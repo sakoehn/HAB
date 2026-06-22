@@ -1,0 +1,87 @@
+########################################
+# Jupyter notebooks & checkpoints
+########################################
+
+# Per-notebook autosave folders
+.ipynb_checkpoints
+**/.ipynb_checkpoints/
+
+# Optional: ignore all notebooks if they are exploratory only
+# Comment this out if you want to track specific .ipynb files.
+Notebooks/
+*.ipynb
+
+
+########################################
+# Project data (HAB / ORCAS etc.)
+########################################
+
+# Major data directories
+COG_genes/
+KEGG/
+Estimated_gene_copies/
+Metagenome_Samples/
+Gene_Annoation_Mappings/
+Misc/
+DataStructures/
+DataStrucutes/           # typo variant just in case
+
+# Archives and raw drops
+tar_files/
+files (1).zip
+probs need to throw away _ old files/
+
+
+########################################
+# Node / frontend build artifacts
+########################################
+
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+.vite/
+frontend/.vite/
+
+# Playwright & test output
+playwright-report/
+test-results/
+
+
+########################################
+# Python virtualenvs & caches
+########################################
+
+.venv/
+venv/
+env/
+ENV/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage*
+htmlcov/
+
+
+########################################
+# Environment / secrets
+########################################
+
+.env
+.env.*
+!.env.example
+
+
+########################################
+# Editor / OS junk
+########################################
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
