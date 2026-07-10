@@ -20,7 +20,6 @@ All structures are module-level so they survive across requests.  Nothing
 here performs file I/O directly — that is delegated to cache.py.
 """
 
-import bisect
 import threading
 from typing import Any
 
@@ -32,7 +31,7 @@ from .cache import (
     extract_parent,
     get_all_sample_names,
     get_timepoint,
-    load_annotations_by_source,
+    load_annotations_by_source_uncached,
     load_tsv,
     _TSV_CACHE,
 )
@@ -196,7 +195,7 @@ def build_search_index() -> None:
 
     for sample_name in all_samples:
         for source_enum, src in source_loaders:
-            data     = load_annotations_by_source(sample_name, source_enum)
+            data     = load_annotations_by_source_uncached(sample_name, source_enum)
             meta     = _ANN_META[src]
             acc      = egc_acc[src]
             matrix   = _EGC_MATRIX[src]
@@ -208,7 +207,11 @@ def build_search_index() -> None:
                 _index_annotation(src, annotation_id, value)
 
                 if annotation_id not in meta:
-                    name   = extract_annotation_name(value)
+                    # Taxonomy: the name IS the dict key (no 'name' field in value).
+                    if source_enum == AnnotationSource.taxonomy:
+                        name = annotation_id
+                    else:
+                        name = extract_annotation_name(value)
                     parent = extract_parent(value, src)
                     meta[annotation_id] = {
                         "annotation_id": annotation_id,
@@ -275,7 +278,7 @@ def build_mapping_index() -> None:
     for sample_name, rows in _TSV_CACHE.items():
         for row in rows:
             for source, col in source_to_col.items():
-                val = row.get(col)
+                val = getattr(row, col)
                 if not val:
                     continue
                 ann_id = val.strip()
@@ -286,11 +289,12 @@ def build_mapping_index() -> None:
 
 def search_index(source: str, q: str) -> set[str]:
     """
-    Return annotation_ids matching query q via binary-search prefix lookup.
+    Return annotation_ids matching query q via token lookup.
 
-    Complexity: O(log n + k) per token.  Multiple tokens are AND-ed so a
-    query like "photosystem II" only returns annotations that contain both
-    tokens.
+    Supports exact-token matches, prefix matches, and substring matches so
+    searches like "iro" and "cohol" work for annotation IDs and names.
+    Multiple tokens are AND-ed so a query like "photosystem II" only returns
+    annotations that contain both tokens.
     """
     idx     = _SEARCH_INDEX.get(source, {})
     keys    = _SEARCH_INDEX_SORTED.get(source, [])
@@ -305,11 +309,9 @@ def search_index(source: str, q: str) -> set[str]:
         if token in idx:
             matched |= idx[token]
 
-        lo = bisect.bisect_left(keys, token)
-        for key in keys[lo:]:
-            if not key.startswith(token):
-                break
-            matched |= idx[key]
+        for key in keys:
+            if token in key or key in token:
+                matched |= idx.get(key, set())
 
         result = matched if result is None else result & matched
         if not result:
@@ -353,7 +355,7 @@ def _build_egc_vectors_from_files(
     parent_map: dict[str, str | None]         = {}
 
     for sample_name in samples_sorted:
-        data = load_annotations_by_source(sample_name, source)
+        data = load_annotations_by_source_uncached(sample_name, source)
         for ann_id, value in data.items():
             egc = extract_egc(value)
             if ann_id not in vectors:

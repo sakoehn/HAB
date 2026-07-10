@@ -3,10 +3,13 @@
 // All network requests in the app go through apiFetch so timeout and
 // error handling are consistent everywhere.
 
-const FETCH_TIMEOUT_MS = 30_000
+const FETCH_TIMEOUT_MS = 60_000
 
 // ── apiFetch ───────────────────────────────────────────────────────────────
-// Generic typed fetch with a 30-second abort timeout.
+// Generic typed fetch with a 60-second abort timeout. Raised from 30s
+// because a cold (never-yet-cached) annotation-series request can take
+// ~35-40s to read from disk — see JSON_CACHE_MAX_ENTRIES in the backend's
+// config.py for the caching side of this.
 // Throws on non-2xx responses so callers can catch uniformly.
 //
 // Usage:

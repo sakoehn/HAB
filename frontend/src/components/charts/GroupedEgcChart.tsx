@@ -1,45 +1,30 @@
-// ── GroupedEgcChart ───────────────────────────────────────────────────────────
-// Sums EGC across multiple annotations and renders the result as a single line.
-// Used when the user selects several rows and clicks "∑ Group" in AnalyzePage,
-// and also inside AnnotationsByParentPanel to show a parent category total.
-//
-// L1 normalisation note:
-//   GroupedEgcChart cannot use pre-computed norm_egc because the summed series
-//   has no single norm_egc value — it falls back to dividing by the group total,
-//   which is relative within the group, not a true depth-normalised abundance.
-//   A ⚠ label is shown in the UI when L1 is active.
-//
-// Day/Night + Tide overlays (both off by default):
-//   Day/Night shades real night hours (sunrise/sunset for Rosario, Orcas
-//   Island). Tide renders predicted water level as a translucent area on
-//   a secondary right axis (meters).
-//
-// XAxis is type="number" (time-proportional, driven by each point's `ts`
-// Unix-ms field) rather than categorical — pixel spacing reflects real
-// elapsed time, so a missing sample's gap stretches instead of being
-// squeezed to the same width as every other gap. See EgcChart's XAxis
-// comment for the full rationale.
-
+// @ts-expect-error plotly.js-dist-min ships no .d.ts; types from @types/plotly.js
+import PlotlyBase from 'plotly.js-dist-min'
+import createPlotlyComponent from 'react-plotly.js/factory'
 import React, { useState, useRef, useMemo } from 'react'
-import {
-  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceArea, Brush,
-} from 'recharts'
 
-import type { AnnotationItem, NormalizeMode } from '../../types'
-import { extractEgc } from '../../utils/stats'
-import { applyL1Normalize, applyZScore, applyLowess } from '../../utils/signal'
+import type { AnnotationItem, ChartMetric } from '../../types'
+import { extractEgc, extractNormEgc } from '../../utils/stats'
+import { applyZScore, applyLowess } from '../../utils/signal'
 import {
-  parseDateTime, fmtDate, isoDate,
-  computeDayBands, makeTickFormatter, buildAxisTicks,
+  parseDateTime, fmtDate, isoDate, computeDayBands, toPlotlyDate,
 } from '../../utils/format'
 import { computeNightBands, alignTideToChartPoints } from '../../utils/solar'
 import { useSolarTideData } from '../../utils/useSolarTideData'
-import { downloadChartPng, downloadChartSvg } from '../../utils/chart'
 import { downloadCsv } from '../../utils/api'
+import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { StatsPanel }    from '../ui/StatsPanel'
 import { DateRangePicker } from '../ui/DateRangePicker'
 import { ChartControls }  from './ChartControls'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Plot = createPlotlyComponent(PlotlyBase as any)
+
+function resolveCssVar(value: string, fallback: string): string {
+  if (typeof document === 'undefined' || !value.startsWith('var(')) return value
+  const name = value.slice(4, -1).trim()
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
 
 type SeriesEntry = {
   annotationId: string
@@ -57,21 +42,24 @@ export function GroupedEgcChart({
   groupLabel:     string
   dataDateRange?: { min: string; max: string } | null
 }) {
-  const [normalizeMode, setNormalizeMode]     = useState<NormalizeMode>('none')
+  const [metric, setMetric]                   = useState<ChartMetric>('egc')
+  const [standardize, setStandardize]         = useState(false)
   const [smoothed, setSmoothed]               = useState(false)
-  const [smoothBandwidth, setSmoothBandwidth] = useState(0.4)
+  const [smoothBandwidth, setSmoothBandwidth] = useState(0.05)
   const [dateFrom, setDateFrom]               = useState('')
   const [dateTo, setDateTo]                   = useState('')
-  const [brushRange, setBrushRange]           = useState<{ startIndex: number; endIndex: number } | null>(null)
   const [showNightShading, setShowNightShading] = useState(false)
   const [showTide, setShowTide]                 = useState(false)
   const [showDayBands, setShowDayBands]         = useState(false)
-  const chartRef = useRef<HTMLDivElement>(null)
+  const plotDivRef = useRef<HTMLDivElement | null>(null)
 
   const { sunTimes, tides, tidesLoading, tidesError } =
     useSolarTideData(showNightShading || showTide)
 
   const summedPoints = useMemo(() => {
+    // When metric is norm_egc, sum norm_egc (egc / total_sample_depth) per
+    // datetime for true depth-normalised group abundance. Otherwise sum raw egc.
+    const useNormEgc = metric === 'norm_egc'
     const dtMap: Record<string, { egc: number; datetime: string; iso: string }> = {}
     for (const s of allSeries) {
       for (const d of s.data) {
@@ -79,40 +67,36 @@ export function GroupedEgcChart({
         const iso = isoDate(d.timepoint.datetime)
         if (dateFrom && iso < dateFrom) continue
         if (dateTo   && iso > dateTo)   continue
-        const egc = extractEgc(d.value)
-        if (egc === null) continue
+        const val = useNormEgc ? extractNormEgc(d.value) : extractEgc(d.value)
+        if (val === null) continue
         const dt = d.timepoint.datetime
         if (!dtMap[dt]) dtMap[dt] = { egc: 0, datetime: dt, iso }
-        dtMap[dt].egc += egc
+        dtMap[dt].egc += val
       }
     }
     return Object.values(dtMap)
       .sort((a, b) => parseDateTime(a.datetime) - parseDateTime(b.datetime))
       .map(({ egc, datetime }) => ({
-        date: fmtDate(datetime),
+        date:     fmtDate(datetime),
         egc,
         datetime,
-        // ts (Unix ms) drives the time-proportional XAxis below — see
-        // EgcChart's XAxis comment for why real elapsed time matters here.
-        ts: parseDateTime(datetime),
+        ts:       parseDateTime(datetime),
       }))
-  }, [allSeries, dateFrom, dateTo])
+  }, [allSeries, dateFrom, dateTo, metric])
 
   const processedPointsRaw = useMemo(() => {
+    // The metric swap is handled upstream in summedPoints so it is absent here.
     let pts = summedPoints as { egc: number | null; datetime: string; ts: number; date: string }[]
-    if (normalizeMode === 'l1')     pts = applyL1Normalize(pts) as typeof pts
-    if (normalizeMode === 'zscore') pts = applyZScore(pts) as typeof pts
+    if (standardize) pts = applyZScore(pts) as typeof pts
     if (smoothed) pts = applyLowess(pts, smoothBandwidth) as typeof pts
     return pts
-  }, [summedPoints, normalizeMode, smoothed, smoothBandwidth])
+  }, [summedPoints, standardize, smoothed, smoothBandwidth])
 
-  // ── Tide values aligned to this chart's own x-values ──────────────────────
   const processedPoints = useMemo(() => {
     if (!showTide || !tides || tides.length === 0) {
       return processedPointsRaw.map(p => ({ ...p, tide_wl: null as number | null }))
     }
-    const datetimes = processedPointsRaw.map(p => p.datetime)
-    const aligned = alignTideToChartPoints(datetimes, tides)
+    const aligned = alignTideToChartPoints(processedPointsRaw.map(p => p.datetime), tides)
     return processedPointsRaw.map(p => ({
       ...p,
       tide_wl: aligned.get(p.datetime) ?? null,
@@ -124,144 +108,159 @@ export function GroupedEgcChart({
     [processedPoints],
   )
 
-  const dayBands = useMemo(
+  const dayBandsList = useMemo(
     () => showDayBands
-      ? computeDayBands(
-          processedPoints.map(p => ({
-            datetime: (p as typeof p & { datetime: string }).datetime,
-          })),
-        )
+      ? computeDayBands(processedPoints.map(p => ({ datetime: p.datetime })))
       : [],
     [showDayBands, processedPoints],
   )
 
   const nightBands = useMemo(
     () => showNightShading && sunTimes
-      ? computeNightBands(
-          processedPoints.map(p => ({
-            datetime: (p as typeof p & { datetime: string }).datetime,
-          })),
-          sunTimes,
-        )
+      ? computeNightBands(processedPoints.map(p => ({ datetime: p.datetime })), sunTimes)
       : [],
     [showNightShading, sunTimes, processedPoints],
   )
 
-  const visiblePoints = useMemo(() => {
-    if (!brushRange) return processedPoints
-    return processedPoints.slice(brushRange.startIndex, brushRange.endIndex + 1)
-  }, [processedPoints, brushRange])
+  const yLabel = metric === 'norm_egc'
+    ? (standardize ? 'Summed Relative Abundance (Z-score)' : 'Summed Relative Abundance')
+    : (standardize ? 'Summed EGC (Z-score)' : 'Summed EGC')
 
-  const uniqueDayCount = useMemo(() => {
-    const days = new Set(
-      visiblePoints.map(p =>
-        ((p as typeof p & { datetime: string }).datetime ?? '').split(' ')[0],
-      ),
-    )
-    return days.size
-  }, [visiblePoints])
+  // ── Shapes: night/day bands positioned by real timestamps ─────────────────
+  const shapes = useMemo(() => {
+    const out: object[] = []
+    for (const band of dayBandsList) {
+      if (!band.shade) continue
+      out.push({
+        type: 'rect', xref: 'x', yref: 'paper',
+        x0: toPlotlyDate(band.x1Ts),
+        x1: toPlotlyDate(band.x2Ts),
+        y0: 0, y1: 1,
+        fillcolor: 'rgba(0,0,0,0.035)',
+        line: { width: 0 },
+        layer: 'below',
+      })
+    }
+    for (const band of nightBands) {
+      out.push({
+        type: 'rect', xref: 'x', yref: 'paper',
+        x0: toPlotlyDate(band.x1Ts),
+        x1: toPlotlyDate(band.x2Ts),
+        y0: 0, y1: 1,
+        fillcolor: 'rgba(0,0,0,0.14)',
+        line: { width: 0 },
+        layer: 'below',
+      })
+    }
+    return out
+  }, [dayBandsList, nightBands])
 
-  const tickFormatter = useMemo(
-    () => makeTickFormatter(
-      processedPoints.map(p => ({
-        datetime: (p as typeof p & { datetime: string }).datetime,
-        ts:       (p as typeof p & { ts: number }).ts,
-      })),
-      uniqueDayCount,
-    ),
-    [processedPoints, uniqueDayCount],
-  )
+  // ── Traces ────────────────────────────────────────────────────────────────
+  const lineColor = resolveCssVar('var(--chart-group)', '#222222')
 
-  // Explicit tick positions — see EgcChart's axisTicks comment for why
-  // Recharts' default tick generation is too sparse on a numeric axis.
-  const axisTicks = useMemo(
-    () => buildAxisTicks(
-      processedPoints.map(p => ({
-        datetime: (p as typeof p & { datetime: string }).datetime,
-        ts:       (p as typeof p & { ts: number }).ts,
-      })),
-      uniqueDayCount,
-    ),
-    [processedPoints, uniqueDayCount],
-  )
+  const plotData = useMemo(() => {
+    const fmtVal = (v: number | null) => {
+      if (v === null) return '--'
+      if (standardize)          return v.toFixed(3) + 'σ'
+      if (metric === 'norm_egc') return (v * 100).toFixed(3) + '%'
+      return v.toExponential(3)
+    }
+    const xs = processedPoints.map(p => toPlotlyDate(p.ts))
+    const traces: object[] = [{
+      type: 'scatter', mode: 'lines+markers',
+      x: xs,
+      y: processedPoints.map(p => p.egc),
+      line:   { color: lineColor, width: 3.7 },
+      marker: { color: lineColor, size: 5 },
+      name: groupLabel,
+      yaxis: 'y',
+      connectgaps: false,
+      customdata: processedPoints.map(p => [fmtVal(p.egc), p.datetime]),
+      hovertemplate:
+        '<b>%{customdata[1]}</b><br>' +
+        yLabel + ': %{customdata[0]}' +
+        '<extra></extra>',
+    }]
+    if (showTide) {
+      traces.push({
+        type: 'scatter', mode: 'lines',
+        x: xs,
+        y: processedPoints.map(p => p.tide_wl),
+        fill: 'tozeroy', fillcolor: 'rgba(0,160,160,0.12)',
+        line: { color: 'rgba(0,160,160,0.55)', width: 1.5 },
+        name: 'Tide (m)', yaxis: 'y2',
+        connectgaps: false,
+        hovertemplate: 'Tide: %{y:.2f} m<extra></extra>',
+      })
+    }
+    return traces
+  }, [processedPoints, lineColor, groupLabel, yLabel, showTide, metric, standardize])
 
-  const tideVals = useMemo(
-    () => processedPoints.map(d => d.tide_wl).filter((v): v is number => v !== null),
-    [processedPoints],
-  )
-  const tideDomain = useMemo<[number, number] | undefined>(() => {
-    if (tideVals.length === 0) return undefined
-    const pad = (Math.max(...tideVals) - Math.min(...tideVals)) * 0.1 || 0.1
-    return [Math.min(...tideVals) - pad, Math.max(...tideVals) + pad]
-  }, [tideVals])
+  // ── Layout ────────────────────────────────────────────────────────────────
+  const layout = useMemo(() => {
+    const base: Record<string, unknown> = {
+      height: 280,
+      margin: { t: 10, r: showTide ? 70 : 20, b: 30, l: 80 },
+      paper_bgcolor: 'transparent',
+      plot_bgcolor:  'transparent',
+      showlegend: false,
+      hovermode: 'x unified',
+      hoverlabel: PLOTLY_HOVERLABEL,
+      shapes,
+      xaxis: {
+        type: 'date',
+        tickfont:    { size: 11, family: 'monospace' },
+        tickangle:   -40,
+        showgrid:    false,
+        linecolor:   '#d9d9d9',
+        rangeslider: { visible: true, thickness: 0.06, bgcolor: 'rgba(0,0,0,0.02)' },
+      },
+      yaxis: {
+        title:    { text: yLabel, font: { size: 10, family: 'monospace' } },
+        tickfont: { size: 11, family: 'monospace' },
+        gridcolor: '#d9d9d9',
+        zeroline:  false,
+      },
+    }
+    if (showTide) {
+      base.yaxis2 = {
+        title:      { text: 'Tide (m)', font: { size: 10, family: 'monospace', color: 'rgb(0,160,160)' } },
+        overlaying: 'y', side: 'right',
+        tickfont:   { size: 10, family: 'monospace', color: 'rgb(0,160,160)' },
+        zeroline: false, showgrid: false,
+      }
+    }
+    return base
+  }, [showTide, shapes, yLabel])
 
-  const yLabel = normalizeMode === 'l1'
-    ? 'Summed EGC (relative — group total, not sample depth) ⚠'
-    : normalizeMode === 'zscore'
-    ? 'Summed EGC (Z-score)'
-    : 'Summed EGC'
+  // ── Export handlers ───────────────────────────────────────────────────────
+  const handleExportPng = async () => {
+    if (!plotDivRef.current) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const url = await (PlotlyBase as any).toImage(plotDivRef.current, {
+      format: 'png', scale: 2, width: plotDivRef.current.offsetWidth,
+    })
+    const a = document.createElement('a')
+    a.href = url; a.download = `${groupLabel}_grouped_egc.png`; a.click()
+  }
 
-  const yFormatter = normalizeMode === 'l1'
-    ? (v: number) => (v * 100).toFixed(1) + '%'
-    : normalizeMode === 'zscore'
-    ? (v: number) => v.toFixed(1) + 'σ'
-    : (v: number) => v.toExponential(1)
+  const handleExportSvg = async () => {
+    if (!plotDivRef.current) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const url = await (PlotlyBase as any).toImage(plotDivRef.current, { format: 'svg' })
+    const a = document.createElement('a')
+    a.href = url; a.download = `${groupLabel}_grouped_egc.svg`; a.click()
+  }
 
   const handleExportCsv = () => downloadCsv(
     processedPoints.map(d => ({
       group:    groupLabel,
-      date:     (d as typeof d & { datetime: string }).datetime,
+      date:     d.datetime,
       egc:      d.egc,
       ...(showTide ? { tide_predicted_wl_m: d.tide_wl } : {}),
     })),
     `${groupLabel}_grouped_egc.csv`,
   )
-  const handleExportPng = () => downloadChartPng(
-    chartRef,
-    `${groupLabel}_grouped_egc.png`,
-    `Grouped: "${groupLabel}" — ${allSeries.length} annotations summed`,
-  )
-  const handleExportSvg = () => downloadChartSvg(
-    chartRef,
-    `${groupLabel}_grouped_egc.svg`,
-    `Grouped: "${groupLabel}" — ${allSeries.length} annotations summed`,
-  )
-
-  const CustomTooltip = ({
-    active,
-    payload,
-  }: {
-    active?:  boolean
-    payload?: { payload: typeof processedPoints[0] }[]
-  }) => {
-    if (!active || !payload?.length) return null
-    const d = payload[0].payload
-    const fmtVal = (v: number | null) => {
-      if (v === null) return '--'
-      if (normalizeMode === 'l1')     return (v * 100).toFixed(3) + '%'
-      if (normalizeMode === 'zscore') return v.toFixed(3) + 'σ'
-      return v.toExponential(3)
-    }
-    return (
-      <div className="chart-tooltip">
-        <div className="tt-date">
-          {(d as typeof d & { datetime: string }).datetime}
-        </div>
-        <div className="tt-row">
-          <div className="tt-dot" style={{ background: 'var(--chart-1)' }} />
-          <span className="tt-label">{yLabel}</span>
-          <span className="tt-val">{fmtVal(d.egc)}</span>
-        </div>
-        {showTide && d.tide_wl !== null && (
-          <div className="tt-row">
-            <div className="tt-dot" style={{ background: 'var(--teal)' }} />
-            <span className="tt-label">Tide</span>
-            <span className="tt-val">{d.tide_wl.toFixed(2)} m</span>
-          </div>
-        )}
-      </div>
-    )
-  }
 
   return (
     <div className="chart-card" style={{ marginTop: 16 }}>
@@ -299,8 +298,10 @@ export function GroupedEgcChart({
       </div>
 
       <ChartControls
-        normalizeMode={normalizeMode}
-        onNormalizeMode={setNormalizeMode}
+        metric={metric}
+        onMetric={setMetric}
+        standardize={standardize}
+        onStandardize={setStandardize}
         smoothed={smoothed}
         onSmooth={setSmoothed}
         smoothBandwidth={smoothBandwidth}
@@ -349,153 +350,17 @@ export function GroupedEgcChart({
       {processedPoints.length === 0 ? (
         <div className="state-box"><span>No data available.</span></div>
       ) : (
-        <div ref={chartRef}>
-          <ResponsiveContainer width="100%" height={280}>
-            <ComposedChart
-              data={processedPoints}
-              margin={{ top: 6, right: showTide ? 48 : 16, left: 0, bottom: 52 }}
-            >
-              {dayBands.map((band, i) =>
-                band.shade ? (
-                  <ReferenceArea
-                    key={`day-${i}`}
-                    yAxisId="egc"
-                    x1={band.x1Ts}
-                    x2={band.x2Ts}
-                    fill="rgba(0,0,0,0.04)"
-                    fillOpacity={1}
-                    strokeOpacity={0}
-                    ifOverflow="visible"
-                  />
-                ) : null,
-              )}
-              <CartesianGrid strokeDasharray="" stroke="#d9d9d9" vertical={false} />
-              {/* type="number" + domain={['dataMin','dataMax']}: a
-                  time-proportional axis, so pixel spacing reflects real
-                  elapsed time rather than just row position — see
-                  EgcChart's XAxis comment for why this matters. */}
-              <XAxis
-                dataKey="ts"
-                type="number"
-                domain={['dataMin', 'dataMax']}
-                ticks={axisTicks}
-                tick={{ fill: 'var(--text-dim)', fontSize: 11, fontFamily: 'var(--mono)' }}
-                tickLine={false}
-                axisLine={{ stroke: 'var(--border)' }}
-                angle={-40}
-                textAnchor="end"
-                height={56}
-                tickFormatter={tickFormatter}
-              />
-              <YAxis
-                yAxisId="egc"
-                tick={{ fill: 'var(--text-dim)', fontSize: 11, fontFamily: 'var(--mono)' }}
-                tickLine={false}
-                axisLine={{ stroke: 'var(--border)' }}
-                width={72}
-                tickFormatter={yFormatter}
-                label={{
-                  value:    yLabel,
-                  angle:    -90,
-                  position: 'insideLeft',
-                  fill:     'var(--text-dim)',
-                  fontSize: 10,
-                  fontFamily: 'var(--mono)',
-                  dy:       50,
-                }}
-              />
-              {showTide && (
-                <YAxis
-                  yAxisId="tide"
-                  orientation="right"
-                  domain={tideDomain}
-                  tick={{ fill: 'var(--teal)', fontSize: 10, fontFamily: 'var(--mono)' }}
-                  tickLine={false}
-                  axisLine={{ stroke: 'var(--border)' }}
-                  width={48}
-                  tickFormatter={(v: number) => v.toFixed(1)}
-                  label={{
-                    value:    'Tide (m)',
-                    angle:    90,
-                    position: 'insideRight',
-                    fill:     'var(--teal)',
-                    fontSize: 10,
-                    fontFamily: 'var(--mono)',
-                  }}
-                />
-              )}
-              <Tooltip content={<CustomTooltip />} />
-
-              {/* Night shading — after axes/series so Recharts has
-                  resolved the numeric x-scale (see EgcChart for the
-                  render-order bug this avoids). */}
-              {showNightShading && nightBands.map((b, i) => (
-                <ReferenceArea
-                  key={`night-${i}`}
-                  yAxisId="egc"
-                  x1={b.x1Ts}
-                  x2={b.x2Ts}
-                  fill="var(--shade-night-fill)"
-                  style={{ fillOpacity: 'var(--shade-night-opacity)' }}
-                  strokeOpacity={0}
-                  ifOverflow="visible"
-                />
-              ))}
-
-              {showTide && (
-                <Area
-                  yAxisId="tide"
-                  type="monotone"
-                  dataKey="tide_wl"
-                  stroke="var(--tide-stroke)"
-                  strokeWidth={1.5}
-                  strokeOpacity={0.6}
-                  fill="var(--tide-fill)"
-                  fillOpacity={0.16}
-                  connectNulls={true}
-                  dot={false}
-                  activeDot={false}
-                  isAnimationActive={false}
-                />
-              )}
-
-              <Line
-                yAxisId="egc"
-                type="monotone"
-                dataKey="egc"
-                stroke="var(--chart-1)"
-                strokeWidth={3.7}
-                dot={{ r: 4, fill: 'var(--chart-1)', strokeWidth: 0 }}
-                activeDot={{ r: 6 }}
-                connectNulls={false}
-              />
-              {/* Brush still works on array startIndex/endIndex (not axis
-                  values), so switching the axis to numeric doesn't change
-                  its zoom mechanics — only its dataKey (for the mini chart
-                  preview) and tickFormatter need to match. */}
-              <Brush
-                dataKey="ts"
-                height={24}
-                stroke="var(--border)"
-                fill="var(--surface2)"
-                travellerWidth={6}
-                tickFormatter={tickFormatter}
-                onChange={range => {
-                  if (
-                    range &&
-                    typeof range.startIndex === 'number' &&
-                    typeof range.endIndex   === 'number'
-                  ) {
-                    setBrushRange({
-                      startIndex: range.startIndex,
-                      endIndex:   range.endIndex,
-                    })
-                  }
-                }}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
+        <Plot
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          data={plotData as any}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          layout={layout as any}
+          style={{ width: '100%' }}
+          useResizeHandler
+          onInitialized={(_, graphDiv) => { plotDivRef.current = graphDiv as HTMLDivElement }}
+          onUpdate={(_, graphDiv) => { plotDivRef.current = graphDiv as HTMLDivElement }}
+          config={{ displayModeBar: false, displaylogo: false }}
+        />
       )}
     </div>
   )

@@ -14,10 +14,10 @@ export const SOURCE_COLORS: Record<string, string> = {
 }
 
 export const SOURCE_TAG_CLS: Record<string, string> = {
-  kegg:     'teal',
-  cog:      'violet',
-  enzyme:   'amber',
-  taxonomy: 'coral',
+  kegg:     'chart-1',
+  cog:      'chart-2',
+  enzyme:   'chart-3',
+  taxonomy: 'chart-4',
 }
 
 export const CHART_COLORS = [
@@ -30,10 +30,10 @@ export const CHART_COLORS = [
 // Per-source shade palettes — used to give each new card a distinct hue
 // within its source family rather than repeating the same color.
 export const SOURCE_SHADES: Record<string, string[]> = {
-  kegg:     ['#38d9b4', '#0c9e7a', '#8effe0', '#1ecfaa'],
-  cog:      ['#7b8ef0', '#3d4fc8', '#b3bbff', '#5566ff'],
-  enzyme:   ['#f0b429', '#b87900', '#ffd97a', '#e09000'],
-  taxonomy: ['#e8705a', '#b03520', '#ffaa95', '#cc4430'],
+  kegg:     ['#56B4E9', '#0090C5', '#89D4F5', '#2B8FC4'],  // sky-blue family
+  cog:      ['#CC79A7', '#A0407A', '#E8A8C8', '#B55090'],  // reddish-purple family
+  enzyme:   ['#E69F00', '#B27A00', '#F0BC4D', '#D48A00'],  // orange family
+  taxonomy: ['#009E73', '#006B4E', '#4DC9A3', '#007A5A'],  // bluish-green/teal family
 }
 
 // ── Color allocation ───────────────────────────────────────────────────────
@@ -149,9 +149,7 @@ export function expandParentLabel(parent: string, source: string): string {
 
   if (source === 'cog') {
     const key = parent.trim().toUpperCase()
-    return COG_CATEGORY_LABELS[key]
-      ? `${key} · ${COG_CATEGORY_LABELS[key]}`
-      : parent
+    return COG_CATEGORY_LABELS[key] ?? parent
   }
 
   if (source === 'enzyme') {
@@ -179,6 +177,31 @@ export function expandParentLabel(parent: string, source: string): string {
   return parent
 }
 
+// ── Taxonomy rank names ─────────────────────────────────────────────────────
+// depth -> rank name, for the 3 domains whose lineages compress cleanly into
+// an 8-level ladder (Bacteria, Archaea, Viruses). Eukaryota lineages have
+// extra intermediate NCBI ranks that don't fit this ladder, so depths for
+// category === 'Eukaryota' fall back to "Level N" instead.
+
+export const PROKARYOTE_RANK_NAMES: Record<number, string> = {
+  1: 'Domain',
+  2: 'Phylum',
+  3: 'Class',
+  4: 'Order',
+  5: 'Family',
+  6: 'Genus',
+  7: 'Species',
+  8: 'Strain',
+}
+
+export function taxonomyRankLabel(depth: number | null, category: string | null): string {
+  if (depth == null) return 'Unknown rank'
+  if (category !== 'Eukaryota' && PROKARYOTE_RANK_NAMES[depth]) {
+    return PROKARYOTE_RANK_NAMES[depth]
+  }
+  return `Level ${depth}`
+}
+
 // ── Navigation items ───────────────────────────────────────────────────────
 // Defined here so App.tsx and any future nav component share one source of truth.
 
@@ -199,6 +222,11 @@ export const NAV_ITEMS: { id: Page; label: string; icon: string }[] = [
     id:    'explore',
     label: 'Explore',
     icon:  `<svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="10" width="3" height="6" rx="1"/><rect x="7.5" y="6" width="3" height="10" rx="1"/><rect x="13" y="2" width="3" height="14" rx="1"/></svg>`,
+  },
+  {
+    id:    'taxonomy',
+    label: 'Taxonomy',
+    icon:  `<svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 2v5M9 7L4 14M9 7l5 7M4 14h10"/></svg>`,
   },
   {
     id:    'about',

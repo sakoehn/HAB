@@ -16,26 +16,21 @@
 // coupled to ExploreState.
 
 import React, { useState, useEffect, useMemo } from 'react'
-import {
-  ComposedChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer,
-} from 'recharts'
 
 import type {
-  ApiStatus, TopAnnotation, AnnotationItem,
+  ApiStatus, TopAnnotation, AnnotationValue, AnnotationItem,
   ExploreSection, ExploreSortCol, SortDir,
 } from '../types'
 import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel } from '../constants'
 import { apiFetch, downloadCsv } from '../utils/api'
-import { fmtDate, fmtTime, isoDate } from '../utils/format'
-import { extractEgc } from '../utils/stats'
-import { computeTrend } from '../utils/stats'
+import { extractEgc, computeTrend } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
 import { CopyBtn } from '../components/ui/controls'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
 import { ChartErrorBoundary } from '../components/ui/ChartErrorBoundary'
 import { StatsPanel } from '../components/ui/StatsPanel'
 import { ExternalLinks } from '../components/ui/ExternalLinks'
+import { HelpTooltip } from '../components/ui/HelpTooltip'
 import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { GroupedEgcChart } from '../components/charts/GroupedEgcChart'
 import { ScaffoldBtn } from '../components/scaffolds/ScaffoldBtn'
@@ -133,16 +128,17 @@ function DatasetOverviewPanel({
   const [status, setStatus]             = useState<ApiStatus>('idle')
   const [seriesData, setSeriesData]     = useState<Record<string, AnnotationItem[]>>({})
   const [seriesStatus, setSeriesStatus] = useState<ApiStatus>('idle')
+  const [seriesFailed, setSeriesFailed] = useState<string[]>([])
 
   useEffect(() => {
     setSource('kegg'); setDateFrom(''); setDateTo('')
     setRows([]); setSampleCount(null); setStatus('idle')
-    setSeriesData({}); setSeriesStatus('idle')
+    setSeriesData({}); setSeriesStatus('idle'); setSeriesFailed([])
   }, [resetKey])
 
   async function load() {
     setStatus('loading')
-    setSeriesData({}); setSeriesStatus('idle')
+    setSeriesData({}); setSeriesStatus('idle'); setSeriesFailed([])
     try {
       let url = `/api/annotations/top?source=${source}&limit=200`
       if (dateFrom) url += `&date_from=${dateFrom}`
@@ -183,21 +179,24 @@ function DatasetOverviewPanel({
     const allAnns = top5Groups.flatMap(g => g.items).slice(0, 40)
     if (!allAnns.length) return
     setSeriesStatus('loading')
-    try {
-      const results = await Promise.all(
-        allAnns.map(ann =>
-          apiFetch<{ data: AnnotationItem[] }>(
-            `/api/series/annotations?source=${source}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
-          )
-            .then(r => ({ id: ann.annotation_id, data: r.data ?? [] }))
-            .catch(() => ({ id: ann.annotation_id, data: [] as AnnotationItem[] })),
-        ),
-      )
-      const map: Record<string, AnnotationItem[]> = {}
-      for (const { id, data } of results) map[id] = data
-      setSeriesData(map)
-      setSeriesStatus('ok')
-    } catch { setSeriesStatus('error') }
+    const results = await Promise.all(
+      allAnns.map(ann =>
+        apiFetch<{ data: AnnotationItem[] }>(
+          `/api/series/annotations?source=${source}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
+        )
+          .then(r => ({ id: ann.annotation_id, data: r.data ?? [], failed: false }))
+          .catch(() => ({ id: ann.annotation_id, data: [] as AnnotationItem[], failed: true })),
+      ),
+    )
+    const map: Record<string, AnnotationItem[]> = {}
+    const failed: string[] = []
+    for (const { id, data, failed: f } of results) {
+      map[id] = data
+      if (f) failed.push(id)
+    }
+    setSeriesData(map)
+    setSeriesFailed(failed)
+    setSeriesStatus('ok')
   }
 
   const temporalSeries = useMemo(() => {
@@ -303,6 +302,11 @@ function DatasetOverviewPanel({
             {dateFrom || dateTo
               ? ` · ${dateFrom || '…'} → ${dateTo || '…'}`
               : ' · all dates'}
+            {rows.length === 500 && (
+              <span style={{ color: 'var(--amber)', marginLeft: 6 }}>
+                · showing first 500 — use date filter to narrow
+              </span>
+            )}
           </div>
 
           {overviewStats && (
@@ -333,6 +337,11 @@ function DatasetOverviewPanel({
                 <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>
                   Loading time series…
                 </span>
+              )}
+              {seriesStatus === 'ok' && seriesFailed.length > 0 && (
+                <button className="btn sm" onClick={loadTemporalChart}>
+                  ⚠ Retry time series
+                </button>
               )}
             </div>
 
@@ -403,6 +412,20 @@ function DatasetOverviewPanel({
               })}
             </div>
 
+            {seriesStatus === 'ok' && seriesFailed.length > 0 && (
+              <div
+                className="state-box error"
+                style={{ padding: '10px 16px', flexDirection: 'row', gap: 10, textAlign: 'left', marginBottom: 12 }}
+                data-testid="overview-series-failure-warning"
+              >
+                <span style={{ flex: 1 }}>
+                  {seriesFailed.length} annotation{seriesFailed.length !== 1 ? 's' : ''} failed
+                  to load their time series ({seriesFailed.join(', ')}) — excluded from the
+                  chart below.
+                </span>
+              </div>
+            )}
+
             {seriesStatus === 'ok' && temporalSeries.length > 0 && (
               <div>
                 <div style={{
@@ -448,11 +471,14 @@ function AnnotationsByParentPanel({
   const [showSummed, setShowSummed]           = useState(false)
   const [groupSeriesData, setGroupSeriesData] = useState<Record<string, {
     data:   Record<string, AnnotationItem[]>
+    failed: string[]  // annotation_ids whose series fetch failed — kept
+                       // separate from `data` so a failure never gets
+                       // silently mistaken for genuinely-empty data.
     status: ApiStatus
   }>>({})
   const { copiedId, copy } = useCopyId()
 
-  useEffect(() => {
+  function loadTop() {
     setStatus('loading')
     setAllRows([])
     setExpandedParents(new Set())
@@ -462,7 +488,9 @@ function AnnotationsByParentPanel({
     )
       .then(r => { setAllRows(r.data ?? []); setStatus('ok') })
       .catch(() => setStatus('error'))
-  }, [source])
+  }
+
+  useEffect(loadTop, [source])
 
   const parentGroups = useMemo(() => {
     const map = new Map<string, TopAnnotation[]>()
@@ -490,25 +518,25 @@ function AnnotationsByParentPanel({
     })
   }
 
-  async function loadGroupSeries(parent: string, items: TopAnnotation[]) {
-    if (groupSeriesData[parent]) return
-    setGroupSeriesData(prev => ({ ...prev, [parent]: { data: {}, status: 'loading' } }))
-    try {
-      const results = await Promise.all(
-        items.slice(0, 20).map(ann =>
-          apiFetch<{ data: AnnotationItem[] }>(
-            `/api/series/annotations?source=${source}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
-          )
-            .then(r => ({ id: ann.annotation_id, data: r.data ?? [] }))
-            .catch(() => ({ id: ann.annotation_id, data: [] as AnnotationItem[] })),
-        ),
-      )
-      const map: Record<string, AnnotationItem[]> = {}
-      for (const { id, data } of results) map[id] = data
-      setGroupSeriesData(prev => ({ ...prev, [parent]: { data: map, status: 'ok' } }))
-    } catch {
-      setGroupSeriesData(prev => ({ ...prev, [parent]: { data: {}, status: 'error' } }))
+  async function loadGroupSeries(parent: string, items: TopAnnotation[], force = false) {
+    if (!force && groupSeriesData[parent]) return
+    setGroupSeriesData(prev => ({ ...prev, [parent]: { data: {}, failed: [], status: 'loading' } }))
+    const results = await Promise.all(
+      items.slice(0, 20).map(ann =>
+        apiFetch<{ data: AnnotationItem[] }>(
+          `/api/series/annotations?source=${source}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
+        )
+          .then(r => ({ id: ann.annotation_id, data: r.data ?? [], failed: false }))
+          .catch(() => ({ id: ann.annotation_id, data: [] as AnnotationItem[], failed: true })),
+      ),
+    )
+    const map: Record<string, AnnotationItem[]> = {}
+    const failed: string[] = []
+    for (const { id, data, failed: f } of results) {
+      map[id] = data
+      if (f) failed.push(id)
     }
+    setGroupSeriesData(prev => ({ ...prev, [parent]: { data: map, failed, status: 'ok' } }))
   }
 
   if (status === 'loading') return (
@@ -519,6 +547,9 @@ function AnnotationsByParentPanel({
   if (status === 'error') return (
     <div className="state-box error" style={{ padding: 32 }}>
       <span>Failed to load.</span>
+      <button className="btn sm" data-testid="parent-panel-retry-btn" onClick={loadTop}>
+        Retry
+      </button>
     </div>
   )
   if (status === 'ok' && parentGroups.length === 0) return (
@@ -527,26 +558,39 @@ function AnnotationsByParentPanel({
     </div>
   )
 
+  // Shown inline above the toggle row when results were clipped
+  const truncationNote = allRows.length === 500 ? (
+    <div style={{
+      font: '11px var(--mono)', color: 'var(--amber)',
+      marginBottom: 10,
+    }}>
+      Showing first 500 annotations — use date filter in Dataset Overview to narrow.
+    </div>
+  ) : null
+
   const maxSum = parentGroups[0]?.sumEgc ?? 1
 
   return (
     <div>
+      {truncationNote}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
         <span style={{ font: '400 11px var(--mono)', color: 'var(--text-dim)' }}>
           View:
         </span>
+        <HelpTooltip text="Individual shows each annotation's own trend. Summed by parent adds up all annotations under the same parent category into one line." />
         <button
           className={`toggle-pill ${!showSummed ? 'on' : ''}`}
           onClick={() => setShowSummed(false)}
+          title="Show each annotation as its own time series — expand a parent group to see individual lines and compare trends"
         >
           Individual annotations
         </button>
         <button
           className={`toggle-pill ${showSummed ? 'on' : ''}`}
           onClick={() => setShowSummed(true)}
-          title="Collapse each parent group into its summed mean EGC"
+          title="Collapse each parent group into one row showing the sum of all member mean EGCs — useful for ranking which functional categories dominate the dataset. No time series is shown here because this is a static aggregate across all timepoints."
         >
-          ∑ Summed EGC by parent
+          ∑ Summed by parent
         </button>
       </div>
 
@@ -640,9 +684,24 @@ function AnnotationsByParentPanel({
                         <span>Loading time series for {group.count} annotations…</span>
                       </div>
                     )}
-                    {gs?.status === 'error' && (
-                      <div className="state-box error" style={{ padding: 20 }}>
-                        <span>Failed to load time series.</span>
+                    {gs?.status === 'ok' && gs.failed.length > 0 && (
+                      <div
+                        className="state-box error"
+                        style={{ padding: '10px 16px', flexDirection: 'row', gap: 10, textAlign: 'left', marginBottom: 12 }}
+                        data-testid="parent-group-failure-warning"
+                      >
+                        <span style={{ flex: 1 }}>
+                          {gs.failed.length} of {Math.min(group.items.length, 20)} annotation
+                          {gs.failed.length !== 1 ? 's' : ''} failed to load
+                          ({gs.failed.join(', ')}) — excluded from the chart below.
+                        </span>
+                        <button
+                          className="btn sm"
+                          data-testid="parent-group-retry-btn"
+                          onClick={() => loadGroupSeries(group.parent, group.items, true)}
+                        >
+                          Retry
+                        </button>
                       </div>
                     )}
                     {gs?.status === 'ok' && chartSeries.length > 0 && (
@@ -742,6 +801,7 @@ export function ExplorePage({
   setState,
   resetKey,
   dataDateRange,
+  indexReady,
   onSendToAnalyze,
   onGoScaffoldExplore,
 }: {
@@ -749,6 +809,7 @@ export function ExplorePage({
   setState:            (updater: (prev: ExploreState) => ExploreState) => void
   resetKey:            number
   dataDateRange:       { min: string; max: string } | null
+  indexReady:          boolean
   onSendToAnalyze:     (annotationId: string) => void
   onGoScaffoldExplore: (annotationId: string, source: string) => void
 }) {
@@ -780,6 +841,29 @@ export function ExplorePage({
         ? (prev.sortDir === 'asc' ? 'desc' : 'asc')
         : 'desc',
     }))
+  }
+
+  // A failed request and a genuinely empty result must stay distinguishable
+  // (status 'error' vs. 'ok' with an empty lookupResults) — otherwise a
+  // timeout looks identical to "this annotation doesn't exist."
+  async function runLookupSearch() {
+    const term = state.lookupId.trim()
+    if (!term) return
+    setState(prev => ({ ...prev, lookupStatus: 'loading', lookupSelected: null }))
+    try {
+      const url = `/api/search/annotations?q=${encodeURIComponent(term)}&sources=${state.lookupSource}&page_size=25`
+      const r   = await apiFetch<{ data: TopAnnotation[]; total: number }>(url)
+      const results = r.data ?? []
+      setState(prev => ({
+        ...prev,
+        lookupResults:  results,
+        lookupSelected: results.length === 1 ? results[0] : null,
+        lookupTotal:    r.total ?? results.length,
+        lookupStatus:   'ok',
+      }))
+    } catch {
+      setState(prev => ({ ...prev, lookupStatus: 'error' }))
+    }
   }
 
   const sorted = useMemo(() => {
@@ -836,13 +920,13 @@ export function ExplorePage({
               id:   'overview' as ExploreSection,
               icon: '📈',
               label: 'Dataset Overview',
-              desc:  'Summary statistics for any annotation type with date filtering',
+              desc:  'Functional group breakdown with bar chart, stats, and temporal trends for top parent categories',
             },
             {
               id:   'top-egc' as ExploreSection,
               icon: '📊',
               label: 'Top EGC Annotations',
-              desc:  'Highest mean abundance by source type, optional date filter',
+              desc:  'Sortable table of highest mean-abundance annotations — filter by source, date range, or keyword',
             },
             {
               id:   'by-parent' as ExploreSection,
@@ -1039,9 +1123,6 @@ export function ExplorePage({
                       <th>Group</th>
                       <SortTh col="mean_egc"     label="Mean EGC"  />
                       <SortTh col="sample_count" label="Samples"   />
-                      <th title="Trend: last-quarter mean vs first-quarter mean">
-                        Trend
-                      </th>
                       <th>Scaffolds</th>
                       <th>Relative</th>
                     </tr>
@@ -1091,18 +1172,6 @@ export function ExplorePage({
                         </td>
                         <td style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>
                           {row.sample_count}
-                        </td>
-                        <td style={{
-                          fontFamily: 'var(--mono)',
-                          fontSize:   13,
-                          textAlign:  'center',
-                        }}>
-                          <span
-                            style={{ color: 'var(--text-dim)' }}
-                            title="Expand in Analyze to see trend"
-                          >
-                            —
-                          </span>
                         </td>
                         <td>
                           <ScaffoldBtn
@@ -1220,27 +1289,7 @@ export function ExplorePage({
                 <button
                   className="btn primary"
                   disabled={!state.lookupId.trim() || state.lookupStatus === 'loading'}
-                  onClick={async () => {
-                    const term = state.lookupId.trim()
-                    if (!term) return
-                    setState(prev => ({
-                      ...prev, lookupStatus: 'loading', lookupSelected: null,
-                    }))
-                    try {
-                      const url = `/api/search/annotations?q=${encodeURIComponent(term)}&sources=${state.lookupSource}&page_size=25`
-                      const r   = await apiFetch<{ data: TopAnnotation[]; total: number }>(url)
-                      const results = r.data ?? []
-                      setState(prev => ({
-                        ...prev,
-                        lookupResults:  results,
-                        lookupSelected: results.length === 1 ? results[0] : null,
-                        lookupTotal:    r.total ?? results.length,
-                        lookupStatus:   results.length > 0 ? 'ok' : 'error',
-                      }))
-                    } catch {
-                      setState(prev => ({ ...prev, lookupStatus: 'error' }))
-                    }
-                  }}
+                  onClick={runLookupSearch}
                 >
                   {state.lookupStatus === 'loading' ? 'Searching…' : 'Search'}
                 </button>
@@ -1255,10 +1304,31 @@ export function ExplorePage({
 
               {state.lookupStatus === 'error' && (
                 <div className="state-box error" style={{ padding: 20 }}>
+                  <div className="state-icon">⚠</div>
+                  <span>
+                    Search failed — the request may have timed out.
+                  </span>
+                  <button className="btn sm" data-testid="lookup-retry-btn" onClick={runLookupSearch}>
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {state.lookupStatus === 'ok' && state.lookupResults.length === 0 && (
+                <div className="state-box" style={{ padding: 20 }}>
                   <div className="state-icon">∅</div>
                   <span>
                     No results for <strong>{state.lookupId}</strong> in{' '}
                     {state.lookupSource}.
+                    {!indexReady && (
+                      <span style={{
+                        display: 'block', marginTop: 6,
+                        color: 'var(--amber)', fontSize: 12,
+                        fontFamily: 'var(--mono)',
+                      }}>
+                        ⚠ Search index is still building — try again in a few seconds.
+                      </span>
+                    )}
                   </span>
                 </div>
               )}
@@ -1348,10 +1418,25 @@ export function ExplorePage({
                   {/* Detail card */}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {state.lookupSelected ? (() => {
-                      const r     = state.lookupSelected
+                      const r      = state.lookupSelected
+                      const v      = r.value as AnnotationValue | null | undefined
                       const parent = r.parent
                         ? expandParentLabel(r.parent, state.lookupSource)
                         : null
+                      const category = v?.category
+                        ? expandParentLabel(v.category, state.lookupSource)
+                        : null
+                      const scaffoldCount = v?.scaffolds
+                        ? Object.keys(v.scaffolds).length
+                        : null
+
+                      const depthLabel = (depth: number) => {
+                        if (state.lookupSource === 'kegg')    return { 1: 'pathway class', 2: 'subcategory', 3: 'pathway', 4: 'leaf (KO)' }[depth] ?? String(depth)
+                        if (state.lookupSource === 'cog')     return { 1: 'category', 2: 'leaf (COG)' }[depth] ?? String(depth)
+                        if (state.lookupSource === 'enzyme')  return { 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' }[depth] ?? String(depth)
+                        return String(depth)
+                      }
+
                       return (
                         <div className="lookup-result">
                           <div className="lookup-header">
@@ -1364,10 +1449,36 @@ export function ExplorePage({
                             )}
                           </div>
                           <div className="lookup-meta-grid">
+                            {category && (
+                              <div className="lookup-meta-row">
+                                <span className="lookup-meta-label">Category</span>
+                                <span className="lookup-meta-value">{category}</span>
+                              </div>
+                            )}
                             {parent && (
                               <div className="lookup-meta-row">
                                 <span className="lookup-meta-label">Parent</span>
                                 <span className="lookup-meta-value">{parent}</span>
+                              </div>
+                            )}
+                            {v?.depth != null && (
+                              <div className="lookup-meta-row">
+                                <span className="lookup-meta-label">
+                                  Depth
+                                  <HelpTooltip text="Depth = how deep this term sits in its hierarchy (e.g. KEGG depth 3 = pathway level). Meaning depends on the annotation source." />
+                                </span>
+                                <span className="lookup-meta-value mono">
+                                  {v.depth}
+                                  <span style={{
+                                    marginLeft:  6,
+                                    fontFamily:  'var(--sans)',
+                                    fontSize:    11,
+                                    color:       'var(--text-dim)',
+                                    fontWeight:  400,
+                                  }}>
+                                    ({depthLabel(v.depth)})
+                                  </span>
+                                </span>
                               </div>
                             )}
                             <div className="lookup-meta-row">
@@ -1382,12 +1493,46 @@ export function ExplorePage({
                                 {r.max_egc.toExponential(3)}
                               </span>
                             </div>
+                            {r.mean_norm_egc != null && (
+                              <div className="lookup-meta-row">
+                                <span
+                                  className="lookup-meta-label"
+                                  title="Mean EGC / total sample depth — comparable across samples"
+                                >
+                                  Mean norm EGC
+                                </span>
+                                <span className="lookup-meta-value mono">
+                                  {r.mean_norm_egc.toExponential(3)}
+                                </span>
+                              </div>
+                            )}
+                            {r.max_norm_egc != null && (
+                              <div className="lookup-meta-row">
+                                <span className="lookup-meta-label">Max norm EGC</span>
+                                <span className="lookup-meta-value mono">
+                                  {r.max_norm_egc.toExponential(3)}
+                                </span>
+                              </div>
+                            )}
                             <div className="lookup-meta-row">
                               <span className="lookup-meta-label">Samples</span>
                               <span className="lookup-meta-value mono">
                                 {r.sample_count} / 128
                               </span>
                             </div>
+                            {scaffoldCount != null && (
+                              <div className="lookup-meta-row">
+                                <span
+                                  className="lookup-meta-label"
+                                  title="Unique scaffold IDs in the earliest sample this annotation appears in"
+                                >
+                                  Scaffolds (sample)
+                                </span>
+                                <span className="lookup-meta-value mono">
+                                  {scaffoldCount}
+                                </span>
+                              </div>
+                            )}
                           </div>
                           <div className="lookup-links-section">
                             <div className="lookup-links-label">External Databases</div>

@@ -69,9 +69,10 @@ class TestExtractAnnotationName:
         from api.cache import extract_annotation_name
         assert extract_annotation_name({"label": "my label"}) == "my label"
 
-    def test_dict_falls_back_to_parent_ec(self):
+    def test_dict_with_only_unrelated_fields_returns_none(self):
+        """parent_ec/parent_id are not name fields — must not leak into 'name'."""
         from api.cache import extract_annotation_name
-        assert extract_annotation_name({"parent_ec": "1.1.-.-"}) == "1.1.-.-"
+        assert extract_annotation_name({"parent_ec": "1.1.-.-", "parent_id": "X"}) is None
 
     def test_dict_with_no_name_fields_returns_none(self):
         from api.cache import extract_annotation_name
@@ -93,18 +94,19 @@ class TestExtractAnnotationName:
 class TestExtractParent:
     """cache.extract_parent — per-source branching."""
 
-    def test_kegg_uses_parents_list_first_element(self):
+    def test_kegg_uses_parent_name_list_first_element(self):
         from api.cache import extract_parent
-        v = {"parents": ["Carbohydrate metabolism", "Other"]}
+        v = {"parent_name": ["Carbohydrate metabolism", "Other"]}
         assert extract_parent(v, "kegg") == "Carbohydrate metabolism"
 
-    def test_kegg_falls_back_to_category(self):
+    def test_kegg_falls_back_to_parent_id_then_category(self):
         from api.cache import extract_parent
+        assert extract_parent({"parent_id": "09101"}, "kegg") == "09101"
         assert extract_parent({"category": "Metabolism"}, "kegg") == "Metabolism"
 
-    def test_kegg_empty_parents_list_falls_back(self):
+    def test_kegg_empty_parent_name_list_falls_back(self):
         from api.cache import extract_parent
-        v = {"parents": [], "category": "Fallback"}
+        v = {"parent_name": [], "category": "Fallback"}
         assert extract_parent(v, "kegg") == "Fallback"
 
     def test_cog_uses_category(self):
@@ -115,11 +117,15 @@ class TestExtractParent:
         from api.cache import extract_parent
         assert extract_parent({"name": "COG0001"}, "cog") is None
 
-    def test_enzyme_uses_parent_ec(self):
+    def test_enzyme_uses_parent_name(self):
         from api.cache import extract_parent
-        assert extract_parent({"parent_ec": "1.1.-.-"}, "enzyme") == "1.1.-.-"
+        assert extract_parent({"parent_name": "1.1.-.-"}, "enzyme") == "1.1.-.-"
 
-    def test_enzyme_missing_parent_ec_returns_none(self):
+    def test_enzyme_falls_back_to_parent_id(self):
+        from api.cache import extract_parent
+        assert extract_parent({"parent_id": "1.1.-.-"}, "enzyme") == "1.1.-.-"
+
+    def test_enzyme_missing_parent_fields_returns_none(self):
         from api.cache import extract_parent
         assert extract_parent({"name": "ADH"}, "enzyme") is None
 
@@ -209,6 +215,140 @@ class TestExtractNormEgc:
         from api.cache import extract_norm_egc
         result = extract_norm_egc({"norm_egc": 1})
         assert isinstance(result, float)
+
+    def test_zero_norm_egc_returns_zero_float(self):
+        """norm_egc=0 must return 0.0, not None.
+        The explicit None check matches how extract_egc already works."""
+        from api.cache import extract_norm_egc
+        result = extract_norm_egc({"norm_egc": 0})
+        assert result == 0.0
+        assert isinstance(result, float)
+
+    def test_zero_not_shadowed_by_uppercase_key(self):
+        """With both keys present and lowercase=0, lowercase must win (not NORM_EGC)."""
+        from api.cache import extract_norm_egc
+        result = extract_norm_egc({"norm_egc": 0, "NORM_EGC": 0.5})
+        assert result == 0.0
+
+    def test_lowercase_key_takes_precedence_over_uppercase(self):
+        """When both keys present with non-zero values, lowercase wins."""
+        from api.cache import extract_norm_egc
+        result = extract_norm_egc({"norm_egc": 0.001, "NORM_EGC": 0.999})
+        assert result == pytest.approx(0.001)
+
+    def test_result_in_unit_interval(self):
+        """A real norm_egc value must satisfy 0 <= norm_egc <= 1."""
+        from api.cache import extract_norm_egc
+        v = extract_norm_egc({"norm_egc": 6.965e-5})
+        assert v is not None
+        assert 0.0 <= v <= 1.0
+
+    def test_norm_egc_near_one_accepted(self):
+        """norm_egc = 1.0 is valid — annotation covers the entire sample depth."""
+        from api.cache import extract_norm_egc
+        result = extract_norm_egc({"norm_egc": 1.0})
+        assert result == pytest.approx(1.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# norm_egc formula correctness
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestNormEgcFormula:
+    """
+    Verifies the norm_egc formula semantics.
+
+    Correct formula (implemented in all four EGC_*_TREE.ipynb notebooks):
+        norm_egc = EGC / Σ(gene_count × scaffold_AvgFold)
+
+    where the denominator sums over ALL scaffolds in the sample (not just
+    scaffolds carrying the annotation being normalised).
+
+    This guarantees norm_egc ∈ (0, 1] because EGC is itself
+    Σ(gene_count × scaffold_AvgFold) for the annotation's own scaffolds —
+    a subset of the full sample sum.
+
+    The old formula (egc / Σ(AvgFold)) could exceed 1 for multi-copy
+    annotations because it divided by the unweighted sum of coverages rather
+    than the gene-count-weighted sum.
+    """
+
+    def test_norm_egc_manual_calculation(self):
+        """Manual spot-check: EGC / weighted_total matches the expected value."""
+        # Annotation present on 2 scaffolds:
+        #   scaffold A: 3 gene copies, coverage 10.0  → EGC contribution = 30
+        #   scaffold B: 1 gene copy,  coverage 20.0  → EGC contribution = 20
+        egc = 3 * 10.0 + 1 * 20.0  # = 50
+
+        # weighted_total = ALL scaffolds in sample (a superset):
+        # scaffold A (3 × 10) + scaffold B (1 × 20) + 10 other scaffolds (1 × 5 each)
+        weighted_total = (3 * 10.0) + (1 * 20.0) + (10 * 1 * 5.0)  # = 100
+
+        norm = egc / weighted_total  # = 0.5
+        assert norm == pytest.approx(0.5)
+        assert 0.0 < norm <= 1.0
+
+    def test_norm_egc_bounded_by_one(self):
+        """An annotation that spans the entire sample has norm_egc = 1.0 exactly."""
+        egc = weighted_total = 1_000_000.0  # annotation IS the whole sample
+        norm = egc / weighted_total
+        assert norm == pytest.approx(1.0)
+        assert norm <= 1.0
+
+    def test_norm_egc_ratio_uniform_within_sample(self):
+        """
+        All annotations from the same sample share the same denominator, so
+        norm_egc / egc must equal 1 / weighted_total for all of them.
+        A NORM_TOLERANCE of 1e-9 is enough to catch any real computation error
+        while absorbing double-precision rounding.
+        """
+        weighted_total = 7_500_000.0  # realistic value for a 128-sample dataset
+        annotations = {
+            "COG0001": {"egc": 5771.0,  "norm_egc": 5771.0  / weighted_total},
+            "COG0002": {"egc": 3200.0,  "norm_egc": 3200.0  / weighted_total},
+            "COG0006": {"egc": 10500.0, "norm_egc": 10500.0 / weighted_total},
+        }
+        expected_k = 1.0 / weighted_total
+        for ann_id, entry in annotations.items():
+            k = entry["norm_egc"] / entry["egc"]
+            assert k == pytest.approx(expected_k, rel=1e-9), \
+                f"{ann_id}: k={k:.15g} ≠ expected {expected_k:.15g}"
+
+    def test_old_formula_could_exceed_one(self):
+        """
+        Proves WHY the old formula was wrong: dividing EGC by the unweighted
+        sum of coverages (Σ AvgFold) rather than the gene-count-weighted sum
+        can produce norm_egc > 1 for multi-copy annotations.
+        """
+        # Annotation with 2 gene copies on each of 3 scaffolds, each at cov=100:
+        egc = 2 * 100 + 2 * 100 + 2 * 100  # = 600
+
+        # OLD denominator: just sum the coverages (ignores gene counts)
+        old_total = 100 + 100 + 100          # = 300
+        old_norm  = egc / old_total          # = 2.0 — exceeds 1!
+        assert old_norm > 1.0, "Old formula must produce > 1 in this multi-copy case"
+
+        # NEW denominator: weight by gene count — same as EGC numerator structure
+        new_total = 2 * 100 + 2 * 100 + 2 * 100  # = 600 (gene_count × cov per scaffold)
+        new_norm  = egc / new_total               # = 1.0 — correctly bounded
+        assert 0.0 < new_norm <= 1.0
+
+    def test_single_copy_gene_norm_egc_equals_weighted_fraction(self):
+        """
+        For a single-copy gene on one scaffold, the two formulas differ but
+        the new formula still gives the correct interpretation: the fraction
+        of total sample gene-copy depth attributable to this annotation.
+        """
+        scaffold_cov   = 150.0
+        gene_count     = 1
+        egc            = gene_count * scaffold_cov   # = 150
+
+        # sample has 500 more gene-scaffold units at various depths
+        weighted_total = egc + 500 * 100.0           # = 150 + 50000 = 50150
+
+        norm = egc / weighted_total
+        assert 0.0 < norm < 1.0
+        assert norm == pytest.approx(150.0 / 50150.0)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -449,6 +589,11 @@ class TestSearchIndex:
         result = search_index("kegg", "k000")
         assert "KO:K00010" in result
         assert "KO:K00001" in result
+
+    def test_substring_match(self):
+        from api.index import search_index
+        result = search_index("kegg", "cohol")
+        assert "KO:K00010" in result
 
     def test_multi_token_and_logic(self):
         from api.index import search_index
@@ -871,19 +1016,21 @@ class TestSearchDictAnnotations:
 class TestFilterMappingRows:
     """routes._filter_mapping_rows — TSV row filtering by source column."""
 
+    from api.cache import MappingRow as _MappingRow
+
     ROWS = [
-        {"gene_id": "g1", "contig_id": "c1", "taxonomy": "Bacteria",
-         "kegg_id": "K00010", "enzyme": "1.1.1.1", "cog_id": "COG0001"},
-        {"gene_id": "g2", "contig_id": "c2", "taxonomy": "Archaea",
-         "kegg_id": "K00020", "enzyme": None,     "cog_id": "COG0002"},
-        {"gene_id": "g3", "contig_id": "c3", "taxonomy": None,
-         "kegg_id": None,    "enzyme": "2.2.2.2", "cog_id": "COG0001"},
+        _MappingRow(gene_id="g1", contig_id="c1", taxonomy="Bacteria",
+                    kegg_id="K00010", enzyme="1.1.1.1", cog_id="COG0001"),
+        _MappingRow(gene_id="g2", contig_id="c2", taxonomy="Archaea",
+                    kegg_id="K00020", enzyme=None,     cog_id="COG0002"),
+        _MappingRow(gene_id="g3", contig_id="c3", taxonomy=None,
+                    kegg_id=None,    enzyme="2.2.2.2", cog_id="COG0001"),
     ]
 
     def test_kegg_source_filters_by_kegg_id(self):
         from api.routes import _filter_mapping_rows
         result = _filter_mapping_rows(self.ROWS, "kegg", "K000")
-        gene_ids = {r["gene_id"] for r in result}
+        gene_ids = {r.gene_id for r in result}
         assert "g1" in gene_ids
         assert "g2" in gene_ids
         assert "g3" not in gene_ids
@@ -891,7 +1038,7 @@ class TestFilterMappingRows:
     def test_cog_source_filters_by_cog_id(self):
         from api.routes import _filter_mapping_rows
         result = _filter_mapping_rows(self.ROWS, "cog", "COG0001")
-        gene_ids = {r["gene_id"] for r in result}
+        gene_ids = {r.gene_id for r in result}
         assert "g1" in gene_ids
         assert "g3" in gene_ids
         assert "g2" not in gene_ids
@@ -900,13 +1047,13 @@ class TestFilterMappingRows:
         from api.routes import _filter_mapping_rows
         result = _filter_mapping_rows(self.ROWS, "enzyme", "1.1.1")
         assert len(result) == 1
-        assert result[0]["gene_id"] == "g1"
+        assert result[0].gene_id == "g1"
 
     def test_taxonomy_source_filters_by_taxonomy(self):
         from api.routes import _filter_mapping_rows
         result = _filter_mapping_rows(self.ROWS, "taxonomy", "Bacteria")
         assert len(result) == 1
-        assert result[0]["gene_id"] == "g1"
+        assert result[0].gene_id == "g1"
 
     def test_partial_match_case_insensitive(self):
         from api.routes import _filter_mapping_rows
@@ -922,7 +1069,7 @@ class TestFilterMappingRows:
         from api.routes import _filter_mapping_rows
         # g2 has enzyme=None; querying "2" must not crash or match g2
         result = _filter_mapping_rows(self.ROWS, "enzyme", "2")
-        gene_ids = {r["gene_id"] for r in result}
+        gene_ids = {r.gene_id for r in result}
         assert "g2" not in gene_ids
 
 
@@ -947,11 +1094,25 @@ _FAKE_COG_DATA = {
     "s001": {"COG0001": {"name": "GroEL", "egc": 100.0, "norm_egc": 0.001, "scaffolds": {"sc1": 1}}},
     "s002": {"COG0001": {"name": "GroEL", "egc": 200.0, "norm_egc": 0.002, "scaffolds": {"sc2": 2}}},
 }
+_FAKE_KEGG_DATA = {
+    "s001": {"K00010": {"name": "ADH", "egc": 50.0, "norm_egc": 0.0005}},
+    "s002": {"K00010": {"name": "ADH", "egc": 75.0, "norm_egc": 0.00075}},
+}
+_FAKE_ENZYME_DATA = {
+    "s001": {"1.1.1.1": {"name": "Alcohol dehydrogenase", "egc": 30.0, "norm_egc": 0.0003}},
+    "s002": {"1.1.1.1": {"name": "Alcohol dehydrogenase", "egc": 45.0, "norm_egc": 0.00045}},
+}
+_FAKE_TAXONOMY_DATA = {
+    "s001": {"Bacteria": {"egc": 1000.0, "norm_egc": 0.01, "parent": None}},
+    "s002": {"Bacteria": {"egc": 1200.0, "norm_egc": 0.012, "parent": None}},
+}
+from api.cache import MappingRow as _MappingRow
+
 _FAKE_TSV = {
-    "s001": [{"gene_id": "g1", "contig_id": "c1", "taxonomy": "Bacteria",
-              "kegg_id": "K00010", "enzyme": "1.1.1.1", "cog_id": "COG0001"}],
-    "s002": [{"gene_id": "g2", "contig_id": "c2", "taxonomy": "Archaea",
-              "kegg_id": "K00020", "enzyme": None, "cog_id": "COG0001"}],
+    "s001": [_MappingRow(gene_id="g1", contig_id="c1", taxonomy="Bacteria",
+                          kegg_id="K00010", enzyme="1.1.1.1", cog_id="COG0001")],
+    "s002": [_MappingRow(gene_id="g2", contig_id="c2", taxonomy="Archaea",
+                          kegg_id="K00020", enzyme=None, cog_id="COG0001")],
 }
 
 
@@ -970,6 +1131,13 @@ def patched_client():
     cache_mod.TIMEPOINTS = _FAKE_TIMEPOINTS
     cache_mod.TIDES      = _FAKE_TIDES
     cache_mod._TSV_CACHE = _FAKE_TSV
+
+    # routes.py does `from .cache import TIMEPOINTS` — an import-by-value that
+    # binds its own copy of the name, not a live reference to cache_mod's
+    # attribute. Patching cache_mod.TIMEPOINTS alone does NOT affect what
+    # list_timepoints() sees; routes_mod.TIMEPOINTS must be patched directly.
+    orig_routes_timepoints = routes_mod.TIMEPOINTS
+    routes_mod.TIMEPOINTS  = _FAKE_TIMEPOINTS
     cache_mod._JSON_CACHE = {
         f"cog_dir::s001.cog": _FAKE_COG_DATA["s001"],
         f"cog_dir::s002.cog": _FAKE_COG_DATA["s002"],
@@ -988,6 +1156,32 @@ def patched_client():
             "sample_count": 2,
         }
     }
+    index_mod._ANN_META["taxonomy"] = {
+        "Bacteria": {
+            "annotation_id": "Bacteria", "name": "Bacteria", "parent": None,
+            "value": {"depth": 1, "category": "Bacteria", "parent": None,
+                      "egc": 1000.0, "norm_egc": 0.01},
+            "mean_egc": 1000.0, "max_egc": 1200.0,
+            "mean_norm_egc": 0.01, "max_norm_egc": 0.012,
+            "sample_count": 2,
+        },
+        "Bacteroidetes": {
+            "annotation_id": "Bacteroidetes", "name": "Bacteroidetes", "parent": "Bacteria",
+            "value": {"depth": 2, "category": "Bacteria", "parent": "Bacteria",
+                      "egc": 300.0, "norm_egc": 0.003},
+            "mean_egc": 300.0, "max_egc": 350.0,
+            "mean_norm_egc": 0.003, "max_norm_egc": 0.0035,
+            "sample_count": 2,
+        },
+        "Proteobacteria": {
+            "annotation_id": "Proteobacteria", "name": "Proteobacteria", "parent": "Bacteria",
+            "value": {"depth": 2, "category": "Bacteria", "parent": "Bacteria",
+                      "egc": 250.0, "norm_egc": 0.0025},
+            "mean_egc": 250.0, "max_egc": 300.0,
+            "mean_norm_egc": 0.0025, "max_norm_egc": 0.003,
+            "sample_count": 2,
+        },
+    }
     index_mod._MAPPING_INDEX["kegg"] = {
         "K00010": [("s001", _FAKE_TSV["s001"][0])],
     }
@@ -1002,22 +1196,40 @@ def patched_client():
     def _fake_load_cog(sample_name):
         return _FAKE_COG_DATA.get(sample_name, {})
 
+    def _fake_load_kegg(sample_name):
+        return _FAKE_KEGG_DATA.get(sample_name, {})
+
+    def _fake_load_enzyme(sample_name):
+        return _FAKE_ENZYME_DATA.get(sample_name, {})
+
+    def _fake_load_taxonomy(sample_name):
+        return _FAKE_TAXONOMY_DATA.get(sample_name, {})
+
     def _fake_load_tsv(sample_name):
         return _FAKE_TSV.get(sample_name, [])
 
     def _fake_load_by_source(sample_name, source):
         from api.cache import AnnotationSource
-        if source == AnnotationSource.cog:
-            return _FAKE_COG_DATA.get(sample_name, {})
-        return {}
+        return {
+            AnnotationSource.cog:      _FAKE_COG_DATA,
+            AnnotationSource.kegg:     _FAKE_KEGG_DATA,
+            AnnotationSource.enzyme:   _FAKE_ENZYME_DATA,
+            AnnotationSource.taxonomy: _FAKE_TAXONOMY_DATA,
+        }.get(source, {}).get(sample_name, {})
 
-    orig_get_all = cache_mod.get_all_sample_names
-    orig_load_cog = cache_mod.load_cog
-    orig_load_tsv = cache_mod.load_tsv
+    orig_get_all      = cache_mod.get_all_sample_names
+    orig_load_cog      = cache_mod.load_cog
+    orig_load_kegg     = cache_mod.load_kegg
+    orig_load_enzyme   = cache_mod.load_enzyme
+    orig_load_taxonomy = cache_mod.load_taxonomy
+    orig_load_tsv      = cache_mod.load_tsv
     orig_load_by_source = cache_mod.load_annotations_by_source
 
     cache_mod.get_all_sample_names     = _fake_get_all_samples
     cache_mod.load_cog                 = _fake_load_cog
+    cache_mod.load_kegg                = _fake_load_kegg
+    cache_mod.load_enzyme              = _fake_load_enzyme
+    cache_mod.load_taxonomy            = _fake_load_taxonomy
     cache_mod.load_tsv                 = _fake_load_tsv
     cache_mod.load_annotations_by_source = _fake_load_by_source
 
@@ -1035,8 +1247,12 @@ def patched_client():
     # Restore originals
     cache_mod.get_all_sample_names     = orig_get_all
     cache_mod.load_cog                 = orig_load_cog
+    cache_mod.load_kegg                = orig_load_kegg
+    cache_mod.load_enzyme              = orig_load_enzyme
+    cache_mod.load_taxonomy            = orig_load_taxonomy
     cache_mod.load_tsv                 = orig_load_tsv
     cache_mod.load_annotations_by_source = orig_load_by_source
+    routes_mod.TIMEPOINTS              = orig_routes_timepoints
 
 
 class TestRoutesViaTestClient:
@@ -1169,3 +1385,118 @@ class TestRoutesViaTestClient:
     def test_search_annotations_for_sample_400_missing_query(self, patched_client):
         r = patched_client.get("/samples/s001/search/annotations?sources=cog")
         assert r.status_code == 400
+
+    # ── /timepoints ──────────────────────────────────────────────────────
+
+    def test_timepoints_returns_200(self, patched_client):
+        r = patched_client.get("/timepoints")
+        assert r.status_code == 200
+
+    def test_timepoints_has_paginated_data(self, patched_client):
+        body = patched_client.get("/timepoints").json()
+        assert "data"  in body
+        assert "total" in body
+        assert body["total"] == len(_FAKE_TIMEPOINTS)
+
+    def test_timepoints_rows_match_fake_data(self, patched_client):
+        body = patched_client.get("/timepoints").json()
+        taxon_oids = {row["taxon_oid"] for row in body["data"]}
+        assert taxon_oids == set(_FAKE_TIMEPOINTS.keys())
+
+    # ── /samples/{name}/cog, kegg, enzyme, taxonomy ─────────────────────
+
+    def test_get_cog_returns_200(self, patched_client):
+        r = patched_client.get("/samples/s001/cog")
+        assert r.status_code == 200
+
+    def test_get_cog_has_known_annotation(self, patched_client):
+        body = patched_client.get("/samples/s001/cog").json()
+        ids  = {row["annotation_id"] for row in body["data"]}
+        assert "COG0001" in ids
+
+    def test_get_cog_404_unknown_sample(self, patched_client):
+        r = patched_client.get("/samples/UNKNOWN/cog")
+        assert r.status_code == 404
+
+    def test_get_kegg_returns_200(self, patched_client):
+        r = patched_client.get("/samples/s001/kegg")
+        assert r.status_code == 200
+
+    def test_get_kegg_has_known_annotation(self, patched_client):
+        body = patched_client.get("/samples/s001/kegg").json()
+        ids  = {row["annotation_id"] for row in body["data"]}
+        assert "K00010" in ids
+
+    def test_get_kegg_404_unknown_sample(self, patched_client):
+        r = patched_client.get("/samples/UNKNOWN/kegg")
+        assert r.status_code == 404
+
+    def test_get_enzyme_returns_200(self, patched_client):
+        r = patched_client.get("/samples/s001/enzyme")
+        assert r.status_code == 200
+
+    def test_get_enzyme_has_known_annotation(self, patched_client):
+        body = patched_client.get("/samples/s001/enzyme").json()
+        ids  = {row["annotation_id"] for row in body["data"]}
+        assert "1.1.1.1" in ids
+
+    def test_get_enzyme_404_unknown_sample(self, patched_client):
+        r = patched_client.get("/samples/UNKNOWN/enzyme")
+        assert r.status_code == 404
+
+    def test_get_taxonomy_returns_200(self, patched_client):
+        r = patched_client.get("/samples/s001/taxonomy")
+        assert r.status_code == 200
+
+    def test_get_taxonomy_has_known_annotation(self, patched_client):
+        body = patched_client.get("/samples/s001/taxonomy").json()
+        ids  = {row["annotation_id"] for row in body["data"]}
+        assert "Bacteria" in ids
+
+    def test_get_taxonomy_404_unknown_sample(self, patched_client):
+        r = patched_client.get("/samples/UNKNOWN/taxonomy")
+        assert r.status_code == 404
+
+    def test_get_cog_q_filters_by_name(self, patched_client):
+        body = patched_client.get("/samples/s001/cog?q=GroEL").json()
+        assert all(row["name"] == "GroEL" for row in body["data"])
+
+    def test_get_cog_annotation_id_exact_filter(self, patched_client):
+        body = patched_client.get("/samples/s001/cog?annotation_id=COG0001").json()
+        assert len(body["data"]) == 1
+        assert body["data"][0]["annotation_id"] == "COG0001"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GET /taxonomy/children
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestTaxonomyChildrenEndpoint:
+    """HTTP-level tests for GET /taxonomy/children."""
+
+    def test_no_parent_returns_roots(self, patched_client):
+        r = patched_client.get("/taxonomy/children")
+        assert r.status_code == 200
+        ids = {c["annotation_id"] for c in r.json()["data"]}
+        assert ids == {"Bacteria"}
+
+    def test_root_children_returns_phyla(self, patched_client):
+        r = patched_client.get("/taxonomy/children?parent=Bacteria")
+        assert r.status_code == 200
+        ids = {c["annotation_id"] for c in r.json()["data"]}
+        assert ids == {"Bacteroidetes", "Proteobacteria"}
+
+    def test_children_include_depth_and_category(self, patched_client):
+        body = patched_client.get("/taxonomy/children?parent=Bacteria").json()
+        row = body["data"][0]
+        assert row["depth"] == 2
+        assert row["category"] == "Bacteria"
+
+    def test_leaf_node_returns_empty_list_not_404(self, patched_client):
+        r = patched_client.get("/taxonomy/children?parent=Bacteroidetes")
+        assert r.status_code == 200
+        assert r.json()["data"] == []
+
+    def test_unknown_parent_is_404(self, patched_client):
+        r = patched_client.get("/taxonomy/children?parent=NotARealTaxon")
+        assert r.status_code == 404

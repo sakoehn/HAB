@@ -22,6 +22,7 @@ GET /samples/{sample_name}/full
 GET /search/annotations
 GET /samples/{sample_name}/search/annotations
 GET /series/annotations
+GET /taxonomy/children
 GET /annotations/top
 GET /annotations/scaffolds
 GET /annotations/scaffolds/summary
@@ -100,7 +101,7 @@ def _normalize_annotation_dict(data: dict, source: str, sample_name: str) -> lis
             "sample":        sample_name,
             "timepoint":     get_timepoint(sample_name),
             "annotation_id": annotation_id,
-            "name":          extract_annotation_name(value),
+            "name":          annotation_id if source == "taxonomy" else extract_annotation_name(value),
             "value":         value,
         }
         for annotation_id, value in data.items()
@@ -134,7 +135,7 @@ def _search_dict_annotations(
     return items
 
 
-def _filter_mapping_rows(rows: list[dict], source: str, annotation_id: str) -> list[dict]:
+def _filter_mapping_rows(rows: list, source: str, annotation_id: str) -> list:
     """Return rows whose relevant column contains annotation_id (partial, case-insensitive)."""
     col_map = {"kegg": "kegg_id", "enzyme": "enzyme", "cog": "cog_id", "taxonomy": "taxonomy"}
     q   = annotation_id.lower()
@@ -143,12 +144,12 @@ def _filter_mapping_rows(rows: list[dict], source: str, annotation_id: str) -> l
     results = []
     for row in rows:
         if col:
-            val = row.get(col)
+            val = getattr(row, col, None)
             if val and q in val.lower():
                 results.append(row)
         else:
             for c in ("taxonomy", "kegg_id", "enzyme", "cog_id"):
-                val = row.get(c)
+                val = getattr(row, c, None)
                 if val and q in val.lower():
                     results.append(row)
                     break
@@ -271,7 +272,9 @@ def get_mappings(sample_name: str, page: int = 1, page_size: int = 100):
     rows = load_tsv(sample_name)
     if not rows:
         raise HTTPException(status_code=404, detail=f"Sample '{sample_name}' not found")
-    return {"sample": sample_name, "timepoint": get_timepoint(sample_name), **paginate(rows, page, page_size)}
+    paged = paginate(rows, page, page_size)
+    paged["data"] = [row._asdict() for row in paged["data"]]
+    return {"sample": sample_name, "timepoint": get_timepoint(sample_name), **paged}
 
 
 @router.get("/mappings/search")
@@ -311,11 +314,11 @@ def search_mappings(
             if sample_name not in allowed_samples:
                 continue
             if unique_pairs:
-                key = f"{row['taxonomy']}|{row['kegg_id']}|{row['enzyme']}|{row['cog_id']}"
+                key = f"{row.taxonomy}|{row.kegg_id}|{row.enzyme}|{row.cog_id}"
                 if key in seen_keys:
                     continue
                 seen_keys.add(key)
-            results.append({"sample": sample_name, "timepoint": get_timepoint(sample_name), **row})
+            results.append({"sample": sample_name, "timepoint": get_timepoint(sample_name), **row._asdict()})
 
         results.sort(
             key=lambda r: timepoint_dt_sort_key((r.get("timepoint") or {}).get("datetime"))
@@ -327,11 +330,11 @@ def search_mappings(
             matched = _filter_mapping_rows(rows, source.value, annotation_id)
             for row in matched:
                 if unique_pairs:
-                    key = f"{row['taxonomy']}|{row['kegg_id']}|{row['enzyme']}|{row['cog_id']}"
+                    key = f"{row.taxonomy}|{row.kegg_id}|{row.enzyme}|{row.cog_id}"
                     if key in seen_keys:
                         continue
                     seen_keys.add(key)
-                results.append({"sample": sample_name, "timepoint": get_timepoint(sample_name), **row})
+                results.append({"sample": sample_name, "timepoint": get_timepoint(sample_name), **row._asdict()})
 
     return {
         "annotation_id": annotation_id,
@@ -396,10 +399,12 @@ def get_full_sample(sample_name: str, page: int = 1, page_size: int = 100):
     rows = load_tsv(sample_name)
     if not rows:
         raise HTTPException(status_code=404, detail=f"Sample '{sample_name}' not found")
+    mappings = paginate(rows, page, page_size)
+    mappings["data"] = [row._asdict() for row in mappings["data"]]
     return {
         "sample":    sample_name,
         "timepoint": get_timepoint(sample_name),
-        "mappings":  paginate(rows, page, page_size),
+        "mappings":  mappings,
         "cog":       paginate_dict(load_cog(sample_name),      page, page_size),
         "kegg":      paginate_dict(load_kegg(sample_name),     page, page_size),
         "enzyme":    paginate_dict(load_enzyme(sample_name),   page, page_size),
@@ -413,7 +418,11 @@ def _search_annotations_scan(q, annotation_id, name_exact, sources, page, page_s
     results: list[dict] = []
 
     for sample_name in get_all_sample_names():
-        for source in sources:
+        for source_str in sources:
+            try:
+                source = AnnotationSource(source_str)
+            except ValueError:
+                continue
             data = load_annotations_by_source(sample_name, source)
             if not data:
                 continue
@@ -438,7 +447,7 @@ def _search_annotations_scan(q, annotation_id, name_exact, sources, page, page_s
     results.sort(key=lambda r: r.get("mean_egc") or 0, reverse=True)
     return {
         "query": q, "annotation_id": annotation_id, "name_exact": name_exact,
-        "sources": [s.value for s in sources],
+        "sources": sources,
         **paginate(results, page, page_size),
     }
 
@@ -448,7 +457,7 @@ def search_annotations(
     q:             str | None = Query(None, min_length=1),
     annotation_id: str | None = Query(None),
     name_exact:    str | None = Query(None),
-    sources: list[AnnotationSource] = Query(...),
+    sources: list[str] = Query(...),
     page: int = 1, page_size: int = 500,
 ):
     """
@@ -475,7 +484,11 @@ def search_annotations(
     q_lower  = q.lower().strip() if q else None
     results: list[dict] = []
 
-    for source in sources:
+    for source_str in sources:
+        try:
+            source = AnnotationSource(source_str)
+        except ValueError:
+            continue
         src = source.value
 
         if annotation_id:
@@ -536,7 +549,7 @@ def search_annotations(
         "query":         q,
         "annotation_id": annotation_id,
         "name_exact":    name_exact,
-        "sources":       [s.value for s in sources],
+        "sources":       sources,
         "total":         len(results),
         **paginate(results, page, page_size),
     }
@@ -548,7 +561,7 @@ def search_annotations_for_sample(
     q:             str | None = Query(None, min_length=1),
     annotation_id: str | None = Query(None),
     name_exact:    str | None = Query(None),
-    sources: list[AnnotationSource] = Query(...),
+    sources: list[str] = Query(...),
     page: int = 1, page_size: int = 50,
 ):
     """Search within a single sample across one or more annotation sources."""
@@ -559,7 +572,11 @@ def search_annotations_for_sample(
         )
 
     results: list[dict] = []
-    for source in sources:
+    for source_str in sources:
+        try:
+            source = AnnotationSource(source_str)
+        except ValueError:
+            continue
         data = load_annotations_by_source(sample_name, source)
         if not data:
             continue
@@ -582,7 +599,7 @@ def search_annotations_for_sample(
         "query":         q,
         "annotation_id": annotation_id,
         "name_exact":    name_exact,
-        "sources":       [s.value for s in sources],
+        "sources":       sources,
         **paginate(results, page, page_size),
     }
 
@@ -607,15 +624,25 @@ def annotation_time_series(
         value = data.get(annotation_id)
         if value is None:
             continue
+        ann_name = annotation_id if source == AnnotationSource.taxonomy else extract_annotation_name(value)
+        # Drop 'scaffolds' — for high-level nodes (e.g. a taxonomy domain or
+        # KEGG A-level category) it can hold hundreds of thousands of entries,
+        # ballooning this per-sample, all-timepoints response. No frontend
+        # consumer of /series/annotations reads value.scaffolds (scaffold data
+        # comes from the dedicated /annotations/scaffolds endpoint instead).
+        value_out = (
+            {k: v for k, v in value.items() if k != "scaffolds"}
+            if isinstance(value, dict) else value
+        )
         results.append({
             "source":        source.value,
             "sample":        sample_name,
             "timepoint":     get_timepoint(sample_name),
             "annotation_id": annotation_id,
-            "name":          extract_annotation_name(value),
+            "name":          ann_name,
             "egc":           extract_egc(value),
             "norm_egc":      extract_norm_egc(value),
-            "value":         value,
+            "value":         value_out,
         })
 
     if not results:
@@ -628,6 +655,37 @@ def annotation_time_series(
         key=lambda item: timepoint_dt_sort_key((item.get("timepoint") or {}).get("datetime"))
     )
     return {"source": source.value, "annotation_id": annotation_id, **paginate(results, page, page_size)}
+
+
+@router.get("/taxonomy/children")
+def taxonomy_children(parent: str | None = Query(None)):
+    """
+    Direct children of a taxon (structure only — no egc values), for lazily
+    populating an expandable tree without shipping the full ~38k-taxon index.
+
+    parent omitted/empty -> the 4 domain roots (value['parent'] is None).
+    """
+    meta = _ANN_META["taxonomy"]
+
+    if parent:
+        if parent not in meta:
+            raise HTTPException(status_code=404, detail=f"Unknown taxon '{parent}'")
+        matches = [rec for rec in meta.values() if rec.get("parent") == parent]
+    else:
+        matches = [rec for rec in meta.values() if rec.get("parent") is None]
+
+    children = sorted(
+        (
+            {
+                "annotation_id": rec["annotation_id"],
+                "depth":         (rec.get("value") or {}).get("depth"),
+                "category":      (rec.get("value") or {}).get("category"),
+            }
+            for rec in matches
+        ),
+        key=lambda c: c["annotation_id"],
+    )
+    return {"parent": parent, "count": len(children), "data": children}
 
 
 @router.get("/annotations/top")
@@ -674,9 +732,10 @@ def top_annotations_by_egc(
                 if egc is None:
                     continue
                 if annotation_id not in egc_map:
+                    ann_name = annotation_id if source == AnnotationSource.taxonomy else extract_annotation_name(value)
                     egc_map[annotation_id] = {
                         "annotation_id":   annotation_id,
-                        "name":            extract_annotation_name(value),
+                        "name":            ann_name,
                         "parent":          extract_parent(value, source.value),
                         "egc_values":      [],
                         "norm_egc_values": [],

@@ -43,7 +43,7 @@ export function AboutPage() {
               {
                 label: 'Biological',
                 title: 'Taxonomy',
-                desc:  'Taxonomic classifications assign genes and contigs to organisms across the tree of life, from phylum down to species level.',
+                desc:  'Taxonomic classifications assign genes and contigs to organisms across the tree of life, from domain down to species and strain level. Explore and exclude branches on the Taxonomy Explorer page.',
                 ex:    'Tenacibaculum maritimum',
               },
             ].map(c => (
@@ -85,7 +85,7 @@ export function AboutPage() {
 
             <p style={{ marginBottom: 16 }}>
               <strong style={{ color: 'var(--teal)' }}>
-                norm_egc — Depth-Normalised EGC (L1 mode)
+                Relative Abundance (norm_egc)
               </strong>
               <br />
               <code style={{
@@ -101,8 +101,8 @@ export function AboutPage() {
               <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
                 Divides raw EGC by the total sequencing depth of the sample. Removes
                 sequencing effort bias — samples sequenced more deeply are directly
-                comparable to shallower ones. Use L1 mode when comparing relative
-                abundance across samples.
+                comparable to shallower ones. Use the Relative Abundance metric when
+                comparing relative abundance across samples.
               </span>
             </p>
 
@@ -225,14 +225,31 @@ export function AboutPage() {
               <em>Scaffold Information</em>. Click any card to open that view.
             </p>
             <p style={{ marginTop: 12 }}>
+              <strong style={{ color: 'var(--chart-4)' }}>Taxonomy Explorer:</strong>{' '}
+              Pick a scope taxon — search by name, or use{' '}
+              <strong>or browse</strong> to drill down from the 4 domains
+              (Bacteria, Archaea, Eukaryota, Viruses) to any level. Then check
+              boxes in the <strong>Exclude branches</strong> tree to remove
+              specific phyla, classes, or any other descendant from the
+              total — the chart overlays the full scope against the total
+              with your exclusions removed, so you can see how much a branch
+              is contributing over time. Exclude as many branches as you
+              like and re-check a box to add one back in; changing scope
+              clears exclusions since they no longer apply.
+            </p>
+            <p style={{ marginTop: 12 }}>
               <strong style={{ color: 'var(--text-dim)' }}>
-                Normalize modes:
+                Metric:
               </strong>{' '}
-              <em>Off</em> — raw EGC.{' '}
-              <em>L1</em> — depth-normalised EGC (norm_egc = egc / total sample
+              <em>EGC</em> — raw values.{' '}
+              <em>Relative Abundance</em> — depth-normalised EGC (norm_egc = egc / total sample
               sequencing depth), directly comparable across samples.{' '}
-              <em>Z-score</em> — std deviations from mean, best for comparing
-              trends across different scales.
+              <strong style={{ color: 'var(--text-dim)' }}>
+                Standardize:
+              </strong>{' '}
+              <em>Off</em>, or <em>Z-score</em> — std deviations from mean, best for
+              comparing trends across different scales. Independent of Metric, so
+              either can be Z-scored.
             </p>
             <p style={{ marginTop: 12 }}>
               <strong style={{ color: 'var(--text-dim)' }}>LOWESS Smooth:</strong>{' '}
@@ -247,7 +264,8 @@ export function AboutPage() {
             </p>
             <p style={{ marginTop: 12 }}>
               <strong style={{ color: 'var(--text-dim)' }}>Reset:</strong> Clears
-              all page state across Analyze, Compare, and Explore simultaneously.
+              all page state across Analyze, Compare, Explore, and Taxonomy
+              Explorer simultaneously.
             </p>
           </div>
         </div>
@@ -275,6 +293,8 @@ export function AboutPage() {
                'Cross-sample annotation search (inverted index)'],
               ['/api/series/annotations?source=…&annotation_id=…',
                'EGC time series for one annotation'],
+              ['/api/taxonomy/children?parent=…',
+               'Direct children of a taxon (name, rank depth, domain category) — parent omitted returns the 4 domains. Powers the Taxonomy Explorer’s browse tree and exclusion picker'],
               ['/api/mappings/search?annotation_id=…&source=…',
                'Filtered cross-sample mapping rows'],
               ['/api/annotations/top?source=…&limit=25',

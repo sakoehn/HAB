@@ -27,6 +27,11 @@ import {
   makeDefaultExploreState,
   type ExploreState,
 } from './pages/ExplorePage'
+import {
+  TaxonomyPage,
+  makeDefaultTaxonomyState,
+  type TaxonomyState,
+} from './pages/TaxonomyPage'
 import { AboutPage } from './pages/AboutPage'
 
 export default function App() {
@@ -47,9 +52,10 @@ export default function App() {
   const [pendingCompareAnns, setPendingCompareAnns] = useState<SharedAnnotation[]>([])
 
   // ── Per-page persistent state ─────────────────────────────────────────
-  const [analyzeState, setAnalyzeStateRaw] = useState<AnalyzeState>(makeDefaultAnalyzeState)
-  const [exploreState, setExploreStateRaw] = useState<ExploreState>(makeDefaultExploreState)
-  const [compareState, setCompareStateRaw] = useState<CompareState>(makeDefaultCompareState)
+  const [analyzeState, setAnalyzeStateRaw]   = useState<AnalyzeState>(makeDefaultAnalyzeState)
+  const [exploreState, setExploreStateRaw]   = useState<ExploreState>(makeDefaultExploreState)
+  const [compareState, setCompareStateRaw]   = useState<CompareState>(makeDefaultCompareState)
+  const [taxonomyState, setTaxonomyStateRaw] = useState<TaxonomyState>(makeDefaultTaxonomyState)
 
   const setAnalyzeState = useCallback(
     (updater: (prev: AnalyzeState) => AnalyzeState) => setAnalyzeStateRaw(updater),
@@ -61,6 +67,10 @@ export default function App() {
   )
   const setCompareState = useCallback(
     (updater: (prev: CompareState) => CompareState) => setCompareStateRaw(updater),
+    [],
+  )
+  const setTaxonomyState = useCallback(
+    (updater: (prev: TaxonomyState) => TaxonomyState) => setTaxonomyStateRaw(updater),
     [],
   )
 
@@ -104,6 +114,7 @@ export default function App() {
     setAnalyzeStateRaw(makeDefaultAnalyzeState())
     setExploreStateRaw(makeDefaultExploreState())
     setCompareStateRaw(makeDefaultCompareState())
+    setTaxonomyStateRaw(makeDefaultTaxonomyState())
     resetSourceCounters()
   }
 
@@ -113,11 +124,31 @@ export default function App() {
     setPage('compare')
   }
 
-  function handleGoScaffoldExplore(annotationId: string, source: string) {
+    function handleGoScaffoldExplore(annotationId: string, source: string) {
+    const nonce = Date.now()
     setExploreState(prev => ({
       ...prev,
-      openSection:          'scaffolds',
-      scaffoldInitialTerms: [{ annotationId, source }],
+      openSection: 'scaffolds',
+      // Include a nonce so ScaffoldExplorePanel's initialTermsKey changes
+      // on every navigation — even for the same annotationId — ensuring
+      // the useEffect re-fires correctly. O(1).
+      scaffoldInitialTerms: [{ annotationId, source, _nonce: nonce }],
+    }))
+    setPage('explore')
+  }
+
+  function handleGoScaffoldExploreGroup(
+    members: { annotationId: string; source: string }[],
+  ) {
+    const nonce = Date.now()
+    setExploreState(prev => ({
+      ...prev,
+      openSection: 'scaffolds',
+      scaffoldInitialTerms: members.map(m => ({
+        annotationId: m.annotationId,
+        source: m.source,
+        _nonce: nonce,
+      })),
     }))
     setPage('explore')
   }
@@ -231,6 +262,7 @@ export default function App() {
             dataDateRange={dataDateRange}
             onSendToCompare={handleSendToCompare}
             onGoScaffoldExplore={handleGoScaffoldExplore}
+            onGoScaffoldExploreGroup={handleGoScaffoldExploreGroup}
           />
         </div>
 
@@ -242,6 +274,7 @@ export default function App() {
             onConsumed={() => setPendingCompareAnns([])}
             dataDateRange={dataDateRange}
             onGoScaffoldExplore={handleGoScaffoldExplore}
+            onGoScaffoldExploreGroup={handleGoScaffoldExploreGroup}
           />
         </div>
 
@@ -251,8 +284,17 @@ export default function App() {
             setState={setExploreState}
             resetKey={resetKey}
             dataDateRange={dataDateRange}
+            indexReady={indexReady}
             onSendToAnalyze={handleSendToAnalyze}
             onGoScaffoldExplore={handleGoScaffoldExplore}
+          />
+        </div>
+
+        <div style={{ display: page === 'taxonomy' ? 'block' : 'none' }}>
+          <TaxonomyPage
+            state={taxonomyState}
+            setState={setTaxonomyState}
+            dataDateRange={dataDateRange}
           />
         </div>
 

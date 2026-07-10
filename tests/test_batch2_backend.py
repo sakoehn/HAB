@@ -353,6 +353,148 @@ class TestCorrelationLock:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# /annotations/correlate — validation errors
+#
+# Both checks happen in correlate_annotations() before any EGC matrix/data
+# access (see api/correlation.py lines ~401-414), so these run standalone —
+# no warm index, no @pytest.mark.api, no real dataset required.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestCorrelationValidation:
+    """/annotations/correlate must reject invalid mode/target_source combos with 400."""
+
+    def test_invalid_mode_raises_400(self):
+        from fastapi import HTTPException
+        from api.correlation import correlate_annotations
+        from api.cache import AnnotationSource
+
+        with pytest.raises(HTTPException) as exc_info:
+            correlate_annotations(
+                source=AnnotationSource.kegg,
+                annotation_id="anything",
+                mode="bogus",
+            )
+        assert exc_info.value.status_code == 400
+        assert "mode must be" in exc_info.value.detail
+
+    def test_cross_mode_with_same_target_source_raises_400(self):
+        from fastapi import HTTPException
+        from api.correlation import correlate_annotations
+        from api.cache import AnnotationSource
+
+        with pytest.raises(HTTPException) as exc_info:
+            correlate_annotations(
+                source=AnnotationSource.kegg,
+                annotation_id="anything",
+                mode="cross",
+                target_source=AnnotationSource.kegg,
+            )
+        assert exc_info.value.status_code == 400
+        assert "target_source != source" in exc_info.value.detail
+
+    @pytest.mark.api
+    def test_within_mode_ignores_target_source_and_does_not_raise(self):
+        """mode='within' always sets target_source = source internally —
+        passing an explicit (different) target_source must not trigger the
+        cross-mode same-source check, since that check is cross-mode-only."""
+        from api.correlation import correlate_annotations
+        from api.cache import AnnotationSource
+        from api.index import _INDEX_READY, _EGC_MATRIX
+        if not _INDEX_READY or not _EGC_MATRIX.get("kegg"):
+            pytest.skip("Index not ready — only checking this doesn't 400 before that point")
+
+        try:
+            correlate_annotations(
+                source=AnnotationSource.kegg,
+                annotation_id="__nonexistent_annotation__",
+                mode="within",
+                target_source=AnnotationSource.cog,
+                skip_pvalue=True,
+            )
+        except Exception as e:
+            from fastapi import HTTPException
+            assert isinstance(e, HTTPException) and e.status_code == 404, (
+                f"Expected only a 404 (annotation not found) for a within-mode "
+                f"nonexistent annotation, got: {e!r}"
+            )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /taxonomy/children — real, warm-index integration check
+#
+# test_unit_backend.py::TestTaxonomyChildrenEndpoint already exercises the
+# /taxonomy/children contract against a small hand-built 2-level fixture.
+# These tests instead run the same endpoint against the real, warm
+# _ANN_META['taxonomy'] index built from the actual dataset at startup, to
+# catch mismatches the synthetic fixture can't (e.g. a real taxon whose
+# 'parent' pointer doesn't round-trip correctly through the lazy-load API).
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.api
+class TestTaxonomyHierarchyRealIndex:
+
+    def test_domain_roots_present_in_real_index(self):
+        """Calling with no parent must return at least one real domain root."""
+        from api.routes import taxonomy_children
+        from api.index import _INDEX_READY
+        if not _INDEX_READY:
+            pytest.skip("Index not ready")
+
+        result = taxonomy_children(parent=None)
+        assert result["data"], "No domain roots returned from real taxonomy index"
+        for root in result["data"]:
+            assert root["depth"] == 1, f"Domain root '{root['annotation_id']}' has depth != 1"
+
+    def test_children_of_real_root_are_registered_in_ann_meta(self):
+        """Every child returned for a real root must be a real, known taxon
+        whose recorded parent matches the root that was queried."""
+        from api.routes import taxonomy_children
+        from api.index import _ANN_META, _INDEX_READY
+        if not _INDEX_READY:
+            pytest.skip("Index not ready")
+
+        meta = _ANN_META["taxonomy"]
+        if not meta:
+            pytest.skip("Taxonomy index not built")
+
+        roots = taxonomy_children(parent=None)["data"]
+        if not roots:
+            pytest.skip("No domain roots in real index")
+
+        root_id = roots[0]["annotation_id"]
+        children = taxonomy_children(parent=root_id)["data"]
+        for child in children:
+            child_id = child["annotation_id"]
+            assert child_id in meta, \
+                f"Child '{child_id}' not present in _ANN_META['taxonomy']"
+            assert meta[child_id].get("parent") == root_id, (
+                f"'{child_id}' parent mismatch: endpoint nested it under "
+                f"'{root_id}' but the index says '{meta[child_id].get('parent')}'"
+            )
+
+    def test_leaf_taxon_returns_empty_not_error(self):
+        """A real taxon with no children must return an empty list, not raise
+        or 404 — matches the contract test_unit_backend.py checks on the
+        synthetic fixture, verified here against the real dataset."""
+        from api.routes import taxonomy_children
+        from api.index import _ANN_META, _INDEX_READY
+        if not _INDEX_READY:
+            pytest.skip("Index not ready")
+
+        meta = _ANN_META["taxonomy"]
+        if not meta:
+            pytest.skip("Taxonomy index not built")
+
+        parent_ids = {rec.get("parent") for rec in meta.values() if rec.get("parent")}
+        leaf_id = next((tid for tid in meta if tid not in parent_ids), None)
+        if leaf_id is None:
+            pytest.skip("No leaf taxon found in real index")
+
+        result = taxonomy_children(parent=leaf_id)
+        assert result["data"] == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Smoke tests
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -51,6 +51,68 @@ function MappingsSortTh({
 
 const MAPPINGS_PAGE_SIZE = 100
 
+// ── Pure helpers ─────────────────────────────────────────────────────────────
+// Exported so tests can exercise the real sort/paginate/URL logic directly.
+
+export function sortMappingRows(
+  rows:    MappingSearchRow[],
+  sortCol: MappingSortCol,
+  sortDir: SortDir,
+): MappingSearchRow[] {
+  return [...rows].sort((a, b) => {
+    // Both 'date' and 'time' sort by full datetime (ISO string sorts correctly)
+    const av = (sortCol === 'date' || sortCol === 'time')
+      ? (a.timepoint?.datetime ?? '')
+      : ((a[sortCol as keyof MappingSearchRow] ?? '') as string)
+    const bv = (sortCol === 'date' || sortCol === 'time')
+      ? (b.timepoint?.datetime ?? '')
+      : ((b[sortCol as keyof MappingSearchRow] ?? '') as string)
+    return sortDir === 'asc'
+      ? av.localeCompare(bv)
+      : bv.localeCompare(av)
+  })
+}
+
+export function paginateRows<T>(rows: T[], page: number, pageSize: number = MAPPINGS_PAGE_SIZE): T[] {
+  return rows.slice((page - 1) * pageSize, page * pageSize)
+}
+
+export function totalPages(rowCount: number, pageSize: number = MAPPINGS_PAGE_SIZE): number {
+  return Math.ceil(rowCount / pageSize)
+}
+
+export function buildMappingsUrl(
+  annotationId: string,
+  source:       string,
+  sampleCount:  number,
+  uniquePairs:  boolean,
+): string {
+  return `/api/mappings/search?annotation_id=${encodeURIComponent(annotationId)}&source=${source}&sample_count=${sampleCount}&unique_pairs=${uniquePairs}`
+}
+
+export function buildMappingCsvRow(
+  row: {
+    taxonomy:  string | null
+    kegg_id:   string | null
+    enzyme:    string | null
+    cog_id:    string | null
+    timepoint: { datetime: string } | null
+  },
+  annotationId: string,
+  source:       string,
+): Record<string, string> {
+  return {
+    annotation_id: annotationId,
+    source,
+    date:     fmtDate(row.timepoint?.datetime ?? ''),
+    time:     fmtTime(row.timepoint?.datetime ?? ''),
+    taxonomy: row.taxonomy ?? '',
+    kegg_id:  row.kegg_id  ?? '',
+    enzyme:   row.enzyme   ?? '',
+    cog_id:   row.cog_id   ?? '',
+  }
+}
+
 // ── MappingsPanel ──────────────────────────────────────────────────────────
 
 export function MappingsPanel({
@@ -74,7 +136,7 @@ export function MappingsPanel({
     setPage(1)
     try {
       const r = await apiFetch<{ data: MappingSearchRow[]; total: number }>(
-        `/api/mappings/search?annotation_id=${encodeURIComponent(annotationId)}&source=${source}&sample_count=${count}&unique_pairs=${unique}`,
+        buildMappingsUrl(annotationId, source, count, unique),
       )
       setAllRows(r.data ?? [])
       setStatus('ok')
@@ -93,26 +155,13 @@ export function MappingsPanel({
     setPage(1)
   }
 
-  const sortedRows = useMemo(() => (
-    [...allRows].sort((a, b) => {
-      // Both 'date' and 'time' sort by full datetime (ISO string sorts correctly)
-      const av = (sortCol === 'date' || sortCol === 'time')
-        ? (a.timepoint?.datetime ?? '')
-        : ((a[sortCol as keyof MappingSearchRow] ?? '') as string)
-      const bv = (sortCol === 'date' || sortCol === 'time')
-        ? (b.timepoint?.datetime ?? '')
-        : ((b[sortCol as keyof MappingSearchRow] ?? '') as string)
-      return sortDir === 'asc'
-        ? av.localeCompare(bv)
-        : bv.localeCompare(av)
-    })
-  ), [allRows, sortCol, sortDir])
-
-  const totalPages = Math.ceil(sortedRows.length / MAPPINGS_PAGE_SIZE)
-  const pageRows   = sortedRows.slice(
-    (page - 1) * MAPPINGS_PAGE_SIZE,
-    page * MAPPINGS_PAGE_SIZE,
+  const sortedRows = useMemo(
+    () => sortMappingRows(allRows, sortCol, sortDir),
+    [allRows, sortCol, sortDir],
   )
+
+  const totalPageCount = totalPages(sortedRows.length)
+  const pageRows        = paginateRows(sortedRows, page)
 
   // Shorthand for sortable header — captures sortCol/sortDir/toggleSort
   const SortTh = ({ col, label }: { col: MappingSortCol; label: string }) => (
@@ -181,16 +230,7 @@ export function MappingsPanel({
               <button
                 className="btn sm"
                 onClick={() => downloadCsv(
-                  sortedRows.map(r => ({
-                    annotation_id: annotationId,
-                    source,
-                    date:     fmtDate(r.timepoint?.datetime ?? ''),
-                    time:     fmtTime(r.timepoint?.datetime ?? ''),
-                    taxonomy: r.taxonomy ?? '',
-                    kegg_id:  r.kegg_id  ?? '',
-                    enzyme:   r.enzyme   ?? '',
-                    cog_id:   r.cog_id   ?? '',
-                  })),
+                  sortedRows.map(r => buildMappingCsvRow(r, annotationId, source)),
                   `${annotationId}_mappings.csv`,
                 )}
               >
@@ -257,7 +297,7 @@ export function MappingsPanel({
               </div>
 
               {/* ── Pagination ── */}
-              {totalPages > 1 && (
+              {totalPageCount > 1 && (
                 <div className="pagination">
                   <button
                     className="btn sm ghost"
@@ -267,12 +307,12 @@ export function MappingsPanel({
                     ‹ Prev
                   </button>
                   <span className="pagination-info">
-                    Page {page} of {totalPages} · {allRows.length} rows
+                    Page {page} of {totalPageCount} · {allRows.length} rows
                   </span>
                   <button
                     className="btn sm ghost"
-                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
+                    onClick={() => setPage(p => Math.min(totalPageCount, p + 1))}
+                    disabled={page === totalPageCount}
                   >
                     Next ›
                   </button>

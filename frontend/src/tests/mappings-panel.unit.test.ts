@@ -60,6 +60,13 @@
 import { describe, it, expect } from 'vitest'
 
 import { fmtDate, fmtTime } from '../utils/format'
+import {
+  sortMappingRows,
+  paginateRows,
+  totalPages,
+  buildMappingsUrl,
+  buildMappingCsvRow,
+} from '../components/mappings/MappingsPanel'
 import type { MappingSortCol, MappingSearchRow, SortDir } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,31 +145,8 @@ describe('mapping table column set', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mapping CSV export shape
+// Mapping CSV export shape — imported directly from MappingsPanel (see import above)
 // ─────────────────────────────────────────────────────────────────────────────
-
-function buildMappingCsvRow(
-  row: {
-    taxonomy:  string | null
-    kegg_id:   string | null
-    enzyme:    string | null
-    cog_id:    string | null
-    timepoint: { datetime: string } | null
-  },
-  annotationId: string,
-  source:       string,
-): Record<string, string> {
-  return {
-    annotation_id: annotationId,
-    source,
-    date:     fmtDate(row.timepoint?.datetime ?? ''),
-    time:     fmtTime(row.timepoint?.datetime ?? ''),
-    taxonomy: row.taxonomy ?? '',
-    kegg_id:  row.kegg_id  ?? '',
-    enzyme:   row.enzyme   ?? '',
-    cog_id:   row.cog_id   ?? '',
-  }
-}
 
 const SAMPLE_ROW = {
   taxonomy: 'Tenacibaculum',
@@ -224,27 +208,8 @@ describe('mapping CSV export shape', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sorting logic — mirrors MappingsPanel sortedRows useMemo
+// Sorting logic — imported directly from MappingsPanel (see import above)
 // ─────────────────────────────────────────────────────────────────────────────
-
-function sortMappingRows(
-  rows:    MappingSearchRow[],
-  sortCol: MappingSortCol,
-  sortDir: SortDir,
-): MappingSearchRow[] {
-  return [...rows].sort((a, b) => {
-    // date and time both sort by full datetime string
-    const av = (sortCol === 'date' || sortCol === 'time')
-      ? (a.timepoint?.datetime ?? '')
-      : ((a[sortCol as keyof MappingSearchRow] ?? '') as string)
-    const bv = (sortCol === 'date' || sortCol === 'time')
-      ? (b.timepoint?.datetime ?? '')
-      : ((b[sortCol as keyof MappingSearchRow] ?? '') as string)
-    return sortDir === 'asc'
-      ? av.localeCompare(bv)
-      : bv.localeCompare(av)
-  })
-}
 
 const RAW_ROWS: MappingSearchRow[] = [
   {
@@ -350,18 +315,8 @@ describe('mapping row sorting', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pagination logic
+// Pagination logic — imported directly from MappingsPanel (see import above)
 // ─────────────────────────────────────────────────────────────────────────────
-
-const PAGE_SIZE = 100
-
-function paginateRows<T>(rows: T[], page: number): T[] {
-  return rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-}
-
-function totalPages(rowCount: number): number {
-  return Math.ceil(rowCount / PAGE_SIZE)
-}
 
 describe('mapping table pagination', () => {
   it('page 1 returns first 100 rows', () => {
@@ -484,17 +439,8 @@ describe('unique pairs deduplication', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// API URL construction
+// API URL construction — imported directly from MappingsPanel (see import above)
 // ─────────────────────────────────────────────────────────────────────────────
-
-function buildMappingsUrl(
-  annotationId: string,
-  source:       string,
-  sampleCount:  number,
-  uniquePairs:  boolean,
-): string {
-  return `/api/mappings/search?annotation_id=${encodeURIComponent(annotationId)}&source=${source}&sample_count=${sampleCount}&unique_pairs=${uniquePairs}`
-}
 
 describe('mappings API URL construction', () => {
   it('includes annotation_id URL-encoded', () => {

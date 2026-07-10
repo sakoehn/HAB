@@ -30,7 +30,6 @@
  *   isoDate               — truncation, fallback, empty
  *   computeDayBands       — grouping, alternation, x1/x2 are full datetimes,
  *                           single day, < 2 points guard
- *   makeTickFormatter     — wide view date labels, zoomed HH:MM, boundary at 2 days
  *
  * utils/api.ts:
  *   downloadCsv (string builder) — header, data rows, comma escaping,
@@ -75,7 +74,6 @@ import {
   fmtTime,
   isoDate,
   computeDayBands,
-  makeTickFormatter,
 } from '../utils/format'
 
 import {
@@ -85,6 +83,9 @@ import {
   SOURCE_SHADES,
   CHART_COLORS,
 } from '../constants'
+
+import { computeNightBands } from '../utils/solar'
+import type { SunTimes } from '../utils/solar'
 
 import type { AnnotationItem, TimepointMeta } from '../types'
 
@@ -851,78 +852,127 @@ describe('computeDayBands', () => {
     computeDayBands(pts)
     expect(performance.now() - start).toBeLessThan(50)
   })
+
+  it('x1Ts is the start-of-day midnight timestamp (not first sample time)', () => {
+    const bands = computeDayBands(SAMPLE_POINTS)
+    expect(bands[0].x1Ts).toBe(new Date(2021, 4, 27, 0, 0, 0, 0).getTime())
+    expect(bands[1].x1Ts).toBe(new Date(2021, 4, 28, 0, 0, 0, 0).getTime())
+  })
+
+  it('x2Ts is 23:59:59.999 of each calendar day (not last sample time)', () => {
+    const bands = computeDayBands(SAMPLE_POINTS)
+    expect(bands[0].x2Ts).toBe(new Date(2021, 4, 27, 23, 59, 59, 999).getTime())
+    expect(bands[1].x2Ts).toBe(new Date(2021, 4, 28, 23, 59, 59, 999).getTime())
+  })
+
+  it('adjacent day bands are exactly 1ms apart (no gap or overlap)', () => {
+    const bands = computeDayBands(SAMPLE_POINTS)
+    expect(bands[1].x1Ts - bands[0].x2Ts).toBe(1)
+  })
+
+  it('x1Ts is earlier than the first data point in that day', () => {
+    const bands = computeDayBands(SAMPLE_POINTS)
+    const firstPtTs = new Date(2021, 4, 27, 4, 0).getTime()  // 04:00 sample
+    expect(bands[0].x1Ts).toBeLessThan(firstPtTs)
+  })
+
+  it('x2Ts is later than the last data point in that day', () => {
+    const bands = computeDayBands(SAMPLE_POINTS)
+    const lastPtTs = new Date(2021, 4, 27, 20, 0).getTime()  // 20:00 sample
+    expect(bands[0].x2Ts).toBeGreaterThan(lastPtTs)
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// makeTickFormatter
+// computeNightBands
 // ─────────────────────────────────────────────────────────────────────────────
 
-const WIDE_POINTS = [
-  { datetime: '05/27/21 04:00' },
-  { datetime: '05/27/21 08:00' },
-  { datetime: '05/28/21 04:00' },
-  { datetime: '05/28/21 08:00' },
-  { datetime: '05/29/21 04:00' },
-  { datetime: '05/29/21 08:00' },
-]
+const NIGHT_SUN_TIMES: SunTimes = {
+  '2021-05-27': { sunrise: '05:13', sunset: '21:09' },
+  '2021-05-28': { sunrise: '05:12', sunset: '21:10' },
+}
 
-describe('makeTickFormatter', () => {
-  it('wide view (> 2 days): first point of each day shows MM/DD', () => {
-    const fmt = makeTickFormatter(WIDE_POINTS, 3)
-    expect(fmt('05/27/21 04:00')).toBe('05/27')
+describe('computeNightBands', () => {
+  it('returns [] for < 2 points', () => {
+    expect(computeNightBands([], NIGHT_SUN_TIMES)).toHaveLength(0)
+    expect(computeNightBands([{ datetime: '05/27/21 21:00' }], NIGHT_SUN_TIMES)).toHaveLength(0)
   })
 
-  it('wide view: subsequent points of same day return empty string', () => {
-    const fmt = makeTickFormatter(WIDE_POINTS, 3)
-    expect(fmt('05/27/21 08:00')).toBe('')
+  it('returns [] when sunTimes is empty', () => {
+    const pts = [{ datetime: '05/27/21 21:00' }, { datetime: '05/28/21 05:00' }]
+    expect(computeNightBands(pts, {})).toHaveLength(0)
   })
 
-  it('wide view: label is MM/DD not MM/DD/YY', () => {
-    const fmt   = makeTickFormatter(WIDE_POINTS, 3)
-    const label = fmt('05/27/21 04:00')
-    expect(label).toBe('05/27')
-    expect(label).not.toContain('/21')
-  })
-
-  it('wide view: unknown datetime returns empty string', () => {
-    const fmt = makeTickFormatter(WIDE_POINTS, 3)
-    expect(fmt('99/99/99 00:00')).toBe('')
-  })
-
-  it('zoomed view (≤ 2 days): every point returns HH:MM', () => {
+  it('normal day→night: x1Ts is the actual sunset time, not the first night sample', () => {
+    // 17:00 = day, 21:00 = night (within 20min buffer of 21:09 sunset), 09:00 = day
     const pts = [
-      { datetime: '05/27/21 04:00' },
-      { datetime: '05/27/21 08:00' },
-      { datetime: '05/27/21 12:00' },
+      { datetime: '05/27/21 17:00' },
+      { datetime: '05/27/21 21:00' },
+      { datetime: '05/28/21 01:00' },
+      { datetime: '05/28/21 05:00' },
+      { datetime: '05/28/21 09:00' },
     ]
-    const fmt = makeTickFormatter(pts, 1)
-    expect(fmt('05/27/21 04:00')).toBe('04:00')
-    expect(fmt('05/27/21 08:00')).toBe('08:00')
-    expect(fmt('05/27/21 12:00')).toBe('12:00')
+    const bands = computeNightBands(pts, NIGHT_SUN_TIMES)
+    expect(bands).toHaveLength(1)
+    expect(bands[0].x1Ts).toBe(new Date(2021, 4, 27, 21, 9).getTime())
   })
 
-  it('zoomed view: label is HH:MM not a date', () => {
-    const fmt = makeTickFormatter(WIDE_POINTS.slice(0, 3), 1)
-    expect(fmt('05/27/21 04:00')).toBe('04:00')
-    expect(fmt('05/27/21 04:00')).not.toContain('05/27')
+  it('band end: x2Ts is the actual sunrise time, not the last night sample', () => {
+    const pts = [
+      { datetime: '05/27/21 17:00' },
+      { datetime: '05/27/21 21:00' },
+      { datetime: '05/28/21 01:00' },
+      { datetime: '05/28/21 05:00' },
+      { datetime: '05/28/21 09:00' },
+    ]
+    const bands = computeNightBands(pts, NIGHT_SUN_TIMES)
+    expect(bands[0].x2Ts).toBe(new Date(2021, 4, 28, 5, 12).getTime())
   })
 
-  it('exactly 2 days is still zoomed (≤ 2 threshold shows times)', () => {
-    const fmt = makeTickFormatter(WIDE_POINTS.slice(0, 4), 2)
-    expect(fmt('05/27/21 04:00')).toBe('04:00')
+  it('gap-bridge: x1Ts is the previous day sunset when night run starts on new day', () => {
+    // 12:00 on 05/27 is day; next sample is 01:00 on 05/28 (night) — no 21:00 sample
+    const pts = [
+      { datetime: '05/27/21 12:00' },
+      { datetime: '05/28/21 01:00' },
+      { datetime: '05/28/21 09:00' },
+    ]
+    const bands = computeNightBands(pts, NIGHT_SUN_TIMES)
+    expect(bands).toHaveLength(1)
+    expect(bands[0].x1Ts).toBe(new Date(2021, 4, 27, 21, 9).getTime())
   })
 
-  it('3 days switches to wide (date labels)', () => {
-    const fmt = makeTickFormatter(WIDE_POINTS, 3)
-    // First occurrence of each day gets a label
-    expect(fmt('05/27/21 04:00')).toBe('05/27')
-    expect(fmt('05/28/21 04:00')).toBe('05/28')
-    expect(fmt('05/29/21 04:00')).toBe('05/29')
-    // Non-first occurrences are blank
-    expect(fmt('05/27/21 08:00')).toBe('')
-    expect(fmt('05/28/21 08:00')).toBe('')
+  it('trailing night: x2Ts is clipped to last data point when sunrise is beyond data range', () => {
+    // Data ends at 01:00 May 28 — sunrise (05:12) is past maxTs, so band is clipped
+    const pts = [
+      { datetime: '05/27/21 17:00' },
+      { datetime: '05/27/21 21:00' },
+      { datetime: '05/28/21 01:00' },
+    ]
+    const bands = computeNightBands(pts, NIGHT_SUN_TIMES)
+    expect(bands).toHaveLength(1)
+    expect(bands[0].x2Ts).toBe(new Date(2021, 4, 28, 1, 0).getTime())
+  })
+
+  it('x1 and x2 are YYYY-MM-DD date keys for the sunset and sunrise days', () => {
+    const pts = [
+      { datetime: '05/27/21 17:00' },
+      { datetime: '05/27/21 21:00' },
+      { datetime: '05/28/21 05:00' },
+      { datetime: '05/28/21 09:00' },
+    ]
+    const bands = computeNightBands(pts, NIGHT_SUN_TIMES)
+    expect(bands[0].x1).toBe('2021-05-27')
+    expect(bands[0].x2).toBe('2021-05-28')
   })
 })
+
+// Note: this file previously had a `makeTickFormatter` block here. That
+// function (utils/format.ts) is dead code — its only caller was the
+// deprecated App_old.tsx, which main.tsx never imports. The live chart
+// components (EgcChart/MultiEgcChart/GroupedEgcChart) render with Plotly,
+// which formats its own date-axis ticks natively. The block was removed as
+// a dead-code test rather than fixed, since there is no live behavior left
+// to assert against. See App.e2e.spec.ts for real-browser zoom coverage.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CSV string builder (pure logic, no DOM)
@@ -973,12 +1023,12 @@ describe('buildCsvString', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('expandParentLabel', () => {
-  it('expands COG letter C to full label', () => {
-    expect(expandParentLabel('C', 'cog')).toBe('C · Energy production and conversion')
+  it('expands COG letter C to full label without the letter prefix', () => {
+    expect(expandParentLabel('C', 'cog')).toBe('Energy production and conversion')
   })
 
   it('COG is case-insensitive', () => {
-    expect(expandParentLabel('c', 'cog')).toBe('C · Energy production and conversion')
+    expect(expandParentLabel('c', 'cog')).toBe('Energy production and conversion')
   })
 
   it('COG unknown letter returned unchanged', () => {

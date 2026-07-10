@@ -11,22 +11,83 @@
 //   - Date range filter applied to both chart and detail tables
 //   - initialTerms: optional pre-loaded terms from ScaffoldBtn "→ Explore" nav
 
+// @ts-expect-error plotly.js-dist-min ships no .d.ts; types from @types/plotly.js
+import PlotlyBase from 'plotly.js-dist-min'
+import createPlotlyComponent from 'react-plotly.js/factory'
 import React, { useState, useEffect, useMemo } from 'react'
-import {
-  ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer,
-} from 'recharts'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Plot = createPlotlyComponent(PlotlyBase as any)
+
+function resolveCssVar(value: string, fallback: string): string {
+  if (typeof document === 'undefined' || !value.startsWith('var(')) return value
+  const name = value.slice(4, -1).trim()
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+// Builds one Plotly trace (line or bar) from a series of scaffold summary
+// rows — shared by the aggregated/split chart and the per-term chart.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildScaffoldTrace(
+  label:  string,
+  color:  string,
+  data:   { date: string; scaffold_count: number; gene_count: number }[],
+  metric: 'scaffold_count' | 'gene_count',
+  type:   'line' | 'bar',
+): Record<string, unknown> {
+  const resolvedColor = resolveCssVar(color, '#4f8ef7')
+  const xs    = data.map(d => new Date(parseDateTime(d.date)).toISOString())
+  const ys    = data.map(d => d[metric])
+  const cdata = data.map(d => `${fmtDate(d.date)} ${fmtTime(d.date)}`)
+  if (type === 'bar') {
+    return {
+      type: 'bar', x: xs, y: ys,
+      name: label, marker: { color: resolvedColor },
+      customdata: cdata,
+      hovertemplate: '<b>%{customdata}</b><br>' + label + ': %{y}<extra></extra>',
+    }
+  }
+  return {
+    type: 'scatter', mode: 'lines+markers',
+    x: xs, y: ys,
+    line: { color: resolvedColor, width: 2 }, marker: { color: resolvedColor, size: 4 },
+    name: label, connectgaps: false,
+    customdata: cdata,
+    hovertemplate: '<b>%{customdata}</b><br>' + label + ': %{y}<extra></extra>',
+  }
+}
+
+// Filters a term's scaffold summary rows to a date range and sorts
+// chronologically — used by the per-term "View chart" toggle.
+function filterSummaryForChart(
+  rows:     ScaffoldSummaryRow[],
+  dateFrom: string,
+  dateTo:   string,
+): ScaffoldSummaryRow[] {
+  return rows
+    .filter(r => {
+      if (dateFrom && r.date < dateFrom) return false
+      if (dateTo   && r.date > dateTo)   return false
+      return true
+    })
+    .sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date))
+}
 
 import type { ApiStatus, ScaffoldExploreTerm, ScaffoldSummaryRow, ScaffoldDetailRow, TopAnnotation } from '../../types'
 import { SOURCE_TAG_CLS } from '../../constants'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
 import { minMeanMax } from '../../utils/stats'
+import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { DateRangePicker } from '../ui/DateRangePicker'
+import { HelpTooltip } from '../ui/HelpTooltip'
 
 const TERM_COLORS = [
   'var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)',
-  'var(--amber)', '#a78bfa', '#34d399', '#f472b6',
+  '#0072B2',  // Blue — Wong CB-safe
+  '#D55E00',  // Vermilion — Wong (ok as 6th, won't be confused with orange at this slot)
+  '#56B4E9',  // Sky Blue — Wong
+  '#CC79A7',  // Reddish Purple — Wong
 ]
 
 const ALL_SOURCES = ['kegg', 'cog', 'enzyme', 'taxonomy'] as const
@@ -49,13 +110,21 @@ export function ScaffoldExplorePanel({
   const [chartType, setChartType]       = useState<'line' | 'bar'>('line')
   const [splitByTerm, setSplitByTerm]   = useState(false)
 
-  // Load any pre-selected terms passed in from navigation
+  // Load terms passed in from navigation (e.g. "→ Explore" from Analyze).
+  // Depends on a stable key so re-navigation with new terms is detected
+  // even though the panel stays mounted. O(1) key comparison per render.
+  const initialTermsKey = initialTerms
+    ?.map(t => `${t.annotationId}::${t.source}`)
+    .join(',') ?? ''
+
   useEffect(() => {
-    if (initialTerms?.length) {
-      initialTerms.forEach(t => addTerm(t.annotationId, t.source))
-    }
+    if (!initialTerms?.length) return
+    // Clear existing suggested terms so the incoming terms are prominent,
+    // but preserve any manually-added terms the researcher already has.
+    setTerms(prev => prev.filter(t => !t.suggested))
+    initialTerms.forEach(t => addTerm(t.annotationId, t.source))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [initialTermsKey])
 
   // Auto-load top-10 EGC annotations for the selected source as "suggested"
   // terms, so the panel isn't empty before the user searches. Re-runs when
@@ -99,7 +168,7 @@ export function ScaffoldExplorePanel({
       return [...prev, {
         annotationId, source, summary: [], status: 'loading', color, expanded: false,
         expandedSample: null, detailRows: [], detailStatus: 'idle', detailShowAll: false,
-        suggested,
+        suggested, chartVisible: false,
       }]
     })
     try {
@@ -272,7 +341,23 @@ async function loadTermDetail(annotationId: string, source: string, sample: stri
 
   return (
     <div style={{ padding: '20px 24px 32px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div><h2>Scaffold Information</h2></div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <h2>Scaffold Information</h2>
+        {terms.length > 0 && (
+          <button
+            className="btn sm ghost"
+            onClick={() => {
+              setTerms([])
+              setSearchQ('')
+              setSearchRes([])
+              setSearchStatus('idle')
+            }}
+            title="Clear all scaffold terms — does not affect Analyze, Compare, or Explore state"
+          >
+            ✕ Clear scaffolds
+          </button>
+        )}
+      </div>
 
       {/* ── Search bar ── */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -387,6 +472,7 @@ async function loadTermDetail(annotationId: string, source: string, sample: stri
               <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
                 Showing top {terms.filter(t => t.suggested).length} {searchSrc} annotations by mean EGC
               </span>
+              <HelpTooltip text="Auto-filled with the top 10 EGC annotations for the selected source. Replaced automatically if you change the source, unless you've added your own terms." />
               <button
                 className="btn sm ghost"
                 style={{ marginLeft: 'auto' }}
@@ -508,6 +594,7 @@ async function loadTermDetail(annotationId: string, source: string, sample: stri
                   >
                     Split by term
                   </button>
+                  <HelpTooltip text="Aggregated sums all tracked terms into one line per sample. Split by term shows one line per term instead." />
                 </>
               )}
               <button className="btn sm" onClick={handleExportChartCsv}>↓ CSV</button>
@@ -523,80 +610,44 @@ async function loadTermDetail(annotationId: string, source: string, sample: stri
             ))}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <div style={{
-              flexShrink:     0,
-              width:          20,
-              height:         260,
-              display:        'flex',
-              alignItems:     'center',
-              justifyContent: 'center',
-            }}>
-              <div style={{
-                transform:  'rotate(-90deg)',
-                whiteSpace: 'nowrap',
-                font:       '10px var(--mono)',
-                color:      'var(--text-dim)',
-              }}>
-                {chartMetric === 'scaffold_count'
-                  ? 'Scaffold count (per sample)'
-                  : 'Gene count (per sample)'}
-              </div>
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <ResponsiveContainer width="100%" height={260}>
-                <ComposedChart data={chartRows} margin={{ top: 6, right: 16, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="" stroke="#d9d9d9" vertical={false} />
-              <XAxis
-                dataKey="date"
-                tick={{ fill: 'var(--text-dim)', fontSize: 10, fontFamily: 'var(--mono)' }}
-                tickLine={false}
-                axisLine={{ stroke: 'var(--border)' }}
-                angle={-35}
-                textAnchor="end"
-                height={44}
-                tickFormatter={(v: string) => fmtDate(v)}
-                interval={Math.max(1, Math.floor(chartRows.length / 8))}
-              />
-              <YAxis
-                tick={{ fill: 'var(--text-dim)', fontSize: 10, fontFamily: 'var(--mono)' }}
-                tickLine={false}
-                axisLine={{ stroke: 'var(--border)' }}
-                width={52}
-              />
-              <Tooltip
-                content={({ active, payload, label }) => {
-                  if (!active || !payload?.length) return null
-                  return (
-                    <div className="chart-tooltip">
-                      <div className="tt-date">{fmtDate(label as string)} {fmtTime(label as string)}</div>
-                      {payload.map((p, i) => (
-                        <div className="tt-row" key={i}>
-                          <div className="tt-dot" style={{ background: p.color as string }} />
-                          <span className="tt-label">{p.dataKey as string}</span>
-                          <span className="tt-val">{p.value as number}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )
-                }}
-              />
-              {chartSeries.map(s =>
-                chartType === 'line' ? (
-                  <Line
-                    key={s.id} type="monotone" dataKey={s.id}
-                    stroke={s.color} strokeWidth={2}
-                    dot={{ r: 3, fill: s.color, strokeWidth: 0 }}
-                    activeDot={{ r: 5 }} connectNulls={false}
-                  />
-                ) : (
-                  <Bar key={s.id} dataKey={s.id} fill={s.color} radius={[2, 2, 0, 0]} maxBarSize={24} />
-                ),
-              )}
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+          <Plot
+            data={chartSeries.map(s =>
+              buildScaffoldTrace(s.label, s.color, s.data, chartMetric, chartType),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ) as any[]}
+            layout={{
+              height: 260,
+              margin: { t: 10, r: 16, b: 30, l: 70 },
+              paper_bgcolor: 'transparent',
+              plot_bgcolor:  'transparent',
+              showlegend: false,
+              hovermode: 'x unified',
+              hoverlabel: PLOTLY_HOVERLABEL,
+              barmode: 'group',
+              xaxis: {
+                type: 'date',
+                tickfont:  { size: 10, family: 'monospace' },
+                tickangle: -35,
+                showgrid:  false,
+                linecolor: '#d9d9d9',
+              },
+              yaxis: {
+                title: {
+                  text: chartMetric === 'scaffold_count'
+                    ? 'Scaffold count (per sample)'
+                    : 'Gene count (per sample)',
+                  font: { size: 10, family: 'monospace' },
+                },
+                tickfont:  { size: 10, family: 'monospace' },
+                gridcolor: '#d9d9d9',
+                zeroline:  false,
+              },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } as any}
+            style={{ width: '100%' }}
+            useResizeHandler
+            config={{ displayModeBar: false, displaylogo: false }}
+          />
         </div>
       )}
 
@@ -646,17 +697,21 @@ async function loadTermDetail(annotationId: string, source: string, sample: stri
                 contribute more than one gene. Click a row to see the
                 individual scaffolds and their gene counts.
               </p>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
+                <button
+                  className="btn sm"
+                  onClick={() => setTerms(prev => prev.map(t =>
+                    t.annotationId === term.annotationId && t.source === term.source
+                      ? { ...t, chartVisible: !t.chartVisible }
+                      : t,
+                  ))}
+                >
+                  {term.chartVisible ? '▲ Hide chart' : '📈 View chart'}
+                </button>
                 <button
                   className="btn sm"
                   onClick={() => downloadCsv(
-                    term.summary
-                      .filter(r => {
-                        if (dateFrom && r.date < dateFrom) return false
-                        if (dateTo   && r.date > dateTo)   return false
-                        return true
-                      })
-                      .sort((a, b) => a.date.localeCompare(b.date))
+                    filterSummaryForChart(term.summary, dateFrom, dateTo)
                       .map(r => ({
                         annotation_id:  term.annotationId,
                         source:         term.source,
@@ -672,6 +727,54 @@ async function loadTermDetail(annotationId: string, source: string, sample: stri
                   ↓ CSV
                 </button>
               </div>
+
+              {term.chartVisible && (() => {
+                const rows = filterSummaryForChart(term.summary, dateFrom, dateTo)
+                return rows.length === 0 ? (
+                  <div className="state-box" style={{ padding: 16, marginBottom: 12 }}>
+                    <span>No data in the selected date range.</span>
+                  </div>
+                ) : (
+                  <div className="chart-card" style={{ marginBottom: 12 }}>
+                    <Plot
+                      data={[
+                        buildScaffoldTrace(term.annotationId, term.color, rows, chartMetric, chartType),
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      ] as any[]}
+                      layout={{
+                        height: 200,
+                        margin: { t: 10, r: 16, b: 30, l: 60 },
+                        paper_bgcolor: 'transparent',
+                        plot_bgcolor:  'transparent',
+                        showlegend: false,
+                        hovermode: 'x unified',
+                        hoverlabel: PLOTLY_HOVERLABEL,
+                        xaxis: {
+                          type: 'date',
+                          tickfont:  { size: 10, family: 'monospace' },
+                          tickangle: -35,
+                          showgrid:  false,
+                          linecolor: '#d9d9d9',
+                        },
+                        yaxis: {
+                          title: {
+                            text: chartMetric === 'scaffold_count' ? 'Scaffolds' : 'Genes',
+                            font: { size: 10, family: 'monospace' },
+                          },
+                          tickfont:  { size: 10, family: 'monospace' },
+                          gridcolor: '#d9d9d9',
+                          zeroline:  false,
+                        },
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      } as any}
+                      style={{ width: '100%' }}
+                      useResizeHandler
+                      config={{ displayModeBar: false, displaylogo: false }}
+                    />
+                  </div>
+                )
+              })()}
+
               <table className="mappings-table scaffold-summary-table">
                 <thead>
                   <tr>
@@ -683,13 +786,7 @@ async function loadTermDetail(annotationId: string, source: string, sample: stri
                   </tr>
                 </thead>
                 <tbody>
-                  {[...term.summary]
-                    .filter(r => {
-                      if (dateFrom && r.date < dateFrom) return false
-                      if (dateTo   && r.date > dateTo)   return false
-                      return true
-                    })
-                    .sort((a, b) => a.date.localeCompare(b.date))
+                  {filterSummaryForChart(term.summary, dateFrom, dateTo)
                     .map((row, i) => {
                       const isExpanded    = term.expandedSample === row.sample
                       const visibleDetail = term.detailShowAll

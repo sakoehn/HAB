@@ -26,24 +26,24 @@ import { SOURCE_COLORS, SOURCE_TAG_CLS, CHART_COLORS } from '../constants'
 import { nextColorForSource, resetSourceCounters } from '../constants'
 import { apiFetch } from '../utils/api'
 import { isoDate, fmtDate } from '../utils/format'
-import { extractEgc } from '../utils/stats'
+import { extractEgc, extractNormEgc } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
 import { ChartErrorBoundary }  from '../components/ui/ChartErrorBoundary'
 import { DateRangePicker }     from '../components/ui/DateRangePicker'
-import { EgcChart }            from '../components/charts/EgcChart'
-import { MultiEgcChart }       from '../components/charts/MultiEgcChart'
+import { EgcChart }      from '../components/charts/EgcChart'
+import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { GroupedEgcChart }     from '../components/charts/GroupedEgcChart'
 import { MappingsPanel }       from '../components/mappings/MappingsPanel'
 import { CorrelatesPanel }     from '../components/correlates/CorrelatesPanel'
 import { AnnotationInfoDrawer } from '../components/annotations/AnnotationInfoDrawer'
 import { LeftResultList }      from '../components/annotations/LeftResultList'
-import { ScaffoldBtn }         from '../components/scaffolds/ScaffoldBtn'
+import { ScaffoldBtn }            from '../components/scaffolds/ScaffoldBtn'
+import { GroupScaffoldModal }     from '../components/scaffolds/GroupScaffoldModal'
 
 // ── AnalyzeState + default ─────────────────────────────────────────────────
 
 export type AnalyzeState = {
   queryFields:   string[]
-  sources:       string[]
   resultsByTerm: AnnotationItem[][]
   totalsByTerm:  number[]
   searchStatus:  ApiStatus
@@ -58,7 +58,6 @@ export type AnalyzeState = {
 export function makeDefaultAnalyzeState(): AnalyzeState {
   return {
     queryFields:   [''],
-    sources:       ['kegg', 'cog', 'enzyme', 'taxonomy'],
     resultsByTerm: [],
     totalsByTerm:  [],
     searchStatus:  'idle',
@@ -112,6 +111,7 @@ function RightSingleCard({
   onRemove,
   onAddAnnotation,
   onGoExplore,
+  onRetry,
   dataDateRange,
 }: {
   card:            Extract<RightCard, { kind: 'single' }>
@@ -119,6 +119,7 @@ function RightSingleCard({
   onRemove:        () => void
   onAddAnnotation: (annotationId: string, source: string, name: string | null) => void
   onGoExplore:     (annotationId: string, source: string) => void
+  onRetry:         () => void
   dataDateRange?:  { min: string; max: string } | null
 }) {
   const cached = seriesCache[card.key]
@@ -191,6 +192,7 @@ function RightSingleCard({
       {cached?.status === 'error' && (
         <div className="state-box error" style={{ padding: 20 }}>
           <span>Failed to load.</span>
+          <button className="btn sm" onClick={onRetry}>Retry</button>
         </div>
       )}
       {cached?.status === 'ok' && (
@@ -205,7 +207,7 @@ function RightSingleCard({
               dataDateRange={dataDateRange}
             />
           </ChartErrorBoundary>
-          <MappingsPanel
+<MappingsPanel
             annotationId={card.annotationId}
             source={card.source}
           />
@@ -227,12 +229,20 @@ function RightGroupCard({
   seriesCache,
   onRemove,
   dataDateRange,
+  onGoExplore,
+  onGoExploreGroup,
+  onRetryMember,
 }: {
   card:           Extract<RightCard, { kind: 'group' }>
   seriesCache:    SeriesCache
   onRemove:       () => void
   dataDateRange?: { min: string; max: string } | null
+  onGoExplore?:   (annotationId: string, source: string) => void
+  onGoExploreGroup?: (members: { annotationId: string; source: string }[]) => void
+  onRetryMember:  (annotationId: string, source: string) => void
 }) {
+  const [scaffoldOpen, setScaffoldOpen] = useState(false)
+
   const allSeries = card.annotationIds
     .map((id, i) => ({
       annotationId: id,
@@ -245,6 +255,18 @@ function RightGroupCard({
   const loading = card.annotationIds.some(
     (id, i) => seriesCache[`${id}::${card.sources[i]}`]?.status === 'loading',
   )
+
+  // A member that failed to fetch contributes 0 data points, same shape as
+  // one that genuinely has no data — without tracking this separately, a
+  // failed member silently disappears from the summed total with no
+  // indication anything went wrong.
+  const failedMembers = card.annotationIds
+    .map((id, i) => ({ annotationId: id, source: card.sources[i] }))
+    .filter(({ annotationId, source }) => seriesCache[`${annotationId}::${source}`]?.status === 'error')
+
+  function retryFailedMembers() {
+    failedMembers.forEach(m => onRetryMember(m.annotationId, m.source))
+  }
 
   return (
     <div className="al-right-card al-right-card-group">
@@ -261,10 +283,35 @@ function RightGroupCard({
             {card.annotationIds.length} annotations
           </span>
         </div>
+        <button
+          className="btn sm ghost"
+          style={{ fontFamily: 'var(--mono)', fontSize: 11, padding: '2px 8px' }}
+          onClick={e => { e.stopPropagation(); setScaffoldOpen(true) }}
+          title={`View scaffolds for all ${card.annotationIds.length} annotations in this group`}
+        >
+          🧬 Scaffolds
+        </button>
         <button className="al-card-close" onClick={onRemove} title="Remove chart">
           ×
         </button>
       </div>
+
+      {scaffoldOpen && (
+        <GroupScaffoldModal
+          members={card.annotationIds.map((id, i) => ({
+            annotationId: id,
+            source:       card.sources[i],
+            // name not stored on RightCard group — GroupScaffoldModal
+            // shows '—' for unknown names, which is acceptable here.
+            // Names are available in the drill-down from the API response.
+            name: null,
+          }))}
+          groupLabel={card.label}
+          onClose={() => setScaffoldOpen(false)}
+          onGoExplore={onGoExplore}
+          onGoExploreGroup={onGoExploreGroup}
+        />
+      )}
 
       {/* Compact annotation list */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
@@ -287,6 +334,25 @@ function RightGroupCard({
           <span>Loading series data…</span>
         </div>
       )}
+
+      {!loading && failedMembers.length > 0 && (
+        <div
+          className="state-box error"
+          style={{ padding: '10px 16px', flexDirection: 'row', gap: 10, textAlign: 'left', marginBottom: 10 }}
+          data-testid="group-member-failure-warning"
+        >
+          <span style={{ flex: 1 }}>
+            {failedMembers.length} of {card.annotationIds.length} member
+            {failedMembers.length !== 1 ? 's' : ''} failed to load
+            ({failedMembers.map(m => m.annotationId).join(', ')}) — the
+            summed total excludes them.
+          </span>
+          <button className="btn sm" data-testid="group-retry-member-btn" onClick={retryFailedMembers}>
+            Retry
+          </button>
+        </div>
+      )}
+
       {!loading && allSeries.length > 0 && (
         <ChartErrorBoundary label={card.label}>
           <GroupedEgcChart
@@ -296,7 +362,7 @@ function RightGroupCard({
           />
         </ChartErrorBoundary>
       )}
-      {!loading && allSeries.length === 0 && (
+      {!loading && allSeries.length === 0 && failedMembers.length === 0 && (
         <div className="state-box" style={{ padding: 20 }}>
           <span>No data loaded yet.</span>
         </div>
@@ -353,20 +419,84 @@ function CompareDrawer({
     document.addEventListener('mouseup', onUp)
   }
 
-  const eligibleCards = rightCards.filter(
-    c => c.kind === 'single',
-  ) as Extract<RightCard, { kind: 'single' }>[]
+  // All right-column cards, both single and group, are eligible for the
+  // Compare drawer. The checklist and activeSeries builder below guard on
+  // c.kind so each variant is handled correctly.
+  const eligibleCards: RightCard[] = rightCards
 
   const activeSeries = eligibleCards
-    .filter(c => drawerChecked.has(c.key) && seriesCache[c.key]?.status === 'ok')
-    .map(c => ({
-      annotationId: c.annotationId,
-      name:         c.name,
-      data:         seriesCache[c.key]!.data,
-      color:        c.color,
-      source:       c.source,
-      isGrouped:    false,
-    }))
+    .filter(c => drawerChecked.has(c.key))
+    .flatMap(c => {
+      if (c.kind === 'single') {
+        // Single annotation — one line, pulled straight from cache
+        const cached = seriesCache[c.key]
+        if (cached?.status !== 'ok') return []
+        return [{
+          annotationId: c.annotationId,
+          name:         c.name,
+          data:         cached.data,
+          color:        c.color,
+          source:       c.source,
+          isGrouped:    false as const,
+        }]
+      }
+
+      // Group card — sum both egc and norm_egc per datetime so MultiEgcChart
+      // can serve both raw and L1 modes correctly. norm_egc is the true
+      // depth-normalised value (egc / total_sample_depth) pre-computed by
+      // the pipeline — summing it across members gives group-level
+      // depth-normalised abundance on the same scale as single annotations.
+      //
+      // All member data is already in seriesCache — no new fetches.
+      // O(points × members): one pass per member, two accumulators per datetime.
+      const dtMap: Record<string, {
+        datetime: string
+        egc:      number
+        norm_egc: number
+        sample:   string
+      }> = {}
+
+      for (let i = 0; i < c.annotationIds.length; i++) {
+        const memberKey = `${c.annotationIds[i]}::${c.sources[i]}`
+        const cached    = seriesCache[memberKey]
+        if (cached?.status !== 'ok') continue
+
+        for (const d of cached.data) {
+          const dt = d.timepoint?.datetime
+          if (!dt) continue
+          const egc      = extractEgc(d.value)
+          const normEgc  = extractNormEgc(d.value)
+          if (egc === null) continue
+          if (!dtMap[dt]) dtMap[dt] = { datetime: dt, egc: 0, norm_egc: 0, sample: d.sample ?? '' }
+          dtMap[dt].egc      += egc
+          dtMap[dt].norm_egc += normEgc ?? 0
+        }
+      }
+
+      // Store both egc and norm_egc in value so MultiEgcChart's __norm
+      // lookup (used for L1 mode) finds the correct depth-normalised sum.
+      const summedData: AnnotationItem[] = Object.values(dtMap)
+        .sort((a, b) => a.datetime.localeCompare(b.datetime))
+        .map(pt => ({
+          annotation_id: c.key,
+          source:        c.sources[0] ?? 'kegg',
+          sample:        pt.sample,
+          name:          c.label,
+          timepoint:     { datetime: pt.datetime },
+          value:         { egc: pt.egc, norm_egc: pt.norm_egc },
+        } as AnnotationItem))
+
+      if (!summedData.length) return []
+
+      return [{
+        annotationId: c.label,
+        name:         c.label,
+        data:         summedData,
+        color:        'var(--chart-2)',
+        source:       c.sources[0] ?? 'kegg',
+        isGrouped:    true as const,
+      }]
+    })
 
   return (
     <div className="al-drawer" style={{ height: drawerH }}>
@@ -401,18 +531,35 @@ function CompareDrawer({
           {activeSeries.length > 0 && (
             <button
               className="btn sm"
-              onClick={() => onSendToComparePage(
-                activeSeries.map(s => {
-                  const card = eligibleCards.find(
-                    c => c.annotationId === s.annotationId,
-                  )
-                  return {
-                    annotationId: s.annotationId,
-                    source:       card?.source ?? 'kegg',
-                    name:         s.name,
+              onClick={() => {
+                // Build SharedAnnotation list preserving group identity.
+                // Singles → kind:'single', groups → kind:'group' with full
+                // member list so ComparePage can reconstruct the summed line.
+                const anns: SharedAnnotation[] = []
+
+                for (const c of eligibleCards) {
+                  if (!drawerChecked.has(c.key)) continue
+                  if (c.kind === 'single') {
+                    anns.push({
+                      kind:         'single',
+                      annotationId: c.annotationId,
+                      source:       c.source,
+                      name:         c.name,
+                    })
+                  } else {
+                    anns.push({
+                      kind:    'group',
+                      label:   c.label,
+                      members: c.annotationIds.map((id, i) => ({
+                        annotationId: id,
+                        source:       c.sources[i],
+                      })),
+                    })
                   }
-                }),
-              )}
+                }
+
+                onSendToComparePage(anns)
+              }}
               title="Open full Compare page with these annotations"
             >
               → Compare page
@@ -436,7 +583,7 @@ function CompareDrawer({
           </div>
           {eligibleCards.length === 0 && (
             <span style={{ font: '12px var(--mono)', color: 'var(--text-dim)' }}>
-              Add single annotation charts to the right panel first.
+              Add annotation charts to the right panel first.
             </span>
           )}
           {eligibleCards.map(c => (
@@ -446,38 +593,74 @@ function CompareDrawer({
                 checked={drawerChecked.has(c.key)}
                 onChange={() => onToggleChecked(c.key)}
               />
-              <div style={{
-                width:        8,
-                height:       8,
-                borderRadius: '50%',
-                background:   c.color,
-                flexShrink:   0,
-              }} />
-              <span style={{
-                fontFamily: 'var(--mono)',
-                fontSize:   12,
-                color:      'var(--teal)',
-                flexShrink: 0,
-              }}>
-                {c.annotationId}
-              </span>
-              {c.name && (
-                <span style={{
-                  fontSize:     11,
-                  color:        'var(--text-dim)',
-                  overflow:     'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace:   'nowrap',
-                }}>
-                  {c.name}
-                </span>
+              {c.kind === 'single' ? (
+                <>
+                  <div style={{
+                    width:        8,
+                    height:       8,
+                    borderRadius: '50%',
+                    background:   c.color,
+                    flexShrink:   0,
+                  }} />
+                  <span style={{
+                    fontFamily: 'var(--mono)',
+                    fontSize:   12,
+                    color:      'var(--teal)',
+                    flexShrink: 0,
+                  }}>
+                    {c.annotationId}
+                  </span>
+                  {c.name && (
+                    <span style={{
+                      fontSize:     11,
+                      color:        'var(--text-dim)',
+                      overflow:     'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace:   'nowrap',
+                    }}>
+                      {c.name}
+                    </span>
+                  )}
+                  <span
+                    className={`tag ${SOURCE_TAG_CLS[c.source] ?? ''}`}
+                    style={{ marginLeft: 'auto', flexShrink: 0 }}
+                  >
+                    {c.source}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span style={{
+                    fontSize:   13,
+                    color:      'var(--teal)',
+                    flexShrink: 0,
+                  }}>
+                    ∑
+                  </span>
+                  <span style={{
+                    fontFamily:   'var(--mono)',
+                    fontSize:     12,
+                    color:        'var(--text-dim)',
+                    overflow:     'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace:   'nowrap',
+                  }}>
+                    {c.label}
+                  </span>
+                  <span style={{
+                    font:        '400 10px var(--mono)',
+                    color:       'var(--teal)',
+                    background:  'var(--teal-dim)',
+                    border:      '1px solid rgba(61,217,184,.22)',
+                    borderRadius: 3,
+                    padding:     '1px 5px',
+                    marginLeft:  'auto',
+                    flexShrink:  0,
+                  }}>
+                    {c.annotationIds.length} annotations summed
+                  </span>
+                </>
               )}
-              <span
-                className={`tag ${SOURCE_TAG_CLS[c.source] ?? ''}`}
-                style={{ marginLeft: 'auto', flexShrink: 0 }}
-              >
-                {c.source}
-              </span>
             </label>
           ))}
         </div>
@@ -517,14 +700,16 @@ export function AnalyzePage({
   indexReady,
   onSendToCompare,
   onGoScaffoldExplore,
+  onGoScaffoldExploreGroup,
   dataDateRange,
 }: {
-  state:               AnalyzeState
-  setState:            (updater: (prev: AnalyzeState) => AnalyzeState) => void
-  indexReady:          boolean
-  onSendToCompare:     (anns: SharedAnnotation[]) => void
-  onGoScaffoldExplore: (annotationId: string, source: string) => void
-  dataDateRange?:      { min: string; max: string } | null
+  state:                    AnalyzeState
+  setState:                 (updater: (prev: AnalyzeState) => AnalyzeState) => void
+  indexReady:               boolean
+  onSendToCompare:          (anns: SharedAnnotation[]) => void
+  onGoScaffoldExplore:      (annotationId: string, source: string) => void
+  onGoScaffoldExploreGroup: (members: { annotationId: string; source: string }[]) => void
+  dataDateRange?:           { min: string; max: string } | null
 }) {
   const { copiedId, copy } = useCopyId()
   const firstInputRef      = useRef<HTMLInputElement>(null)
@@ -573,9 +758,12 @@ export function AnalyzePage({
   const activeChecked = state.checkedByTerm[activeTerm] ?? new Set<string>()
 
   // ── Series fetcher ───────────────────────────────────────────────────
-  const fetchSeries = useCallback(async (annotationId: string, source: string) => {
+  // force=true bypasses the cache-hit guard — used by a failed card's
+  // Retry button, which needs to re-fetch even though a (errored) cache
+  // entry already exists for this key.
+  const fetchSeries = useCallback(async (annotationId: string, source: string, force = false) => {
     const key = `${annotationId}::${source}`
-    if (state.seriesCache[key]) return
+    if (!force && state.seriesCache[key]) return
     setState(prev => ({
       ...prev,
       seriesCache: {
@@ -607,7 +795,7 @@ export function AnalyzePage({
 
   // ── Search ──────────────────────────────────────────────────────────
   async function runSearch() {
-    if (activeTerms.length === 0 || state.sources.length === 0) return
+    if (activeTerms.length === 0) return
     setState(prev => ({
       ...prev,
       searchStatus:  'loading',
@@ -617,7 +805,7 @@ export function AnalyzePage({
       checkedByTerm: {},
     }))
     try {
-      const src       = state.sources.map(s => `sources=${s}`).join('&')
+      const src       = 'sources=kegg&sources=cog&sources=enzyme&sources=taxonomy'
       const responses = await Promise.all(
         activeTerms.map(term =>
           apiFetch<{ data: AnnotationItem[]; total: number }>(
@@ -733,6 +921,7 @@ export function AnalyzePage({
     setState(prev => ({
       ...prev,
       rightCards:    [...prev.rightCards, card],
+      drawerChecked: new Set([...prev.drawerChecked, key]),
       checkedByTerm: { ...prev.checkedByTerm, [termKey]: new Set() },
     }))
 
@@ -789,7 +978,7 @@ export function AnalyzePage({
 
       {/* ── Search section ── */}
       <div className="al-topbar">
-        <div style={{ marginBottom: 8 }}><h2>Search</h2></div>
+        <div style={{ marginBottom: 6 }}><h2>Search</h2></div>
         <div className="al-search-area">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
             {state.queryFields.map((q, idx) => (
@@ -848,58 +1037,6 @@ export function AnalyzePage({
           </div>
         </div>
 
-        {/* Source toggles */}
-        <div style={{
-          display:    'flex',
-          gap:        10,
-          alignItems: 'center',
-          flexWrap:   'wrap',
-          marginTop:  10,
-        }}>
-          <div className="search-sources">
-            {(['kegg', 'cog', 'enzyme', 'taxonomy'] as const).map(src => (
-              <label
-                key={src}
-                className={`source-toggle ${state.sources.includes(src) ? 'active' : ''}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={state.sources.includes(src)}
-                  onChange={() => setState(prev => ({
-                    ...prev,
-                    sources: prev.sources.includes(src)
-                      ? prev.sources.filter(x => x !== src)
-                      : [...prev.sources, src],
-                  }))}
-                />
-                <span style={{
-                  width:        9,
-                  height:       9,
-                  borderRadius: '50%',
-                  background:   SOURCE_COLORS[src],
-                  flexShrink:   0,
-                  display:      'inline-block',
-                }} />
-                {src}
-              </label>
-            ))}
-          </div>
-          <p className="subtitle" style={{ marginLeft: 4 }}>
-            ···Click to exclude annotation type
-          </p>
-          {hasResults && (
-            <div style={{
-              display:    'flex',
-              gap:        6,
-              marginLeft: 'auto',
-              alignItems: 'center',
-            }}>
-              <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
-                {allUniqueRows.length} unique annotations
-              </span>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* ── States ── */}
@@ -1002,12 +1139,10 @@ export function AnalyzePage({
                   onClick={() =>
                     setState(prev => ({ ...prev, drawerOpen: !prev.drawerOpen }))
                   }
-                  disabled={
-                    state.rightCards.filter(c => c.kind === 'single').length < 2
-                  }
+                  disabled={state.rightCards.length < 2}
                   title={
-                    state.rightCards.filter(c => c.kind === 'single').length < 2
-                      ? 'Add at least 2 single annotation charts to compare'
+                    state.rightCards.length < 2
+                      ? 'Add at least 2 charts to compare'
                       : 'Toggle overlay comparison chart'
                   }
                 >
@@ -1036,6 +1171,7 @@ export function AnalyzePage({
                     dataDateRange={dataDateRange}
                     onRemove={() => removeCard(card.key)}
                     onGoExplore={onGoScaffoldExplore}
+                    onRetry={() => fetchSeries(card.annotationId, card.source, true)}
                     onAddAnnotation={(annId, src, name) => {
                       addSingleCard({
                         annotation_id: annId,
@@ -1054,6 +1190,9 @@ export function AnalyzePage({
                     seriesCache={state.seriesCache}
                     dataDateRange={dataDateRange}
                     onRemove={() => removeCard(card.key)}
+                    onGoExplore={onGoScaffoldExplore}
+                    onGoExploreGroup={onGoScaffoldExploreGroup}
+                    onRetryMember={(id, src) => fetchSeries(id, src, true)}
                   />
                 ),
               )}

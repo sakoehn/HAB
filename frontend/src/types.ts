@@ -5,7 +5,7 @@
 // ── Primitive aliases ──────────────────────────────────────────────────────
 
 export type ApiStatus = 'idle' | 'loading' | 'ok' | 'error'
-export type Page      = 'analyze' | 'compare' | 'explore' | 'about'
+export type Page      = 'analyze' | 'compare' | 'explore' | 'taxonomy' | 'about'
 export type SortDir   = 'asc' | 'desc'
 export type Theme     = 'dark' | 'light'
 
@@ -35,13 +35,54 @@ export type AnnotationItem = {
   sample_count?: number | null
 }
 
-export type TopAnnotation = {
+// Shape of the per-annotation JSON entry returned in the `value` field by
+// /search/annotations.  Fields are all optional because the schema varies
+// by source type (taxonomy omits name/parent_id/parent_name; the egc and
+// norm_egc values are from the first sample seen, not aggregates).
+export type AnnotationValue = {
+  name?:        string | null
+  depth?:       number | null
+  category?:    string | null
+  parent_id?:   string | null
+  parent_name?: string | null
+  parent?:      string | null   // taxonomy uses 'parent' instead of parent_id
+  egc?:         number | null
+  norm_egc?:    number | null
+  scaffolds?:   Record<string, number> | null
+}
+
+// ── Taxonomy Explorer ───────────────────────────────────────────────────────
+
+// Response row shape from GET /taxonomy/children.
+export type TaxonomyChildNode = {
   annotation_id: string
-  name:          string | null
-  parent:        string | null
-  mean_egc:      number
-  max_egc:       number
-  sample_count:  number
+  depth:         number | null
+  category:      string | null
+}
+
+// Client-side expandable-tree node. Children are populated lazily on first
+// expand; childrenLoaded distinguishes "not fetched yet" from "fetched, zero
+// children" (a leaf taxon).
+export type TaxonomyTreeNode = {
+  annotationId:   string
+  depth:          number | null
+  category:       string | null
+  expanded:       boolean
+  loadStatus:     ApiStatus
+  childrenLoaded: boolean
+  children:       TaxonomyTreeNode[]
+}
+
+export type TopAnnotation = {
+  annotation_id:  string
+  name:           string | null
+  parent:         string | null
+  mean_egc:       number
+  max_egc:        number
+  mean_norm_egc?: number | null
+  max_norm_egc?:  number | null
+  sample_count:   number
+  value?:         AnnotationValue | null
 }
 
 // ── Mapping row types ──────────────────────────────────────────────────────
@@ -92,16 +133,32 @@ export type CorrelateResult = {
 }
 
 // ── Chart / UI state ───────────────────────────────────────────────────────
+// Metric and standardize are independent: any metric can be combined with
+// standardize on or off (e.g. Z-scored Relative Abundance).
 
-export type NormalizeMode = 'none' | 'l1' | 'zscore'
+export type ChartMetric = 'egc' | 'norm_egc'
 
 // ── Shared annotation reference (used when passing between pages) ──────────
+// Discriminated union: single annotations pass directly; group cards pass
+// their label and full member list so ComparePage can reconstruct the sum.
 
-export type SharedAnnotation = {
+export type SharedAnnotationMember = {
   annotationId: string
   source:       string
-  name:         string | null
 }
+
+export type SharedAnnotation =
+  | {
+      kind:         'single'
+      annotationId: string
+      source:       string
+      name:         string | null
+    }
+  | {
+      kind:    'group'
+      label:   string
+      members: SharedAnnotationMember[]
+    }
 
 // ── Series data cache ──────────────────────────────────────────────────────
 
@@ -129,14 +186,30 @@ export type RightCard =
     }
 
 // ── Compare page entry ─────────────────────────────────────────────────────
+// A single-annotation entry carries one series directly.
+// A group entry carries the summed series plus the raw member series for
+// the expand toggle — members are fetched once and cached in memberData.
 
-export type CompareEntry = {
+export type CompareEntryMember = {
   annotationId: string
   source:       string
-  name:         string | null
   data:         AnnotationItem[]
   status:       ApiStatus
-  color:        string
+}
+
+export type CompareEntry = {
+  // Display identity
+  annotationId:    string          // annotation_id for singles; group label for groups
+  source:          string          // source for singles; first member source for groups
+  name:            string | null
+  color:           string
+  // Series data (summed for groups, raw for singles)
+  data:            AnnotationItem[]
+  status:          ApiStatus
+  // Group-only fields (undefined for singles)
+  isGrouped?:      boolean
+  members?:        CompareEntryMember[]
+  membersExpanded?: boolean
 }
 
 // ── Descriptive statistics ─────────────────────────────────────────────────
@@ -181,4 +254,5 @@ export type ScaffoldExploreTerm = {
   detailStatus:        ApiStatus
   detailShowAll:       boolean
   suggested:           boolean
+  chartVisible:        boolean
 }

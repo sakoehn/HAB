@@ -20,13 +20,14 @@
 import React, { useState, useEffect, useCallback } from 'react'
 
 import type {
-  CompareState, CompareEntry, AnnotationItem, ApiStatus, SharedAnnotation,
+  CompareState, CompareEntry, CompareEntryMember,
+  AnnotationItem, TimepointMeta, ApiStatus, SharedAnnotation,
 } from '../types'
 import { SOURCE_TAG_CLS } from '../constants'
 import { nextColorForSource, resetSourceCounters } from '../constants'
 import { apiFetch, downloadCsv } from '../utils/api'
 import { isoDate } from '../utils/format'
-import { extractEgc } from '../utils/stats'
+import { extractEgc, extractNormEgc } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
 import { CopyBtn } from '../components/ui/controls'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
@@ -61,6 +62,63 @@ export function makeDefaultCompareState(): CompareState {
   }
 }
 
+// ── Series fetch helpers ─────────────────────────────────────────────────
+// Module-level — no component state needed. Shared by the initial-load
+// effect and retryEntry() so a failed group member can be re-fetched and
+// re-summed without duplicating this logic a third time.
+
+async function fetchMemberSeries(
+  m: { annotationId: string; source: string },
+): Promise<CompareEntryMember> {
+  try {
+    const json = await apiFetch<{ data: AnnotationItem[] }>(
+      `/api/series/annotations?source=${m.source}&annotation_id=${encodeURIComponent(m.annotationId)}&page_size=5000`,
+    )
+    return { annotationId: m.annotationId, source: m.source, data: json.data ?? [], status: 'ok' }
+  } catch {
+    return { annotationId: m.annotationId, source: m.source, data: [], status: 'error' }
+  }
+}
+
+// Sums both egc and norm_egc per datetime across a group's members so
+// MultiEgcChart can serve raw mode and L1 mode correctly for group series.
+// norm_egc = egc / total_sample_depth (pre-computed by pipeline); summing
+// across members gives true depth-normalised group abundance, on the same
+// scale as any single annotation's norm_egc. O(points × members).
+function sumMemberSeries(members: CompareEntryMember[], label: string): AnnotationItem[] {
+  const dtMap: Record<string, {
+    datetime: string
+    egc:      number
+    norm_egc: number
+    sample:   string
+  }> = {}
+
+  for (const m of members) {
+    if (m.status !== 'ok') continue
+    for (const d of m.data) {
+      const dt = d.timepoint?.datetime
+      if (!dt) continue
+      const egc     = extractEgc(d.value)
+      const normEgc = extractNormEgc(d.value)
+      if (egc === null) continue
+      if (!dtMap[dt]) dtMap[dt] = { datetime: dt, egc: 0, norm_egc: 0, sample: d.sample ?? '' }
+      dtMap[dt].egc      += egc
+      dtMap[dt].norm_egc += normEgc ?? 0
+    }
+  }
+
+  return Object.values(dtMap)
+    .sort((a, b) => a.datetime.localeCompare(b.datetime))
+    .map(pt => ({
+      annotation_id: label,
+      source:        members[0]?.source ?? 'kegg',
+      sample:        pt.sample,
+      name:          label,
+      timepoint:     { datetime: pt.datetime } as TimepointMeta,
+      value:         { egc: pt.egc, norm_egc: pt.norm_egc },
+    }))
+}
+
 // ── ComparePage ────────────────────────────────────────────────────────────
 
 export function ComparePage({
@@ -80,47 +138,115 @@ export function ComparePage({
 }) {
   const { copiedId, copy } = useCopyId()
 
-  // Load annotations arriving from the Analyze page Compare drawer
+  // Load annotations arriving from the Analyze page Compare drawer.
+  // Singles: fetch one series directly.
+  // Groups: fetch all member series in parallel, sum by datetime — identical
+  // algorithm to GroupedEgcChart/CompareDrawer so the line matches exactly.
+  // All member fetches are parallel (Promise.all) → O(members) round-trips.
+  // Summing is O(points × members) in memory — no extra backend calls.
   useEffect(() => {
     if (!initialAnnotations.length) return
     onConsumed()
     resetSourceCounters()
 
-    const toLoad  = initialAnnotations.slice(0, 4)
-    const colors  = toLoad.map(ann => nextColorForSource(ann.source))
+    const toLoad = initialAnnotations.slice(0, 4)
+    const colors = toLoad.map(ann =>
+      ann.kind === 'single'
+        ? nextColorForSource(ann.source)
+        : nextColorForSource('kegg'), // group gets a fresh color slot
+    )
 
+    // Optimistic loading state — one entry per incoming annotation/group
     setState(prev => ({
       ...prev,
-      entries: toLoad.map((ann, i) => ({
-        annotationId: ann.annotationId,
-        source:       ann.source,
-        name:         ann.name,
-        data:         [],
-        status:       'loading' as ApiStatus,
-        color:        colors[i],
-      })),
+      entries: toLoad.map((ann, i) =>
+        ann.kind === 'single'
+          ? {
+              annotationId: ann.annotationId,
+              source:       ann.source,
+              name:         ann.name,
+              data:         [],
+              status:       'loading' as ApiStatus,
+              color:        colors[i],
+            }
+          : {
+              annotationId:    ann.label,
+              source:          ann.members[0]?.source ?? 'kegg',
+              name:            ann.label,
+              data:            [],
+              status:          'loading' as ApiStatus,
+              color:           colors[i],
+              isGrouped:       true,
+              members:         ann.members.map(m => ({
+                annotationId: m.annotationId,
+                source:       m.source,
+                data:         [],
+                status:       'loading' as ApiStatus,
+              })),
+              membersExpanded: false,
+            },
+      ),
     }))
 
+    // Fetch all series — singles fetch once, groups fetch all members in parallel
     Promise.all(
-      toLoad.map((ann, i) =>
-        apiFetch<{ data: AnnotationItem[] }>(
-          `/api/series/annotations?source=${ann.source}&annotation_id=${encodeURIComponent(ann.annotationId)}&page_size=5000`,
-        )
-          .then(json => ({ ann, i, data: json.data ?? [] }))
-          .catch(() => ({ ann, i, data: [] as AnnotationItem[] })),
-      ),
+      toLoad.map(async (ann, i) => {
+        if (ann.kind === 'single') {
+          try {
+            const json = await apiFetch<{ data: AnnotationItem[] }>(
+              `/api/series/annotations?source=${ann.source}&annotation_id=${encodeURIComponent(ann.annotationId)}&page_size=5000`,
+            )
+            const data = json.data ?? []
+            return {
+              i,
+              entry: {
+                annotationId: ann.annotationId,
+                source:       ann.source,
+                name:         ann.name,
+                data,
+                status:       (data.length > 0 ? 'ok' : 'error') as ApiStatus,
+                color:        colors[i],
+              } satisfies CompareEntry,
+            }
+          } catch {
+            return {
+              i,
+              entry: {
+                annotationId: ann.annotationId,
+                source:       ann.source,
+                name:         ann.name,
+                data:         [],
+                status:       'error' as ApiStatus,
+                color:        colors[i],
+              } satisfies CompareEntry,
+            }
+          }
+        }
+
+        // Group: fetch all member series in parallel, then sum by datetime.
+        // O(members) parallel fetches, O(points × members) sum — fast even
+        // at 128 samples × many annotations.
+        const memberResults = await Promise.all(ann.members.map(fetchMemberSeries))
+        const summedData    = sumMemberSeries(memberResults, ann.label)
+
+        return {
+          i,
+          entry: {
+            annotationId:    ann.label,
+            source:          ann.members[0]?.source ?? 'kegg',
+            name:            ann.label,
+            data:            summedData,
+            status:          (summedData.length > 0 ? 'ok' : 'error') as ApiStatus,
+            color:           colors[i],
+            isGrouped:       true,
+            members:         memberResults,
+            membersExpanded: false,
+          } satisfies CompareEntry,
+        }
+      }),
     ).then(results => {
-      setState(prev => ({
-        ...prev,
-        entries: results.map(({ ann, i, data }) => ({
-          annotationId: ann.annotationId,
-          source:       ann.source,
-          name:         ann.name,
-          data,
-          status:       (data.length > 0 ? 'ok' : 'error') as ApiStatus,
-          color:        colors[i],
-        })),
-      }))
+      const ordered = [...results].sort((a, b) => a.i - b.i).map(r => r.entry)
+      setState(prev => ({ ...prev, entries: ordered }))
     })
   }, [initialAnnotations])
 
@@ -248,6 +374,63 @@ export function ComparePage({
         entries: prev.entries.map(e =>
           e.annotationId === ann.annotation_id && e.source === ann.source
             ? { ...e, status: 'error' }
+            : e,
+        ),
+      }))
+    }
+  }
+
+  // Re-fetches a failed entry in place. Grouped entries re-fetch and
+  // re-sum all members (simplest correct behavior — failures here are rare
+  // enough that re-fetching already-successful members isn't worth the
+  // extra bookkeeping a partial-retry would need).
+  async function retryEntry(entry: CompareEntry) {
+    setState(prev => ({
+      ...prev,
+      entries: prev.entries.map(e =>
+        e.annotationId === entry.annotationId && e.source === entry.source
+          ? { ...e, status: 'loading' as ApiStatus }
+          : e,
+      ),
+    }))
+
+    if (entry.isGrouped) {
+      const memberResults = await Promise.all((entry.members ?? []).map(fetchMemberSeries))
+      const summedData    = sumMemberSeries(memberResults, entry.annotationId)
+      setState(prev => ({
+        ...prev,
+        entries: prev.entries.map(e =>
+          e.annotationId === entry.annotationId && e.source === entry.source
+            ? {
+                ...e,
+                data:    summedData,
+                status:  (summedData.length > 0 ? 'ok' : 'error') as ApiStatus,
+                members: memberResults,
+              }
+            : e,
+        ),
+      }))
+      return
+    }
+
+    try {
+      const json = await apiFetch<{ data: AnnotationItem[] }>(
+        `/api/series/annotations?source=${entry.source}&annotation_id=${encodeURIComponent(entry.annotationId)}&page_size=5000`,
+      )
+      setState(prev => ({
+        ...prev,
+        entries: prev.entries.map(e =>
+          e.annotationId === entry.annotationId && e.source === entry.source
+            ? { ...e, data: json.data ?? [], status: 'ok' as ApiStatus }
+            : e,
+        ),
+      }))
+    } catch {
+      setState(prev => ({
+        ...prev,
+        entries: prev.entries.map(e =>
+          e.annotationId === entry.annotationId && e.source === entry.source
+            ? { ...e, status: 'error' as ApiStatus }
             : e,
         ),
       }))
@@ -462,35 +645,127 @@ export function ComparePage({
             <div style={{ marginBottom: 10 }}><h2>Selected Annotations</h2></div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
               {state.entries.map(e => (
-                <div
-                  className="compare-chip"
-                  key={`${e.annotationId}::${e.source}`}
-                >
-                  <div className="chip-color" style={{ background: e.color }} />
-                  <CopyBtn
-                    id={e.annotationId}
-                    copiedId={copiedId}
-                    onCopy={copy}
-                  />
-                  <span>{e.annotationId}</span>
-                  <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
-                    {e.source}
-                  </span>
-                  {e.status === 'loading' && (
-                    <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>…</span>
+                <div key={`${e.annotationId}::${e.source}`}>
+                  <div className="compare-chip">
+                    <div className="chip-color" style={{ background: e.color }} />
+                    {e.isGrouped ? (
+                      <span style={{ fontSize: 13, color: 'var(--teal)' }}>∑</span>
+                    ) : (
+                      <CopyBtn id={e.annotationId} copiedId={copiedId} onCopy={copy} />
+                    )}
+                    <span>{e.annotationId}</span>
+                    {e.isGrouped ? (
+                      <span style={{
+                        font:        '400 10px var(--mono)',
+                        color:       'var(--teal)',
+                        background:  'var(--teal-dim)',
+                        border:      '1px solid rgba(61,217,184,.22)',
+                        borderRadius: 3,
+                        padding:     '1px 5px',
+                      }}>
+                        {e.members?.length ?? 0} annotations summed
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                        {e.source}
+                      </span>
+                    )}
+                    {e.status === 'loading' && (
+                      <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>…</span>
+                    )}
+                    {e.status === 'error' && (
+                      <span
+                        data-testid="compare-entry-failed"
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--coral)' }}
+                      >
+                        failed to load
+                        <button
+                          className="btn sm"
+                          data-testid="compare-entry-retry-btn"
+                          style={{ padding: '1px 6px', fontSize: 10 }}
+                          onClick={() => retryEntry(e)}
+                        >
+                          Retry
+                        </button>
+                      </span>
+                    )}
+                    {/* Expand/collapse toggle for group entries */}
+                    {e.isGrouped && e.status === 'ok' && (
+                      <button
+                        className="btn sm ghost"
+                        style={{ fontSize: 10, padding: '1px 6px' }}
+                        title={e.membersExpanded ? 'Collapse member list' : 'Expand member list'}
+                        onClick={() => setState(prev => ({
+                          ...prev,
+                          entries: prev.entries.map(x =>
+                            x.annotationId === e.annotationId && x.source === e.source
+                              ? { ...x, membersExpanded: !x.membersExpanded }
+                              : x,
+                          ),
+                        }))}
+                      >
+                        {e.membersExpanded ? '▲ members' : '▼ members'}
+                      </button>
+                    )}
+                    <button
+                      className="chip-remove"
+                      onClick={() => setState(prev => {
+                        const next = prev.entries.filter(
+                          x => !(x.annotationId === e.annotationId && x.source === e.source),
+                        )
+                        if (next.length === 0) resetSourceCounters()
+                        return { ...prev, entries: next }
+                      })}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  {/* Inline member list — shown when expanded */}
+                  {e.isGrouped && e.membersExpanded && e.members && (
+                    <div style={{
+                      marginTop:    4,
+                      marginLeft:   12,
+                      padding:      '8px 12px',
+                      background:   'var(--surface2)',
+                      border:       '1px solid var(--border)',
+                      borderRadius: 6,
+                      display:      'flex',
+                      flexDirection: 'column',
+                      gap:          4,
+                      maxHeight:    200,
+                      overflowY:    'auto',
+                    }}>
+                      <div style={{
+                        font:          '600 9px var(--mono)',
+                        color:         'var(--text-dim)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '.1em',
+                        marginBottom:  4,
+                      }}>
+                        {e.members.length} member annotations
+                      </div>
+                      {e.members.map(m => (
+                        <div
+                          key={`${m.annotationId}::${m.source}`}
+                          style={{
+                            display:    'flex',
+                            alignItems: 'center',
+                            gap:        8,
+                            font:       '11px var(--mono)',
+                          }}
+                        >
+                          <span style={{ color: 'var(--teal)' }}>{m.annotationId}</span>
+                          <span style={{ color: 'var(--text-dim)' }}>{m.source}</span>
+                          {m.status === 'error' && (
+                            <span style={{ color: 'var(--coral)', fontSize: 10 }}>
+                              failed to load
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   )}
-                  <button
-                    className="chip-remove"
-                    onClick={() => setState(prev => {
-                      const next = prev.entries.filter(
-                        x => !(x.annotationId === e.annotationId && x.source === e.source),
-                      )
-                      if (next.length === 0) resetSourceCounters()
-                      return { ...prev, entries: next }
-                    })}
-                  >
-                    ×
-                  </button>
                 </div>
               ))}
               {state.entries.length < 4 && (

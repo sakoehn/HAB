@@ -544,12 +544,72 @@ describe('ComparePage — entries panel', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ComparePage — failed entry (was previously invisible: no error text at all)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ComparePage — failed entry', () => {
+  async function addFailingEntry() {
+    setupMocks({ seriesFail: true })
+    render(<ManagedComparePage />)
+    const input = await screen.findByPlaceholderText(/search annotation id or name/i)
+    await userEvent.type(input, 'K02014')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+    await waitFor(() => screen.getByText('K02014'))
+    const rowCheck = screen.getAllByRole('checkbox').slice(1)[0]
+    await userEvent.click(rowCheck)
+    await userEvent.click(screen.getByText(/add 1 selected/i))
+  }
+
+  it('shows a failed-to-load indicator (previously showed nothing at all)', async () => {
+    await addFailingEntry()
+    await waitFor(() => {
+      expect(screen.getByTestId('compare-entry-failed')).toBeInTheDocument()
+    })
+  })
+
+  it('failed entry has a retry button', async () => {
+    await addFailingEntry()
+    await waitFor(() => {
+      expect(screen.getByTestId('compare-entry-retry-btn')).toBeInTheDocument()
+    })
+  })
+
+  it('clicking retry re-fetches and clears the failed indicator on success', async () => {
+    await addFailingEntry()
+    await waitFor(() => screen.getByTestId('compare-entry-retry-btn'))
+
+    setupMocks({ seriesFail: false })
+    await userEvent.click(screen.getByTestId('compare-entry-retry-btn'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('compare-entry-failed')).toBeNull()
+    })
+  })
+
+  it('no failed indicator is shown for a successfully-loaded entry', async () => {
+    setupMocks()
+    render(<ManagedComparePage />)
+    const input = await screen.findByPlaceholderText(/search annotation id or name/i)
+    await userEvent.type(input, 'K02014')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+    await waitFor(() => screen.getByText('K02014'))
+    const rowCheck = screen.getAllByRole('checkbox').slice(1)[0]
+    await userEvent.click(rowCheck)
+    await userEvent.click(screen.getByText(/add 1 selected/i))
+    await waitFor(() => {
+      expect(screen.getAllByText('K02014').length).toBeGreaterThan(0)
+    })
+    expect(screen.queryByTestId('compare-entry-failed')).toBeNull()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ComparePage — initialAnnotations
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('ComparePage — initialAnnotations from Analyze page', () => {
   const INIT_ANNS: SharedAnnotation[] = [
-    { annotationId: 'K02014', source: 'kegg', name: 'TonB-dep receptor' },
+    { kind: 'single', annotationId: 'K02014', source: 'kegg', name: 'TonB-dep receptor' },
   ]
 
   it('entries pre-populated when initialAnnotations provided', async () => {
@@ -581,6 +641,7 @@ describe('ComparePage — initialAnnotations from Analyze page', () => {
 
   it('capped at 4 even if more provided', async () => {
     const fiveAnns: SharedAnnotation[] = Array.from({ length: 5 }, (_, i) => ({
+      kind:         'single' as const,
       annotationId: `K0000${i}`,
       source:       'kegg' as const,
       name:         `Ann ${i}`,
@@ -686,5 +747,101 @@ describe('ComparePage — deduplication', () => {
       // Still just 1 entry
       expect(removeBtns).toHaveLength(1)
     })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ComparePage — group entry via Analyze handoff (initialAnnotations, kind: 'group')
+// Previously untested: fetchMemberSeries/sumMemberSeries only ran through the
+// 'single' path in every existing test.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ComparePage — group entry from Analyze handoff', () => {
+  const GROUP_ANN: SharedAnnotation[] = [
+    {
+      kind:  'group',
+      label: 'My Group',
+      members: [
+        { annotationId: 'K00001', source: 'kegg' },
+        { annotationId: 'K00002', source: 'kegg' },
+      ],
+    },
+  ]
+
+  it('loads a group entry and shows the summed chip', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<ManagedComparePage initialAnnotations={GROUP_ANN} />)
+    await waitFor(() => {
+      expect(screen.getByText('My Group')).toBeInTheDocument()
+    })
+    expect(screen.getByText('2 annotations summed')).toBeInTheDocument()
+  })
+
+  it('expanding "▼ members" shows the individual member list', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<ManagedComparePage initialAnnotations={GROUP_ANN} />)
+    await waitFor(() => screen.getByText('2 annotations summed'))
+    await userEvent.click(screen.getByText('▼ members'))
+    await waitFor(() => {
+      expect(screen.getByText('K00001')).toBeInTheDocument()
+      expect(screen.getByText('K00002')).toBeInTheDocument()
+    })
+  })
+
+  it('collapsing "▲ members" hides the member list again', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<ManagedComparePage initialAnnotations={GROUP_ANN} />)
+    await waitFor(() => screen.getByText('2 annotations summed'))
+    await userEvent.click(screen.getByText('▼ members'))
+    await waitFor(() => screen.getByText('K00001'))
+    await userEvent.click(screen.getByText('▲ members'))
+    await waitFor(() => {
+      expect(screen.queryByText('K00001')).toBeNull()
+    })
+  })
+
+  it('all members failing shows a failed-to-load chip with retry (not a silently empty sum)', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations')) return Promise.reject(new Error('fail'))
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<ManagedComparePage initialAnnotations={GROUP_ANN} />)
+    await waitFor(() => {
+      expect(screen.getByTestId('compare-entry-failed')).toBeInTheDocument()
+    })
+  })
+
+  it('clicking retry on a failed group entry re-fetches and succeeds', async () => {
+    let calls = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations')) {
+        calls++
+        // Both members fail on the initial load, succeed on retry.
+        if (calls <= 2) return Promise.reject(new Error('fail'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<ManagedComparePage initialAnnotations={GROUP_ANN} />)
+    await waitFor(() => screen.getByTestId('compare-entry-retry-btn'))
+
+    await userEvent.click(screen.getByTestId('compare-entry-retry-btn'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('compare-entry-failed')).toBeNull()
+    })
+    expect(screen.getByText('2 annotations summed')).toBeInTheDocument()
   })
 })

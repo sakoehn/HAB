@@ -2,10 +2,11 @@
 // Normalize, smooth, and overlay controls bar rendered below the chart card header.
 // Used by EgcChart, MultiEgcChart, and GroupedEgcChart.
 //
-// Normalize modes:
-//   none   — raw EGC values
-//   l1     — depth-normalised EGC (norm_egc = egc / total sample depth)
-//   zscore — std deviations from mean, best for cross-scale trend comparison
+// Metric and Standardize are independent controls — any metric can be
+// combined with standardize on or off:
+//   metric      — 'egc' (raw) or 'norm_egc' (Relative Abundance = egc / total sample depth)
+//   standardize — off, or Z-score (subtract mean, divide by std dev; best for
+//                 cross-scale trend comparison), applied to whichever metric is active
 //
 // Smooth:
 //   LOWESS locally weighted regression with adjustable bandwidth (0.05–0.75).
@@ -21,11 +22,14 @@
 //   (not tied to real sunrise/sunset). Off by default like the others.
 
 import React, { useState, useEffect, useRef } from 'react'
-import type { NormalizeMode } from '../../types'
+import type { ChartMetric } from '../../types'
+import { HelpTooltip } from '../ui/HelpTooltip'
 
 export function ChartControls({
-  normalizeMode,
-  onNormalizeMode,
+  metric,
+  onMetric,
+  standardize,
+  onStandardize,
   smoothed,
   onSmooth,
   smoothBandwidth,
@@ -37,8 +41,10 @@ export function ChartControls({
   showDayBands,
   onShowDayBands,
 }: {
-  normalizeMode:        NormalizeMode
-  onNormalizeMode:      (v: NormalizeMode) => void
+  metric:               ChartMetric
+  onMetric:             (v: ChartMetric) => void
+  standardize:          boolean
+  onStandardize:        (v: boolean) => void
   smoothed:             boolean
   onSmooth:             (v: boolean) => void
   smoothBandwidth:      number
@@ -77,40 +83,59 @@ export function ChartControls({
   return (
     <div className="chart-controls">
       <div className="chart-ctrl-group">
-        <label className="ctrl-label">Normalize</label>
+        <label className="ctrl-label">
+          Metric
+          <HelpTooltip text="Off = raw EGC. Relative Abundance = norm_egc, EGC ÷ total sample sequencing depth, comparable across samples. Z-score = standardized (mean-subtracted, divided by std dev) — apply to either metric to compare series on different scales." />
+        </label>
         <div style={{ display: 'flex', gap: 4 }}>
           <button
-            className={`toggle-pill ${normalizeMode === 'none' ? 'on' : ''}`}
-            onClick={() => onNormalizeMode('none')}
+            className={`toggle-pill ${metric === 'egc' ? 'on' : ''}`}
+            onClick={() => onMetric('egc')}
             title="Raw EGC values"
+          >
+            EGC
+          </button>
+          <button
+            className={`toggle-pill ${metric === 'norm_egc' ? 'on' : ''}`}
+            onClick={() => onMetric('norm_egc')}
+            title="Relative Abundance: uses pre-computed norm_egc (egc ÷ total sample sequencing depth) — comparable across samples"
+          >
+            Relative Abundance
+          </button>
+        </div>
+        {metric === 'norm_egc' && (
+          <span className="ctrl-hint">Relative Abundance (norm_egc)</span>
+        )}
+      </div>
+
+      <div className="chart-ctrl-group">
+        <label className="ctrl-label">Standardize</label>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button
+            className={`toggle-pill ${!standardize ? 'on' : ''}`}
+            onClick={() => onStandardize(false)}
+            title="No standardization"
           >
             Off
           </button>
           <button
-            className={`toggle-pill ${normalizeMode === 'l1' ? 'on' : ''}`}
-            onClick={() => onNormalizeMode('l1')}
-            title="L1: use pre-computed norm_egc (egc / total sample sequencing depth) — true depth-normalised abundance, comparable across samples"
-          >
-            L1
-          </button>
-          <button
-            className={`toggle-pill ${normalizeMode === 'zscore' ? 'on' : ''}`}
-            onClick={() => onNormalizeMode('zscore')}
+            className={`toggle-pill ${standardize ? 'on' : ''}`}
+            onClick={() => onStandardize(true)}
             title="Z-score: subtract mean, divide by std dev — best for comparing trends across different scales"
           >
             Z-score
           </button>
         </div>
-        {normalizeMode === 'l1' && (
-          <span className="ctrl-hint">Depth-normalised EGC (norm_egc)</span>
-        )}
-        {normalizeMode === 'zscore' && (
+        {standardize && (
           <span className="ctrl-hint">Std deviations from mean</span>
         )}
       </div>
 
       <div className="chart-ctrl-group">
-        <label className="ctrl-label">Smooth</label>
+        <label className="ctrl-label">
+          Smooth
+          <HelpTooltip text="Fits a smoothed trend line through the data. Lower bandwidth = tighter fit to the raw data; higher = smoother, more averaged." />
+        </label>
         <button
           className={`toggle-pill ${smoothed ? 'on' : ''}`}
           onClick={() => onSmooth(!smoothed)}
@@ -124,12 +149,12 @@ export function ChartControls({
             <input
               type="range"
               className="smooth-slider"
-              min={0.05}
-              max={0.75}
-              step={0.05}
+              min={0.01}
+              max={0.05}
+              step={0.01}
               value={sliderVal}
               onChange={handleSliderChange}
-              title={`LOWESS bandwidth: ${sliderVal.toFixed(2)} — fraction of data used as neighbors. Lower = tighter fit, higher = smoother. Above ~0.75 approaches a global linear regression.`}
+              title={`LOWESS bandwidth: ${sliderVal.toFixed(2)} — fraction of data used as neighbors. Lower = tighter fit, higher = smoother.`}
             />
             <span className="ctrl-hint">{sliderVal.toFixed(2)}</span>
           </div>
@@ -138,7 +163,10 @@ export function ChartControls({
 
       {showOverlayGroup && (
         <div className="chart-ctrl-group">
-          <label className="ctrl-label">Overlays</label>
+          <label className="ctrl-label">
+            Overlays
+            <HelpTooltip text="Day/Night uses real sunrise/sunset times for Rosario, Orcas Island. Day bands is just alternating shading to help track days — not tied to actual solar data." />
+          </label>
           <div style={{ display: 'flex', gap: 4 }}>
             {onShowNightShading && (
               <button

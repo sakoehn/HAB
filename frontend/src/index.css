@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;0,9..144,700;1,9..144,300&family=DM+Sans:wght@400;500;600&display=swap');
+﻿@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;0,9..144,700;1,9..144,300&family=DM+Sans:wght@400;500;600&display=swap');
 
 :root {
   /* Mid-tone oceanic palette */
@@ -20,10 +20,11 @@
   --coral:     #e8705a;
   --violet:    #7b8ef0;
 
-  --chart-1:   #38d9b4;
-  --chart-2:   #7b8ef0;
-  --chart-3:   #f0b429;
-  --chart-4:   #e8705a;
+  --chart-1:     #56B4E9;  /* Sky Blue (kegg) â€” Wong CB-safe */
+  --chart-2:     #CC79A7;  /* Reddish Purple (cog) â€” Wong, pink to CB */
+  --chart-3:     #E69F00;  /* Orange (enzyme) â€” Wong, yellow to CB */
+  --chart-4:     #009E73;  /* Bluish Green (taxonomy) â€” Wong, teal to CB */
+  --chart-group: #c8c8c8;  /* grouped line: neutral on dark bg */
 
   --sans:  'DM Sans', sans-serif;
   --mono:  'DM Mono', monospace;
@@ -90,6 +91,11 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .tag.amber { background: rgba(240,180,41,.1); border-color: rgba(240,180,41,.3); color: var(--amber); }
 .tag.coral { background: rgba(232,112,90,.1); border-color: rgba(232,112,90,.3); color: var(--coral); }
 .tag.violet{ background: rgba(123,142,240,.1); border-color: rgba(123,142,240,.3); color: var(--violet); }
+/* Source tags â€” always in sync with chart colors */
+.tag.chart-1 { color: var(--chart-1); background: color-mix(in srgb, var(--chart-1) 12%, transparent); border-color: color-mix(in srgb, var(--chart-1) 30%, transparent); }
+.tag.chart-2 { color: var(--chart-2); background: color-mix(in srgb, var(--chart-2) 12%, transparent); border-color: color-mix(in srgb, var(--chart-2) 30%, transparent); }
+.tag.chart-3 { color: var(--chart-3); background: color-mix(in srgb, var(--chart-3) 12%, transparent); border-color: color-mix(in srgb, var(--chart-3) 30%, transparent); }
+.tag.chart-4 { color: var(--chart-4); background: color-mix(in srgb, var(--chart-4) 12%, transparent); border-color: color-mix(in srgb, var(--chart-4) 30%, transparent); }
 
 /* Input / Select base */
 .field {
@@ -137,3 +143,5 @@ select.field {
   to   { opacity: 1; transform: translateY(0); }
 }
 .page-fade { animation: pageFade .25s ease; }
+
+

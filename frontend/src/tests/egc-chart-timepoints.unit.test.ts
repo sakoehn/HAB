@@ -1,10 +1,17 @@
 /**
  * egc-chart-timepoints.unit.test.ts
  * ===================================
- * Unit tests for EgcChart timepoint selector, date range filter,
- * and brush zoom logic.
+ * Unit tests for EgcChart timepoint selector and date range filter logic.
  *
  * Tests import directly from production source files.
+ *
+ * Note: this file previously also covered "brush zoom" and a hardcoded
+ * "chart dimensions" section, both of which tested a Recharts <Brush>
+ * slider mechanism that no longer exists — EgcChart.tsx now renders with
+ * Plotly, which handles zoom natively via its own date-axis drag-zoom and
+ * rangeslider (no app-level brush/zoom state). Those blocks were removed
+ * as dead-code tests; real zoom behavior is covered at the E2E level in
+ * App.e2e.spec.ts since it requires a real Plotly render to verify.
  *
  * Coverage
  * --------
@@ -24,22 +31,12 @@
  *   empty strings             — no filtering
  *   out-of-range              — returns empty
  *
- * Brush zoom (EgcChart):
- *   null brush             — full processedPoints
- *   brush slice            — correct window
- *   uniqueDayCount after zoom — reduced when zoomed to 1 day
- *   tick formatter context switch after zoom
- *
- * Chart dimensions:
- *   height is 320 (280 content + 24 brush + 16 margin)
- *   brush height is 24px
- *
  * Run: npx vitest run src/tests/egc-chart-timepoints.unit.test.ts
  */
 
 import { describe, it, expect } from 'vitest'
 
-import { isoDate, makeTickFormatter, computeDayBands } from '../utils/format'
+import { isoDate, computeDayBands } from '../utils/format'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers — mirrors of EgcChart internal logic
@@ -87,18 +84,6 @@ function applyDateRangeFilter(
     if (dateTo   && p.iso > dateTo)   return false
     return true
   })
-}
-
-function applyBrushFilter<T>(
-  data:       T[],
-  brushRange: { startIndex: number; endIndex: number } | null,
-): T[] {
-  if (!brushRange) return data
-  return data.slice(brushRange.startIndex, brushRange.endIndex + 1)
-}
-
-function uniqueDayCount(datetimes: string[]): number {
-  return new Set(datetimes.map(dt => dt.split(' ')[0])).size
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -417,76 +402,6 @@ describe('date range filter (applyDateRangeFilter)', () => {
     const result = applyDateRangeFilter(SAMPLE_POINTS, '2021-05-28', '2021-05-28')
     expect(result.every(p => p.iso === '2021-05-28')).toBe(true)
     expect(result.length).toBeGreaterThan(0)
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Brush zoom (EgcChart)
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('EgcChart — brush zoom', () => {
-  it('null brush returns all processedPoints', () => {
-    expect(applyBrushFilter(SAMPLE_POINTS, null)).toHaveLength(SAMPLE_POINTS.length)
-  })
-
-  it('brush [0, 4] returns 5 rows', () => {
-    const result = applyBrushFilter(SAMPLE_POINTS, { startIndex: 0, endIndex: 4 })
-    expect(result).toHaveLength(5)
-    expect(result[0].datetime).toBe('05/27/21 04:00')
-    expect(result[4].datetime).toBe('05/27/21 20:00')
-  })
-
-  it('brush to 1 day: uniqueDayCount = 1', () => {
-    const zoomed = applyBrushFilter(SAMPLE_POINTS, { startIndex: 0, endIndex: 4 })
-    expect(uniqueDayCount(zoomed.map(p => p.datetime))).toBe(1)
-  })
-
-  it('full data: uniqueDayCount = 4', () => {
-    expect(uniqueDayCount(SAMPLE_POINTS.map(p => p.datetime))).toBe(4)
-  })
-
-  it('brush to 1 day: tick formatter returns HH:MM', () => {
-    const zoomed = applyBrushFilter(SAMPLE_POINTS, { startIndex: 0, endIndex: 4 })
-    const dts    = zoomed.map(p => ({ datetime: p.datetime }))
-    const days   = uniqueDayCount(zoomed.map(p => p.datetime))
-    const fmt    = makeTickFormatter(dts, days)
-    expect(fmt('05/27/21 04:00')).toBe('04:00')
-    expect(fmt('05/27/21 08:00')).toBe('08:00')
-  })
-
-  it('full data: tick formatter returns MM/DD for first of day', () => {
-    const dts  = SAMPLE_POINTS.map(p => ({ datetime: p.datetime }))
-    const days = uniqueDayCount(SAMPLE_POINTS.map(p => p.datetime))
-    const fmt  = makeTickFormatter(dts, days)
-    expect(fmt('05/27/21 04:00')).toBe('05/27')
-    expect(fmt('05/27/21 08:00')).toBe('')
-  })
-
-  it('brush Traveller handles endIndex = last index', () => {
-    const last   = SAMPLE_POINTS.length - 1
-    const result = applyBrushFilter(SAMPLE_POINTS, { startIndex: 0, endIndex: last })
-    expect(result).toHaveLength(SAMPLE_POINTS.length)
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Chart dimensions
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('EgcChart dimensions', () => {
-  it('chart height is 320', () => {
-    const CHART_HEIGHT = 320
-    expect(CHART_HEIGHT).toBe(320)
-  })
-
-  it('chart height accommodates 24px brush bar', () => {
-    const CHART_HEIGHT = 320
-    const BRUSH_HEIGHT = 24
-    expect(BRUSH_HEIGHT).toBeLessThan(CHART_HEIGHT)
-  })
-
-  it('brush height is 24px', () => {
-    expect(24).toBe(24)
   })
 })
 

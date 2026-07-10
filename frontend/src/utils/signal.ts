@@ -80,10 +80,9 @@ export function applyZScore(
 // neighbours.  Closer points receive higher weight via the tricube kernel:
 //   w = (1 − |u|³)³   where u = distance / max_distance_in_window
 //
-// bandwidth: fraction of data used as neighbours per fit (0.05 – 0.75).
+// bandwidth: fraction of data used as neighbours per fit (0.01 – 0.05).
 //   Lower → tighter fit to local fluctuations.
 //   Higher → smoother global trend.
-//   Above ~0.75 approaches a global linear regression.
 //
 // Points with egc = null are excluded from the fit but retained in the
 // output array so the chart's x-axis alignment is preserved.

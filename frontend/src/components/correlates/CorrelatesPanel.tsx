@@ -16,7 +16,7 @@
 //   lag_hours < 0 → reference peaks earlier than candidate
 //   lag_hours = 0 → simultaneous
 
-import React, { useState, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type {
   ApiStatus, AnnotationSourceKey, CorrTab, CorrelateResult,
@@ -24,6 +24,7 @@ import type {
 import { SOURCE_TAG_CLS } from '../../constants'
 import { apiFetch } from '../../utils/api'
 import { ExternalLink } from '../ui/ExternalLinks'
+import { HelpTooltip } from '../ui/HelpTooltip'
 
 export function CorrelatesPanel({
   annotationId,
@@ -43,15 +44,14 @@ export function CorrelatesPanel({
 
   const defaultTarget = source === 'taxonomy' ? 'kegg' : 'taxonomy'
   const [targetSource, setTargetSource] = useState<string>(defaultTarget)
+  const requestSeqRef = useRef<Record<CorrTab, number>>({ cross: 0, within: 0 })
 
   const allSources: AnnotationSourceKey[] = ['kegg', 'cog', 'enzyme', 'taxonomy']
 
-  // Re-fetch cross data when target source changes while panel is open
+  // Re-fetch cross data when target source changes while panel is open.
   useEffect(() => {
-    if (open && tab === 'cross') {
-      setCrossData([])
-      setCrossStatus('idle')
-      fetchCorr('cross')
+    if (open && tab === 'cross' && (crossStatus === 'idle' || crossStatus === 'error')) {
+      void fetchCorr('cross')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetSource])
@@ -59,39 +59,53 @@ export function CorrelatesPanel({
   async function fetchCorr(mode: CorrTab) {
     const setStatus = mode === 'cross' ? setCrossStatus : setWithinStatus
     const setData   = mode === 'cross' ? setCrossData   : setWithinData
-    if ((mode === 'cross' ? crossStatus : withinStatus) === 'loading') return
+    const currentStatus = mode === 'cross' ? crossStatus : withinStatus
+    if (currentStatus === 'loading') return
 
+    const requestId = ++requestSeqRef.current[mode]
+    setData([])
     setStatus('loading')
+
     try {
       const base      = `/api/annotations/correlate?source=${source}&annotation_id=${encodeURIComponent(annotationId)}&mode=${mode}`
-      const modeParam = mode === 'cross' ? `&target_source=${targetSource}` : ''
+      const modeParam = mode === 'cross' ? `&target_source=${encodeURIComponent(targetSource)}` : ''
 
-      // Fast path — no p-values, results appear immediately
+      // Fast path — no p-values, results appear immediately.
       const fastUrl = `${base}${modeParam}&skip_pvalue=true&limit=15`
       const fast    = await apiFetch<{ data: CorrelateResult[] }>(fastUrl)
+      if (requestId !== requestSeqRef.current[mode]) return
       setData(fast.data ?? [])
       setStatus('ok')
 
-      // Background fetch — fills in p-values silently when ready
+      // Background fetch — fills in p-values silently when ready.
       const fullUrl = `${base}${modeParam}&skip_pvalue=false&limit=15`
-      apiFetch<{ data: CorrelateResult[] }>(fullUrl)
-        .then(full => setData(full.data ?? []))
-        .catch(() => {})
+      const full    = await apiFetch<{ data: CorrelateResult[] }>(fullUrl)
+      if (requestId !== requestSeqRef.current[mode]) return
+      setData(full.data ?? [])
     } catch {
-      setStatus('error')
+      if (requestId === requestSeqRef.current[mode]) {
+        setStatus('error')
+      }
     }
   }
 
   function handleOpen() {
     setOpen(o => {
-      if (!o && crossStatus === 'idle') fetchCorr('cross')
-      return !o
+      const nextOpen = !o
+      if (nextOpen && (crossStatus === 'idle' || crossStatus === 'error')) {
+        void fetchCorr('cross')
+      }
+      return nextOpen
     })
   }
 
   function handleTabChange(t: CorrTab) {
     setTab(t)
-    if (t === 'within' && withinStatus === 'idle') fetchCorr('within')
+    if (t === 'cross' && (crossStatus === 'idle' || crossStatus === 'error')) {
+      void fetchCorr('cross')
+    } else if (t === 'within' && (withinStatus === 'idle' || withinStatus === 'error')) {
+      void fetchCorr('within')
+    }
   }
 
   const data   = tab === 'cross' ? crossData   : withinData
@@ -138,6 +152,7 @@ export function CorrelatesPanel({
                 ? `Which ${targetSource} annotations co-vary with this ${source}?`
                 : `Which other ${source} functions co-occur unexpectedly?`}
             </div>
+            <HelpTooltip text="Cross-source compares against a different annotation type. Within-source compares against the same type, excluding siblings under the same parent." />
           </div>
 
           {/* ── Cross-source target selector ── */}
@@ -250,6 +265,7 @@ export function CorrelatesPanel({
                             title="Time offset. Positive = candidate peaks earlier."
                           >
                             {fmtLag(row.lag_hours)}
+                            <HelpTooltip text="Positive lag = the other annotation tends to peak earlier than this one. Negative = it peaks later." />
                           </span>
                           {row.p_value !== null ? (
                             <span
@@ -270,6 +286,9 @@ export function CorrelatesPanel({
                             }
                           >
                             {lowN ? '⚠ ' : ''}n={row.n_pairs}
+                            {lowN && (
+                              <HelpTooltip text="Fewer than 30 overlapping timepoints — treat this correlation as exploratory, not statistically reliable." />
+                            )}
                           </span>
                           <button
                             className="corr-add-btn"

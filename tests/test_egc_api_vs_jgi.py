@@ -6,6 +6,16 @@ Phase 3 — Live API validation (server must be running).
 Compares EGC values from the FastAPI backend against JGI ground-truth tables,
 and verifies norm_egc is present, in range, and mathematically consistent.
 
+ID format note
+--------------
+JGI's own ground-truth files label KEGG entries "KO:K00001". The backend's
+KEGG JSON (DataStructures/Kegg/<sample>.ko.json) and therefore the live API
+use the bare "K00001" form with no prefix (confirmed against the on-disk
+JSON — see test_annotation_trees.py for the authoritative format docs).
+This file always queries the API with the bare form and only re-attaches
+"KO:" when looking a value up in kegg_jgi_table (the JGI fixture, which
+legitimately keeps JGI's own prefixed format).
+
 Scope
 -----
 - Series endpoint (/series/annotations): single-copy COGs + first 10 KEGG
@@ -13,7 +23,7 @@ Scope
   because the per-sample endpoint returns ALL annotations including high-copy
   paralogs that legitimately diverge from JGI (scaffold-level vs per-gene
   coverage — see conftest.py).  Value correctness for specific annotations is
-  covered by test_egc_json_vs_jgi.py.
+  covered by test_annotation_trees.py.
 
 All tests skip automatically when the server is not reachable.
 
@@ -60,6 +70,11 @@ server_required = pytest.mark.skipif(
 
 
 # ── Response helpers ──────────────────────────────────────────────────────────
+
+def _bare_kegg(jgi_ann_id: str) -> str:
+    """Strip JGI's 'KO:' prefix — the backend JSON/API use bare K##### IDs."""
+    return jgi_ann_id[3:] if jgi_ann_id.startswith("KO:") else jgi_ann_id
+
 
 def _series(client: httpx.Client, source: str, ann_id: str) -> dict:
     r = client.get(
@@ -186,7 +201,7 @@ class TestKEGGApiSeriesVsJGI:
 
     def test_k00001_all_samples(self, api_client, kegg_jgi_table):
         jgi_row = kegg_jgi_table.get("KO:K00001", {})
-        backend = _series_egc(_series(api_client, "kegg", "KO:K00001"))
+        backend = _series_egc(_series(api_client, "kegg", _bare_kegg("KO:K00001")))
         assert backend
         mismatches = [
             _fmt("KO:K00001", sid, backend[sid], jgi)
@@ -207,7 +222,7 @@ class TestKEGGApiSeriesVsJGI:
         jgi_row = kegg_jgi_table.get(ann_id, {})
         if not jgi_row:
             pytest.skip(f"{ann_id} not in JGI table")
-        backend = _series_egc(_series(api_client, "kegg", ann_id))
+        backend = _series_egc(_series(api_client, "kegg", _bare_kegg(ann_id)))
         mismatches = [
             _fmt(ann_id, sid, backend[sid], jgi)
             for sid, jgi in jgi_row.items()
@@ -232,10 +247,10 @@ class TestNormEGCInSeriesResponse:
         assert not missing, f"norm_egc absent from {len(missing)} COG0001 rows"
 
     def test_kegg_series_has_norm_egc(self, api_client):
-        rows = _series_rows(_series(api_client, "kegg", "KO:K00001"))
+        rows = _series_rows(_series(api_client, "kegg", "K00001"))
         assert rows
         missing = [r.get("sample") for r in rows if "norm_egc" not in r]
-        assert not missing, f"norm_egc absent from {len(missing)} KO:K00001 rows"
+        assert not missing, f"norm_egc absent from {len(missing)} K00001 rows"
 
     def test_cog_series_norm_egc_in_range(self, api_client):
         rows = _series_rows(_series(api_client, "cog", "COG0001"))
@@ -247,13 +262,13 @@ class TestNormEGCInSeriesResponse:
         assert not bad, "COG0001 norm_egc out of range:\n" + "\n".join(bad)
 
     def test_kegg_series_norm_egc_in_range(self, api_client):
-        rows = _series_rows(_series(api_client, "kegg", "KO:K00001"))
+        rows = _series_rows(_series(api_client, "kegg", "K00001"))
         bad = [
             f"  {r.get('sample')}: {r['norm_egc']}"
             for r in rows if "norm_egc" in r
             and (float(r["norm_egc"]) <= 0 or float(r["norm_egc"]) > 1 + NORM_TOLERANCE)
         ]
-        assert not bad, "KO:K00001 norm_egc out of range:\n" + "\n".join(bad)
+        assert not bad, "K00001 norm_egc out of range:\n" + "\n".join(bad)
 
 
 # ── Per-sample endpoint: structure only ───────────────────────────────────────

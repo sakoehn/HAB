@@ -1,7 +1,7 @@
-/* ── Google Fonts ─────────────────────────────────────────────────────────── */
+﻿/* â”€â”€ Google Fonts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 @import url('https://fonts.googleapis.com/css2?family=Literata:ital,wght@0,400;0,600;0,700;1,400;1,600&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
-/* ── CSS Variables — Dark (default) ─────────────────────────────────────── */
+/* â”€â”€ CSS Variables â€” Dark (default) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 :root,
 [data-theme="dark"] {
   --bg:        #0c0f18;
@@ -22,10 +22,11 @@
   --amber:     #f5bc30;
   --coral:     #f07060;
 
-  --chart-1:   #3dd9b8;
-  --chart-2:   #8899f5;
-  --chart-3:   #f5bc30;
-  --chart-4:   #f07060;
+  --chart-1:     #56B4E9;  /* Sky Blue (kegg) â€” Wong CB-safe */
+  --chart-2:     #CC79A7;  /* Reddish Purple (cog) â€” pink to CB */
+  --chart-3:     #E69F00;  /* Orange (enzyme) â€” yellow to CB */
+  --chart-4:     #009E73;  /* Bluish Green (taxonomy) â€” teal to CB */
+  --chart-group: #c8c8c8;  /* grouped line: neutral on dark bg */
 
   --mono:  'IBM Plex Mono', 'Fira Code', monospace;
   --sans:  'IBM Plex Sans', system-ui, sans-serif;
@@ -43,7 +44,7 @@
   --tide-stroke:         var(--teal);
 }
 
-/* ── Light theme ─────────────────────────────────────────────────────────── */
+/* â”€â”€ Light theme â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 [data-theme="light"] {
   --bg:        #f0f3fa;
   --surface:   #ffffff;
@@ -63,10 +64,11 @@
   --amber:     #b06c10;
   --coral:     #c03820;
 
-  --chart-1:   #0a9e7c;
-  --chart-2:   #4a5ccc;
-  --chart-3:   #b06c10;
-  --chart-4:   #c03820;
+  --chart-1:     #0072B2;  /* Blue (kegg, darker for light-bg contrast) */
+  --chart-2:     #B5507A;  /* Reddish Purple (cog, slightly deeper for light bg) */
+  --chart-3:     #956A00;  /* Dark amber (enzyme — #E69F00 too light on white) */
+  --chart-4:     #007A57;  /* Bluish Green (taxonomy, slightly deeper for light bg) */
+  --chart-group: #222222;  /* grouped line: near-black on light bg */
 
   --dot-color: rgba(0,0,0,.025);
 
@@ -77,7 +79,7 @@
   --tide-stroke:         var(--teal);
 }
 
-/* ── Reset & Base ─────────────────────────────────────────────────────────── */
+/* â”€â”€ Reset & Base â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body, #root {
@@ -122,7 +124,7 @@ h3 { font: 600 14px var(--sans); color: var(--text-h); }
   to   { opacity: 1; }
 }
 
-/* ── Tags ─────────────────────────────────────────────────────────────────── */
+/* â”€â”€ Tags â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .tag {
   display: inline-flex; align-items: center;
   padding: 2px 8px; border-radius: 3px;
@@ -134,8 +136,13 @@ h3 { font: 600 14px var(--sans); color: var(--text-h); }
 .tag.violet { background: rgba(136,153,245,.1); color: var(--violet); border-color: rgba(136,153,245,.22); }
 .tag.amber  { background: rgba(245,188,48,.1); color: var(--amber); border-color: rgba(245,188,48,.22); }
 .tag.coral  { background: rgba(240,112,96,.1); color: var(--coral); border-color: rgba(240,112,96,.22); }
+/* Source tags â€” always in sync with chart colors, adapts to dark/light theme */
+.tag.chart-1 { color: var(--chart-1); background: color-mix(in srgb, var(--chart-1) 12%, transparent); border-color: color-mix(in srgb, var(--chart-1) 30%, transparent); }
+.tag.chart-2 { color: var(--chart-2); background: color-mix(in srgb, var(--chart-2) 12%, transparent); border-color: color-mix(in srgb, var(--chart-2) 30%, transparent); }
+.tag.chart-3 { color: var(--chart-3); background: color-mix(in srgb, var(--chart-3) 12%, transparent); border-color: color-mix(in srgb, var(--chart-3) 30%, transparent); }
+.tag.chart-4 { color: var(--chart-4); background: color-mix(in srgb, var(--chart-4) 12%, transparent); border-color: color-mix(in srgb, var(--chart-4) 30%, transparent); }
 
-/* ── Buttons ──────────────────────────────────────────────────────────────── */
+/* â”€â”€ Buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border-l);
@@ -154,7 +161,7 @@ h3 { font: 600 14px var(--sans); color: var(--text-h); }
 .btn.ghost:hover { color: var(--text-h); background: var(--surface2); }
 .btn.sm { padding: 5px 10px; font-size: 11px; border-radius: 5px; }
 
-/* ── Form fields ──────────────────────────────────────────────────────────── */
+/* â”€â”€ Form fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .field {
   padding: 8px 13px; border-radius: 6px;
   border: 1px solid var(--border-l);
@@ -168,7 +175,7 @@ h3 { font: 600 14px var(--sans); color: var(--text-h); }
 }
 select.field { cursor: pointer; }
 
-/* ── Topbar — frosted glass ───────────────────────────────────────────────── */
+/* â”€â”€ Topbar â€” frosted glass â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .topbar {
   grid-column: 1 / -1;
   grid-row: 1;
@@ -209,7 +216,7 @@ select.field { cursor: pointer; }
 .api-status.loading .dot { background: var(--amber); animation: blink 1s ease-in-out infinite; }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-/* ── Theme Toggle ─────────────────────────────────────────────────────────── */
+/* â”€â”€ Theme Toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .theme-toggle {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 12px; border-radius: 20px;
@@ -220,7 +227,7 @@ select.field { cursor: pointer; }
 .theme-toggle:hover { color: var(--text-h); border-color: var(--teal); }
 [data-theme="light"] .theme-toggle { background: rgba(0,0,0,.04); }
 
-/* ── Refresh Button ───────────────────────────────────────────────────────── */
+/* â”€â”€ Refresh Button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .refresh-btn {
   display: flex; align-items: center; gap: 5px;
   padding: 5px 11px; border-radius: 20px;
@@ -233,7 +240,7 @@ select.field { cursor: pointer; }
 .refresh-btn:hover svg { transform: rotate(180deg); }
 [data-theme="light"] .refresh-btn { background: rgba(0,0,0,.04); }
 
-/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+/* â”€â”€ Sidebar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .sidebar {
   grid-column: 1;
   grid-row: 2;
@@ -283,7 +290,7 @@ select.field { cursor: pointer; }
   font: 400 10px var(--mono); color: var(--text-dim); line-height: 1.8; letter-spacing: .03em;
 }
 
-/* ── Main content ─────────────────────────────────────────────────────────── */
+/* â”€â”€ Main content â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .main {
   display: flex;
   flex-direction: column;
@@ -295,7 +302,7 @@ select.field { cursor: pointer; }
   grid-row: 2;
 }
 
-/* ── Page header ──────────────────────────────────────────────────────────── */
+/* â”€â”€ Page header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .page-header {
   padding: 30px 36px 24px;
   border-bottom: 1px solid var(--border);
@@ -309,26 +316,12 @@ select.field { cursor: pointer; }
 .page-header-actions { display: flex; gap: 8px; align-items: center; }
 .page-body { padding: 28px 36px; display: flex; flex-direction: column; gap: 24px; }
 
-/* ── Search bar ───────────────────────────────────────────────────────────── */
+/* â”€â”€ Search bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .search-bar { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
 .search-bar .field { flex: 1; min-width: 240px; }
 
-.search-sources { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.source-toggle {
-  display: flex; align-items: center; gap: 5px; cursor: pointer;
-  padding: 6px 11px; border-radius: 4px; border: 1px solid var(--border);
-  background: var(--surface3); color: var(--text-dim);
-  font: 500 11px var(--mono); transition: all .15s;
-  user-select: none; letter-spacing: .04em;
-}
-.source-toggle:hover { border-color: var(--border-l); color: var(--text-h); }
-.source-toggle.active {
-  border-color: rgba(61,217,184,.35);
-  background: var(--teal-dim); color: var(--teal);
-}
-.source-toggle input { display: none; }
 
-/* ── Results table ────────────────────────────────────────────────────────── */
+/* â”€â”€ Results table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .results-meta {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; flex-wrap: wrap;
@@ -370,7 +363,7 @@ select.field { cursor: pointer; }
   border-left: 2px solid var(--teal);
 }
 
-/* ── EGC Chart ────────────────────────────────────────────────────────────── */
+/* â”€â”€ EGC Chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .chart-card {
   border: 1px solid var(--border); border-radius: 8px;
   padding: 18px 20px;
@@ -393,7 +386,7 @@ select.field { cursor: pointer; }
 }
 .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
-/* ── Chart Controls ───────────────────────────────────────────────────────── */
+/* â”€â”€ Chart Controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .chart-controls {
   display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
   padding: 9px 0 11px;
@@ -438,7 +431,7 @@ select.field { cursor: pointer; }
   background: var(--teal); cursor: pointer; border: none;
 }
 
-/* ── Descriptive Statistics Panel ────────────────────────────────────────── */
+/* â”€â”€ Descriptive Statistics Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .stats-panel {
   background: var(--surface3); border: 1px solid var(--border);
   border-radius: 6px; padding: 11px 14px; margin-bottom: 14px;
@@ -459,7 +452,7 @@ select.field { cursor: pointer; }
 }
 .stat-cell-value { font: 600 12px var(--mono); color: var(--teal); }
 
-/* ── Mappings section ─────────────────────────────────────────────────────── */
+/* â”€â”€ Mappings section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mappings-toggle {
   display: flex; align-items: center; gap: 10px; cursor: pointer;
   padding: 12px 0; border: none; background: none;
@@ -502,7 +495,7 @@ select.field { cursor: pointer; }
 .mappings-table tr:last-child td { border-bottom: none; }
 .mappings-table tr:hover td { background: rgba(61,217,184,.04); }
 
-/* ── Compare chips ────────────────────────────────────────────────────────── */
+/* â”€â”€ Compare chips â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .compare-chip {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 11px; border-radius: 6px;
@@ -517,7 +510,7 @@ select.field { cursor: pointer; }
 }
 .compare-chip .chip-remove:hover { opacity: 1; }
 
-/* ── About page ───────────────────────────────────────────────────────────── */
+/* â”€â”€ About page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .about-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px;
 }
@@ -554,7 +547,7 @@ select.field { cursor: pointer; }
 .api-ref-path { font: 400 12px var(--mono); color: var(--text-h); flex: 1; word-break: break-all; }
 .api-ref-desc { font: 13px var(--sans); color: var(--text); margin-top: 3px; }
 
-/* ── State messages ───────────────────────────────────────────────────────── */
+/* â”€â”€ State messages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .state-box {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 10px; padding: 48px 24px;
@@ -564,7 +557,7 @@ select.field { cursor: pointer; }
 .state-box.error { color: var(--coral); }
 .state-box.error .state-icon { opacity: .7; }
 
-/* ── Tooltip ──────────────────────────────────────────────────────────────── */
+/* â”€â”€ Tooltip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .chart-tooltip {
   background: var(--surface2); border: 1px solid var(--border-l);
   border-radius: 7px; padding: 10px 13px;
@@ -577,7 +570,7 @@ select.field { cursor: pointer; }
 .chart-tooltip .tt-label { color: var(--text-dim); }
 .chart-tooltip .tt-val   { color: var(--text-h); margin-left: auto; padding-left: 14px; }
 
-/* ── Copy ID button ───────────────────────────────────────────────────────── */
+/* â”€â”€ Copy ID button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .copy-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 19px; height: 19px; border-radius: 4px;
@@ -587,18 +580,18 @@ select.field { cursor: pointer; }
 }
 .copy-btn:hover { border-color: var(--teal); color: var(--teal); background: var(--teal-dim); }
 
-/* ── Date range picker ────────────────────────────────────────────────────── */
+/* â”€â”€ Date range picker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .date-range { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .date-range-label { font: 400 11px var(--mono); color: var(--text-dim); white-space: nowrap; letter-spacing: .04em; }
 .date-field { width: 135px; padding: 6px 10px; font-size: 12px; }
 
-/* ── Pagination ───────────────────────────────────────────────────────────── */
+/* â”€â”€ Pagination â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .pagination {
   display: flex; align-items: center; justify-content: center; gap: 12px; padding: 12px 0 4px;
 }
 .pagination-info { font: 400 12px var(--mono); color: var(--text-dim); }
 
-/* ── Sidebar collapse ─────────────────────────────────────────────────────── */
+/* â”€â”€ Sidebar collapse â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .layout-sidebar-open, .layout-sidebar-closed { display: contents; }
 #root:has(.sidebar-collapsed) { grid-template-columns: 48px 1fr; }
 .sidebar-collapsed { padding: 12px 0; align-items: center; }
@@ -613,7 +606,7 @@ select.field { cursor: pointer; }
 }
 .sidebar-toggle-btn:hover { color: var(--text-h); background: rgba(255,255,255,.05); }
 
-/* ── Multi-term results columns ───────────────────────────────────────────── */
+/* â”€â”€ Multi-term results columns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 /* Each term gets its own column; columns scroll independently if overflow */
 .results-columns {
   display: grid;
@@ -626,7 +619,7 @@ select.field { cursor: pointer; }
   min-width: 0; /* prevent grid blowout */
 }
 
-/* ── Explore section cards — 3 tabs ──────────────────────────────────────── */
+/* â”€â”€ Explore section cards â€” 3 tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .explore-section-cards { display: flex; gap: 12px; flex-wrap: wrap; }
 
 .explore-card {
@@ -650,22 +643,22 @@ select.field { cursor: pointer; }
   background-size: 22px 22px;
 }
 
-/* ── Parent groups ────────────────────────────────────────────────────────── */
+/* â”€â”€ Parent groups â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .parent-group {
   border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin-bottom: 8px;
 }
 
-/* ── Light mode date input ────────────────────────────────────────────────── */
+/* â”€â”€ Light mode date input â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 [data-theme="light"] input[type="date"] { color-scheme: light; }
 [data-theme="dark"]  input[type="date"] { color-scheme: dark; }
 
-/* ── Subtitle helper ──────────────────────────────────────────────────────── */
+/* â”€â”€ Subtitle helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .subtitle { font: 400 11px var(--mono); color: var(--text-dim); letter-spacing: .04em; }
-/* ═══════════════════════════════════════════════════════════════════════════
-   Analyze page — two-column workspace
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   Analyze page â€” two-column workspace
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
-/* Page root — flex column, grows with content, scrolls via .main */
+/* Page root â€” flex column, grows with content, scrolls via .main */
 .al-page {
   display: flex;
   flex-direction: column;
@@ -673,9 +666,9 @@ select.field { cursor: pointer; }
   min-height: 0;
 }
 
-/* Search section — sits below the page header, above the workspace */
+/* Search section â€” sits below the page header, above the workspace */
 .al-topbar {
-  padding: 20px 36px 16px;
+  padding: 12px 20px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex-shrink: 0;
@@ -685,11 +678,10 @@ select.field { cursor: pointer; }
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  margin-bottom: 10px;
 }
 .al-search-area .field { flex: 1; }
 
-/* Two-column workspace — align-items:flex-start so each col is its natural height */
+/* Two-column workspace â€” align-items:flex-start so each col is its natural height */
 .al-workspace {
   display: grid;
   grid-template-columns: 320px 1fr;
@@ -697,7 +689,7 @@ select.field { cursor: pointer; }
   flex: 1;
 }
 
-/* ── Left column — sticky so it stays visible while right col grows ── */
+/* â”€â”€ Left column â€” sticky so it stays visible while right col grows â”€â”€ */
 .al-left {
   display: flex;
   flex-direction: column;
@@ -815,7 +807,7 @@ select.field { cursor: pointer; }
 .al-row-checked { background: var(--teal-dim) !important; }
 .al-row-in-right { opacity: .7; }
 
-/* Custom checkbox button — visually obvious, shows tick when checked */
+/* Custom checkbox button â€” visually obvious, shows tick when checked */
 .al-row-checkbox {
   flex-shrink: 0;
   width: 18px;
@@ -925,7 +917,7 @@ select.field { cursor: pointer; }
   margin-left: 4px;
 }
 
-/* Disabled state for btn sm variants — clear but not invisible */
+/* Disabled state for btn sm variants â€” clear but not invisible */
 .btn.sm:disabled {
   opacity: .35;
   cursor: not-allowed;
@@ -945,14 +937,14 @@ select.field { cursor: pointer; }
   z-index: 9;
 }
 
-/* ── Right column — grows freely, NO overflow trapping ── */
+/* â”€â”€ Right column â€” grows freely, NO overflow trapping â”€â”€ */
 .al-right {
   display: flex;
   flex-direction: column;
   background: var(--bg);
 }
 
-/* Cards area — grows with content, bottom padding clears fixed drawer */
+/* Cards area â€” grows with content, bottom padding clears fixed drawer */
 .al-right-cards {
   padding: 20px 24px 280px; /* 280px bottom clears the fixed drawer */
   display: flex;
@@ -1022,7 +1014,7 @@ select.field { cursor: pointer; }
 }
 .al-card-close:hover { color: var(--coral); border-color: var(--coral); background: rgba(240,112,96,.1); }
 
-/* ── Compare drawer — FIXED to viewport bottom, always visible ── */
+/* â”€â”€ Compare drawer â€” FIXED to viewport bottom, always visible â”€â”€ */
 .al-drawer {
   position: fixed;
   bottom: 0;
@@ -1045,7 +1037,7 @@ select.field { cursor: pointer; }
   left: calc(48px + 320px);
 }
 
-/* Drag resize grip — sits at the very top of the drawer, full width */
+/* Drag resize grip â€” sits at the very top of the drawer, full width */
 .al-drawer-resize-grip {
   position: absolute;
   top: 0;
@@ -1062,7 +1054,7 @@ select.field { cursor: pointer; }
   background: rgba(61,217,184,.25);
 }
 
-/* al-drawer-handle removed — replaced by al-drawer-resize-grip */
+/* al-drawer-handle removed â€” replaced by al-drawer-resize-grip */
 
 .al-drawer-header {
   display: flex;
@@ -1120,7 +1112,7 @@ select.field { cursor: pointer; }
   overflow-y: auto;
   min-height: 0;
 }
-/* ── Correlates Panel ─────────────────────────────────────────────────────── */
+/* â”€â”€ Correlates Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .corr-panel {
   margin-top: 10px;
   border: 1px solid var(--border-l);
@@ -1248,7 +1240,7 @@ select.field { cursor: pointer; }
   border-color: rgba(61,217,184,.4);
 }
 
-/* ── External database links ──────────────────────────────────────────────── */
+/* â”€â”€ External database links â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .ext-link {
   display: inline-flex;
   align-items: center;
@@ -1271,7 +1263,7 @@ select.field { cursor: pointer; }
 }
 .ext-link + .ext-link { margin-left: 3px; }
 
-/* ── Correlates Panel (redesigned) ───────────────────────────────────────── */
+/* â”€â”€ Correlates Panel (redesigned) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 /* Trigger button */
 .corr-trigger {
@@ -1391,7 +1383,7 @@ select.field { cursor: pointer; }
 .corr-row:hover { background: rgba(61,217,184,.03); }
 .corr-row-dim { opacity: .7; }
 
-/* r-strength bar — sits behind row content */
+/* r-strength bar â€” sits behind row content */
 .corr-r-bar {
   position: absolute;
   left: 0; top: 0; bottom: 0;
@@ -1498,7 +1490,41 @@ select.field { cursor: pointer; }
   border-color: rgba(61,217,184,.4);
 }
 
-/* ── Result info strip ────────────────────────────────────────────────────── */
+/* ── Source filter pills ─────────────────────────────────────────────────── */
+.al-source-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface3);
+}
+.al-source-pill {
+  cursor: pointer;
+  font: 600 10px var(--mono);
+  letter-spacing: .05em;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border-l);
+  background: var(--surface2);
+  color: var(--text-dim);
+  transition: all .12s;
+  text-transform: uppercase;
+}
+.al-source-pill:hover { color: var(--text-h); border-color: var(--teal); }
+.al-source-pill.al-source-pill-active {
+  border-color: var(--teal);
+  background: var(--teal-dim);
+  color: var(--teal);
+}
+.al-source-pill.tag.al-source-pill-active {
+  opacity: 1;
+  filter: brightness(1.15);
+  box-shadow: 0 0 0 1px currentColor;
+}
+
+/* â”€â”€ Result info strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .al-result-info {
   display: flex;
   align-items: baseline;
@@ -1525,7 +1551,7 @@ select.field { cursor: pointer; }
   text-align: right;
 }
 
-/* ── Card Info Drawer (Option 1) ──────────────────────────────────────────── */
+/* â”€â”€ Card Info Drawer (Option 1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .card-info-btn {
   width: 22px; height: 22px;
   border-radius: 50%;
@@ -1575,7 +1601,49 @@ select.field { cursor: pointer; }
   display: flex; flex-wrap: wrap; gap: 4px;
 }
 
-/* ── Annotation Lookup Panel (Option 5 in Explore) ────────────────────────── */
+/* ── HelpTooltip — inline "?" click-to-reveal badge ─────────────────────── */
+/* The panel itself is portaled to document.body and positioned via inline
+   style (position: fixed, top/left computed in HelpTooltip.tsx) so it can't
+   be clipped by an ancestor's overflow — see the component for why. */
+.help-tooltip {
+  display: inline-flex;
+  margin-left: 4px;
+}
+.help-tooltip-btn {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border-l);
+  background: var(--surface2);
+  color: var(--text-dim);
+  font: 600 10px var(--sans);
+  line-height: 1;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+  flex-shrink: 0;
+  padding: 0;
+}
+.help-tooltip-btn:hover,
+.help-tooltip-btn-active {
+  color: var(--teal);
+  border-color: rgba(61,217,184,.4);
+  background: var(--teal-dim);
+}
+.help-tooltip-panel {
+  z-index: 20;
+  width: max-content;
+  max-width: 280px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  box-shadow: 0 4px 14px rgba(0,0,0,.25);
+}
+
+/* â”€â”€ Annotation Lookup Panel (Option 5 in Explore) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .lookup-result {
   border: 1px solid var(--border-l);
   border-radius: 8px;
@@ -1656,7 +1724,7 @@ select.field { cursor: pointer; }
   padding: 4px 10px;
 }
 
-/* ── Scaffold modal overlay ───────────────────────────────────────────────── */
+/* â”€â”€ Scaffold modal overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .scaffold-modal-overlay {
   position: fixed;
   inset: 0;
@@ -1834,7 +1902,7 @@ select.field { cursor: pointer; }
 }
 .scaffold-summary-card-row:last-child { border-bottom: none; }
  
-/* ── Basic / Advanced toggle ─────────────────────────────────────────────── */
+/* â”€â”€ Basic / Advanced toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mode-toggle {
   display: flex;
   align-items: center;
@@ -1863,7 +1931,7 @@ select.field { cursor: pointer; }
   font-weight: 600;
 }
  
-/* ── First-run hint ───────────────────────────────────────────────────────── */
+/* â”€â”€ First-run hint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .first-run-hint {
   max-width: 560px;
   margin: 40px auto 0;
@@ -1911,7 +1979,7 @@ select.field { cursor: pointer; }
 }
 .frh-mode-hint strong { font-weight: 600; }
 
-/* ── Day/Night + Tide chart overlay legend ───────────────────────────────── */
+/* â”€â”€ Day/Night + Tide chart overlay legend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .chart-overlay-legend {
   display: flex;
   gap: 16px;
@@ -1939,3 +2007,109 @@ select.field { cursor: pointer; }
   background: var(--teal);
   opacity: 0.5;
 }
+
+/* ── Taxonomy Explorer tree ──────────────────────────────────────────────── */
+
+.tax-tree-status {
+  padding:   12px;
+  color:     var(--text-dim);
+  font:      12px var(--sans);
+  font-style: italic;
+}
+.tax-tree-error {
+  color: #e05a5a;
+}
+
+.tax-node-row {
+  display:     flex;
+  align-items: center;
+  gap:         6px;
+  padding:     3px 4px;
+  border-radius: 4px;
+}
+.tax-node-row:hover {
+  background: var(--surface2);
+}
+.tax-node-excluded .tax-node-name {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+
+.tax-node-chevron {
+  flex-shrink: 0;
+  width:      16px;
+  height:     16px;
+  border:     none;
+  background: none;
+  color:      var(--text-dim);
+  cursor:     pointer;
+  font-size:  11px;
+  display:    flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.tax-node-chevron:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.tax-node-checkbox {
+  flex-shrink: 0;
+  width:      16px;
+  height:     16px;
+  border-radius: 4px;
+  border:     1.5px solid var(--border-l);
+  background: var(--surface2);
+  cursor:     pointer;
+  display:    flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all .12s;
+}
+.tax-node-checkbox:hover {
+  border-color: rgba(224,90,90,.5);
+  background:   rgba(224,90,90,.07);
+}
+.tax-node-checkbox-checked {
+  background:   #e05a5a;
+  border-color: #e05a5a;
+}
+.tax-node-checkbox-tick {
+  font-size:   10px;
+  line-height: 1;
+  color:       #fff;
+  font-weight: 700;
+}
+
+.tax-node-name {
+  font:   12px var(--mono);
+}
+.tax-node-select {
+  font:       12px var(--mono);
+  color:      var(--teal);
+  background: none;
+  border:     none;
+  cursor:     pointer;
+  padding:    0;
+  text-align: left;
+}
+.tax-node-select:hover {
+  text-decoration: underline;
+}
+.tax-node-rank {
+  font:      10px var(--sans);
+  color:     var(--text-dim);
+  margin-left: auto;
+  padding-left: 8px;
+}
+
+.tax-node-children {
+  margin-left: 20px;
+  border-left: 1px solid var(--border-l);
+  padding-left: 6px;
+}
+
+
+

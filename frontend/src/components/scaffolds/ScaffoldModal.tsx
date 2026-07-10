@@ -13,11 +13,19 @@
 //   - "→ Explore" button to open ScaffoldExplorePanel with this annotation
 //   - Escape key closes the modal
 
+// @ts-expect-error plotly.js-dist-min ships no .d.ts; types from @types/plotly.js
+import PlotlyBase from 'plotly.js-dist-min'
+import createPlotlyComponent from 'react-plotly.js/factory'
 import React, { useState, useEffect, useMemo } from 'react'
-import {
-  ComposedChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer,
-} from 'recharts'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Plot = createPlotlyComponent(PlotlyBase as any)
+
+function resolveCssVar(value: string, fallback: string): string {
+  if (typeof document === 'undefined' || !value.startsWith('var(')) return value
+  const name = value.slice(4, -1).trim()
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
 
 import type {
   ApiStatus, ScaffoldSummaryRow, ScaffoldDetailRow, ScaffoldSortCol, SortDir,
@@ -26,6 +34,7 @@ import { SOURCE_TAG_CLS } from '../../constants'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
 import { minMeanMax } from '../../utils/stats'
+import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 
 export function ScaffoldModal({
   annotationId,
@@ -48,14 +57,16 @@ export function ScaffoldModal({
   const [detailShowAll, setDetailShowAll] = useState(false)
   const [showChart, setShowChart]         = useState(true)
   const [chartMetric, setChartMetric]     = useState<'scaffold_count' | 'gene_count'>('scaffold_count')
+  const [retryTick, setRetryTick]         = useState(0)
 
   useEffect(() => {
+    setStatus('loading')
     apiFetch<{ data: ScaffoldSummaryRow[]; total: number }>(
       `/api/annotations/scaffolds/summary?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`,
     )
       .then(r => { setSummary(r.data ?? []); setStatus('ok') })
       .catch(() => setStatus('error'))
-  }, [annotationId, source])
+  }, [annotationId, source, retryTick])
 
   async function loadDetail(sample: string) {
     if (expandedSample === sample) { setExpanded(null); return }
@@ -155,10 +166,10 @@ export function ScaffoldModal({
       className="scaffold-modal-overlay"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="scaffold-modal">
+      <div className="scaffold-modal" data-testid="scaffold-modal" role="dialog">
 
         {/* ── Modal header ── */}
-        <div className="scaffold-modal-header">
+        <div className="scaffold-modal-header" data-testid="modal-header">
           <div style={{
             display:    'flex',
             alignItems: 'center',
@@ -166,10 +177,13 @@ export function ScaffoldModal({
             minWidth:   0,
             flex:       1,
           }}>
-            <span style={{ font: '600 14px var(--mono)', color: 'var(--teal)' }}>
+            <span
+              data-testid="annotation-id"
+              style={{ font: '600 14px var(--mono)', color: 'var(--teal)' }}
+            >
               {annotationId}
             </span>
-            <span className={`tag ${SOURCE_TAG_CLS[source] ?? ''}`}>{source}</span>
+            <span data-testid="source-tag" className={`tag ${SOURCE_TAG_CLS[source] ?? ''}`}>{source}</span>
             <span style={{ font: '12px var(--mono)', color: 'var(--text-dim)' }}>
               · Scaffold Summary
             </span>
@@ -181,10 +195,11 @@ export function ScaffoldModal({
             alignItems: 'center',
           }}>
             {status === 'ok' && summary.length > 0 && (
-              <button className="btn sm" onClick={handleExportCsv}>↓ CSV</button>
+              <button data-testid="csv-btn" className="btn sm" onClick={handleExportCsv}>↓ CSV</button>
             )}
             {onGoExplore && status === 'ok' && summary.length > 0 && (
               <button
+                data-testid="explore-btn"
                 className="btn sm primary"
                 onClick={() => { onGoExplore(annotationId, source); onClose() }}
                 title="Open Scaffold Information tab in Explore with this term pre-loaded"
@@ -192,25 +207,31 @@ export function ScaffoldModal({
                 → Explore
               </button>
             )}
-            <button className="btn sm ghost" onClick={onClose}>✕ Close</button>
+            <button data-testid="close-btn" className="btn sm ghost" onClick={onClose}>✕ Close</button>
           </div>
         </div>
 
         {/* ── Modal body ── */}
         <div className="scaffold-modal-body">
           {status === 'loading' && (
-            <div className="state-box" style={{ padding: 32 }}>
+            <div className="state-box" data-testid="loading-state" style={{ padding: 32 }}>
               <span>Loading scaffold summary…</span>
             </div>
           )}
           {status === 'error' && (
-            <div className="state-box" style={{ padding: 32 }}>
-              <div className="state-icon">∅</div>
-              <span>No scaffolds found for {annotationId}.</span>
+            <div className="state-box error" data-testid="error-state" style={{ padding: 32 }}>
+              <div className="state-icon">⚠</div>
+              <span>
+                Failed to load scaffolds for {annotationId} — the request may
+                have timed out.
+              </span>
+              <button data-testid="retry-btn" className="btn sm" onClick={() => setRetryTick(t => t + 1)}>
+                Retry
+              </button>
             </div>
           )}
           {status === 'ok' && summary.length === 0 && (
-            <div className="state-box" style={{ padding: 32 }}>
+            <div className="state-box" data-testid="empty-state" style={{ padding: 32 }}>
               <div className="state-icon">∅</div>
               <span>No scaffolds found for {annotationId}.</span>
             </div>
@@ -219,11 +240,11 @@ export function ScaffoldModal({
           {status === 'ok' && summary.length > 0 && (
             <>
               {/* ── Stat strip ── */}
-              <div className="scaffold-stat-grid">
+              <div className="scaffold-stat-grid" data-testid="stat-strip">
                 <div className="scaffold-stat-row">
                   <span className="scaffold-stat-row-label">Scaffolds</span>
                   <div className="scaffold-stat">
-                    <span className="scaffold-stat-val">{summary.length}</span>
+                    <span className="scaffold-stat-val" data-testid="stat-samples">{summary.length}</span>
                     <span className="scaffold-stat-label">samples</span>
                   </div>
                   <div className="scaffold-stat">
@@ -242,7 +263,7 @@ export function ScaffoldModal({
                     <span className="scaffold-stat-label">mean</span>
                   </div>
                   <div className="scaffold-stat">
-                    <span className="scaffold-stat-val">{scaffoldStats?.max ?? '—'}</span>
+                    <span className="scaffold-stat-val" data-testid="stat-peak-scaffolds">{scaffoldStats?.max ?? '—'}</span>
                     <span
                       className="scaffold-stat-label"
                       title={scaffoldStats
@@ -275,7 +296,7 @@ export function ScaffoldModal({
                     <span className="scaffold-stat-label">mean</span>
                   </div>
                   <div className="scaffold-stat">
-                    <span className="scaffold-stat-val">{geneStats?.max ?? '—'}</span>
+                    <span className="scaffold-stat-val" data-testid="stat-peak-genes">{geneStats?.max ?? '—'}</span>
                     <span
                       className="scaffold-stat-label"
                       title={geneStats
@@ -289,11 +310,12 @@ export function ScaffoldModal({
               </div>
 
               {/* ── Chart zone ── */}
-              <div className="scaffold-chart-zone">
+              <div className="scaffold-chart-zone" data-testid="chart-zone">
                 <div className="scaffold-chart-header">
                   {/* Left group: show/hide toggle */}
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                     <button
+                      data-testid="chart-toggle"
                       className={`toggle-pill sm ${showChart ? 'on' : ''}`}
                       onClick={() => setShowChart(s => !s)}
                     >
@@ -303,7 +325,7 @@ export function ScaffoldModal({
 
                   {/* Right group: metric selector | chart type label */}
                   {showChart && (
-                    <div style={{
+                    <div data-testid="chart-content" style={{
                       display:    'flex',
                       gap:        6,
                       alignItems: 'center',
@@ -316,6 +338,7 @@ export function ScaffoldModal({
                         Show:
                       </span>
                       <button
+                        data-testid="metric-scaffolds"
                         className={`toggle-pill sm ${chartMetric === 'scaffold_count' ? 'on' : ''}`}
                         onClick={() => setChartMetric('scaffold_count')}
                         title="Plot scaffold count over time"
@@ -323,6 +346,7 @@ export function ScaffoldModal({
                         Scaffolds
                       </button>
                       <button
+                        data-testid="metric-genes"
                         className={`toggle-pill sm ${chartMetric === 'gene_count' ? 'on' : ''}`}
                         onClick={() => setChartMetric('gene_count')}
                         title="Plot gene count over time"
@@ -340,121 +364,74 @@ export function ScaffoldModal({
                       </span>
 
                       {/* Chart type — always line for now, kept as label for clarity */}
-                      <span style={{
-                        font:  '400 10px var(--mono)',
-                        color: 'var(--text-dim)',
-                      }}>
-                        Type: Line
+                      <span
+                        data-testid="chart-metric-label"
+                        style={{
+                          font:  '400 10px var(--mono)',
+                          color: 'var(--text-dim)',
+                        }}
+                      >
+                        {chartMetric === 'scaffold_count' ? 'Scaffold count over time' : 'Gene count over time'}
                       </span>
                     </div>
                   )}
                 </div>
 
                 {showChart && (
-                  <div style={{ display: 'flex', alignItems: 'center' }}>
-                    <div style={{
-                      flexShrink:     0,
-                      width:          20,
-                      height:         180,
-                      display:        'flex',
-                      alignItems:     'center',
-                      justifyContent: 'center',
-                    }}>
-                      <div style={{
-                        transform:  'rotate(-90deg)',
-                        whiteSpace: 'nowrap',
-                        font:       '10px var(--mono)',
-                        color:      'var(--text-dim)',
-                      }}>
-                        {chartMetric === 'scaffold_count'
-                          ? 'Scaffold count (per sample)'
-                          : 'Gene count (per sample)'}
-                      </div>
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <ResponsiveContainer width="100%" height={180}>
-                        <ComposedChart
-                          data={chartData}
-                          margin={{ top: 6, right: 16, left: 0, bottom: 8 }}
-                        >
-                      <CartesianGrid
-                        strokeDasharray=""
-                        stroke="#d9d9d9"
-                        vertical={false}
-                      />
-                      <XAxis
-                        dataKey="date"
-                        tick={{
-                          fill:       'var(--text-dim)',
-                          fontSize:   10,
-                          fontFamily: 'var(--mono)',
-                        }}
-                        tickLine={false}
-                        axisLine={{ stroke: 'var(--border)' }}
-                        angle={-35}
-                        textAnchor="end"
-                        height={44}
-                        tickFormatter={(v: string) => fmtDate(v)}
-                        interval={Math.max(1, Math.floor(chartData.length / 8))}
-                      />
-                      <YAxis
-                        tick={{
-                          fill:       'var(--text-dim)',
-                          fontSize:   10,
-                          fontFamily: 'var(--mono)',
-                        }}
-                        tickLine={false}
-                        axisLine={{ stroke: 'var(--border)' }}
-                        width={48}
-                      />
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (!active || !payload?.length) return null
-                          const d = payload[0].payload as ScaffoldSummaryRow
-                          return (
-                            <div className="chart-tooltip">
-                              <div className="tt-date">
-                                {fmtDate(d.date)} {fmtTime(d.date)}
-                              </div>
-                              <div className="tt-row">
-                                <div
-                                  className="tt-dot"
-                                  style={{ background: 'var(--chart-1)' }}
-                                />
-                                <span className="tt-label">
-                                  {chartMetric === 'scaffold_count'
-                                    ? 'Scaffolds'
-                                    : 'Genes'}
-                                </span>
-                                <span className="tt-val">
-                                  {chartMetric === 'scaffold_count'
-                                    ? d.scaffold_count
-                                    : d.gene_count}
-                                </span>
-                              </div>
-                            </div>
-                          )
-                        }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey={chartMetric}
-                        stroke="var(--chart-1)"
-                        strokeWidth={2}
-                        dot={{ r: 3, fill: 'var(--chart-1)', strokeWidth: 0 }}
-                        activeDot={{ r: 5 }}
-                        connectNulls={false}
-                      />
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
+                  <Plot
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    data={[{
+                      type: 'scatter', mode: 'lines+markers',
+                      x: chartData.map(r => new Date(parseDateTime(r.date)).toISOString()),
+                      y: chartData.map(r =>
+                        chartMetric === 'scaffold_count' ? r.scaffold_count : r.gene_count
+                      ),
+                      line:   { color: resolveCssVar('var(--chart-1)', '#4f8ef7'), width: 2 },
+                      marker: { color: resolveCssVar('var(--chart-1)', '#4f8ef7'), size: 4 },
+                      connectgaps: false,
+                      customdata: chartData.map(r => `${fmtDate(r.date)} ${fmtTime(r.date)}`),
+                      hovertemplate:
+                        '<b>%{customdata}</b><br>' +
+                        (chartMetric === 'scaffold_count' ? 'Scaffolds' : 'Genes') +
+                        ': %{y}<extra></extra>',
+                    } as any]}
+                    layout={{
+                      height: 180,
+                      margin: { t: 10, r: 16, b: 30, l: 60 },
+                      paper_bgcolor: 'transparent',
+                      plot_bgcolor:  'transparent',
+                      showlegend: false,
+                      hovermode: 'x unified',
+                      hoverlabel: PLOTLY_HOVERLABEL,
+                      xaxis: {
+                        type: 'date',
+                        tickfont:  { size: 10, family: 'monospace' },
+                        tickangle: -35,
+                        showgrid:  false,
+                        linecolor: '#d9d9d9',
+                      },
+                      yaxis: {
+                        title: {
+                          text: chartMetric === 'scaffold_count'
+                            ? 'Scaffold count (per sample)'
+                            : 'Gene count (per sample)',
+                          font: { size: 10, family: 'monospace' },
+                        },
+                        tickfont:  { size: 10, family: 'monospace' },
+                        gridcolor: '#d9d9d9',
+                        zeroline:  false,
+                      },
+                    } as any}
+                    style={{ width: '100%' }}
+                    useResizeHandler
+                    config={{ displayModeBar: false, displaylogo: false }}
+                  />
                 )}
               </div>
 
               {/* ── Summary table with drill-down ── */}
               <div style={{ overflowX: 'auto' }}>
-                <table className="mappings-table scaffold-summary-table">
+                <table className="mappings-table scaffold-summary-table" data-testid="summary-table">
                   <thead>
                     <tr>
                       <SortTh col="date"           label="Date"      />
@@ -474,14 +451,17 @@ export function ScaffoldModal({
                       return (
                         <React.Fragment key={row.sample}>
                           <tr
+                            data-testid={`row-${row.sample}`}
                             className={`scaffold-summary-row ${isExpanded ? 'expanded' : ''}`}
                             onClick={() => loadDetail(row.sample)}
                           >
-                            <td style={{
-                              fontFamily: 'var(--mono)',
-                              fontSize:   12,
-                              whiteSpace: 'nowrap',
-                            }}>
+                            <td
+                              data-testid={`date-${row.sample}`}
+                              style={{
+                                fontFamily: 'var(--mono)',
+                                fontSize:   12,
+                                whiteSpace: 'nowrap',
+                              }}>
                               {fmtDate(row.date) || '—'}
                             </td>
                             <td style={{
@@ -491,10 +471,10 @@ export function ScaffoldModal({
                             }}>
                               {fmtTime(row.date) || '—'}
                             </td>
-                            <td style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
+                            <td data-testid={`scaffolds-${row.sample}`} style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
                               {row.scaffold_count}
                             </td>
-                            <td style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
+                            <td data-testid={`genes-${row.sample}`} style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
                               {row.gene_count}
                             </td>
                             <td style={{
@@ -508,7 +488,7 @@ export function ScaffoldModal({
 
                           {/* ── Drill-down: individual scaffold names ── */}
                           {isExpanded && (
-                            <tr className="scaffold-detail-row">
+                            <tr className="scaffold-detail-row" data-testid={`detail-${row.sample}`}>
                               <td colSpan={5} style={{ padding: 0 }}>
                                 <div className="scaffold-detail-inner expand-anim">
                                   {detailStatus === 'loading' && (

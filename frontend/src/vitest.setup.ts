@@ -7,11 +7,10 @@
  * ----------------
  * 1. Load @testing-library/jest-dom so `expect(el).toBeInTheDocument()` etc. work.
  * 2. Polyfill jsdom gaps that the component and logic tests rely on:
- *    - URL.createObjectURL / revokeObjectURL  (used by downloadCsv, downloadChartSvg)
- *    - HTMLCanvasElement.getContext           (used by downloadChartPng)
+ *    - URL.createObjectURL / revokeObjectURL  (used by downloadCsv)
  *    - navigator.clipboard.writeText         (used by CopyBtn, KEGG Color Mapper)
  *    - window.open                           (used by external link helpers)
- *    - ResizeObserver                         (required by Recharts ResponsiveContainer)
+ *    - ResizeObserver                         (required by Plotly useResizeHandler)
  *
  * None of these are implemented by jsdom; without stubs every component test
  * that touches a download, copy, or chart throws before any assertion runs.
@@ -29,34 +28,6 @@ if (typeof URL.createObjectURL === 'undefined') {
 }
 if (typeof URL.revokeObjectURL === 'undefined') {
   URL.revokeObjectURL = (_url: string): void => {}
-}
-
-// ── Canvas context ─────────────────────────────────────────────────────────
-// downloadChartPng creates a <canvas> and calls getContext('2d').
-// jsdom does not implement canvas rendering; return a minimal stub so the
-// code path doesn't throw.
-
-if (typeof HTMLCanvasElement !== 'undefined') {
-  HTMLCanvasElement.prototype.getContext = function (
-    _contextId: string,
-    _options?: unknown
-  ) {
-    return {
-      scale:     vi.fn(),
-      fillRect:  vi.fn(),
-      fillText:  vi.fn(),
-      drawImage: vi.fn(),
-      get fillStyle() { return '' },
-      set fillStyle(_v: string) {},
-      get font() { return '' },
-      set font(_v: string) {},
-      get textAlign() { return 'left' as CanvasTextAlign },
-      set textAlign(_v: CanvasTextAlign) {},
-    }
-  } as unknown as typeof HTMLCanvasElement.prototype.getContext
-
-  HTMLCanvasElement.prototype.toDataURL = (_type?: string): string =>
-    'data:image/png;base64,mock'
 }
 
 // ── Clipboard API ──────────────────────────────────────────────────────────
@@ -79,7 +50,7 @@ Object.defineProperty(navigator, 'clipboard', {
 vi.stubGlobal('open', vi.fn())
 
 // ── ResizeObserver ─────────────────────────────────────────────────────────
-// Recharts' ResponsiveContainer uses ResizeObserver internally.
+// Plotly's useResizeHandler (and jsdom in general) requires ResizeObserver.
 // jsdom does not implement it; without a stub every chart render throws.
 
 if (typeof ResizeObserver === 'undefined') {

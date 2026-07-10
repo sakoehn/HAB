@@ -22,6 +22,7 @@ export function ScaffoldBtn({
   return (
     <>
       <button
+        data-testid="scaffold-btn"
         className="btn sm ghost"
         style={{ fontFamily: 'var(--mono)', fontSize: 11, padding: '2px 8px' }}
         onClick={e => { e.stopPropagation(); setOpen(true) }}

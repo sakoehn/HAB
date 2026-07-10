@@ -5,6 +5,12 @@ Unit + integration tests for:
   - GET /annotations/scaffolds
   - GET /annotations/scaffolds/summary
 
+These hit the REAL FastAPI app (main.app -> api.routes.annotation_scaffolds /
+annotation_scaffolds_summary) with cache/routes I/O patched to synthetic
+data, rather than a hand-copied mirror endpoint. A hand-copied mirror would
+keep passing even if the real implementation in api/routes.py broke, since
+it tests its own duplicate logic instead of the production code path.
+
 Reflects the current flat annotation JSON format:
 
     {
@@ -22,28 +28,30 @@ Reflects the current flat annotation JSON format:
     }
 
 Run with:
-    pytest test_main_scaffolds.py -v
+    pytest tests/test_main_scaffolds.py -v
 
 Requirements:
     pip install pytest httpx fastapi
 """
 
-import json
-from pathlib import Path
-
 import pytest
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.testclient import TestClient
-from enum import Enum
+
+from api.cache import AnnotationSource
 
 # ---------------------------------------------------------------------------
 # Shared fake data
 # ---------------------------------------------------------------------------
 
+# Datetimes use the "%Y-%m-%d %H:%M:%S" form, one of the three formats
+# api.index._parse_any_datetime actually accepts — using an unsupported
+# format here would make timepoint_dt_sort_key() silently return -1.0 for
+# every row, and the "sorted chronologically" tests below would pass by
+# coincidence (stable-sort on equal keys) rather than by actually exercising
+# the real sort.
 FAKE_TIMEPOINTS = {
-    "sample_001": {"taxon_oid": "sample_001", "timepoint": "T1", "datetime": "2021-05-10 08:00"},
-    "sample_002": {"taxon_oid": "sample_002", "timepoint": "T2", "datetime": "2021-05-10 12:00"},
-    "sample_003": {"taxon_oid": "sample_003", "timepoint": "T3", "datetime": "2021-05-11 08:00"},
+    "sample_001": {"taxon_oid": "sample_001", "timepoint": "T1", "datetime": "2021-05-10 08:00:00"},
+    "sample_002": {"taxon_oid": "sample_002", "timepoint": "T2", "datetime": "2021-05-10 12:00:00"},
+    "sample_003": {"taxon_oid": "sample_003", "timepoint": "T3", "datetime": "2021-05-11 08:00:00"},
 }
 
 # Per-sample annotation data in the current flat format.
@@ -101,130 +109,39 @@ FAKE_COG_DATA: dict[str, dict] = {
 
 
 # ---------------------------------------------------------------------------
-# Minimal FastAPI app that mirrors main.py's two scaffold endpoints
+# TestClient against the real app, with cache/routes I/O patched
 # ---------------------------------------------------------------------------
 
-class AnnotationSource(str, Enum):
-    kegg     = "kegg"
-    cog      = "cog"
-    enzyme   = "enzyme"
-    taxonomy = "taxonomy"
+@pytest.fixture(scope="module")
+def client():
+    import api.cache  as cache_mod
+    import api.routes as routes_mod
+    from fastapi.testclient import TestClient
+    from main import app
 
+    orig_timepoints = cache_mod.TIMEPOINTS
+    orig_get_all = routes_mod.get_all_sample_names
+    orig_load_by_source = routes_mod.load_annotations_by_source
 
-def _make_app() -> FastAPI:
-    app = FastAPI()
+    cache_mod.TIMEPOINTS = FAKE_TIMEPOINTS
 
-    def _get_samples() -> list[str]:
+    def _fake_get_all_samples():
         return sorted(FAKE_TIMEPOINTS.keys())
 
-    def _get_timepoint(sample_name: str) -> dict | None:
-        return FAKE_TIMEPOINTS.get(sample_name)
-
-    def _load(sample_name: str, source: AnnotationSource) -> dict:
+    def _fake_load_by_source(sample_name, source):
         if source == AnnotationSource.cog:
             return FAKE_COG_DATA.get(sample_name, {})
         return {}
 
-    @app.get("/annotations/scaffolds")
-    def annotation_scaffolds(
-        source:        AnnotationSource = Query(...),
-        annotation_id: str             = Query(...),
-    ):
-        """
-        Return one row per (sample, scaffold) for the given annotation.
-        Sorted chronologically by sample datetime.
-        """
-        rows: list[dict] = []
+    routes_mod.get_all_sample_names = _fake_get_all_samples
+    routes_mod.load_annotations_by_source = _fake_load_by_source
 
-        for sample_name in _get_samples():
-            data     = _load(sample_name, source)
-            value    = data.get(annotation_id)
-            if not isinstance(value, dict):
-                continue
+    test_client = TestClient(app, raise_server_exceptions=False)
+    yield test_client
 
-            scaffolds = value.get("scaffolds")
-            if not isinstance(scaffolds, dict) or not scaffolds:
-                continue
-
-            tp_meta = _get_timepoint(sample_name)
-            dt      = (tp_meta or {}).get("datetime", "")
-
-            for scaffold_name, count in scaffolds.items():
-                rows.append({
-                    "sample":   sample_name,
-                    "date":     dt,
-                    "scaffold": scaffold_name,
-                    "count":    int(count) if isinstance(count, (int, float)) else 1,
-                })
-
-        if not rows:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No scaffolds found for '{annotation_id}' in source '{source.value}'",
-            )
-
-        rows.sort(key=lambda r: (r["date"] or r["sample"]))
-
-        return {
-            "annotation_id": annotation_id,
-            "source":        source.value,
-            "total":         len(rows),
-            "data":          rows,
-        }
-
-    @app.get("/annotations/scaffolds/summary")
-    def annotation_scaffolds_summary(
-        source:        AnnotationSource = Query(...),
-        annotation_id: str             = Query(...),
-    ):
-        """
-        Return one row per sample: scaffold_count and gene_count.
-        scaffold_count = number of unique scaffolds in that sample.
-        gene_count     = sum of all scaffold hit counts.
-        """
-        rows: list[dict] = []
-
-        for sample_name in _get_samples():
-            data     = _load(sample_name, source)
-            value    = data.get(annotation_id)
-            if not isinstance(value, dict):
-                continue
-
-            scaffolds = value.get("scaffolds")
-            if not isinstance(scaffolds, dict) or not scaffolds:
-                continue
-
-            tp_meta = _get_timepoint(sample_name)
-            dt      = (tp_meta or {}).get("datetime", "")
-
-            rows.append({
-                "sample":         sample_name,
-                "date":           dt,
-                "scaffold_count": len(scaffolds),
-                "gene_count":     sum(scaffolds.values()),
-            })
-
-        if not rows:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No scaffolds found for '{annotation_id}' in source '{source.value}'",
-            )
-
-        rows.sort(key=lambda r: (r["date"] or r["sample"]))
-
-        return {
-            "annotation_id": annotation_id,
-            "source":        source.value,
-            "total":         len(rows),
-            "data":          rows,
-        }
-
-    return app
-
-
-@pytest.fixture(scope="module")
-def client() -> TestClient:
-    return TestClient(_make_app())
+    cache_mod.TIMEPOINTS = orig_timepoints
+    routes_mod.get_all_sample_names = orig_get_all
+    routes_mod.load_annotations_by_source = orig_load_by_source
 
 
 # ---------------------------------------------------------------------------
@@ -339,12 +256,12 @@ class TestScaffoldsDetail:
     def test_date_resolved_from_timepoint_map(self, client):
         body     = client.get("/annotations/scaffolds?source=cog&annotation_id=COG0055").json()
         s1_dates = {r["date"] for r in body["data"] if r["sample"] == "sample_001"}
-        assert s1_dates == {"2021-05-10 08:00"}
+        assert s1_dates == {"2021-05-10 08:00:00"}
 
     def test_sample_002_date_correct(self, client):
         body     = client.get("/annotations/scaffolds?source=cog&annotation_id=COG0055").json()
         s2_dates = {r["date"] for r in body["data"] if r["sample"] == "sample_002"}
-        assert s2_dates == {"2021-05-10 12:00"}
+        assert s2_dates == {"2021-05-10 12:00:00"}
 
 
 # ---------------------------------------------------------------------------

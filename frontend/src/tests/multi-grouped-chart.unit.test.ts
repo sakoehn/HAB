@@ -1,67 +1,41 @@
 /**
  * multi-grouped-chart.unit.test.ts
  * ==================================
- * Unit tests for day shading, brush zoom, and tick formatting in
- * MultiEgcChart and GroupedEgcChart.
+ * Unit tests for day-shading band computation in MultiEgcChart and
+ * GroupedEgcChart, both of which render with Plotly (`shapes` of
+ * type 'rect') driven by utils/format.ts's computeDayBands().
  *
  * Tests import directly from production source files.
+ *
+ * Note: this file previously also covered "brush zoom" and
+ * "makeTickFormatter" boundary conditions. Both tested a Recharts
+ * <Brush>/<XAxis tickFormatter> mechanism that no longer exists —
+ * MultiEgcChart.tsx and GroupedEgcChart.tsx now render with Plotly, which
+ * handles zoom and axis tick formatting natively via its own date-axis
+ * drag-zoom and rangeslider (no app-level brush/zoom state, no custom tick
+ * formatter). Those blocks were removed as dead-code tests; real zoom
+ * behavior is covered at the E2E level in App.e2e.spec.ts since it requires
+ * a real Plotly render to verify.
  *
  * Coverage
  * --------
  * utils/format.ts — computeDayBands:
  *   MultiEgcChart uses _dt field (full datetime strings)
  *   GroupedEgcChart uses datetime field on summedPoints
- *   x1/x2 are always full datetime strings (valid ReferenceArea domain values)
+ *   x1/x2 are always full datetime strings (valid Plotly shape x0/x1 source)
  *   even-indexed bands shaded, odd not
  *   all x1/x2 exist in actual data domain
  *
- * utils/format.ts — makeTickFormatter:
- *   wide view (> 2 days): first point of each day gets MM/DD label
- *   wide view: subsequent same-day points return ''
- *   zoomed view (≤ 2 days): every point returns HH:MM
- *   exactly 2 days is zoomed (boundary condition)
- *   label is MM/DD not MM/DD/YY in wide mode
- *   label is HH:MM not date in zoomed mode
- *
- * Brush zoom:
- *   null brush returns full data
- *   brush range slices correctly
- *   zoomed window reduces unique day count
- *   tick formatter switches context after zoom
- *
- * ReferenceArea props:
- *   shade fill opacity is < 0.1 (subtle)
- *   strokeOpacity is 0 (no border)
- *   only shade:true bands produce a ReferenceArea
+ * Day-shading shape invariants:
+ *   only shade:true bands produce a shaded rect
  *   bands do not overlap
- *
- * Chart dimensions:
- *   MultiEgcChart height >= 340
- *   GroupedEgcChart height >= 304
- *   Brush height is 24px
  *
  * Run: npx vitest run src/tests/multi-grouped-chart.unit.test.ts
  */
 
 import { describe, it, expect } from 'vitest'
 
-import { computeDayBands, makeTickFormatter } from '../utils/format'
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Brush filter helper (pure slice — mirrors chart useMemo)
-// ─────────────────────────────────────────────────────────────────────────────
-
-function applyBrushFilter<T>(
-  data:       T[],
-  brushRange: { startIndex: number; endIndex: number } | null,
-): T[] {
-  if (!brushRange) return data
-  return data.slice(brushRange.startIndex, brushRange.endIndex + 1)
-}
-
-function uniqueDayCount(datetimes: string[]): number {
-  return new Set(datetimes.map(dt => dt.split(' ')[0])).size
-}
+import { computeDayBands } from '../utils/format'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test data
@@ -129,20 +103,6 @@ describe('MultiEgcChart — _dt field is full datetime string', () => {
       expect(row._dt).toMatch(/^\d{2}\/\d{2}\/\d{2} \d{2}:\d{2}$/)
     }
   })
-
-  it('bare date string (no time) returns empty from tick formatter', () => {
-    const dts  = MULTI_ROWS.map(r => ({ datetime: r._dt }))
-    const days = uniqueDayCount(MULTI_ROWS.map(r => r._dt))
-    const fmt  = makeTickFormatter(dts, days)
-    expect(fmt('05/27/21')).toBe('')
-  })
-
-  it('first _dt of first day returns a non-empty label in wide view', () => {
-    const dts  = MULTI_ROWS.map(r => ({ datetime: r._dt }))
-    const days = uniqueDayCount(MULTI_ROWS.map(r => r._dt))
-    const fmt  = makeTickFormatter(dts, days)
-    expect(fmt(MULTI_ROWS[0]._dt)).not.toBe('')
-  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,7 +123,7 @@ describe('MultiEgcChart — computeDayBands from _dt', () => {
     }
   })
 
-  it('x1/x2 exist in the _dt domain (valid ReferenceArea keys)', () => {
+  it('x1/x2 exist in the _dt domain (valid Plotly shape source values)', () => {
     const dtSet = new Set(MULTI_ROWS.map(r => r._dt))
     for (const band of computeDayBands(pts)) {
       expect(dtSet.has(band.x1)).toBe(true)
@@ -183,62 +143,6 @@ describe('MultiEgcChart — computeDayBands from _dt', () => {
 
   it('day 1 last x2 is 20:00 (00:00 opens the next date prefix)', () => {
     expect(computeDayBands(pts)[0].x2).toBe('05/27/21 20:00')
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MultiEgcChart — brush zoom
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('MultiEgcChart — brush zoom', () => {
-  it('null brush returns full data', () => {
-    expect(applyBrushFilter(MULTI_ROWS, null)).toHaveLength(MULTI_ROWS.length)
-  })
-
-  it('brush range [0,5] returns 6 rows (inclusive)', () => {
-    const result = applyBrushFilter(MULTI_ROWS, { startIndex: 0, endIndex: 5 })
-    expect(result).toHaveLength(6)
-    expect(result[0]._dt).toBe('05/27/21 04:00')
-    expect(result[5]._dt).toBe('05/28/21 00:00')
-  })
-
-  it('single-point brush returns one row', () => {
-    expect(applyBrushFilter(MULTI_ROWS, { startIndex: 3, endIndex: 3 })).toHaveLength(1)
-  })
-
-  it('zoomed to first 5 rows: uniqueDayCount = 1', () => {
-    const zoomed = applyBrushFilter(MULTI_ROWS, { startIndex: 0, endIndex: 4 })
-    expect(uniqueDayCount(zoomed.map(r => r._dt))).toBe(1)
-  })
-
-  it('zoomed to 1 day: tick formatter returns HH:MM', () => {
-    const zoomed = applyBrushFilter(MULTI_ROWS, { startIndex: 0, endIndex: 4 })
-    const dts    = zoomed.map(r => ({ datetime: r._dt }))
-    const days   = uniqueDayCount(zoomed.map(r => r._dt))
-    const fmt    = makeTickFormatter(dts, days)
-    expect(fmt('05/27/21 04:00')).toBe('04:00')
-    expect(fmt('05/27/21 08:00')).toBe('08:00')
-  })
-
-  it('full range (3 days): tick formatter returns MM/DD for first of each day', () => {
-    const dts  = MULTI_ROWS.map(r => ({ datetime: r._dt }))
-    const days = uniqueDayCount(MULTI_ROWS.map(r => r._dt))
-    const fmt  = makeTickFormatter(dts, days)
-    expect(fmt(MULTI_ROWS[0]._dt)).toBe('05/27')
-    expect(fmt(MULTI_ROWS[1]._dt)).toBe('')
-  })
-
-  it('exactly 2-day window uses zoomed (time) mode', () => {
-    const twoDayEnd = MULTI_ROWS.findIndex(r => r._dt.startsWith('05/29/21')) - 1
-    const zoomed    = applyBrushFilter(MULTI_ROWS, { startIndex: 0, endIndex: twoDayEnd })
-    const days      = uniqueDayCount(zoomed.map(r => r._dt))
-    expect(days).toBe(2)
-    const fmt = makeTickFormatter(zoomed.map(r => ({ datetime: r._dt })), days)
-    expect(fmt('05/27/21 04:00')).toBe('04:00')
-  })
-
-  it('chart height is 340', () => {
-    expect(340).toBeGreaterThanOrEqual(340)
   })
 })
 
@@ -280,127 +184,14 @@ describe('GroupedEgcChart — computeDayBands from datetime field', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GroupedEgcChart — brush zoom
+// Day-shading rect invariants (Plotly `shapes`, built from computeDayBands)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('GroupedEgcChart — brush zoom', () => {
-  it('null brush returns all grouped points', () => {
-    expect(applyBrushFilter(GROUPED_POINTS, null)).toHaveLength(GROUPED_POINTS.length)
-  })
-
-  it('brush range [0,4] returns 5 rows', () => {
-    const result = applyBrushFilter(GROUPED_POINTS, { startIndex: 0, endIndex: 4 })
-    expect(result).toHaveLength(5)
-    expect(result[0].datetime).toBe('05/27/21 04:00')
-    expect(result[4].datetime).toBe('05/27/21 20:00')
-  })
-
-  it('zoomed to 1 day: tick formatter returns times', () => {
-    const zoomed = applyBrushFilter(GROUPED_POINTS, { startIndex: 0, endIndex: 4 })
-    const dts    = zoomed.map(p => ({ datetime: p.datetime }))
-    const days   = uniqueDayCount(zoomed.map(p => p.datetime))
-    const fmt    = makeTickFormatter(dts, days)
-    expect(fmt('05/27/21 04:00')).toBe('04:00')
-    expect(fmt('05/27/21 08:00')).toBe('08:00')
-  })
-
-  it('full range: tick formatter returns dates', () => {
-    const dts  = GROUPED_POINTS.map(p => ({ datetime: p.datetime }))
-    const days = uniqueDayCount(GROUPED_POINTS.map(p => p.datetime))
-    const fmt  = makeTickFormatter(dts, days)
-    expect(fmt(GROUPED_POINTS[0].datetime)).toBe('05/27')
-    expect(fmt(GROUPED_POINTS[1].datetime)).toBe('')
-  })
-
-  it('brush height is 24px', () => {
-    expect(24).toBe(24)
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────
-// makeTickFormatter — boundary conditions
-// ─────────────────────────────────────────────────────────────────────────────
-
-const WIDE_PTS = [
-  { datetime: '05/27/21 04:00' },
-  { datetime: '05/27/21 08:00' },
-  { datetime: '05/28/21 04:00' },
-  { datetime: '05/28/21 08:00' },
-  { datetime: '05/29/21 04:00' },
-  { datetime: '05/29/21 08:00' },
-]
-
-describe('makeTickFormatter — boundary conditions', () => {
-  it('3 days → wide: first of each day gets MM/DD', () => {
-    const fmt = makeTickFormatter(WIDE_PTS, 3)
-    expect(fmt('05/27/21 04:00')).toBe('05/27')
-    expect(fmt('05/28/21 04:00')).toBe('05/28')
-    expect(fmt('05/29/21 04:00')).toBe('05/29')
-  })
-
-  it('3 days → wide: non-first points return ""', () => {
-    const fmt = makeTickFormatter(WIDE_PTS, 3)
-    expect(fmt('05/27/21 08:00')).toBe('')
-    expect(fmt('05/28/21 08:00')).toBe('')
-  })
-
-  it('1 day → zoomed: all points return HH:MM', () => {
-    const fmt = makeTickFormatter(WIDE_PTS.slice(0, 2), 1)
-    expect(fmt('05/27/21 04:00')).toBe('04:00')
-    expect(fmt('05/27/21 08:00')).toBe('08:00')
-  })
-
-  it('2 days → zoomed (≤ 2 threshold)', () => {
-    const fmt = makeTickFormatter(WIDE_PTS.slice(0, 4), 2)
-    expect(fmt('05/27/21 04:00')).toBe('04:00')
-  })
-
-  it('wide label is MM/DD (5 chars, no year)', () => {
-    const label = makeTickFormatter(WIDE_PTS, 3)('05/27/21 04:00')
-    expect(label).toBe('05/27')
-    expect(label).not.toContain('/21')
-  })
-
-  it('zoomed label is HH:MM (no date)', () => {
-    const label = makeTickFormatter(WIDE_PTS.slice(0, 2), 1)('05/27/21 04:00')
-    expect(label).toBe('04:00')
-    expect(label).not.toContain('05/')
-  })
-
-  it('unknown datetime always returns ""', () => {
-    expect(makeTickFormatter(WIDE_PTS, 3)('01/01/99 00:00')).toBe('')
-  })
-
-  it('same datetime: wide returns "" for non-first, zoomed returns time', () => {
-    const dt      = '05/27/21 08:00'
-    const wideFmt = makeTickFormatter(WIDE_PTS, 3)
-    const zoomFmt = makeTickFormatter(WIDE_PTS.slice(0, 2), 1)
-    expect(wideFmt(dt)).toBe('')
-    expect(zoomFmt(dt)).toBe('08:00')
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReferenceArea configuration
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('ReferenceArea day shading configuration', () => {
-  it('shade fill opacity is < 0.1 (subtle)', () => {
-    const fill    = 'rgba(0,0,0,0.04)'
-    const match   = fill.match(/[\d.]+\)$/)
-    const opacity = match ? parseFloat(match[0]) : 1
-    expect(opacity).toBeLessThan(0.1)
-    expect(opacity).toBeGreaterThan(0)
-  })
-
-  it('shade fill uses rgba (allows opacity)', () => {
-    expect('rgba(0,0,0,0.04)').toContain('rgba')
-  })
-
+describe('Day-shading rects — computeDayBands invariants', () => {
   it('shade:true and shade:false bands both exist', () => {
-    const bands   = computeDayBands(MULTI_ROWS.map(r => ({ datetime: r._dt })))
-    const shaded  = bands.filter(b => b.shade)
-    const plain   = bands.filter(b => !b.shade)
+    const bands  = computeDayBands(MULTI_ROWS.map(r => ({ datetime: r._dt })))
+    const shaded = bands.filter(b => b.shade)
+    const plain  = bands.filter(b => !b.shade)
     expect(shaded.length).toBeGreaterThan(0)
     expect(plain.length).toBeGreaterThan(0)
   })
@@ -458,23 +249,5 @@ describe('computeDayBands — edge cases', () => {
     const start = performance.now()
     computeDayBands(pts)
     expect(performance.now() - start).toBeLessThan(50)
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────
-// uniqueDayCount helper
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('uniqueDayCount', () => {
-  it('counts 3 distinct date prefixes across MULTI_ROWS', () => {
-    expect(uniqueDayCount(MULTI_ROWS.map(r => r._dt))).toBe(3)
-  })
-
-  it('single day returns 1', () => {
-    expect(uniqueDayCount(['05/27/21 04:00', '05/27/21 08:00', '05/27/21 12:00'])).toBe(1)
-  })
-
-  it('empty array returns 0', () => {
-    expect(uniqueDayCount([])).toBe(0)
   })
 })

@@ -30,10 +30,6 @@ from fastapi.staticfiles import StaticFiles
 
 from api.cache import (
     get_all_sample_names,
-    load_cog,
-    load_enzyme,
-    load_kegg,
-    load_taxonomy,
     load_tsv,
 )
 from api.config import FRONTEND_DIST
@@ -58,11 +54,15 @@ async def lifespan(app: FastAPI):
     def _warm() -> None:
         try:
             samples = get_all_sample_names()
+            # build_search_index() reads every sample's KEGG/COG/Enzyme/
+            # Taxonomy JSON itself (via the uncached loader — see
+            # cache.load_json_uncached) to build the derived indexes, so
+            # pre-loading them into _JSON_CACHE here would just parse the
+            # entire dataset a second time for no benefit — worse, since
+            # _JSON_CACHE is bounded (see JSON_CACHE_MAX_ENTRIES), most of
+            # it would be evicted again before build_search_index() even
+            # runs. Only load_tsv is needed upfront, for build_mapping_index().
             for sample in samples:
-                load_kegg(sample)
-                load_cog(sample)
-                load_enzyme(sample)
-                load_taxonomy(sample)
                 load_tsv(sample)
             build_search_index()
             build_mapping_index()
@@ -93,11 +93,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve built frontend if present (production mode).
-if os.path.exists(FRONTEND_DIST):
-    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
-
 # ── Routers ───────────────────────────────────────────────────────────────────
+# Must be included before the static-files mount so API routes are matched
+# first — a "/" mount catches every path, including /status, /timepoints, etc.
 
 app.include_router(routes.router)
 app.include_router(correlation.router)
+
+# Serve built frontend if present (production mode).
+if os.path.exists(FRONTEND_DIST):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")

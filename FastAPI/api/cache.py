@@ -20,11 +20,14 @@ import csv
 import json
 import logging
 import os
+from collections import OrderedDict
 from enum import Enum
+from typing import NamedTuple
 
 from .config import (
     COG_DIR,
     ENZYME_DIR,
+    JSON_CACHE_MAX_ENTRIES,
     KEGG_DIR,
     MAPPINGS_DIR,
     TAXONOMY_DIR,
@@ -147,7 +150,9 @@ TIDES: list[dict] = load_tides()
 
 # ── JSON annotation cache ─────────────────────────────────────────────────────
 
-_JSON_CACHE: dict[str, dict] = {}
+# Ordered for LRU eviction — move_to_end() on hit, popitem(last=False) to
+# evict the least-recently-used entry once over JSON_CACHE_MAX_ENTRIES.
+_JSON_CACHE: "OrderedDict[str, dict]" = OrderedDict()
 
 
 def load_json(folder: str, filename: str) -> dict:
@@ -155,22 +160,41 @@ def load_json(folder: str, filename: str) -> dict:
     Load a JSON file by stem name, caching the result in memory.
 
     The cache key is ``folder::filename`` so the same stem in different
-    directories never collides.
+    directories never collides. Bounded to JSON_CACHE_MAX_ENTRIES with
+    least-recently-used eviction — see that constant in config.py for why
+    an unbounded cache isn't safe here. Code that needs to read every sample
+    once (e.g. the startup index build) should use load_json_uncached
+    instead, so a one-time scan doesn't permanently evict everything else
+    out of this cache.
     """
     cache_key = f"{folder}::{filename}"
     if cache_key in _JSON_CACHE:
+        _JSON_CACHE.move_to_end(cache_key)
         return _JSON_CACHE[cache_key]
 
-    path = os.path.join(folder, f"{filename}.json")
-    if not os.path.exists(path):
-        _JSON_CACHE[cache_key] = {}
-        return {}
-
-    with open(path, "r") as f:
-        data = json.load(f)
+    data = load_json_uncached(folder, filename)
 
     _JSON_CACHE[cache_key] = data
+    if len(_JSON_CACHE) > JSON_CACHE_MAX_ENTRIES:
+        _JSON_CACHE.popitem(last=False)
     return data
+
+
+def load_json_uncached(folder: str, filename: str) -> dict:
+    """
+    Load a JSON file by stem name without touching _JSON_CACHE.
+
+    For one-time, full-dataset scans (e.g. index.build_search_index()'s
+    startup pass, which reads every sample × source exactly once to build
+    the derived indexes and never needs the raw dict again) — caching
+    those reads would just thrash _JSON_CACHE's LRU and evict data that
+    live requests actually want to keep warm.
+    """
+    path = os.path.join(folder, f"{filename}.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r") as f:
+        return json.load(f)
 
 
 def load_cog(sample_name: str) -> dict:
@@ -200,17 +224,49 @@ def load_annotations_by_source(sample_name: str, source: AnnotationSource) -> di
     return loaders[source](sample_name)
 
 
+_UNCACHED_DIRS = {
+    AnnotationSource.kegg:     (KEGG_DIR,     "ko"),
+    AnnotationSource.cog:      (COG_DIR,      "cog"),
+    AnnotationSource.enzyme:   (ENZYME_DIR,   "enzyme"),
+    AnnotationSource.taxonomy: (TAXONOMY_DIR, "tax"),
+}
+
+
+def load_annotations_by_source_uncached(sample_name: str, source: AnnotationSource) -> dict:
+    """Uncached counterpart to load_annotations_by_source — see load_json_uncached."""
+    folder, ext = _UNCACHED_DIRS[source]
+    return load_json_uncached(folder, f"{sample_name}.{ext}")
+
+
 # ── TSV mapping cache ─────────────────────────────────────────────────────────
 
-_TSV_CACHE: dict[str, list[dict]] = {}
+class MappingRow(NamedTuple):
+    """
+    One gene-mapping row. A NamedTuple rather than a dict: the mapping TSVs
+    total ~10GB raw across 128 samples, and with tens of millions of rows,
+    per-row dict overhead alone (CPython dicts run ~300+ bytes even before
+    counting content) pushed resident memory to ~3.5x that just to hold
+    _TSV_CACHE — a NamedTuple's per-instance overhead is a fraction of that.
+    _asdict() is used at API response boundaries so client-facing JSON shape
+    is unchanged.
+    """
+    gene_id:   str | None
+    contig_id: str | None
+    taxonomy:  str | None
+    kegg_id:   str | None
+    enzyme:    str | None
+    cog_id:    str | None
 
 
-def load_tsv(sample_name: str) -> list[dict]:
+_TSV_CACHE: dict[str, list[MappingRow]] = {}
+
+
+def load_tsv(sample_name: str) -> list[MappingRow]:
     """
     Load the gene-mapping TSV for a sample, caching the result in memory.
 
-    Each row is normalised to a fixed-key dict regardless of column count,
-    with missing columns set to None.
+    Each row is normalised to a fixed-shape MappingRow regardless of column
+    count, with missing columns set to None.
     """
     if sample_name in _TSV_CACHE:
         return _TSV_CACHE[sample_name]
@@ -219,20 +275,20 @@ def load_tsv(sample_name: str) -> list[dict]:
     if not os.path.exists(path):
         return []
 
-    rows: list[dict] = []
+    rows: list[MappingRow] = []
     with open(path, "r") as f:
         reader = csv.reader(f, delimiter="\t")
         for row in reader:
             if len(row) < 2:
                 continue
-            rows.append({
-                "gene_id":   row[0] or None,
-                "contig_id": row[1] or None,
-                "taxonomy":  row[2] if len(row) > 2 and row[2] else None,
-                "kegg_id":   row[3] if len(row) > 3 and row[3] else None,
-                "enzyme":    row[4] if len(row) > 4 and row[4] else None,
-                "cog_id":    row[5] if len(row) > 5 and row[5] else None,
-            })
+            rows.append(MappingRow(
+                gene_id=row[0] or None,
+                contig_id=row[1] or None,
+                taxonomy=row[2] if len(row) > 2 and row[2] else None,
+                kegg_id=row[3] if len(row) > 3 and row[3] else None,
+                enzyme=row[4] if len(row) > 4 and row[4] else None,
+                cog_id=row[5] if len(row) > 5 and row[5] else None,
+            ))
 
     _TSV_CACHE[sample_name] = rows
     return rows
@@ -258,7 +314,12 @@ def get_all_sample_names() -> list[str]:
 # ── Annotation field extraction ───────────────────────────────────────────────
 
 def extract_annotation_name(value) -> str | None:
-    """Return the human-readable name from an annotation JSON value."""
+    """Return the human-readable name from an annotation JSON value.
+
+    Note: for Taxonomy the name IS the dict key, not inside the value.
+    Call sites that know the annotation_id should use it directly for taxonomy
+    rather than calling this function.
+    """
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
@@ -266,7 +327,6 @@ def extract_annotation_name(value) -> str | None:
             value.get("name")
             or value.get("category")
             or value.get("label")
-            or value.get("parent_ec")
         )
     return None
 
@@ -275,12 +335,12 @@ def extract_parent(value, source: str) -> str | None:
     """
     Extract the parent / grouping label for an annotation.
 
-    Per-source rules
-    ~~~~~~~~~~~~~~~~
-    - KEGG:     parents[0]  → category  → None
-    - COG:      category    → None
-    - Enzyme:   parent_ec   → None
-    - Taxonomy: parent[0]   → category  → None
+    Per-source rules (new JSON format)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    - KEGG:     parent_name → parent_id → category
+    - COG:      category letter (flat — no hierarchy)
+    - Enzyme:   parent_name → parent_id
+    - Taxonomy: parent (string taxon name, or null for roots)
     """
     if not isinstance(value, dict):
         return None
@@ -294,20 +354,19 @@ def extract_parent(value, source: str) -> str | None:
 
     if source == "kegg":
         return (
-            _first(value.get("parents"))
-            or _first(value.get("parent"))
+            _first(value.get("parent_name"))
+            or _first(value.get("parent_id"))
             or _first(value.get("category"))
         )
     if source == "cog":
         return _first(value.get("category"))
     if source == "enzyme":
-        return _first(value.get("parent_ec"))
-    if source == "taxonomy":
         return (
-            _first(value.get("parent"))
-            or _first(value.get("parents"))
-            or _first(value.get("category"))
+            _first(value.get("parent_name"))
+            or _first(value.get("parent_id"))
         )
+    if source == "taxonomy":
+        return _first(value.get("parent"))
     return None
 
 
@@ -328,7 +387,10 @@ def extract_egc(value) -> float | None:
 def extract_norm_egc(value) -> float | None:
     """Extract the depth-normalised EGC (norm_egc) from an annotation JSON value."""
     if isinstance(value, dict):
-        raw = value.get("norm_egc") or value.get("NORM_EGC")
+        # Use explicit None check so norm_egc=0 is returned as 0.0, not skipped.
+        raw = value.get("norm_egc")
+        if raw is None:
+            raw = value.get("NORM_EGC")
         if isinstance(raw, (int, float)):
             return float(raw)
     return None

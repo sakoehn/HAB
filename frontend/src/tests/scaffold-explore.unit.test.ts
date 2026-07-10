@@ -44,6 +44,15 @@
  *   sorted chronologically
  *   empty input returns []
  *
+ * Single-term chart rows (ScaffoldExplorePanel — per-term "View chart"):
+ *   dateFrom filter excludes earlier dates
+ *   dateTo filter excludes later dates
+ *   sorted chronologically
+ *   unsorted input gets sorted
+ *   empty input returns []
+ *   does not mutate original array
+ *   no filter returns all rows
+ *
  * Term management (ScaffoldExplorePanel):
  *   addTerm — adds new term
  *   addTerm — rejects duplicate (same id + source)
@@ -80,7 +89,7 @@
 
 import { describe, it, expect } from 'vitest'
 
-import { fmtDate, fmtTime } from '../utils/format'
+import { fmtDate, fmtTime, parseDateTime } from '../utils/format'
 import type { ScaffoldSummaryRow, ScaffoldDetailRow } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,6 +175,20 @@ function buildSplitChartRows(
     }
     return row
   })
+}
+
+function filterSummaryForChart(
+  rows:     ScaffoldSummaryRow[],
+  dateFrom: string,
+  dateTo:   string,
+): ScaffoldSummaryRow[] {
+  return rows
+    .filter(r => {
+      if (dateFrom && r.date < dateFrom) return false
+      if (dateTo   && r.date > dateTo)   return false
+      return true
+    })
+    .sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date))
 }
 
 type Term = { annotationId: string; source: string }
@@ -478,6 +501,65 @@ describe('buildSplitChartRows', () => {
 
   it('empty input returns []', () => {
     expect(buildSplitChartRows([], 'scaffold_count', '', '')).toEqual([])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Single-term chart rows (per-term "View chart" toggle)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('filterSummaryForChart', () => {
+  it('dateFrom filter excludes earlier dates', () => {
+    const rows  = filterSummaryForChart(SAMPLE_SUMMARY, '2021-05-11', '')
+    const dates = rows.map(r => r.date)
+    expect(dates).not.toContain('2021-05-10 08:00')
+    expect(dates).not.toContain('2021-05-10 12:00')
+    expect(dates).toContain('2021-05-11 08:00')
+  })
+
+  it('dateTo filter excludes later dates', () => {
+    const rows  = filterSummaryForChart(SAMPLE_SUMMARY, '', '2021-05-11')
+    const dates = rows.map(r => r.date)
+    expect(dates).not.toContain('2021-05-12 08:00')
+  })
+
+  it('output is sorted chronologically', () => {
+    const rows  = filterSummaryForChart(SAMPLE_SUMMARY, '', '')
+    const dates = rows.map(r => r.date)
+    expect(dates).toEqual([...dates].sort())
+  })
+
+  it('unsorted input gets sorted', () => {
+    const shuffled = [SAMPLE_SUMMARY[4], SAMPLE_SUMMARY[0], SAMPLE_SUMMARY[2]]
+    const rows     = filterSummaryForChart(shuffled, '', '')
+    expect(rows.map(r => r.sample)).toEqual(['s1', 's3', 's5'])
+  })
+
+  it('empty input returns []', () => {
+    expect(filterSummaryForChart([], '', '')).toEqual([])
+  })
+
+  it('does not mutate the original array', () => {
+    const original = SAMPLE_SUMMARY.map(r => r.sample)
+    filterSummaryForChart([SAMPLE_SUMMARY[4], SAMPLE_SUMMARY[0]], '', '')
+    expect(SAMPLE_SUMMARY.map(r => r.sample)).toEqual(original)
+  })
+
+  it('no filter returns all rows', () => {
+    expect(filterSummaryForChart(SAMPLE_SUMMARY, '', '')).toHaveLength(SAMPLE_SUMMARY.length)
+  })
+
+  it('sorts non-zero-padded M/D/YY dates chronologically, not lexicographically (real backend format)', () => {
+    // The backend returns dates like "5/9/21 13:00" — no zero-padding.
+    // A plain string sort would put "5/9/21" after "5/10/21" and
+    // "5:00" after "13:00", which is exactly backwards.
+    const rows: ScaffoldSummaryRow[] = [
+      { sample: 'c', date: '5/10/21 5:00',  scaffold_count: 3, gene_count: 3 },
+      { sample: 'a', date: '5/9/21 13:00',  scaffold_count: 1, gene_count: 1 },
+      { sample: 'b', date: '5/9/21 21:00',  scaffold_count: 2, gene_count: 2 },
+    ]
+    const result = filterSummaryForChart(rows, '', '')
+    expect(result.map(r => r.sample)).toEqual(['a', 'b', 'c'])
   })
 })
 

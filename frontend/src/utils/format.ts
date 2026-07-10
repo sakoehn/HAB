@@ -46,6 +46,26 @@ function parseMMDDYY(dt: string): {
 // Returns 0 for empty or unparseable strings so sort order degrades
 // gracefully rather than throwing.
 
+// ── toPlotlyDate ───────────────────────────────────────────────────────────
+// Format a Unix ms timestamp as "YYYY-MM-DD HH:MM:SS" in LOCAL time,
+// which Plotly treats as a naive (timezone-free) datetime on its date axis.
+// Using local time methods means the string round-trips correctly to the
+// original clock time stored in the timestamp, regardless of browser timezone.
+// This avoids the UTC-offset shift that `toISOString()` introduces:
+// e.g. 21:00 PDT → "2021-06-13T04:00:00.000Z" (wrong label) vs
+//                  "2021-06-12 21:00:00"        (correct label).
+
+export function toPlotlyDate(ts: number): string {
+  const d   = new Date(ts)
+  const y   = d.getFullYear()
+  const mo  = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const h   = String(d.getHours()).padStart(2, '0')
+  const min = String(d.getMinutes()).padStart(2, '0')
+  const sec = String(d.getSeconds()).padStart(2, '0')
+  return `${y}-${mo}-${day} ${h}:${min}:${sec}`
+}
+
 export function parseDateTime(dt: string): number {
   if (!dt) return 0
 
@@ -174,11 +194,20 @@ export function computeDayBands(
     return {
       x1,
       x2,
-      // x1Ts/x2Ts: numeric timestamps for the time-proportional XAxis —
-      // ReferenceArea needs values on the same numeric domain as the
-      // chart's dataKey, not the original datetime strings.
-      x1Ts:  parseDateTime(x1),
-      x2Ts:  parseDateTime(x2),
+      // x1Ts/x2Ts: midnight-to-23:59:59.999 boundaries for the calendar day.
+      // The x-axis is type="number" (Unix ms) so ReferenceArea accepts any
+      // timestamp — not just values that match a data point. Using the full
+      // calendar day means bands extend to the true day boundary rather than
+      // snapping to the nearest sample. The explicit Date constructor for x2Ts
+      // is DST-safe (JS resolves local time correctly); +86400000-1 would be
+      // wrong on spring-forward days (23-hour days) and land 1 h into the next day.
+      x1Ts:  groupDate.getTime(),
+      x2Ts:  new Date(
+        groupDate.getFullYear(),
+        groupDate.getMonth(),
+        groupDate.getDate(),
+        23, 59, 59, 999,
+      ).getTime(),
       shade: daysSinceStart % 2 === 0,
     }
   })

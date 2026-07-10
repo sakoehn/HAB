@@ -32,10 +32,17 @@
  *   "Add term" adds a second search field
  *
  * EgcChart — normalize controls:
- *   Off / L1 / Z-score buttons render
- *   L1 button shows depth-normalised hint text
+ *   EGC / Relative Abundance / Off / Z-score buttons render
+ *   Relative Abundance button shows Relative Abundance hint text
  *   Z-score button shows std dev hint text
  *   Smooth toggle reveals bandwidth slider
+ *
+ * EgcChart — decoupled metric/standardize controls:
+ *   Metric and Standardize render as two independent groups
+ *   selecting Relative Abundance does not reset Standardize
+ *   Standardize survives switching metric back to EGC
+ *   Relative Abundance + Z-score combined y-axis label
+ *   Off deactivates Z-score
  *
  * EgcChart — export buttons:
  *   PNG button present
@@ -44,7 +51,7 @@
  *   CSV triggers Blob download
  *   Σ Stats button shows stats panel
  *   Σ Stats hides on second click
- *   L1 changes y-axis label
+ *   L1 changes y-axis label to Relative Abundance
  *   Z-score changes y-axis label
  *
  * StatsPanel:
@@ -91,9 +98,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import React from 'react'
+
+import { LeftResultList } from '../components/annotations/LeftResultList'
+import { MultiEgcChart } from '../components/charts/MultiEgcChart'
+import type { AnnotationItem } from '../types'
 
 // ── Mock fetch globally ────────────────────────────────────────────────────
 
@@ -455,29 +466,207 @@ describe('AnalyzePage — search', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EgcChart — normalize controls (always visible, no mode toggle)
+// AnalyzePage — chart card retry on failed series fetch
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('EgcChart — normalize controls', () => {
-  it('renders Off, L1, Z-score normalize buttons', async () => {
+describe('AnalyzePage — chart card retry', () => {
+  it('shows a retry button when a card fails to load (not just "Failed to load" with no way forward)', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations')) return Promise.reject(new Error('fail'))
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SEARCH })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
     render(<App />)
     const resultRow = await searchAndGetResult()
     await userEvent.click(resultRow)
     await waitFor(() => {
+      expect(screen.getByText(/failed to load/i)).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+  })
+
+  it('clicking retry re-fetches and shows the chart on success', async () => {
+    let seriesCalls = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations')) {
+        seriesCalls++
+        if (seriesCalls === 1) return Promise.reject(new Error('fail'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      }
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SEARCH })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    render(<App />)
+    const resultRow = await searchAndGetResult()
+    await userEvent.click(resultRow)
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: /retry/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByText(/failed to load/i)).not.toBeInTheDocument()
+    })
+    expect(seriesCalls).toBe(2)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AnalyzePage — group card: a failed member must not silently vanish
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TWO_ROW_SEARCH = {
+  data: [
+    {
+      annotation_id: 'K00001', source: 'kegg', name: 'a', parent: null,
+      mean_egc: 1, max_egc: 1, sample_count: 1, value: null, timepoint: null, sample: '',
+    },
+    {
+      annotation_id: 'K00002', source: 'kegg', name: 'b', parent: null,
+      mean_egc: 1, max_egc: 1, sample_count: 1, value: null, timepoint: null, sample: '',
+    },
+  ],
+  total: 2,
+}
+
+async function addTwoRowGroupWithSecondMemberFailing() {
+  mockFetch.mockImplementation((url: string) => {
+    if (url.includes('/api/search/annotations'))
+      return Promise.resolve({ ok: true, status: 200, json: async () => TWO_ROW_SEARCH })
+    if (url.includes('/api/series/annotations') && url.includes('annotation_id=K00002'))
+      return Promise.reject(new Error('fail'))
+    if (url.includes('/api/series/annotations'))
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+    return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+  })
+  render(<App />)
+  const input = await getAnalyzeSearchInput()
+  await userEvent.type(input, 'alcohol')
+  await userEvent.keyboard('{Enter}')
+  await waitFor(() => {
+    expect(document.querySelectorAll('.al-row-checkbox').length).toBe(2)
+  })
+  const checkboxes = document.querySelectorAll('.al-row-checkbox')
+  await userEvent.click(checkboxes[0])
+  await userEvent.click(checkboxes[1])
+  await userEvent.click(screen.getByTitle(/Sum EGC across/i))
+}
+
+describe('AnalyzePage — group card member failure', () => {
+  it('shows a failure warning instead of silently excluding the failed member from the total', async () => {
+    await addTwoRowGroupWithSecondMemberFailing()
+    await waitFor(() => {
+      expect(screen.getByTestId('group-member-failure-warning')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('group-member-failure-warning').textContent).toContain('K00002')
+  })
+
+  it('failure warning has a retry button', async () => {
+    await addTwoRowGroupWithSecondMemberFailing()
+    await waitFor(() => {
+      expect(screen.getByTestId('group-retry-member-btn')).toBeInTheDocument()
+    })
+  })
+
+  it('does not show the failure warning when both members succeed', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => TWO_ROW_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    render(<App />)
+    const input = await getAnalyzeSearchInput()
+    await userEvent.type(input, 'alcohol')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-row-checkbox').length).toBe(2)
+    })
+    const checkboxes = document.querySelectorAll('.al-row-checkbox')
+    await userEvent.click(checkboxes[0])
+    await userEvent.click(checkboxes[1])
+    await userEvent.click(screen.getByTitle(/Sum EGC across/i))
+
+    await waitFor(() => {
+      expect(document.querySelector('.al-right-card-group')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('group-member-failure-warning')).toBeNull()
+  })
+
+  it('clicking retry re-fetches only the failed member', async () => {
+    let k2Calls = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => TWO_ROW_SEARCH })
+      if (url.includes('/api/series/annotations') && url.includes('annotation_id=K00002')) {
+        k2Calls++
+        if (k2Calls === 1) return Promise.reject(new Error('fail'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      }
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    render(<App />)
+    const input = await getAnalyzeSearchInput()
+    await userEvent.type(input, 'alcohol')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-row-checkbox').length).toBe(2)
+    })
+    const checkboxes = document.querySelectorAll('.al-row-checkbox')
+    await userEvent.click(checkboxes[0])
+    await userEvent.click(checkboxes[1])
+    await userEvent.click(screen.getByTitle(/Sum EGC across/i))
+
+    await waitFor(() => expect(screen.getByTestId('group-retry-member-btn')).toBeInTheDocument())
+    await userEvent.click(screen.getByTestId('group-retry-member-btn'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('group-member-failure-warning')).toBeNull()
+    })
+    expect(k2Calls).toBe(2)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EgcChart — normalize controls (always visible, no mode toggle)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Scoped to a specific chart-ctrl-group by its label — the Standardize
+// group's "Off" button, the Smooth group's "Off" button, and the About
+// page's own "Off" copy (About stays mounted simultaneously in this SPA,
+// visibility toggled via CSS not unmount) would otherwise all collide
+// under a document-wide screen.getAllByText('Off') query.
+function ctrlGroup(container: HTMLElement, labelText: string): HTMLElement {
+  const label = within(container).getByText(labelText, { selector: '.ctrl-label' })
+  return label.parentElement as HTMLElement
+}
+
+describe('EgcChart — normalize controls', () => {
+  it('renders EGC, Relative Abundance, Off, Z-score buttons', async () => {
+    render(<App />)
+    const resultRow = await searchAndGetResult()
+    await userEvent.click(resultRow)
+    await waitFor(() => {
+      expect(screen.getAllByText('EGC').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('Relative Abundance').length).toBeGreaterThan(0)
       expect(screen.getAllByText('Off').length).toBeGreaterThan(0)
-      expect(screen.getAllByText('L1').length).toBeGreaterThan(0)
       expect(screen.getAllByText('Z-score').length).toBeGreaterThan(0)
     })
   })
 
-  it('L1 button shows depth-normalised hint text', async () => {
+  it('Relative Abundance button shows Relative Abundance hint text', async () => {
     render(<App />)
     const resultRow = await searchAndGetResult()
     await userEvent.click(resultRow)
     await waitFor(() => screen.getAllByText(/↓ PNG/i).length > 0)
-    await userEvent.click(screen.getAllByText('L1')[0])
+    await userEvent.click(screen.getAllByText('Relative Abundance')[0])
     await waitFor(() => {
-      expect(screen.getAllByText(/depth-normalised/i).length).toBeGreaterThan(0)
+      const hints = Array.from(document.querySelectorAll('.ctrl-hint')).map(h => h.textContent)
+      expect(hints.some(h => h?.includes('Relative Abundance'))).toBe(true)
     })
   })
 
@@ -501,6 +690,401 @@ describe('EgcChart — normalize controls', () => {
     await userEvent.click(smoothBtn)
     await waitFor(() => {
       expect(screen.getByRole('slider')).toBeInTheDocument()
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EgcChart — decoupled Metric / Standardize controls
+// ─────────────────────────────────────────────────────────────────────────────
+// Prior to this, Z-score could only be applied to raw EGC — L1 (norm_egc)
+// and Z-score were mutually exclusive modes of one NormalizeMode. Metric
+// (EGC / Relative Abundance) and Standardize (Off / Z-score) are now two
+// independent controls, so all four combinations are reachable.
+
+describe('EgcChart — decoupled metric/standardize controls', () => {
+  async function openChartControls(): Promise<HTMLElement> {
+    render(<App />)
+    const resultRow = await searchAndGetResult()
+    await userEvent.click(resultRow)
+    await waitFor(() => screen.getAllByText(/↓ PNG/i).length > 0)
+    const container = document.querySelector('.chart-controls') as HTMLElement | null
+    expect(container).toBeTruthy()
+    return container!
+  }
+
+  it('Metric and Standardize render as two separate control groups', async () => {
+    const container = await openChartControls()
+    const metricGroup = ctrlGroup(container, 'Metric')
+    const standardizeGroup = ctrlGroup(container, 'Standardize')
+    expect(within(metricGroup).getByText('EGC')).toBeInTheDocument()
+    expect(within(metricGroup).getByText('Relative Abundance')).toBeInTheDocument()
+    expect(within(standardizeGroup).getByText('Off')).toBeInTheDocument()
+    expect(within(standardizeGroup).getByText('Z-score')).toBeInTheDocument()
+  })
+
+  it('selecting Relative Abundance metric does not reset Standardize to Off', async () => {
+    const container = await openChartControls()
+    const standardizeGroup = ctrlGroup(container, 'Standardize')
+    const metricGroup = ctrlGroup(container, 'Metric')
+    await userEvent.click(within(standardizeGroup).getByText('Z-score'))
+    await userEvent.click(within(metricGroup).getByText('Relative Abundance'))
+    await waitFor(() => {
+      expect(within(standardizeGroup).getByText('Z-score').className).toContain('on')
+    })
+  })
+
+  it('switching Standardize on then back to EGC metric keeps Z-score active', async () => {
+    const container = await openChartControls()
+    const standardizeGroup = ctrlGroup(container, 'Standardize')
+    const metricGroup = ctrlGroup(container, 'Metric')
+    await userEvent.click(within(standardizeGroup).getByText('Z-score'))
+    await userEvent.click(within(metricGroup).getByText('EGC'))
+    await waitFor(() => {
+      expect(within(standardizeGroup).getByText('Z-score').className).toContain('on')
+    })
+  })
+
+  it('Relative Abundance + Z-score combined shows a y-axis label reflecting both', async () => {
+    const container = await openChartControls()
+    const standardizeGroup = ctrlGroup(container, 'Standardize')
+    const metricGroup = ctrlGroup(container, 'Metric')
+    await userEvent.click(within(metricGroup).getByText('Relative Abundance'))
+    await userEvent.click(within(standardizeGroup).getByText('Z-score'))
+    await waitFor(() => {
+      expect(screen.getAllByText(/Relative Abundance \(Z-score/i).length).toBeGreaterThan(0)
+    })
+  })
+
+  it('selecting Off (Standardize) after Z-score deactivates it', async () => {
+    const container = await openChartControls()
+    const standardizeGroup = ctrlGroup(container, 'Standardize')
+    await userEvent.click(within(standardizeGroup).getByText('Z-score'))
+    await waitFor(() => expect(within(standardizeGroup).getByText('Z-score').className).toContain('on'))
+    await userEvent.click(within(standardizeGroup).getByText('Off'))
+    await waitFor(() => {
+      expect(within(standardizeGroup).getByText('Z-score').className).not.toContain('on')
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ChartControls — help tooltips
+// ─────────────────────────────────────────────────────────────────────────────
+// Each chart-ctrl-group gets a "?" HelpTooltip explaining its options — the
+// underlying formulas/behavior were previously only documented on the About
+// page or in native title= hover text, both easy to miss.
+
+describe('ChartControls — help tooltips', () => {
+  async function openChartControls(): Promise<HTMLElement> {
+    render(<App />)
+    const resultRow = await searchAndGetResult()
+    await userEvent.click(resultRow)
+    await waitFor(() => screen.getAllByText(/↓ PNG/i).length > 0)
+    const container = document.querySelector('.chart-controls') as HTMLElement | null
+    expect(container).toBeTruthy()
+    return container!
+  }
+
+  it('Metric group has a help tooltip explaining EGC vs Relative Abundance vs Z-score', async () => {
+    const container = await openChartControls()
+    const metricGroup = ctrlGroup(container, 'Metric')
+    const btn = within(metricGroup).getByTitle('Help')
+    await userEvent.click(btn)
+    await waitFor(() => {
+      expect(screen.getAllByText(/apply to either metric/i).length).toBeGreaterThan(0)
+    })
+  })
+
+  it('Smooth group has a help tooltip explaining LOWESS bandwidth', async () => {
+    const container = await openChartControls()
+    const smoothGroup = ctrlGroup(container, 'Smooth')
+    const btn = within(smoothGroup).getByTitle('Help')
+    await userEvent.click(btn)
+    await waitFor(() => {
+      expect(screen.getAllByText(/smoothed trend line/i).length).toBeGreaterThan(0)
+    })
+  })
+
+  it('Overlays group has a help tooltip explaining Day/Night vs Day bands', async () => {
+    const container = await openChartControls()
+    const overlaysGroup = ctrlGroup(container, 'Overlays')
+    const btn = within(overlaysGroup).getByTitle('Help')
+    await userEvent.click(btn)
+    await waitFor(() => {
+      expect(screen.getAllByText(/not tied to actual solar data/i).length).toBeGreaterThan(0)
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LeftResultList — help tooltips
+// ─────────────────────────────────────────────────────────────────────────────
+// LeftResultList is purely presentational (all state/callbacks owned by
+// AnalyzePage), so it's rendered directly here rather than through the full
+// <App/> + fetch-mock machinery — lets us control `rows` (and therefore
+// availableSources) precisely.
+
+describe('LeftResultList — help tooltips', () => {
+  function makeRow(source: string, id: string): AnnotationItem {
+    return {
+      source, sample: 's1', timepoint: null,
+      annotation_id: id, name: id, value: { egc: 100, norm_egc: 0.01 },
+      mean_egc: 100, max_egc: 100, sample_count: 1,
+    }
+  }
+
+  const baseProps = {
+    termLabel:     'iron',
+    checkedKeys:   new Set<string>(),
+    seriesCache:   {},
+    rightCardKeys: new Set<string>(),
+    copiedId:      null,
+    onCopy:        () => {},
+    onToggleCheck: () => {},
+    onAddSingle:   () => {},
+    onAddSelected: () => {},
+    onGroupSelected: () => {},
+  }
+
+  it('bulk action bar has a help tooltip explaining "+ Add" vs "∑ Group"', async () => {
+    render(<LeftResultList {...baseProps} rows={[makeRow('kegg', 'K00001')]} total={1} />)
+    await userEvent.click(screen.getByTitle('Help'))
+    await waitFor(() => {
+      expect(screen.getByText(/sums all checked items/i)).toBeInTheDocument()
+    })
+  })
+
+  it('source filter pills have a help tooltip when multiple sources are present', async () => {
+    render(
+      <LeftResultList
+        {...baseProps}
+        rows={[makeRow('kegg', 'K00001'), makeRow('cog', 'COG0001')]}
+        total={2}
+      />,
+    )
+    const filterRow = document.querySelector('.al-source-filter') as HTMLElement
+    expect(filterRow).toBeTruthy()
+    await userEvent.click(within(filterRow).getByTitle('Help'))
+    await waitFor(() => {
+      expect(screen.getByText(/remembered per search tab/i)).toBeInTheDocument()
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiEgcChart — scale-mismatch help tooltip
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('MultiEgcChart — scale-mismatch help tooltip', () => {
+  it('scale-mismatch warning banner has a help tooltip', async () => {
+    const mkData = (egc: number): AnnotationItem[] =>
+      Array.from({ length: 5 }, (_, i) => ({
+        source: 'kegg', sample: `s${i}`,
+        timepoint: { taxon_oid: `t${i}`, timepoint: String(i), datetime: `2021-05-2${i}T00:00:00` },
+        annotation_id: 'X', name: 'X', value: { egc, norm_egc: egc / 1e6 },
+      }))
+    render(
+      <MultiEgcChart
+        series={[
+          { annotationId: 'K00001', name: 'high', data: mkData(10000), color: '#111', source: 'kegg' },
+          { annotationId: 'K00002', name: 'low',  data: mkData(10),    color: '#222', source: 'kegg' },
+        ]}
+        dateFrom=""
+        dateTo=""
+      />,
+    )
+    await waitFor(() => {
+      expect(document.querySelector('.scale-mismatch-warning')).toBeTruthy()
+    })
+    const banner = document.querySelector('.scale-mismatch-warning') as HTMLElement
+    await userEvent.click(within(banner).getByTitle('Help'))
+    await waitFor(() => {
+      expect(screen.getByText(/comparable on one chart/i)).toBeInTheDocument()
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ExplorePage — help tooltips
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ExplorePage — help tooltips', () => {
+  it('"Annotations by Parent" View toggle has a help tooltip', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({
+            data: [
+              { annotation_id: 'K00001', name: 'a', parent: 'p1', mean_egc: 100, max_egc: 100, sample_count: 1 },
+              { annotation_id: 'K00002', name: 'b', parent: 'p1', mean_egc: 50,  max_egc: 50,  sample_count: 1 },
+            ],
+          }),
+        })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    const cardLabel = await screen.findByText('Annotations by Parent', {
+      selector: '.explore-card-label',
+    })
+    await userEvent.click(cardLabel)
+    await waitFor(() => {
+      expect(screen.getByText('Individual annotations')).toBeInTheDocument()
+    })
+    await userEvent.click(screen.getByTitle('Help'))
+    await waitFor(() => {
+      expect(screen.getByText(/adds up all annotations under the same parent/i)).toBeInTheDocument()
+    })
+  })
+
+  it('Annotation Lookup "Depth" field has a help tooltip', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({
+            data: [{
+              annotation_id: 'K00001', name: 'alcohol dehydrogenase',
+              parent: '00001 KEGG Orthology',
+              value: { depth: 4, category: 'Metabolism' },
+              mean_egc: 277.0, max_egc: 500.0, sample_count: 128,
+            }],
+            total: 1,
+          }),
+        })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    const cardLabel = await screen.findByText('Annotation Lookup', {
+      selector: '.explore-card-label',
+    })
+    await userEvent.click(cardLabel)
+    const input = await screen.findByPlaceholderText(/ID \(K02014\)/i)
+    await userEvent.type(input, 'K00001')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(screen.getByText('Depth')).toBeInTheDocument()
+    })
+    const depthLabel = screen.getByText('Depth')
+    await userEvent.click(within(depthLabel).getByTitle('Help'))
+    await waitFor(() => {
+      expect(screen.getByText(/depth is source-dependent|meaning depends on the annotation source/i)).toBeInTheDocument()
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TaxonomyPage — help tooltips
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('TaxonomyPage — help tooltips', () => {
+  it('scope picker and Exclude branches heading both have a help tooltip', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations') && url.includes('sources=taxonomy'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({ data: [{ annotation_id: 'Bacteria', source: 'taxonomy', name: null, parent: null, value: {} }] }),
+        })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('Taxonomy', { selector: '.nav-label' }))
+    const searchInput = await screen.findByPlaceholderText(/Search for a taxon/i)
+    await userEvent.type(searchInput, 'Bacteria')
+    const searchBar = searchInput.closest('.search-bar') as HTMLElement
+    await userEvent.click(within(searchBar).getByText('Find'))
+    const scopeResult = await screen.findByText('Bacteria', { selector: 'span' })
+    await userEvent.click(scopeResult)
+    // Scoped to h2 — the About page's own copy (always mounted) also mentions
+    // "Exclude branches" as plain text inside a <strong>, not an <h2>.
+    await waitFor(() => {
+      expect(screen.getByText('Exclude branches', { selector: 'h2' })).toBeInTheDocument()
+    })
+    // Two tooltips now present: scope-change and exclude-branches
+    const helpBtns = screen.getAllByTitle('Help')
+    expect(helpBtns.length).toBeGreaterThanOrEqual(2)
+    await userEvent.click(helpBtns[0])
+    await waitFor(() => {
+      expect(screen.getByText(/clears your current exclusions/i)).toBeInTheDocument()
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ScaffoldExplorePanel — help tooltips
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ScaffoldExplorePanel — help tooltips', () => {
+  async function openScaffoldPanelWithTwoTerms() {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({
+            data: [
+              { annotation_id: 'K00001', name: 'a', parent: null, mean_egc: 100, max_egc: 100, sample_count: 1 },
+              { annotation_id: 'K00002', name: 'b', parent: null, mean_egc: 50,  max_egc: 50,  sample_count: 1 },
+            ],
+          }),
+        })
+      if (url.includes('/api/annotations/scaffolds/summary'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({ data: [{ sample: 's1', date: '05/27/21', scaffold_count: 3, gene_count: 5 }] }),
+        })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    const cardLabel = await screen.findByText('Scaffold Information', {
+      selector: '.explore-card-label',
+    })
+    await userEvent.click(cardLabel)
+    await waitFor(() => {
+      expect(screen.getByText(/Showing top 2 kegg annotations/i)).toBeInTheDocument()
+    })
+  }
+
+  it('"Suggested" terms banner has a help tooltip', async () => {
+    await openScaffoldPanelWithTwoTerms()
+    const banner = screen.getByText(/Showing top 2 kegg annotations/i).closest('div') as HTMLElement
+    await userEvent.click(within(banner).getByTitle('Help'))
+    await waitFor(() => {
+      expect(screen.getByText(/replaced automatically if you change the source/i)).toBeInTheDocument()
+    })
+  })
+
+  it('"Split by term" control has a help tooltip', async () => {
+    await openScaffoldPanelWithTwoTerms()
+    await waitFor(() => {
+      expect(screen.getByText('Split by term')).toBeInTheDocument()
+    })
+    const splitBtn = screen.getByText('Split by term')
+    await userEvent.click(within(splitBtn.parentElement as HTMLElement).getByTitle('Help'))
+    await waitFor(() => {
+      expect(screen.getByText(/shows one line per term instead/i)).toBeInTheDocument()
     })
   })
 })
@@ -563,11 +1147,14 @@ describe('EgcChart — export buttons', () => {
     })
   })
 
-  it('L1 changes y-axis label to norm_egc', async () => {
+  it('Relative Abundance metric changes y-axis label to Relative Abundance', async () => {
     await renderWithChart()
-    await userEvent.click(screen.getAllByText('L1')[0])
+    const container = document.querySelector('.chart-controls') as HTMLElement
+    const metricGroup = ctrlGroup(container, 'Metric')
+    await userEvent.click(within(metricGroup).getByText('Relative Abundance'))
     await waitFor(() => {
-      expect(screen.getAllByText(/norm_egc/i).length).toBeGreaterThan(0)
+      expect(screen.getAllByText('Relative Abundance').length).toBeGreaterThan(0)
+      expect(screen.queryByText('norm_egc (EGC / sample depth)')).toBeNull()
     })
   })
 
@@ -818,6 +1405,112 @@ describe('CorrelatesPanel', () => {
       expect(document.querySelector('.corr-pill-bar')).toBeNull()
     })
   })
+
+  it('Cross-source/Within-source pill bar has a help tooltip', async () => {
+    await renderWithChartAndWait()
+    await userEvent.click(screen.getByText(/Find Correlates/i))
+    const bar = await waitFor(() => {
+      const el = document.querySelector('.corr-pill-bar')
+      expect(el).toBeTruthy()
+      return el as HTMLElement
+    })
+    await userEvent.click(within(bar).getByTitle('Help'))
+    await waitFor(() => {
+      expect(screen.getByText(/excluding siblings under the same parent/i)).toBeInTheDocument()
+    })
+  })
+
+  it('lag value has a help tooltip explaining the sign convention', async () => {
+    await renderWithChartAndWait()
+    await userEvent.click(screen.getByText(/Find Correlates/i))
+    const lagStat = await screen.findByTitle('Time offset. Positive = candidate peaks earlier.')
+    await userEvent.click(within(lagStat).getByTitle('Help'))
+    await waitFor(() => {
+      expect(screen.getByText(/tends to peak earlier than this one/i)).toBeInTheDocument()
+    })
+  })
+
+  it('low-n "⚠ n<30" badge has a help tooltip', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/correlate'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({
+            data: [{
+              annotation_id: 'COG0001', source: 'taxonomy', name: 'Bacteria', parent: null,
+              spearman_r: 0.72, abs_r: 0.72, lag_samples: 0, lag_hours: 0,
+              p_value: 0.02, n_pairs: 12,
+            }],
+          }),
+        })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    await renderWithChartAndWait()
+    await userEvent.click(screen.getByText(/Find Correlates/i))
+    const nBadge = await waitFor(() => {
+      const el = document.querySelector('.corr-stat-n-warn')
+      expect(el).toBeTruthy()
+      return el as HTMLElement
+    })
+    await userEvent.click(within(nBadge).getByTitle('Help'))
+    await waitFor(() => {
+      expect(screen.getByText(/not statistically reliable/i)).toBeInTheDocument()
+    })
+  })
+
+  it('retries the cross-source tab when the first request fails', async () => {
+    let correlateCalls = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/correlate')) {
+        correlateCalls += 1
+        if (correlateCalls === 1) {
+          return Promise.reject(new Error('network'))
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => DEFAULT_CORRELATES,
+        })
+      }
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      if (url.includes('/api/mappings/search'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_MAPPINGS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    render(<App />)
+    const resultRow = await searchAndGetResult()
+    await userEvent.click(resultRow)
+    await waitFor(() => screen.getByText(/Find Correlates/i))
+    await userEvent.click(screen.getByText(/Find Correlates/i))
+
+    await waitFor(() => {
+      expect(screen.getByText(/Correlation failed/i)).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cross-source/i }))
+
+    await waitFor(() => {
+      expect(
+        mockFetch.mock.calls.filter(([rawUrl]) => String(rawUrl).includes('/api/annotations/correlate')),
+      ).toHaveLength(3)
+    })
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -964,6 +1657,568 @@ describe('Explore page — scaffold section card', () => {
       // ScaffoldExplorePanel opens and renders a search input
       const inputs = screen.getAllByPlaceholderText(/annotation ID or name/i)
       expect(inputs.length).toBeGreaterThanOrEqual(1)
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ExplorePage — AnnotationsByParentPanel retry
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ExplorePage — AnnotationsByParentPanel retry', () => {
+  const ONE_PARENT_TOP = {
+    data: [
+      { annotation_id: 'K00001', name: 'a', parent: 'p1', mean_egc: 100, max_egc: 100, sample_count: 1 },
+      { annotation_id: 'K00002', name: 'b', parent: 'p1', mean_egc: 50,  max_egc: 50,  sample_count: 1 },
+    ],
+  }
+
+  async function openAnnotationsByParent() {
+    render(<App />)
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    const cardLabel = await screen.findByText('Annotations by Parent', {
+      selector: '.explore-card-label',
+    })
+    await userEvent.click(cardLabel)
+    await waitFor(() => screen.getByText('Individual annotations'))
+  }
+
+  it('top-level fetch failure shows a retry button', async () => {
+    let topCalls = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) {
+        topCalls++
+        return topCalls === 1
+          ? Promise.reject(new Error('fail'))
+          : Promise.resolve({ ok: true, status: 200, json: async () => ONE_PARENT_TOP })
+      }
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    const cardLabel = await screen.findByText('Annotations by Parent', {
+      selector: '.explore-card-label',
+    })
+    await userEvent.click(cardLabel)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('parent-panel-retry-btn')).toBeInTheDocument()
+    })
+    await userEvent.click(screen.getByTestId('parent-panel-retry-btn'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('parent-panel-retry-btn')).toBeNull()
+    })
+    expect(topCalls).toBe(2)
+  })
+
+  it('a parent group with a failed member series shows a warning, not a silently empty chart', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ONE_PARENT_TOP })
+      if (url.includes('/api/series/annotations')) {
+        if (url.includes('annotation_id=K00002')) return Promise.reject(new Error('fail'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [] }) })
+      }
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    await openAnnotationsByParent()
+
+    const groupToggle = document.querySelector('.parent-group .mappings-toggle') as HTMLElement
+    await userEvent.click(groupToggle)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('parent-group-failure-warning')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('parent-group-failure-warning').textContent).toContain('K00002')
+    expect(screen.getByTestId('parent-group-retry-btn')).toBeInTheDocument()
+  })
+
+  it('clicking the parent-group retry re-fetches and clears the warning on success', async () => {
+    let k2Calls = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ONE_PARENT_TOP })
+      if (url.includes('/api/series/annotations') && url.includes('annotation_id=K00002')) {
+        k2Calls++
+        if (k2Calls === 1) return Promise.reject(new Error('fail'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [] }) })
+      }
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [] }) })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    await openAnnotationsByParent()
+
+    const groupToggle = document.querySelector('.parent-group .mappings-toggle') as HTMLElement
+    await userEvent.click(groupToggle)
+    await waitFor(() => expect(screen.getByTestId('parent-group-retry-btn')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByTestId('parent-group-retry-btn'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('parent-group-failure-warning')).toBeNull()
+    })
+    expect(k2Calls).toBe(2)
+  })
+
+  it('temporal chart: a failed member shows a warning + single retry, not silently "ok" with no indication', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ONE_PARENT_TOP })
+      if (url.includes('/api/series/annotations') && url.includes('annotation_id=K00002'))
+        return Promise.reject(new Error('fail'))
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [] }) })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    const overviewLabel = await screen.findByText('Dataset Overview', {
+      selector: '.explore-card-label',
+    })
+    await userEvent.click(overviewLabel)
+    await userEvent.click(await screen.findByText('Load Overview'))
+    await userEvent.click(await screen.findByText('Load time series →'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('overview-series-failure-warning')).toBeInTheDocument()
+    })
+    expect(screen.getAllByRole('button', { name: /retry/i }).length).toBe(1)
+  })
+
+  it('no failure warning when all members succeed', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ONE_PARENT_TOP })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [] }) })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    await openAnnotationsByParent()
+
+    const groupToggle = document.querySelector('.parent-group .mappings-toggle') as HTMLElement
+    await userEvent.click(groupToggle)
+
+    await waitFor(() => screen.getByText('K00001'))
+    expect(screen.queryByTestId('parent-group-failure-warning')).toBeNull()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ExplorePage — Dataset Overview happy path
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ExplorePage — Dataset Overview happy path', () => {
+  const THREE_ROW_TOP = {
+    data: [
+      { annotation_id: 'K00001', name: 'a', parent: 'p1', mean_egc: 100, max_egc: 150, sample_count: 10 },
+      { annotation_id: 'K00002', name: 'b', parent: 'p1', mean_egc: 50,  max_egc: 80,  sample_count: 10 },
+      { annotation_id: 'K00003', name: 'c', parent: 'p2', mean_egc: 30,  max_egc: 40,  sample_count: 10 },
+    ],
+    sample_count: 10,
+  }
+
+  async function openDatasetOverview() {
+    render(<App />)
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    const overviewLabel = await screen.findByText('Dataset Overview', {
+      selector: '.explore-card-label',
+    })
+    await userEvent.click(overviewLabel)
+  }
+
+  it('clicking Load Overview groups annotations by parent and renders each group', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => THREE_ROW_TOP })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    await openDatasetOverview()
+    await userEvent.click(await screen.findByText('Load Overview'))
+
+    // p1 (2 annotations) and p2 (1 annotation) are the two parent groups
+    // that should fall out of grouping THREE_ROW_TOP by `parent`.
+    await waitFor(() => {
+      expect(screen.getByTitle('p1')).toBeInTheDocument()
+    })
+    expect(screen.getByTitle('p2')).toBeInTheDocument()
+    expect(screen.getAllByText(/↓ CSV/i).length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('clicking "Load time series →" renders the summed temporal chart', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => THREE_ROW_TOP })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({
+            data: [{
+              annotation_id: 'K00001', source: 'kegg', name: 'a', sample: 's1',
+              timepoint: { taxon_oid: 's1', timepoint: '1', datetime: '2021-05-27T08:00:00' },
+              value: { egc: 100, norm_egc: 0.001 },
+            }],
+          }),
+        })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    await openDatasetOverview()
+    await userEvent.click(await screen.findByText('Load Overview'))
+    await waitFor(() => screen.getByTitle('p1'))
+
+    await userEvent.click(await screen.findByText('Load time series →'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Summed EGC over time — top 5 functional groups')).toBeInTheDocument()
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ExplorePage — Annotation Lookup happy path
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ExplorePage — Annotation Lookup happy path', () => {
+  it('searching an exact ID auto-selects the single result and renders the detail card', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({
+            data: [{
+              annotation_id: 'K02014',
+              source:        'kegg',
+              name:          'TonB-dependent receptor',
+              parent:        '02010 Membrane transport',
+              mean_egc:      500,
+              max_egc:       900,
+              sample_count:  20,
+              value:         { egc: 500, norm_egc: 0.0005, depth: 3 },
+              timepoint:     null,
+              sample:        '',
+            }],
+            total: 1,
+          }),
+        })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    const lookupLabel = await screen.findByText('Annotation Lookup', {
+      selector: '.explore-card-label',
+    })
+    await userEvent.click(lookupLabel)
+
+    const input = await screen.findByPlaceholderText(/ID \(K02014\)/i)
+    await userEvent.type(input, 'K02014')
+    await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
+
+    await waitFor(() => {
+      expect(document.querySelector('.lookup-id')?.textContent).toBe('K02014')
+    })
+    expect(document.querySelector('.lookup-name')?.textContent).toBe('TonB-dependent receptor')
+    // Parent label is derived via expandParentLabel — "02010 Membrane transport"
+    // has a 5-digit code prefix, so it should be stripped to just the label.
+    expect(document.querySelector('.lookup-meta-grid')?.textContent).toContain('Membrane transport')
+  })
+
+  it('multi-result search shows a result list without auto-selecting a detail card', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({
+            data: [
+              {
+                annotation_id: 'K02014', source: 'kegg', name: 'a', parent: null,
+                mean_egc: 1, max_egc: 1, sample_count: 1, value: null, timepoint: null, sample: '',
+              },
+              {
+                annotation_id: 'K02015', source: 'kegg', name: 'b', parent: null,
+                mean_egc: 1, max_egc: 1, sample_count: 1, value: null, timepoint: null, sample: '',
+              },
+            ],
+            total: 2,
+          }),
+        })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    const lookupLabel = await screen.findByText('Annotation Lookup', {
+      selector: '.explore-card-label',
+    })
+    await userEvent.click(lookupLabel)
+
+    const input = await screen.findByPlaceholderText(/ID \(K02014\)/i)
+    await userEvent.type(input, 'K0201')
+    await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('2 results · click to view details')).toBeInTheDocument()
+    })
+    expect(document.querySelector('.lookup-id')).toBeNull()
+
+    // Clicking a result selects it and renders the detail card.
+    await userEvent.click(screen.getByText('K02014'))
+    await waitFor(() => {
+      expect(document.querySelector('.lookup-id')?.textContent).toBe('K02014')
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ExplorePage — Annotation Lookup: failed request vs. genuinely no results
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ExplorePage — Annotation Lookup failure vs. empty', () => {
+  async function openLookupAndSearch(term: string) {
+    render(<App />)
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    const lookupLabel = await screen.findByText('Annotation Lookup', {
+      selector: '.explore-card-label',
+    })
+    await userEvent.click(lookupLabel)
+    const input = await screen.findByPlaceholderText(/ID \(K02014\)/i)
+    await userEvent.type(input, term)
+    await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
+  }
+
+  it('a genuinely empty result shows "no results" and no retry button', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [], total: 0 }) })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    await openLookupAndSearch('zzz-nonexistent')
+
+    await waitFor(() => {
+      expect(screen.getByText(/No results for/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('lookup-retry-btn')).toBeNull()
+  })
+
+  it('a failed request shows a distinct failure message with a retry button (not "no results")', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations')) return Promise.reject(new Error('fail'))
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    await openLookupAndSearch('K02014')
+
+    await waitFor(() => {
+      expect(screen.getByTestId('lookup-retry-btn')).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/No results for/i)).toBeNull()
+  })
+
+  it('clicking retry re-runs the search and shows results on success', async () => {
+    let calls = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations')) {
+        calls++
+        if (calls === 1) return Promise.reject(new Error('fail'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({
+            data: [{
+              annotation_id: 'K02014', source: 'kegg', name: 'x', parent: null,
+              mean_egc: 1, max_egc: 1, sample_count: 1, value: null, timepoint: null, sample: '',
+            }],
+            total: 1,
+          }),
+        })
+      }
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    await openLookupAndSearch('K02014')
+    await waitFor(() => screen.getByTestId('lookup-retry-btn'))
+
+    await userEvent.click(screen.getByTestId('lookup-retry-btn'))
+
+    await waitFor(() => {
+      expect(document.querySelector('.lookup-id')?.textContent).toBe('K02014')
+    })
+    expect(calls).toBe(2)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AnalyzePage — Compare drawer (previously untested — 0% of CompareDrawer)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('AnalyzePage — Compare drawer', () => {
+  // The "▲ Compare" toggle button itself is disabled until 2+ cards exist
+  // (disabled={state.rightCards.length < 2}) — so the drawer can never be
+  // opened with 0 or 1 cards through the real UI. That makes CompareDrawer's
+  // own "eligibleCards.length === 0" empty-checklist branch unreachable in
+  // practice; every test here goes through the 2-card path the UI actually
+  // allows.
+
+  async function addTwoSingleCards() {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => TWO_ROW_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    render(<App />)
+    const input = await getAnalyzeSearchInput()
+    await userEvent.type(input, 'alcohol')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-row-body').length).toBe(2)
+    })
+    const rows = document.querySelectorAll('.al-row-body')
+    await userEvent.click(rows[0])
+    await userEvent.click(rows[1])
+    await waitFor(() => {
+      expect(screen.getAllByText('K00002').length).toBeGreaterThan(0)
+    })
+  }
+
+  it('lists both added cards in the checklist', async () => {
+    await addTwoSingleCards()
+    await userEvent.click(screen.getByText('▲ Compare'))
+    await waitFor(() => {
+      const text = document.querySelector('.al-drawer-checklist')?.textContent
+      expect(text).toContain('K00001')
+      expect(text).toContain('K00002')
+    })
+  })
+
+  it('shows the overlay chart once 2+ cards are checked (cards auto-check on add)', async () => {
+    await addTwoSingleCards()
+    await userEvent.click(screen.getByText('▲ Compare'))
+    await waitFor(() => {
+      expect(document.querySelector('.al-drawer-chart .chart-card')).toBeTruthy()
+    })
+  })
+
+  it('"→ Compare page" button appears once 2+ series are active and hands off both annotations', async () => {
+    await addTwoSingleCards()
+    await userEvent.click(screen.getByText('▲ Compare'))
+    await waitFor(() => screen.getByText('→ Compare page'))
+    await userEvent.click(screen.getByText('→ Compare page'))
+    // Handoff navigates to the Compare page with both annotations pre-loaded.
+    await waitFor(() => {
+      expect(screen.getByText(/Compare Annotations/i)).toBeInTheDocument()
+    })
+  })
+
+  it('"✕ Close" closes the drawer', async () => {
+    await addTwoSingleCards()
+    await userEvent.click(screen.getByText('▲ Compare'))
+    await waitFor(() => screen.getByText('✕ Close'))
+    await userEvent.click(screen.getByText('✕ Close'))
+    await waitFor(() => {
+      expect(screen.queryByText('✕ Close')).toBeNull()
+    })
+  })
+
+  it('unchecking a card drops it from the chart, leaving fewer than 2 active', async () => {
+    await addTwoSingleCards()
+    await userEvent.click(screen.getByText('▲ Compare'))
+    await waitFor(() => {
+      expect(document.querySelector('.al-drawer-chart .chart-card')).toBeTruthy()
+    })
+    const checkboxes = document.querySelectorAll('.al-drawer-check-row input[type="checkbox"]')
+    await userEvent.click(checkboxes[0])
+    await waitFor(() => {
+      expect(screen.getByText(/Check at least 2 annotations/i)).toBeInTheDocument()
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AnalyzePage — group card "🧬 Scaffolds" button opens GroupScaffoldModal
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('AnalyzePage — group card scaffolds button', () => {
+  it('clicking 🧬 Scaffolds on a group card opens GroupScaffoldModal', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => TWO_ROW_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      if (url.includes('/api/annotations/scaffolds/summary'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [] }) })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    render(<App />)
+    const input = await getAnalyzeSearchInput()
+    await userEvent.type(input, 'alcohol')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-row-checkbox').length).toBe(2)
+    })
+    const checkboxes = document.querySelectorAll('.al-row-checkbox')
+    await userEvent.click(checkboxes[0])
+    await userEvent.click(checkboxes[1])
+    await userEvent.click(screen.getByTitle(/Sum EGC across/i))
+
+    await waitFor(() => document.querySelector('.al-right-card-group'))
+    const scaffoldsBtn = Array.from(document.querySelectorAll('.al-right-card-group button'))
+      .find(b => b.textContent?.includes('Scaffolds')) as HTMLElement
+    await userEvent.click(scaffoldsBtn)
+
+    await waitFor(() => {
+      expect(document.querySelector('.scaffold-modal')).toBeTruthy()
     })
   })
 })

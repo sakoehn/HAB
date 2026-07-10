@@ -8,17 +8,11 @@
  *
  * Coverage
  * --------
- * CartesianGrid configuration:
- *   strokeDasharray   — empty string = solid lines
- *   stroke color      — concrete hex #d9d9d9, not a CSS variable
- *   color luminance   — lighter than text, darker than white
- *   consistent        — EgcChart, MultiEgcChart, GroupedEgcChart all match
- *
- * ChartControls — normalize modes:
- *   NormalizeMode type  — 'none' | 'l1' | 'zscore'
- *   L1 hint text        — 'Depth-normalised EGC'
- *   Z-score hint text   — 'Std deviations from mean'
- *   Off resets to raw
+ * ChartControls — metric/standardize (decoupled):
+ *   ChartMetric type       — 'egc' | 'norm_egc'
+ *   Relative Abundance hint text — 'Relative Abundance (norm_egc)'
+ *   Z-score hint text      — 'Std deviations from mean'
+ *   all 4 metric×standardize combinations verified via applyZScore directly
  *
  * ChartControls — LOWESS slider:
  *   minimum bandwidth   — 0.05 (allows tight local fit)
@@ -62,95 +56,103 @@
 import { describe, it, expect } from 'vitest'
 
 import { applyZScore, applyLowess } from '../utils/signal'
-import type { NormalizeMode } from '../types'
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CartesianGrid configuration
-// ─────────────────────────────────────────────────────────────────────────────
-
-const GRID_CONFIG = {
-  strokeDasharray: '' as const,
-  stroke:          '#d9d9d9' as const,
-} satisfies { strokeDasharray: string; stroke: string }
-
-describe('CartesianGrid — solid light gray', () => {
-  it('strokeDasharray is empty string (solid lines)', () => {
-    expect(GRID_CONFIG.strokeDasharray).toBe('')
-  })
-
-  it('stroke is a concrete hex value, not a CSS variable', () => {
-    expect(GRID_CONFIG.stroke.startsWith('#')).toBe(true)
-    expect(GRID_CONFIG.stroke).not.toContain('var(')
-  })
-
-  it('stroke is light gray: R, G, B each > 200', () => {
-    const r = parseInt(GRID_CONFIG.stroke.slice(1, 3), 16)
-    const g = parseInt(GRID_CONFIG.stroke.slice(3, 5), 16)
-    const b = parseInt(GRID_CONFIG.stroke.slice(5, 7), 16)
-    expect(r).toBeGreaterThan(200)
-    expect(g).toBeGreaterThan(200)
-    expect(b).toBeGreaterThan(200)
-  })
-
-  it('stroke is lighter than body text (#1e293b)', () => {
-    const gridR = parseInt(GRID_CONFIG.stroke.slice(1, 3), 16)
-    const textR = parseInt('1e', 16)
-    expect(gridR).toBeGreaterThan(textR)
-  })
-
-  it('all three chart components use identical grid config', () => {
-    // If any chart changes its grid it must be intentional and caught here
-    const configs = [
-      { component: 'EgcChart',        ...GRID_CONFIG },
-      { component: 'MultiEgcChart',   ...GRID_CONFIG },
-      { component: 'GroupedEgcChart', ...GRID_CONFIG },
-    ]
-    for (const c of configs) {
-      expect(c.strokeDasharray).toBe(GRID_CONFIG.strokeDasharray)
-      expect(c.stroke).toBe(GRID_CONFIG.stroke)
-    }
-  })
-})
+import { getEgcYLabel } from '../utils/chartTheme'
+import type { ChartMetric } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ChartControls — NormalizeMode
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('ChartControls — normalize mode type', () => {
-  it('valid NormalizeMode values are none, l1, zscore', () => {
-    const valid: NormalizeMode[] = ['none', 'l1', 'zscore']
-    expect(valid).toContain('none')
-    expect(valid).toContain('l1')
-    expect(valid).toContain('zscore')
-  })
-
-  it('L1 hint text is depth-normalised (exact UI string)', () => {
-    const HINT = 'Depth-normalised EGC (norm_egc)'
-    expect(HINT).toContain('Depth-normalised')
-    expect(HINT).toContain('norm_egc')
-  })
-
-  it('Z-score hint text mentions std deviations from mean', () => {
-    const HINT = 'Std deviations from mean'
-    expect(HINT).toContain('Std deviations')
-    expect(HINT).toContain('mean')
-  })
-
-  it('L1 y-label references norm_egc and sample depth', () => {
-    const LABEL = 'norm_egc (EGC / sample depth)'
-    expect(LABEL).toContain('norm_egc')
-    expect(LABEL).toContain('sample depth')
-  })
-
-  it('Z-score y-label references sigma and mean', () => {
-    const LABEL = 'EGC (Z-score, σ from mean)'
-    expect(LABEL).toContain('Z-score')
-    expect(LABEL).toContain('mean')
-  })
-
+// The two ctrl-hint strings ("Relative Abundance (norm_egc)", "Std deviations
+// from mean") are real rendered JSX text in ChartControls.tsx — those are
+// covered by a DOM-rendering test in chart-controls.component.test.tsx, not
+// here, since they require actually rendering the component to be meaningful.
+describe('EgcChart — y-axis label (getEgcYLabel)', () => {
   it('raw mode y-label is simply EGC', () => {
-    const LABEL = 'EGC'
-    expect(LABEL).toBe('EGC')
+    expect(getEgcYLabel('egc', false)).toBe('EGC')
+  })
+
+  it('Relative Abundance y-label (no longer the raw norm_egc field name)', () => {
+    const label = getEgcYLabel('norm_egc', false)
+    expect(label).toBe('Relative Abundance')
+    expect(label).not.toContain('norm_egc')
+  })
+
+  it('raw EGC + Z-score y-label references sigma and mean', () => {
+    const label = getEgcYLabel('egc', true)
+    expect(label).toContain('Z-score')
+    expect(label).toContain('mean')
+  })
+
+  it('Relative Abundance + Z-score y-label references both (previously unreachable combination)', () => {
+    // Under the old exclusive NormalizeMode, 'l1' and 'zscore' could never
+    // both be active — Z-score always operated on raw egc. Metric and
+    // Standardize are now independent, so this combined label is reachable.
+    const label = getEgcYLabel('norm_egc', true)
+    expect(label).toContain('Relative Abundance')
+    expect(label).toContain('Z-score')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Metric + Standardize pipeline — all 4 combinations
+// ─────────────────────────────────────────────────────────────────────────────
+// Mirrors the per-chart processing pipeline (metric swap, then optional
+// z-score) using applyZScore directly, so the decoupling is verified at the
+// math level independent of any single chart component's rendering.
+
+describe('metric + standardize pipeline — all 4 combinations', () => {
+  type Pt = { egc: number | null; norm_egc: number | null }
+
+  const RAW: Pt[] = [
+    { egc: 100, norm_egc: 0.01 },
+    { egc: 200, norm_egc: 0.02 },
+    { egc: 300, norm_egc: 0.03 },
+    { egc: 400, norm_egc: 0.04 },
+  ]
+
+  function applyMetricAndStandardize(
+    points: Pt[],
+    metric: ChartMetric,
+    standardize: boolean,
+  ): { egc: number | null }[] {
+    let pts: { egc: number | null }[] = points.map(p => ({
+      egc: metric === 'norm_egc' ? p.norm_egc : p.egc,
+    }))
+    if (standardize) pts = applyZScore(pts)
+    return pts
+  }
+
+  it('(egc, off) returns raw egc values unchanged', () => {
+    const out = applyMetricAndStandardize(RAW, 'egc', false)
+    expect(out.map(p => p.egc)).toEqual([100, 200, 300, 400])
+  })
+
+  it('(norm_egc, off) returns raw norm_egc values unchanged', () => {
+    const out = applyMetricAndStandardize(RAW, 'norm_egc', false)
+    expect(out.map(p => p.egc)).toEqual([0.01, 0.02, 0.03, 0.04])
+  })
+
+  it('(egc, zscore) standardizes raw egc — mean approximately 0', () => {
+    const out  = applyMetricAndStandardize(RAW, 'egc', true)
+    const vals = out.map(p => p.egc as number)
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length
+    expect(Math.abs(mean)).toBeLessThan(1e-9)
+  })
+
+  it('(norm_egc, zscore) standardizes norm_egc — previously impossible when l1/zscore were mutually exclusive', () => {
+    const out  = applyMetricAndStandardize(RAW, 'norm_egc', true)
+    const vals = out.map(p => p.egc as number)
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length
+    expect(Math.abs(mean)).toBeLessThan(1e-9)
+  })
+
+  it('(egc, zscore) and (norm_egc, zscore) give identical standardized shape here (norm_egc is a constant rescaling of egc)', () => {
+    const outEgc  = applyMetricAndStandardize(RAW, 'egc', true)
+    const outNorm = applyMetricAndStandardize(RAW, 'norm_egc', true)
+    outEgc.forEach((p, i) => {
+      expect(p.egc as number).toBeCloseTo(outNorm[i].egc as number, 9)
+    })
   })
 })
 
@@ -562,7 +564,7 @@ describe('dark mode text contrast — WCAG 2.1', () => {
 const ABOUT_CALC_TEXT = `
   EGC — Estimated Gene Copies
   EGC(annotation, sample) = sum scaffold ( gene_count × coverage )
-  norm_egc — Depth-Normalised EGC
+  Relative Abundance (norm_egc)
   norm_egc = EGC(annotation, sample) / total_coverage(sample)
   Z-score Normalisation
   Z = ( EGC − μ ) / s where s = sample std dev (÷ n−1, Bessel-corrected)
@@ -577,6 +579,7 @@ const ABOUT_CALC_TEXT = `
 const REQUIRED_TERMS = [
   'EGC',
   'norm_egc',
+  'Relative Abundance',
   'Z-score',
   'LOWESS',
   'Spearman',

@@ -3,13 +3,16 @@
  * ===================================
  * React component tests for ScaffoldModal and ScaffoldBtn.
  *
- * All fetch calls are mocked. No real API calls are made.
+ * Imports the real production components (not a hand-written copy) — only
+ * `downloadCsv` is mocked (via a partial mock of utils/api) to avoid real
+ * DOM Blob/anchor side effects; `apiFetch` is the real implementation
+ * running against a mocked global `fetch`, same as GroupScaffoldModal's
+ * tests below.
  *
  * Coverage
  * --------
  * ScaffoldModal — loading / error states:
  *   shows loading state immediately on mount
- *   shows error for KEGG source (scaffold data unavailable)
  *   shows empty state when API returns 0 rows
  *   shows error state when network fails
  *   error message contains annotation ID
@@ -68,22 +71,43 @@
  *   closes modal on close button click
  *   button click does not propagate to parent
  *   title attribute correct
- *   works with kegg source
+ *   works with kegg source (fetches and renders normally, same as any source)
  *
  * fmtDate (scaffold context):
  *   formats date in table correctly
  *   empty date shows — in table
- *   singular/plural scaffold label
  *
  * Run: npx vitest run src/tests/scaffold-modal.component.test.tsx
  */
 
-import React, { useState, useEffect } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 import { fmtDate } from '../utils/format'
 import type { ScaffoldSummaryRow } from '../types'
+import { GroupScaffoldModal } from '../components/scaffolds/GroupScaffoldModal'
+import { ScaffoldModal } from '../components/scaffolds/ScaffoldModal'
+import { ScaffoldBtn } from '../components/scaffolds/ScaffoldBtn'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Partial mock of utils/api — downloadCsv only. apiFetch stays real, running
+// against the mocked global fetch below, so the actual fetch/error/retry
+// logic in ScaffoldModal is what's under test, not a re-implementation of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const { csvEvents } = vi.hoisted(() => ({
+  csvEvents: [] as { rows: unknown[]; filename: string }[],
+}))
+
+vi.mock('../utils/api', async importOriginal => {
+  const actual = await importOriginal<typeof import('../utils/api')>()
+  return {
+    ...actual,
+    downloadCsv: (rows: Record<string, unknown>[], filename: string) => {
+      csvEvents.push({ rows, filename })
+    },
+  }
+})
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock fetch
@@ -104,12 +128,6 @@ function mockNetworkError() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mock CSV download — avoids DOM side-effects in test runner
-// ─────────────────────────────────────────────────────────────────────────────
-
-const csvEvents: { rows: unknown[]; filename: string }[] = []
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Shared test data
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -123,243 +141,6 @@ const MOCK_DETAIL = [
   { sample: 's1', date: '2021-05-10 08:00', scaffold: 'Ga0590986_0000001', count: 3 },
   { sample: 's1', date: '2021-05-10 08:00', scaffold: 'Ga0590986_0000002', count: 4 },
 ]
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Inline ScaffoldModal — imports from production utils but keeps
-// component logic self-contained so tests don't depend on Recharts DOM.
-// ─────────────────────────────────────────────────────────────────────────────
-
-type ApiStatus = 'loading' | 'ok' | 'error'
-
-async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(path)
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-  return res.json() as Promise<T>
-}
-
-function downloadCsv(rows: Record<string, unknown>[], filename: string) {
-  csvEvents.push({ rows, filename })
-}
-
-function ScaffoldModal({
-  annotationId,
-  source,
-  onClose,
-  onGoExplore,
-}: {
-  annotationId: string
-  source:       string
-  onClose:      () => void
-  onGoExplore?: (id: string, src: string) => void
-}) {
-  const [summary, setSummary]       = useState<ScaffoldSummaryRow[]>([])
-  const [status, setStatus]         = useState<ApiStatus>('loading')
-  const [showChart, setShowChart]   = useState(true)
-  const [metric, setMetric]         = useState<'scaffold_count' | 'gene_count'>('scaffold_count')
-  const [expanded, setExpanded]     = useState<string | null>(null)
-  const [detailRows, setDetailRows] = useState<typeof MOCK_DETAIL>([])
-
-  useEffect(() => {
-    if (source === 'kegg') { setStatus('error'); return }
-    apiFetch<{ data: ScaffoldSummaryRow[] }>(
-      `/api/annotations/scaffolds/summary?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`,
-    )
-      .then(r => { setSummary(r.data ?? []); setStatus('ok') })
-      .catch(() => setStatus('error'))
-  }, [annotationId, source])
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [onClose])
-
-  async function loadDetail(sample: string) {
-    if (expanded === sample) { setExpanded(null); return }
-    setExpanded(sample)
-    try {
-      const r = await apiFetch<{ data: typeof MOCK_DETAIL }>(
-        `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`,
-      )
-      setDetailRows((r.data ?? []).filter(d => d.sample === sample))
-    } catch {
-      setDetailRows([])
-    }
-  }
-
-  const handleExport = () => downloadCsv(
-    summary.map(r => ({
-      annotation_id:  annotationId,
-      source,
-      sample:         r.sample,
-      date:           r.date,
-      scaffold_count: r.scaffold_count,
-      gene_count:     r.gene_count,
-    })),
-    `${annotationId}_scaffolds_summary.csv`,
-  )
-
-  const stats = summary.length > 0 ? {
-    sampleCount:   summary.length,
-    peakScaffolds: Math.max(...summary.map(r => r.scaffold_count)),
-    peakGenes:     Math.max(...summary.map(r => r.gene_count)),
-  } : null
-
-  return (
-    <div data-testid="scaffold-modal" role="dialog">
-      {/* Header */}
-      <div data-testid="modal-header">
-        <span data-testid="annotation-id">{annotationId}</span>
-        <span data-testid="source-tag">{source}</span>
-        {onGoExplore && status === 'ok' && summary.length > 0 && (
-          <button
-            data-testid="explore-btn"
-            onClick={() => { onGoExplore(annotationId, source); onClose() }}
-          >
-            → Explore
-          </button>
-        )}
-        {status === 'ok' && summary.length > 0 && (
-          <button data-testid="csv-btn" onClick={handleExport}>↓ CSV</button>
-        )}
-        <button data-testid="close-btn" onClick={onClose}>✕ Close</button>
-      </div>
-
-      {/* States */}
-      {status === 'loading' && <div data-testid="loading-state">Loading…</div>}
-      {status === 'error' && (
-        <div data-testid="error-state">
-          {source === 'kegg'
-            ? 'Scaffold data is not available for KEGG annotations.'
-            : `No scaffolds found for ${annotationId}.`}
-        </div>
-      )}
-      {status === 'ok' && summary.length === 0 && (
-        <div data-testid="empty-state">No scaffolds found for {annotationId}.</div>
-      )}
-
-      {status === 'ok' && summary.length > 0 && (
-        <>
-          {/* Stat strip */}
-          {stats && (
-            <div data-testid="stat-strip">
-              <span data-testid="stat-samples">{stats.sampleCount}</span>
-              <span data-testid="stat-peak-scaffolds">{stats.peakScaffolds}</span>
-              <span data-testid="stat-peak-genes">{stats.peakGenes}</span>
-            </div>
-          )}
-
-          {/* Chart zone */}
-          <div data-testid="chart-zone">
-            <button
-              data-testid="chart-toggle"
-              onClick={() => setShowChart(s => !s)}
-            >
-              {showChart ? '▲ Hide chart' : '▼ Show chart'}
-            </button>
-            {showChart && (
-              <div data-testid="chart-content">
-                <button
-                  data-testid="metric-scaffolds"
-                  onClick={() => setMetric('scaffold_count')}
-                >
-                  Scaffolds
-                </button>
-                <button
-                  data-testid="metric-genes"
-                  onClick={() => setMetric('gene_count')}
-                >
-                  Genes
-                </button>
-                <div data-testid="chart-metric-label">
-                  {metric === 'scaffold_count' ? 'Scaffold count over time' : 'Gene count over time'}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Summary table */}
-          <table data-testid="summary-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Time</th>
-                <th>Scaffolds</th>
-                <th>Genes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.map(row => (
-                <React.Fragment key={row.sample}>
-                  <tr
-                    data-testid={`row-${row.sample}`}
-                    onClick={() => loadDetail(row.sample)}
-                  >
-                    <td data-testid={`date-${row.sample}`}>
-                      {fmtDate(row.date) || '—'}
-                    </td>
-                    <td>{row.date.split(' ')[1] ?? '—'}</td>
-                    <td data-testid={`scaffolds-${row.sample}`}>{row.scaffold_count}</td>
-                    <td data-testid={`genes-${row.sample}`}>{row.gene_count}</td>
-                  </tr>
-                  {expanded === row.sample && (
-                    <tr data-testid={`detail-${row.sample}`}>
-                      <td colSpan={4}>
-                        {detailRows.length > 0
-                          ? detailRows.map(d => (
-                              <div key={d.scaffold} data-testid={`scaffold-name-${d.scaffold}`}>
-                                {d.scaffold}: {d.count}
-                              </div>
-                            ))
-                          : 'Loading…'}
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
-
-          {/* Row count */}
-          <div data-testid="row-count">
-            {summary.length} sample{summary.length !== 1 ? 's' : ''}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-function ScaffoldBtn({
-  annotationId,
-  source,
-  onGoExplore,
-}: {
-  annotationId: string
-  source:       string
-  onGoExplore?: (id: string, src: string) => void
-}) {
-  const [open, setOpen] = useState(false)
-  return (
-    <>
-      <button
-        data-testid="scaffold-btn"
-        onClick={e => { e.stopPropagation(); setOpen(true) }}
-        title={`View scaffolds for ${annotationId}`}
-      >
-        🧬 Scaffolds
-      </button>
-      {open && (
-        <ScaffoldModal
-          annotationId={annotationId}
-          source={source}
-          onClose={() => setOpen(false)}
-          onGoExplore={onGoExplore}
-        />
-      )}
-    </>
-  )
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test setup
@@ -379,14 +160,6 @@ describe('ScaffoldModal — loading / error / empty states', () => {
     mockFetch.mockReturnValue(new Promise(() => {}))
     render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
     expect(screen.getByTestId('loading-state')).toBeTruthy()
-  })
-
-  it('shows error for KEGG source (scaffold data unavailable)', async () => {
-    render(<ScaffoldModal annotationId="K02014" source="kegg" onClose={vi.fn()} />)
-    await waitFor(() => {
-      expect(screen.getByTestId('error-state').textContent)
-        .toContain('Scaffold data is not available for KEGG annotations.')
-    })
   })
 
   it('shows empty state when API returns 0 rows', async () => {
@@ -418,6 +191,52 @@ describe('ScaffoldModal — loading / error / empty states', () => {
     render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
     await waitFor(() => {
       expect(screen.getByTestId('empty-state').textContent).toContain('COG0055')
+    })
+  })
+
+  it('error state text is distinct from empty state text (failed request != genuinely no data)', async () => {
+    mockNetworkError()
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => {
+      expect(screen.getByTestId('error-state').textContent)
+        .not.toBe('No scaffolds found for COG0055.')
+    })
+  })
+
+  it('error state shows a retry button', async () => {
+    mockNetworkError()
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => {
+      expect(screen.getByTestId('retry-btn')).toBeTruthy()
+    })
+  })
+
+  it('empty state does NOT show a retry button (nothing to retry)', async () => {
+    mockApiSuccess({ data: [] })
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => screen.getByTestId('empty-state'))
+    expect(screen.queryByTestId('retry-btn')).toBeNull()
+  })
+
+  it('clicking retry re-fetches and shows data on success', async () => {
+    mockNetworkError()
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => screen.getByTestId('retry-btn'))
+    mockApiSuccess({ data: MOCK_SUMMARY })
+    fireEvent.click(screen.getByTestId('retry-btn'))
+    await waitFor(() => {
+      expect(screen.getByTestId('summary-table')).toBeTruthy()
+    })
+  })
+
+  it('clicking retry shows loading state again while in flight', async () => {
+    mockNetworkError()
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => screen.getByTestId('retry-btn'))
+    mockFetch.mockReturnValueOnce(new Promise(() => {}))
+    fireEvent.click(screen.getByTestId('retry-btn'))
+    await waitFor(() => {
+      expect(screen.getByTestId('loading-state')).toBeTruthy()
     })
   })
 })
@@ -648,11 +467,13 @@ describe('ScaffoldModal — summary table', () => {
     render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
     await waitFor(() => screen.getByTestId('summary-table'))
     const headers = Array.from(screen.getByTestId('summary-table').querySelectorAll('th'))
-      .map(h => h.textContent)
-    expect(headers).toContain('Date')
+      .map(h => h.textContent ?? '')
+    // Date/Scaffolds/Genes are sortable — real header text includes a
+    // sort-direction glyph (↑/↓/↕) appended after the label.
+    expect(headers.some(h => h.startsWith('Date'))).toBe(true)
     expect(headers).toContain('Time')
-    expect(headers).toContain('Scaffolds')
-    expect(headers).toContain('Genes')
+    expect(headers.some(h => h.startsWith('Scaffolds'))).toBe(true)
+    expect(headers.some(h => h.startsWith('Genes'))).toBe(true)
   })
 
   it('date cell uses fmtDate format MM/DD/YY', async () => {
@@ -772,6 +593,177 @@ describe('ScaffoldModal — API URL construction', () => {
 // ScaffoldBtn
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe('GroupScaffoldModal', () => {
+  it('→ Explore all calls the grouped navigation handler with all members', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: MOCK_SUMMARY }),
+    })
+
+    const onClose = vi.fn()
+    const onGoExploreGroup = vi.fn()
+
+    render(
+      <GroupScaffoldModal
+        members={[
+          { annotationId: 'COG0055', source: 'cog', name: 'foo' },
+          { annotationId: 'K00001', source: 'kegg', name: 'bar' },
+        ]}
+        groupLabel="Grouped terms"
+        onClose={onClose}
+        onGoExploreGroup={onGoExploreGroup}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('group-explore-btn')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('group-explore-btn'))
+
+    expect(onGoExploreGroup).toHaveBeenCalledWith([
+      { annotationId: 'COG0055', source: 'cog' },
+      { annotationId: 'K00001', source: 'kegg' },
+    ])
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  function mockPartialFailure() {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('annotation_id=COG0055')) {
+        return Promise.resolve({ ok: true, json: async () => ({ data: MOCK_SUMMARY }) })
+      }
+      return Promise.reject(new Error('Network error'))
+    })
+  }
+
+  it('shows a warning when some members fail — does not silently drop them from totals', async () => {
+    mockPartialFailure()
+    render(
+      <GroupScaffoldModal
+        members={[
+          { annotationId: 'COG0055', source: 'cog', name: 'foo' },
+          { annotationId: 'K00001', source: 'kegg', name: 'bar' },
+        ]}
+        groupLabel="Grouped terms"
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('group-fetch-warning')).toBeTruthy()
+    })
+    expect(screen.getByTestId('group-fetch-warning').textContent).toContain('K00001')
+  })
+
+  it('partial-failure warning has a retry button', async () => {
+    mockPartialFailure()
+    render(
+      <GroupScaffoldModal
+        members={[
+          { annotationId: 'COG0055', source: 'cog', name: 'foo' },
+          { annotationId: 'K00001', source: 'kegg', name: 'bar' },
+        ]}
+        groupLabel="Grouped terms"
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() => expect(screen.getByTestId('group-retry-btn')).toBeTruthy())
+  })
+
+  it('successful members still render their data despite one failure', async () => {
+    mockPartialFailure()
+    render(
+      <GroupScaffoldModal
+        members={[
+          { annotationId: 'COG0055', source: 'cog', name: 'foo' },
+          { annotationId: 'K00001', source: 'kegg', name: 'bar' },
+        ]}
+        groupLabel="Grouped terms"
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('3', { selector: '.scaffold-stat-val' })).toBeTruthy()
+    })
+  })
+
+  it('no warning shown when all members succeed', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ data: MOCK_SUMMARY }) })
+    render(
+      <GroupScaffoldModal
+        members={[
+          { annotationId: 'COG0055', source: 'cog', name: 'foo' },
+          { annotationId: 'K00001', source: 'kegg', name: 'bar' },
+        ]}
+        groupLabel="Grouped terms"
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() => screen.getByText(/Group totals/))
+    expect(screen.queryByTestId('group-fetch-warning')).toBeNull()
+  })
+
+  it('all members failing shows a distinct failed state, not "no data found"', async () => {
+    mockFetch.mockRejectedValue(new Error('Network error'))
+    render(
+      <GroupScaffoldModal
+        members={[
+          { annotationId: 'COG0055', source: 'cog', name: 'foo' },
+          { annotationId: 'K00001', source: 'kegg', name: 'bar' },
+        ]}
+        groupLabel="Grouped terms"
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('group-all-failed-state')).toBeTruthy()
+    })
+    expect(screen.queryByText('No scaffold data found for any annotation in this group.')).toBeNull()
+  })
+
+  it('genuinely empty result (all succeed, zero rows) still shows the plain empty state', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ data: [] }) })
+    render(
+      <GroupScaffoldModal
+        members={[{ annotationId: 'COG0055', source: 'cog', name: 'foo' }]}
+        groupLabel="Grouped terms"
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('No scaffold data found for any annotation in this group.')).toBeTruthy()
+    })
+    expect(screen.queryByTestId('group-retry-btn')).toBeNull()
+  })
+
+  it('clicking retry re-fetches only the failed member and merges it in on success', async () => {
+    mockPartialFailure()
+    render(
+      <GroupScaffoldModal
+        members={[
+          { annotationId: 'COG0055', source: 'cog', name: 'foo' },
+          { annotationId: 'K00001', source: 'kegg', name: 'bar' },
+        ]}
+        groupLabel="Grouped terms"
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() => screen.getByTestId('group-retry-btn'))
+
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('annotation_id=K00001')) {
+        return Promise.resolve({ ok: true, json: async () => ({ data: MOCK_SUMMARY }) })
+      }
+      return Promise.reject(new Error('should not refetch the succeeded member'))
+    })
+    fireEvent.click(screen.getByTestId('group-retry-btn'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('group-fetch-warning')).toBeNull()
+    })
+    // Both members now contributed identical MOCK_SUMMARY data, so the
+    // scaffold total should double from 9 (one member) to 18 (both).
+    expect(screen.getByText('18', { selector: '.scaffold-stat-val' })).toBeTruthy()
+  })
+})
+
 describe('ScaffoldBtn', () => {
   it('renders Scaffolds button', () => {
     render(<ScaffoldBtn annotationId="COG0055" source="cog" />)
@@ -840,13 +832,16 @@ describe('ScaffoldBtn', () => {
       .toBe('View scaffolds for COG0055')
   })
 
-  it('works with kegg source — calls API with source=kegg', async () => {
+  it('works with kegg source — fetches and renders normally, same as any source', async () => {
+    mockApiSuccess({ data: MOCK_SUMMARY })
     render(<ScaffoldBtn annotationId="K02014" source="kegg" />)
     fireEvent.click(screen.getByTestId('scaffold-btn'))
-    // KEGG source immediately shows error (no fetch needed)
     await waitFor(() => {
-      expect(screen.getByTestId('error-state').textContent)
-        .toContain('Scaffold data is not available for KEGG annotations.')
+      const url = mockFetch.mock.calls[0][0] as string
+      expect(url).toContain('source=kegg')
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('summary-table')).toBeTruthy()
     })
   })
 
@@ -889,25 +884,5 @@ describe('fmtDate — scaffold table date column', () => {
 
   it('December 31 formats correctly', () => {
     expect(fmtDate('2021-12-31 23:59')).toBe('12/31/21')
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Singular / plural label
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('ScaffoldModal — plural label', () => {
-  it('plural "samples" when count > 1', async () => {
-    mockApiSuccess({ data: MOCK_SUMMARY })
-    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
-    await waitFor(() => screen.getByTestId('row-count'))
-    expect(screen.getByTestId('row-count').textContent).toContain('3 samples')
-  })
-
-  it('singular "sample" when count = 1', async () => {
-    mockApiSuccess({ data: [MOCK_SUMMARY[0]] })
-    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
-    await waitFor(() => screen.getByTestId('row-count'))
-    expect(screen.getByTestId('row-count').textContent).toBe('1 sample')
   })
 })
