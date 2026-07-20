@@ -35,6 +35,7 @@ from api.cache import (
 from api.config import FRONTEND_DIST
 from api.index import build_mapping_index, build_search_index
 from api import routes, correlation
+from api.db import connect_to_mongo, close_mongo_connection
 
 import os
 
@@ -72,7 +73,13 @@ async def lifespan(app: FastAPI):
 
     thread = threading.Thread(target=_warm, daemon=True, name="cache-warmup")
     thread.start()
+
+    # mongodb connection establish
+    client, db = connect_to_mongo()
+    app.state.mongo_client = client
+    app.state.mongo_db = db
     yield
+    close_mongo_connection(client)
 
 
 # ── App ───────────────────────────────────────────────────────────────────────

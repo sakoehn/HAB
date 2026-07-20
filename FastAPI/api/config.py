@@ -9,6 +9,10 @@ this file.
 """
 
 import os
+from dotenv import load_dotenv
+
+_HERE = os.path.dirname(__file__)
+load_dotenv(os.path.join(_HERE,"..",".env"))
 
 # ── Data directory layout ─────────────────────────────────────────────────────
 
@@ -70,3 +74,13 @@ PERMUTATION_SEED = 42
 # evicting itself mid-request. Tested: cold request ~36s, warm (repeat)
 # ~0.26s, no thrashing.
 JSON_CACHE_MAX_ENTRIES = 140
+
+# ── MongoDB connection ────────────────────────────────────────────────────────
+#
+# Connection settings for the optional MongoDB backend (see api/db.py). Only
+# used when DATA_BACKEND=mongo; the default "json" backend reads directly
+# from the DataStructures files above and never touches these.
+
+MONGO_URI     = os.getenv("MONGO_URI")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
+DATA_BACKEND  = os.getenv("DATA_BACKEND", "json")

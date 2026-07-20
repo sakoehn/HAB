@@ -6,6 +6,7 @@ All FastAPI endpoints except /annotations/correlate (in correlation.py).
 Endpoints
 ~~~~~~~~~
 GET /debug
+GET /mongo-test
 GET /status
 GET /timepoints
 GET /samples
@@ -33,7 +34,7 @@ cache.py / index.py — endpoints are intentionally thin.
 
 import os
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from .astronomy import SUN_TIMES
 from .cache import (
@@ -193,6 +194,17 @@ def debug():
         "base_dir_contents":     os.listdir(BASE_DIR) if os.path.exists(BASE_DIR) else "DIR NOT FOUND",
     }
 
+@router.get("/mongo-test")
+async def mongo_test(request: Request):
+    """ Test MongoDB connection by inserting and retrieving a test document."""
+    db = request.app.state.mongo_db
+    try:
+        result = await db.test_collection.insert_one({"test": "data"})
+        doc = await db.test_collection.find_one({"_id": result.inserted_id})
+        doc["_id"] = str(doc["_id"])
+        return {"status": "success", "inserted_id": str(result.inserted_id), "found_doc": doc}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB operation failed: {str(e)}")
 
 @router.get("/status")
 def api_status():
