@@ -1,0 +1,30 @@
+COG - EGC DEDUPLICATION EXPLANATION
+
+The EGC values in your pipeline are wrong for many COGs. The bug is: the .a.cog.txt file has multiple rows for the same gene (multiple domain alignments of one gene to the same COG family). Your pipeline counts each row as a separate gene hit, inflating the gene count. JGI deduplicates — it counts each gene once regardless of how many times it appears.
+
+For COG0086: 649 rows → 480 unique genes. Counting all rows gives 21723; counting unique genes gives exactly 13475, which is JGI's value.
+
+This isn't a methodological difference or a tolerance issue — it's a counting bug in the notebook. The scaffold-level vs gene-level assumption in the conftest comments was wrong. Same depth files, same approach, but different gene counting.
+
+This likely affects every COG with multi-domain proteins (genes that match a COG profile at multiple positions). The 14% of COGs that fail the 20% tolerance test are probably the worst offenders.
+
+The fix needs to go in the processing notebook, not the tests. The EGC notebook should deduplicate gene IDs before counting per scaffold. Once fixed, the COG EGC values should match JGI closely — probably within 1-5% like KEGG — and you can tighten the tolerance on the COG tests.
+
+Do you want me to also check whether KEGG and Enzyme have the same duplicate issue (.a.ko.txt and .a.ec.txt), and update the conftest.py to remove the wrong explanation?
+
+c:\Users\sakoehn\Desktop\JGI\HAB PORTAL UPDATES - 052726.md
+why would JGI have duplicates ?
+Because that's standard output from profile HMM searches (like hmmsearch or hmmscan), which is what JGI uses to assign COG annotations. The COG database is built from protein domain profiles, and a single protein can have multiple copies of the same domain. Each copy gets its own alignment row.
+
+For example:
+
+An ABC transporter might have two nucleotide-binding domains that both match the same COG profile → 2 rows for one gene
+A repeat protein with 4 copies of a domain → 4 rows
+Sometimes two overlapping alignments of the same region hit the same profile at slightly different coordinates
+So the .a.cog.txt file isn't wrong — it faithfully reports every domain hit. The question is how you interpret it for gene counting:
+
+"How many genes carry this function?" → count unique gene IDs (what JGI does for EGC)
+"How many domain copies exist?" → count all rows (what your pipeline currently does)
+JGI's EGC is measuring gene count, not domain count. For most COGs the two are the same (most genes have one copy of the domain), but for proteins with repeated domains the difference is significant. COG0086 happens to be a high-repeat case — 649 rows but only 480 unique genes.
+
+This should be a straightforward fix in the notebook: when building the scaffold gene counts, use a seen_genes set per annotation and skip a gene the second time it appears for the same COG. Do you want me to check if the same issue exists in the KEGG (.a.ko.txt) and Enzyme (.a.ec.txt) files before you touch the notebooks?
