@@ -242,13 +242,6 @@ async function searchAndGetResult(query = 'K00001') {
   return document.querySelector('.al-row-id') as HTMLElement
 }
 
-async function addFirstResultAsChart() {
-  const resultRow = await searchAndGetResult()
-  await userEvent.click(resultRow)
-  await waitFor(() => {
-    expect(screen.getAllByText('K00001').length).toBeGreaterThan(1)
-  })
-}
 
 // ── Import App ─────────────────────────────────────────────────────────────
 

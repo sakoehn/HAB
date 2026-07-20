@@ -59,7 +59,7 @@
 
 import { describe, it, expect } from 'vitest'
 
-import { fmtDate, fmtTime } from '../utils/format'
+import { fmtTime } from '../utils/format'
 import {
   sortMappingRows,
   paginateRows,
@@ -67,7 +67,7 @@ import {
   buildMappingsUrl,
   buildMappingCsvRow,
 } from '../components/mappings/MappingsPanel'
-import type { MappingSortCol, MappingSearchRow, SortDir } from '../types'
+import type { MappingSortCol, MappingSearchRow } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // fmtTime — used in mapping table Time column and CSV export

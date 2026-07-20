@@ -17,7 +17,7 @@
 // onConsumed: called once initialAnnotations have been loaded so App
 // can clear the pending queue.
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
 
 import type {
   CompareState, CompareEntry, CompareEntryMember,
@@ -308,7 +308,7 @@ export function ComparePage({
     }))
     setBulkSelected(new Set())
 
-    await Promise.all(toAdd.map(async (ann, i) => {
+    await Promise.all(toAdd.map(async (ann) => {
       try {
         const json = await apiFetch<{ data: AnnotationItem[] }>(
           `/api/series/annotations?source=${ann.source}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,

@@ -123,7 +123,6 @@ const SEARCH_RESULT_2 = {
   sample:        '',
 }
 const DEFAULT_SEARCH   = { data: [SEARCH_RESULT_1, SEARCH_RESULT_2], total: 2 }
-const EMPTY_SEARCH     = { data: [], total: 0 }
 const DEFAULT_SERIES   = {
   data: Array.from({ length: 5 }, (_, i) => ({
     annotation_id: 'K02014',

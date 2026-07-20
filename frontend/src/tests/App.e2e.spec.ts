@@ -57,7 +57,7 @@ async function searchFor(page: Page, term: string) {
   const response = await responsePromise
   const bodyText = await response.text()
 
-  let body: any
+  let body: { data?: unknown[] }
   try {
     body = JSON.parse(bodyText)
   } catch {
@@ -426,7 +426,9 @@ test.describe('Chart zoom behavior', () => {
     // Chart must remain rendered (not blank/crashed) and show night shapes.
     await expect(plot).toBeVisible()
     await expect(plot.locator('.shapelayer').first()).toBeVisible()
-    const shapeCount = await plot.evaluate((el: any) => el._fullLayout?.shapes?.length ?? 0)
+    const shapeCount = await plot.evaluate(
+      (el: Element & { _fullLayout?: { shapes?: unknown[] } }) => el._fullLayout?.shapes?.length ?? 0
+    )
     expect(shapeCount).toBeGreaterThan(0)
     expect(consoleErrors).toEqual([])
   })

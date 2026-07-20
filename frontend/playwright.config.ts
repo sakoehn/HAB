@@ -20,7 +20,6 @@ const FRONTEND_PORT = Number(process.env.FRONTEND_PORT ?? 5173)
 const BACKEND_PORT  = Number(process.env.BACKEND_PORT  ?? 8000)
 
 const BASE_URL = process.env.BASE_URL ?? `http://localhost:${FRONTEND_PORT}`
-const API_URL  = process.env.API_URL  ?? `http://localhost:${BACKEND_PORT}`
 
 // main.py lives in FastAPI/, a sibling of frontend/ — NOT the repo root.
 // (Previously resolved to '..', the repo root, which has no main.py; that

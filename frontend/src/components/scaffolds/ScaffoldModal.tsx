@@ -30,6 +30,7 @@ function resolveCssVar(value: string, fallback: string): string {
 import type {
   ApiStatus, ScaffoldSummaryRow, ScaffoldDetailRow, ScaffoldSortCol, SortDir,
 } from '../../types'
+import type { Data as PlotlyData, Layout as PlotlyLayout } from 'plotly.js'
 import { SOURCE_TAG_CLS } from '../../constants'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
@@ -379,7 +380,6 @@ export function ScaffoldModal({
 
                 {showChart && (
                   <Plot
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     data={[{
                       type: 'scatter', mode: 'lines+markers',
                       x: chartData.map(r => new Date(parseDateTime(r.date)).toISOString()),
@@ -394,7 +394,7 @@ export function ScaffoldModal({
                         '<b>%{customdata}</b><br>' +
                         (chartMetric === 'scaffold_count' ? 'Scaffolds' : 'Genes') +
                         ': %{y}<extra></extra>',
-                    } as any]}
+                    } as Partial<PlotlyData>]}
                     layout={{
                       height: 180,
                       margin: { t: 10, r: 16, b: 30, l: 60 },
@@ -421,7 +421,7 @@ export function ScaffoldModal({
                         gridcolor: '#d9d9d9',
                         zeroline:  false,
                       },
-                    } as any}
+                    } as Partial<PlotlyLayout>}
                     style={{ width: '100%' }}
                     useResizeHandler
                     config={{ displayModeBar: false, displaylogo: false }}

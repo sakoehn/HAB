@@ -24,7 +24,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, waitFor, act } from '@testing-library/react'
 
 import { useTaxonomyTree } from '../hooks/useTaxonomyTree'
-import type { TaxonomyChildNode, TaxonomyTreeNode } from '../types'
+import type { TaxonomyChildNode } from '../types'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)

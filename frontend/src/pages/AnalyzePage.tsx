@@ -23,9 +23,8 @@ import type {
   SeriesCache, SharedAnnotation,
 } from '../types'
 import { SOURCE_COLORS, SOURCE_TAG_CLS, CHART_COLORS } from '../constants'
-import { nextColorForSource, resetSourceCounters } from '../constants'
+import { nextColorForSource } from '../constants'
 import { apiFetch } from '../utils/api'
-import { isoDate, fmtDate } from '../utils/format'
 import { extractEgc, extractNormEgc } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
 import { ChartErrorBoundary }  from '../components/ui/ChartErrorBoundary'
@@ -952,15 +951,6 @@ export function AnalyzePage({
   const hasResults =
     state.searchStatus === 'ok' &&
     state.resultsByTerm.some(r => r.length > 0)
-
-  const allUniqueRows = useMemo(() => {
-    const seen = new Set<string>()
-    return state.resultsByTerm.flat().filter(r => {
-      const key = `${r.annotation_id}::${r.source}`
-      if (seen.has(key)) return false
-      seen.add(key); return true
-    })
-  }, [state.resultsByTerm])
 
   return (
     <div className="page-fade al-page">

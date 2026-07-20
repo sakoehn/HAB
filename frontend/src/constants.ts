@@ -2,8 +2,6 @@
 // Pure data and lightweight lookup functions — no React imports.
 // All source-color maps, biological label tables, and color allocation logic.
 
-import type { AnnotationSourceKey } from './types'
-
 // ── Source styling ─────────────────────────────────────────────────────────
 
 export const SOURCE_COLORS: Record<string, string> = {

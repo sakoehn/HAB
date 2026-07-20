@@ -43,7 +43,6 @@ export function MultiEgcChart({
   series,
   dateFrom,
   dateTo,
-  dataDateRange: _dataDateRange,
   onGoScaffoldExplore,
   title,
 }: {

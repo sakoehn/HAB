@@ -295,8 +295,7 @@ describe('timepoint selector toggle logic', () => {
   })
 
   it('"All" button sets to full set', () => {
-    const partial = new Set(['05/27/21'])
-    const all     = new Set(ALL_DATES)
+    const all = new Set(ALL_DATES)
     expect(all.size).toBe(ALL_DATES.length)
   })
 
