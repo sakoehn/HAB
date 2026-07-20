@@ -8,8 +8,8 @@
 
 # Optional: ignore all notebooks if they are exploratory only
 # Comment this out if you want to track specific .ipynb files.
-Notebooks/
-*.ipynb
+# Notebooks/
+# *.ipynb
 
 
 ########################################
@@ -21,10 +21,11 @@ COG_genes/
 KEGG/
 Estimated_gene_copies/
 Metagenome_Samples/
-Gene_Annoation_Mappings/
+Gene_Annotation_Mappings/
 Misc/
 DataStructures/
-DataStrucutes/           # typo variant just in case
+DataStrucutes/
+SAM/
 
 # Archives and raw drops
 tar_files/
@@ -42,6 +43,8 @@ dist/
 frontend/dist/
 .vite/
 frontend/.vite/
+frontend/coverage/
+frontend/src/App_old.tsx
 
 # Playwright & test output
 playwright-report/
@@ -56,6 +59,8 @@ test-results/
 venv/
 env/
 ENV/
+.conda/
+**/.conda/
 
 __pycache__/
 *.py[cod]
