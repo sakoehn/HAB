@@ -1,115 +1,177 @@
 """
 test_mappings_notebook_matches.py
 ===================================
-Verifies that mappings.ipynb's gene -> annotation matching is CORRECT —
-i.e. that every row in Mappings_by_Sample/{sample}_mapping.tsv actually
-reflects what's in the real per-sample JSON databases it was built from.
+Verifies that the gene -> annotation mapping build is CORRECT -- i.e. that
+every row in Mappings_by_Sample/{sample}_mapping.tsv actually reflects what's
+in the REAL RAW per-gene JGI annotation files it should be built from.
 
-This is independent of, and complementary to, test_mappings_unique_pairs.py:
-  - test_mappings_unique_pairs.py tests the API/dedup logic GIVEN the TSVs
-    already exist and are correct.
-  - This file tests whether the TSVs are correct in the first place, by
-    re-deriving the expected gene->annotation matches directly from the
-    same JSON sources the notebook reads, using the *exact* join logic
-    from mappings.ipynb, and diffing against the real TSV on disk.
+This file was rewritten after two independent reviews of the mapping
+pipeline found real, systemic data loss in the previous notebook-based
+approach (mappings.ipynb + the COG/Kegg/Enz/tax_db_byTP intermediate JSONs):
+  - The old base gene list was COG's gene set only, silently excluding any
+    gene with real KEGG/Enzyme/Taxonomy data but no COG hit (measured:
+    30-40% of genes per sample, systemic, not an edge case).
+  - The old logic kept only the FIRST of a gene's multiple COG/Enzyme hits,
+    silently dropping the rest (measured: ~27k genes with multiple COG
+    hits, ~13k with multiple Enzyme hits, some genuinely distinct).
+  - scaffold_id was sourced from taxonomy data instead of gene_id itself,
+    losing the scaffold for any gene with no taxonomy hit.
+This test file encodes the CORRECTED rules; test_taxon_paths.py-adjacent
+work on the SQL branch also derives from these same raw files.
 
-What the notebook does, per sample (from mappings.ipynb):
-    1. cog_db_s  = COG_byTP/cog_db_{sample}.json      -> {gene_id: {"lookupId": [...]}}
-    2. kegg_db_s = Kegg_byTP/kegg_db_{sample}.json     -> {gene_id: {"lookupId": [...]}}
-    3. enz_db_s  = Enz_byTP/enz_db_{sample}.json       -> {gene_id: {"lookupId": [...]}}
-    4. tax_db_s  = tax_db_byTP/tax_db_{sample}.json    -> {gene_id: {"lookupId": [...], "scaffolds": [...]}}
-    5. base gene list = list(cog_db_s.keys())  -- COG is the primary gene list;
-       a gene with NO entry in cog_db_s for this sample is never written to
-       the TSV at all, even if it has KEGG/enzyme/taxonomy entries.
-    6. For each of cog/kegg/enzyme: value = lookupId[0] if lookupId else None
-       (_first_or_none -- only the FIRST list entry is kept, any additional
-       lookupIds for that gene are silently dropped)
-    7. taxonomy: same _first_or_none on lookupId; scaffold_id same on scaffolds
-    8. Left-merge all four onto the base gene list, on (gene, sample)
-    9. Write gene_id, scaffold_id, taxonomy, kegg, enzyme, cog to the TSV,
-       in that column order
+Corrected rules, verified against real data and JGI's own
+Metagenome_Samples/<sample>/README.txt (IMG Pipeline v5.0 documentation):
+  1. Base gene list = UNION of gene_ids across ALL FOUR raw per-gene files
+     (a gene needs >=1 real hit in >=1 source to get a row -- a gene with
+     zero hits anywhere has nothing to map, so it's correctly excluded;
+     this is different from the old bug, which excluded genes that DO
+     have real data just because that data wasn't in COG specifically).
+  2. Per source, per gene: collapse to the SORTED, comma-joined SET of
+     unique annotation IDs (not first-only, not raw-with-duplicates).
+     Confirmed correct and consistent with how this app's existing
+     canonical annotation builders (egc_cog_tree.py etc.) already dedupe.
+  3. scaffold_id is parsed directly from gene_id (format
+     "{scaffold}_{start}_{end}"), not sourced from taxonomy data.
+  4. No evalue/percent_identity/bit_score filtering -- matches every
+     existing canonical annotation source in this app; this is a
+     deliberate consistency choice, not an oversight.
 
-This test reimplements steps 5-9 independently (NOT by importing the
-notebook itself -- ipynb execution requires nbconvert/jupyter which isn't
-guaranteed available, and importing it would just be testing itself) and
-checks the result against the real TSV on disk, for both a small
-synthetic dataset and the real 128-sample dataset.
+Raw file columns (Metagenome_Samples/<sample>/<sample>.a.{cog,ko,ec,phylodist}.txt),
+tab-delimited, NO header row, verified against JGI's README.txt:
+  .cog.txt:       gene_id(0), cog_id(1), percent_identity(2), ... (10 cols)
+                  can have MULTIPLE rows per gene_id (multi-domain HMM hits)
+  .ko.txt:        gene_id(0), img_ko_flag(1), ko_term(2), ... (11 cols)
+                  single best hit (LAST) -- confirmed 0 genes with >1 row
+  .ec.txt:        gene_id(0), img_ko_flag(1), EC(2), ... (11 cols)
+                  EC derived from the KO hit, but a single KO can map to
+                  multiple real EC numbers (bifunctional enzymes) -- can
+                  have multiple DISTINCT values per gene, all genuine
+  .phylodist.txt: gene_id(0), homolog_gene_oid(1), homolog_taxon_oid(2),
+                  percent_identity(3), lineage(4) -- single-valued
+
+Re-derives the intended output without importing the notebook (plain
+dicts, no notebook import), and checks the result against the real TSV on
+disk, for both a small synthetic dataset and the real 128-sample dataset.
+
+Important limitation, found by a third independent review (2026-07-31):
+expected_rows_for_sample() below is NOT a structurally independent
+reimplementation -- it uses the same column indices and the same
+rsplit/set/dict logic as the notebook itself, just without a notebook
+import. A pass here mostly proves "the TSV matches re-running the same
+parsing logic," not that the parsing logic's column semantics are
+correct -- a shared misunderstanding of the raw file format would pass
+here undetected. The actual column semantics were independently verified
+against Metagenome_Samples/<sample>/README.txt (JGI's own documentation)
+and real raw file content by that review, not by this test suite. If this
+ever needs re-verifying, re-derive expected_rows_for_sample() from the
+README with genuinely different code (e.g. pandas groupby, or hardcoded
+per-file column names) rather than trusting this file's own agreement
+with itself.
 
 Run:
-    pytest Tests/test_mappings_notebook_matches.py -v
-    pytest Tests/test_mappings_notebook_matches.py -v -k synthetic        # fast, no real data needed
-    pytest Tests/test_mappings_notebook_matches.py -v -s -k RealData      # needs DataStructures/ on disk
-                                                                            # -s shows per-sample progress
-                                                                            # (loading 128 samples'
-                                                                            # worth of JSON/TSV takes a
-                                                                            # while -- this isn't a hang)
+    pytest tests/test_mappings_notebook_matches.py -v
+    pytest tests/test_mappings_notebook_matches.py -v -k synthetic        # fast, no real data needed
+    pytest tests/test_mappings_notebook_matches.py -v -s -k RealData      # needs DataStructures/ and
+                                                                            # Metagenome_Samples/ on disk
+                                                                            # (-s shows per-sample progress;
+                                                                            # loading 128 samples' worth of
+                                                                            # raw files takes a while --
+                                                                            # this isn't a hang)
 """
-import os
 import csv
-import json
+import os
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
-from collections import Counter
 
 import pytest
 
 # Real dataset root -- override via env var, matches the convention used
 # in test_egc_json_vs_jgi.py / test_jgi_file_parsing.py
-DATA_ROOT = Path(os.environ.get("HAB_DATA_ROOT", r"C:\Users\sakoehn\Desktop\JGI"))
-BASE_DS   = DATA_ROOT / "DataStructures"
+DATA_ROOT     = Path(os.environ.get("HAB_DATA_ROOT", r"C:\Users\sakoehn\Desktop\JGI"))
+BASE_DS       = DATA_ROOT / "DataStructures"
+METAGENOME_DIR = DATA_ROOT / "Metagenome_Samples"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Reimplementation of the notebook's join logic (mappings.ipynb, cells 2-3)
-# Kept deliberately literal/unoptimized so it mirrors the notebook exactly
-# and is easy to audit against the source cells side-by-side.
+# Reimplementation of the CORRECTED build logic, straight from the raw
+# per-gene JGI files. Kept deliberately literal/unoptimized so it's easy to
+# audit against README.txt's documented column layout side-by-side.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _first_or_none(x):
-    if not x:
-        return None
-    return x[0]
+def _scaffold_from_gene_id(gene_id: str) -> str:
+    """gene_id is "{scaffold}_{start}_{end}" -- verified at scale (1.09M
+    gene_ids, 0 exceptions) that the last two underscore-separated fields
+    are always the numeric coordinates."""
+    return gene_id.rsplit("_", 2)[0]
 
 
-def _load_json(path: Path) -> dict:
+def _parse_multi_value_hits(path: Path, id_column: int) -> dict[str, set[str]]:
+    """
+    Reads a raw tab-delimited hit file (cog.txt / ko.txt / ec.txt shape,
+    no header) and groups it by gene_id, returning
+    {gene_id: {unique annotation ids}}.
+
+    Missing file -> empty dict (source simply has no data for this
+    sample), not an error.
+    """
+    hits: dict[str, set[str]] = defaultdict(set)
     if not path.exists():
-        return {}
-    with open(path) as f:
-        return json.load(f)
+        return hits
+    with open(path, newline="") as f:
+        reader = csv.reader(f, delimiter="\t")
+        for row in reader:
+            if not row:
+                continue
+            hits[row[0]].add(row[id_column])
+    return hits
 
 
-def expected_rows_for_sample(base_ds: Path, sample: str) -> dict:
+def _parse_taxonomy_hits(path: Path) -> dict[str, str]:
+    """phylodist.txt is single-valued per gene: gene_id -> lineage string (column 4)."""
+    hits: dict[str, str] = {}
+    if not path.exists():
+        return hits
+    with open(path, newline="") as f:
+        reader = csv.reader(f, delimiter="\t")
+        for row in reader:
+            if not row:
+                continue
+            hits[row[0]] = row[4]
+    return hits
+
+
+def _joined(values: set[str] | None) -> str | None:
+    """Sorted, comma-joined multi-value cell -- deterministic serialization
+    so the same gene always produces the same string on every run,
+    regardless of set iteration order. None (not "") when there are no hits."""
+    if not values:
+        return None
+    return ",".join(sorted(values))
+
+
+def expected_rows_for_sample(metagenome_dir: Path, sample: str) -> dict:
     """
     Re-derives the expected gene_id -> {scaffold_id, taxonomy, kegg, enzyme, cog}
-    mapping for one sample, using the IDENTICAL logic to mappings.ipynb's
-    main loop (cell 3), independently of pandas (plain dicts) so a pandas
-    merge bug wouldn't be silently re-introduced by reusing pandas here too.
-
-    Returns {} if the sample has no COG entries (notebook's own skip rule:
-    "if not genes: skip").
+    mapping for one sample directly from the four raw JGI per-gene files.
     """
-    cog_db  = _load_json(base_ds / "COG_byTP"     / f"cog_db_{sample}.json")
-    kegg_db = _load_json(base_ds / "Kegg_byTP"    / f"kegg_db_{sample}.json")
-    enz_db  = _load_json(base_ds / "Enz_byTP"     / f"enz_db_{sample}.json")
-    tax_db  = _load_json(base_ds / "tax_db_byTP"  / f"tax_db_{sample}.json")
+    sample_dir = metagenome_dir / sample
 
-    genes = list(cog_db.keys())
-    if not genes:
-        return {}
+    cog_hits  = _parse_multi_value_hits(sample_dir / f"{sample}.a.cog.txt", id_column=1)
+    kegg_hits = _parse_multi_value_hits(sample_dir / f"{sample}.a.ko.txt", id_column=2)
+    enz_hits  = _parse_multi_value_hits(sample_dir / f"{sample}.a.ec.txt", id_column=2)
+    tax_hits  = _parse_taxonomy_hits(sample_dir / f"{sample}.a.phylodist.txt")
+
+    genes = set(cog_hits) | set(kegg_hits) | set(enz_hits) | set(tax_hits)
 
     expected = {}
     for gene_id in genes:
-        cog_info  = cog_db.get(gene_id, {})
-        kegg_info = kegg_db.get(gene_id, {})
-        enz_info  = enz_db.get(gene_id, {})
-        tax_info  = tax_db.get(gene_id, {})
-
         expected[gene_id] = {
-            "scaffold_id": _first_or_none(tax_info.get("scaffolds", [])),
-            "taxonomy":    _first_or_none(tax_info.get("lookupId", [])),
-            "kegg":        _first_or_none(kegg_info.get("lookupId", [])),
-            "enzyme":      _first_or_none(enz_info.get("lookupId", [])),
-            "cog":         _first_or_none(cog_info.get("lookupId", [])),
+            "scaffold_id": _scaffold_from_gene_id(gene_id),
+            "taxonomy":    tax_hits.get(gene_id),
+            "kegg":        _joined(kegg_hits.get(gene_id)),
+            "enzyme":      _joined(enz_hits.get(gene_id)),
+            "cog":         _joined(cog_hits.get(gene_id)),
         }
     return expected
 
@@ -117,12 +179,12 @@ def expected_rows_for_sample(base_ds: Path, sample: str) -> dict:
 def read_actual_tsv(path: Path) -> dict:
     """
     Reads a real {sample}_mapping.tsv into {gene_id: {scaffold_id, taxonomy,
-    kegg, enzyme, cog}}, matching the notebook's OWN write column order:
+    kegg, enzyme, cog}}, matching the notebook's own write column order:
     gene_id, scaffold_id, taxonomy, kegg, enzyme, cog.
 
     Note this intentionally reads by the notebook's column names (kegg/cog),
     NOT the API's renamed kegg_id/cog_id -- this test verifies the TSV the
-    notebook wrote, before main.py's loader renames anything.
+    build produced, before main.py's loader renames anything.
     """
     actual = {}
     if not path.exists():
@@ -140,14 +202,41 @@ def read_actual_tsv(path: Path) -> dict:
     return actual
 
 
+def _write_raw_hits(path: Path, rows: list[list[str]]):
+    """Writes a raw tab-delimited hit file with no header, matching the real
+    cog.txt/ko.txt/ec.txt/phylodist.txt shape for synthetic fixtures."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        for row in rows:
+            writer.writerow(row)
+
+
+def _cog_row(gene_id: str, cog_id: str) -> list[str]:
+    return [gene_id, cog_id, "99.0", "100", "1", "100", "1", "100", "1e-50", "200.0"]
+
+
+def _ko_row(gene_id: str, ko_term: str) -> list[str]:
+    return [gene_id, "Yes", ko_term, "99.0", "1", "100", "1", "100", "1e-50", "200", "100"]
+
+
+def _ec_row(gene_id: str, ec_id: str) -> list[str]:
+    return [gene_id, "Yes", ec_id, "99.0", "1", "100", "1", "100", "1e-50", "200", "100"]
+
+
+def _phylodist_row(gene_id: str, lineage: str) -> list[str]:
+    return [gene_id, "1234567", "7654321", "99.0", lineage]
+
+
 def _write_json(path: Path, data: dict):
+    import json
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(data, f)
 
 
 def _write_tsv_from_expected(path: Path, expected: dict):
-    """Writes a TSV the same way the notebook does, for synthetic fixtures."""
+    """Writes a TSV the same way the build should, for synthetic fixtures."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
@@ -164,169 +253,174 @@ def _write_tsv_from_expected(path: Path, expected: dict):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TestNotebookMatchingSynthetic — small hand-built JSON dbs, fully controlled
+# TestBuildLogicSynthetic — small hand-built raw hit files, fully controlled
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestNotebookMatchingSynthetic:
+class TestBuildLogicSynthetic:
     """
-    Builds small fake COG/KEGG/Enzyme/Taxonomy per-sample JSON dbs with
-    known, deliberately tricky content (multi-entry lookupId lists, a gene
-    missing from KEGG, a gene missing from COG entirely, empty lookupId
-    lists) and confirms expected_rows_for_sample() reproduces exactly what
-    the notebook's documented logic would produce.
+    Builds small fake raw cog.txt/ko.txt/ec.txt/phylodist.txt files with
+    known, deliberately tricky content and confirms expected_rows_for_sample()
+    reproduces exactly the corrected, intended logic.
 
-    This class validates the TEST'S OWN reimplementation of the notebook
-    logic is faithful to the notebook's documented behavior, independent
-    of any real data on disk -- it's the ground-truth check that the
-    re-derivation function used by TestNotebookMatchingRealData is itself
-    trustworthy.
+    Genes, by design:
+      - scafA_100_200 ("gene_a"): present in all 4 sources. COG has a
+        duplicate hit (same ID twice -> must dedupe to one). Enzyme has two
+        GENUINELY DISTINCT EC values (bifunctional-enzyme case -> both kept).
+      - scafA_300_400 ("gene_b"): present in COG + taxonomy only.
+      - scafB_10_50 ("gene_d"): present in KEGG + enzyme + taxonomy, but
+        NOT in COG at all -- must still be INCLUDED (union rule), with
+        cog=None. This is the direct reversal of the old, buggy exclusion.
+      - scafC_5_60 ("gene_e"): COG only, with two GENUINELY DISTINCT COG
+        hits (multi-domain-protein case -> both kept, sorted). Nothing in
+        kegg/enzyme/taxonomy -- must still appear, with those fields None.
     """
 
     @pytest.fixture
-    def synthetic_ds(self, tmp_path):
-        base_ds = tmp_path / "DataStructures"
+    def synthetic_metagenome_dir(self, tmp_path):
+        meta_dir = tmp_path / "Metagenome_Samples" / "s1"
 
-        # gene_a: present everywhere, multiple lookupIds -> only [0] should be kept
-        # gene_b: present in COG and taxonomy, MISSING from KEGG and enzyme
-        # gene_c: present in COG with an EMPTY lookupId list (edge case: [] not missing)
-        # gene_d: present in KEGG/enzyme/taxonomy but NOT in COG -> must be
-        #         entirely absent from the TSV (COG is the base gene list)
-        _write_json(base_ds / "COG_byTP" / "cog_db_s1.json", {
-            "gene_a": {"lookupId": ["COG0001", "COG9999"]},
-            "gene_b": {"lookupId": ["COG0002"]},
-            "gene_c": {"lookupId": []},
-        })
-        _write_json(base_ds / "Kegg_byTP" / "kegg_db_s1.json", {
-            "gene_a": {"lookupId": ["K00010", "K00011"]},
-            "gene_d": {"lookupId": ["K99999"]},
-        })
-        _write_json(base_ds / "Enz_byTP" / "enz_db_s1.json", {
-            "gene_a": {"lookupId": ["1.1.1.1"]},
-            "gene_d": {"lookupId": ["9.9.9.9"]},
-        })
-        _write_json(base_ds / "tax_db_byTP" / "tax_db_s1.json", {
-            "gene_a": {"lookupId": ["Bacteria;Firmicutes"], "scaffolds": ["scaf_1", "scaf_2"]},
-            "gene_b": {"lookupId": ["Archaea"], "scaffolds": ["scaf_3"]},
-            "gene_d": {"lookupId": ["Viruses"], "scaffolds": ["scaf_9"]},
-        })
+        _write_raw_hits(meta_dir / "s1.a.cog.txt", [
+            _cog_row("scafA_100_200", "COG0001"),
+            _cog_row("scafA_100_200", "COG0001"),   # duplicate hit, same COG
+            _cog_row("scafA_300_400", "COG0002"),
+            _cog_row("scafC_5_60", "COG0003"),
+            _cog_row("scafC_5_60", "COG0004"),       # genuinely distinct 2nd COG
+        ])
+        _write_raw_hits(meta_dir / "s1.a.ko.txt", [
+            _ko_row("scafA_100_200", "K00010"),
+            _ko_row("scafB_10_50", "K99999"),
+        ])
+        _write_raw_hits(meta_dir / "s1.a.ec.txt", [
+            _ec_row("scafA_100_200", "1.1.1.1"),
+            _ec_row("scafA_100_200", "1.1.1.2"),     # genuinely distinct 2nd EC
+            _ec_row("scafB_10_50", "9.9.9.9"),
+        ])
+        _write_raw_hits(meta_dir / "s1.a.phylodist.txt", [
+            _phylodist_row("scafA_100_200", "Bacteria;Firmicutes"),
+            _phylodist_row("scafA_300_400", "Archaea"),
+            _phylodist_row("scafB_10_50", "Viruses"),
+        ])
 
-        return base_ds
+        return tmp_path / "Metagenome_Samples"
 
-    def test_gene_with_multiple_lookupids_keeps_only_the_first(self, synthetic_ds):
-        result = expected_rows_for_sample(synthetic_ds, "s1")
-        assert result["gene_a"]["cog"] == "COG0001"     # not COG9999
-        assert result["gene_a"]["kegg"] == "K00010"      # not K00011
+    def test_duplicate_cog_hit_dedupes_to_one_value(self, synthetic_metagenome_dir):
+        result = expected_rows_for_sample(synthetic_metagenome_dir, "s1")
+        assert result["scafA_100_200"]["cog"] == "COG0001"
 
-    def test_gene_missing_from_kegg_and_enzyme_gets_none(self, synthetic_ds):
-        result = expected_rows_for_sample(synthetic_ds, "s1")
-        assert result["gene_b"]["kegg"] is None
-        assert result["gene_b"]["enzyme"] is None
-        # but taxonomy and cog, which DO have entries, must still be populated
-        assert result["gene_b"]["cog"] == "COG0002"
-        assert result["gene_b"]["taxonomy"] == "Archaea"
+    def test_multiple_distinct_cog_hits_keeps_all_sorted(self, synthetic_metagenome_dir):
+        result = expected_rows_for_sample(synthetic_metagenome_dir, "s1")
+        assert result["scafC_5_60"]["cog"] == "COG0003,COG0004"
 
-    def test_gene_with_empty_lookupid_list_is_none_not_missing_key(self, synthetic_ds):
-        """gene_c has lookupId: [] in COG -- distinct from not being in the
-        dict at all. _first_or_none([]) must return None, same as a fully
-        absent gene, not raise or return something else."""
-        result = expected_rows_for_sample(synthetic_ds, "s1")
-        assert result["gene_c"]["cog"] is None
+    def test_multiple_distinct_ec_hits_keeps_all_sorted(self, synthetic_metagenome_dir):
+        result = expected_rows_for_sample(synthetic_metagenome_dir, "s1")
+        assert result["scafA_100_200"]["enzyme"] == "1.1.1.1,1.1.1.2"
 
-    def test_gene_absent_from_cog_is_excluded_entirely(self, synthetic_ds):
-        """gene_d has real KEGG/enzyme/taxonomy data but no COG entry.
-        Per the notebook's own rule (base gene list = COG keys), it must
-        not appear in the output at all -- this is a real data-loss
-        behavior worth pinning down explicitly, not an oversight to miss."""
-        result = expected_rows_for_sample(synthetic_ds, "s1")
-        assert "gene_d" not in result
+    def test_gene_absent_from_cog_is_still_included(self, synthetic_metagenome_dir):
+        """Direct reversal of the old (buggy) behavior: a gene with real
+        KEGG/enzyme/taxonomy data but no COG hit must appear, with
+        cog=None -- not be excluded entirely."""
+        result = expected_rows_for_sample(synthetic_metagenome_dir, "s1")
+        assert "scafB_10_50" in result
+        assert result["scafB_10_50"]["cog"] is None
+        assert result["scafB_10_50"]["kegg"] == "K99999"
+        assert result["scafB_10_50"]["enzyme"] == "9.9.9.9"
+        assert result["scafB_10_50"]["taxonomy"] == "Viruses"
 
-    def test_sample_with_zero_cog_genes_returns_empty(self, tmp_path):
-        """Mirrors the notebook's 'if not genes: skip' branch."""
-        base_ds = tmp_path / "DataStructures"
-        _write_json(base_ds / "COG_byTP" / "cog_db_empty.json", {})
-        result = expected_rows_for_sample(base_ds, "empty")
+    def test_gene_present_in_only_one_source_gets_nulls_elsewhere(self, synthetic_metagenome_dir):
+        result = expected_rows_for_sample(synthetic_metagenome_dir, "s1")
+        assert result["scafC_5_60"]["kegg"] is None
+        assert result["scafC_5_60"]["enzyme"] is None
+        assert result["scafC_5_60"]["taxonomy"] is None
+
+    def test_scaffold_id_parsed_from_gene_id_even_without_taxonomy(self, synthetic_metagenome_dir):
+        """scaffold_id must come from gene_id itself, even for a gene with
+        NO taxonomy hit at all (scafC_5_60) -- the old bug sourced it from
+        taxonomy's scaffolds list and would have left this None."""
+        result = expected_rows_for_sample(synthetic_metagenome_dir, "s1")
+        assert result["scafA_100_200"]["scaffold_id"] == "scafA"
+        assert result["scafA_300_400"]["scaffold_id"] == "scafA"
+        assert result["scafB_10_50"]["scaffold_id"] == "scafB"
+        assert result["scafC_5_60"]["scaffold_id"] == "scafC"
+
+    def test_missing_raw_file_treated_as_empty_source_not_error(self, tmp_path):
+        """If e.g. s2.a.ko.txt doesn't exist at all (not just empty), the
+        sample's genes should still process with kegg=None rather than
+        crashing."""
+        meta_dir = tmp_path / "Metagenome_Samples" / "s2"
+        _write_raw_hits(meta_dir / "s2.a.cog.txt", [_cog_row("scafX_1_10", "COG0099")])
+        # Deliberately do NOT write s2.a.ko.txt at all
+        result = expected_rows_for_sample(tmp_path / "Metagenome_Samples", "s2")
+        assert result["scafX_1_10"]["kegg"] is None
+        assert result["scafX_1_10"]["cog"] == "COG0099"
+
+    def test_sample_with_no_hits_anywhere_returns_empty(self, tmp_path):
+        result = expected_rows_for_sample(tmp_path / "Metagenome_Samples", "nonexistent_sample")
         assert result == {}
 
-    def test_missing_json_file_treated_as_empty_db_not_error(self, tmp_path):
-        """If e.g. Kegg_byTP/kegg_db_{sample}.json doesn't exist at all
-        (not just empty), the sample's genes should still process with
-        kegg=None rather than crashing."""
-        base_ds = tmp_path / "DataStructures"
-        _write_json(base_ds / "COG_byTP" / "cog_db_s2.json", {
-            "gene_x": {"lookupId": ["COG0099"]},
-        })
-        # Deliberately do NOT write Kegg_byTP/kegg_db_s2.json at all
-        result = expected_rows_for_sample(base_ds, "s2")
-        assert result["gene_x"]["kegg"] is None
-        assert result["gene_x"]["cog"] == "COG0099"
-
-    def test_synthetic_expected_matches_a_correctly_written_tsv(self, synthetic_ds, tmp_path):
+    def test_synthetic_expected_matches_a_correctly_written_tsv(self, synthetic_metagenome_dir, tmp_path):
         """End-to-end sanity check: write a TSV using the SAME expected
         values, read it back with read_actual_tsv(), and confirm a
         round-trip produces an exact match -- proving the comparison
         machinery itself (not just the derivation) is correct."""
-        expected = expected_rows_for_sample(synthetic_ds, "s1")
-        tsv_path = tmp_path / "Mappings_by_sample" / "s1_mapping.tsv"
+        expected = expected_rows_for_sample(synthetic_metagenome_dir, "s1")
+        tsv_path = tmp_path / "Mappings_by_Sample" / "s1_mapping.tsv"
         _write_tsv_from_expected(tsv_path, expected)
 
         actual = read_actual_tsv(tsv_path)
         for gene_id, exp_vals in expected.items():
             assert actual[gene_id] == exp_vals, f"{gene_id}: expected {exp_vals}, got {actual[gene_id]}"
 
-    def test_corrupted_tsv_is_caught_by_the_comparison(self, synthetic_ds, tmp_path):
-        """Negative control: deliberately write a WRONG TSV (swap two
-        genes' cog values) and confirm the comparison detects the
-        mismatch -- proving this test suite would actually fail if the
-        notebook's join logic broke, not just pass trivially."""
-        expected = expected_rows_for_sample(synthetic_ds, "s1")
+    def test_corrupted_tsv_is_caught_by_the_comparison(self, synthetic_metagenome_dir, tmp_path):
+        """Negative control: deliberately write a WRONG TSV (swap a gene's
+        cog value) and confirm the comparison detects the mismatch --
+        proving this test suite would actually fail if the build logic
+        broke, not just pass trivially."""
+        expected = expected_rows_for_sample(synthetic_metagenome_dir, "s1")
         tampered = dict(expected)
-        tampered["gene_a"] = {**tampered["gene_a"], "cog": "COG_WRONG"}
+        tampered["scafA_100_200"] = {**tampered["scafA_100_200"], "cog": "COG_WRONG"}
 
-        tsv_path = tmp_path / "Mappings_by_sample" / "s1_mapping.tsv"
+        tsv_path = tmp_path / "Mappings_by_Sample" / "s1_mapping.tsv"
         _write_tsv_from_expected(tsv_path, tampered)
         actual = read_actual_tsv(tsv_path)
 
-        assert actual["gene_a"] != expected["gene_a"], (
+        assert actual["scafA_100_200"] != expected["scafA_100_200"], (
             "Sanity check failed: tampering didn't actually change the row -- "
             "the comparison logic below would pass even on broken data."
         )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TestNotebookMatchingRealData — real per-sample JSON vs real TSVs on disk
+# TestBuildLogicRealData — real raw JGI files vs real TSVs on disk
 # ═══════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.skipif(
-    not BASE_DS.exists(),
-    reason=f"DataStructures/ not found at {BASE_DS} -- set HAB_DATA_ROOT to run this class",
+    not METAGENOME_DIR.exists(),
+    reason=f"Metagenome_Samples/ not found at {METAGENOME_DIR} -- set HAB_DATA_ROOT to run this class",
 )
-class TestNotebookMatchingRealData:
+class TestBuildLogicRealData:
     """
-    Re-derives expected mappings from the REAL COG_byTP/Kegg_byTP/Enz_byTP/
-    tax_db_byTP JSON files and compares against the REAL
-    Mappings_by_sample/{sample}_mapping.tsv files the notebook actually
+    Re-derives expected mappings from the REAL raw cog.txt/ko.txt/ec.txt/
+    phylodist.txt files and compares against the REAL
+    Mappings_by_Sample/{sample}_mapping.tsv files the build actually
     produced -- catching any genuine mismatch in the production dataset,
     not just in a synthetic fixture.
 
-    Performance note: per-sample JSON/TSV files can be very large (the
-    project's own notebook output shows individual Enz_byTP files with
-    100k-330k entries). Loading + comparing 128 samples' worth of that is
-    real work -- expect this class to take noticeably longer than the
-    synthetic class, not to hang. Two things keep it from being slower
-    than necessary:
-      - sample_data (below) loads each sample's JSON/TSV ONCE per pytest
-        session and caches the result, so the 4 tests in this class don't
-        each independently re-read all 128 samples from scratch (4x
-        redundant I/O eliminated).
-      - test_no_gene_appears_twice_in_any_tsv uses collections.Counter
-        instead of list.count() in a loop, which is O(n) instead of O(n^2)
-        per sample -- the old version could itself take minutes on a
-        300k-row sample.
+    Performance note: raw files can be very large (a single sample's
+    cog.txt/ko.txt/ec.txt/phylodist.txt together can be 100+ MB), and some
+    samples have 500k-900k+ genes. check_results (below) checks and
+    DISCARDS each sample's data immediately, one sample at a time, rather
+    than accumulating every sample's full gene dict simultaneously --
+    confirmed by real crash: an earlier version that held all samples'
+    dicts in memory for the whole test class hit a genuine MemoryError
+    around sample 90/128 on this machine, even running alone with nothing
+    else competing for memory. Only small mismatch lists/counters persist
+    across the whole run; the heavy per-sample dicts are garbage collected
+    before the next sample loads.
 
-    Run with -s to see per-sample progress as it loads:
-        pytest Tests/test_mappings_notebook_matches.py -v -s -k RealData
+    Run with -s to see per-sample progress:
+        pytest tests/test_mappings_notebook_matches.py -v -s -k RealData
 
-    Stops collecting mismatches after 10 per sample (same convention as
+    Stops collecting mismatches after 10 total (same convention as
     test_egc_json_vs_jgi.py) so a systemic bug doesn't flood the terminal.
     """
 
@@ -335,142 +429,127 @@ class TestNotebookMatchingRealData:
     @pytest.fixture(scope="class")
     @classmethod
     def sample_names(cls):
-        cog_dir = BASE_DS / "COG_byTP"
-        if not cog_dir.exists():
-            pytest.skip(f"{cog_dir} not found")
-        names = sorted(
-            p.stem.removeprefix("cog_db_")
-            for p in cog_dir.glob("cog_db_*.json")
-        )
+        """
+        Reads the canonical 128-sample list from sample_names.txt -- the
+        SAME file the build itself reads -- rather than listing
+        Metagenome_Samples/ subdirectories directly. That directory has at
+        least one stray non-sample entry ("faa", confirmed via `diff`
+        against sample_names.txt) that isn't a real sample, and using the
+        same canonical list the build used ensures this test checks
+        exactly what the build actually processed, nothing more.
+        """
+        if not METAGENOME_DIR.exists():
+            pytest.skip(f"{METAGENOME_DIR} not found")
+        sample_names_path = DATA_ROOT / "sample_names.txt"
+        if not sample_names_path.exists():
+            pytest.skip(f"{sample_names_path} not found")
+        with open(sample_names_path) as f:
+            names = [s.strip() for s in f if s.strip()]
         if not names:
-            pytest.skip(f"No cog_db_*.json files found in {cog_dir}")
+            pytest.skip(f"No sample names found in {sample_names_path}")
         return names
 
     @pytest.fixture(scope="class")
     @classmethod
-    def sample_data(cls, sample_names):
+    def check_results(cls, sample_names):
         """
-        Loads expected_rows_for_sample() + read_actual_tsv() ONCE per
-        sample for the whole test class, instead of once per test method.
-        Prints progress per sample (visible with -s) so a long run shows
-        forward motion instead of looking hung.
+        Single streaming pass: for each sample, derive expected + read
+        actual, run every check immediately, record only small
+        mismatch entries, then let both big dicts go out of scope before
+        the next sample loads. Prints progress per sample (visible with -s).
+        """
+        results = {
+            "missing_tsv":         [],
+            "count_mismatches":    [],
+            "missing_genes":       [],
+            "value_mismatches":    [],
+            "duplicate_gene_ids":  [],
+            "samples_checked":     0,
+        }
 
-        Returns {sample: (expected_dict, actual_dict, cog_gene_count)}.
-        Samples whose TSV doesn't exist are still included with
-        actual_dict = {} so test_every_sample_has_a_corresponding_tsv can
-        still report on them.
-        """
-        data = {}
         total = len(sample_names)
-        print(f"\n[notebook-match] loading {total} samples from {BASE_DS} ...", file=sys.stderr)
+        print(f"\n[mappings-match] checking {total} samples from {METAGENOME_DIR} ...", file=sys.stderr)
         for i, sample in enumerate(sample_names, start=1):
-            cog_db = _load_json(BASE_DS / "COG_byTP" / f"cog_db_{sample}.json")
-            expected = expected_rows_for_sample(BASE_DS, sample)
-            tsv_path = BASE_DS / "Mappings_by_sample" / f"{sample}_mapping.tsv"
-            actual = read_actual_tsv(tsv_path) if tsv_path.exists() else {}
-            data[sample] = (expected, actual, len(cog_db))
+            tsv_path = BASE_DS / "Mappings_by_Sample" / f"{sample}_mapping.tsv"
+            if not tsv_path.exists():
+                results["missing_tsv"].append(sample)
+                print(f"[mappings-match] ({i}/{total}) {sample}: NO TSV", file=sys.stderr)
+                continue
+
+            expected = expected_rows_for_sample(METAGENOME_DIR, sample)
+            actual = read_actual_tsv(tsv_path)
+
+            if len(actual) != len(expected):
+                results["count_mismatches"].append(
+                    f"{sample}: union of raw sources has {len(expected)} genes, TSV has {len(actual)} rows"
+                )
+
+            with open(tsv_path, newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                gene_ids = [row["gene_id"] for row in reader]
+            dupes = [g for g, c in Counter(gene_ids).items() if c > 1]
+            if dupes:
+                results["duplicate_gene_ids"].append(f"{sample}: duplicate gene_id(s) {dupes[:5]}")
+
+            for gene_id, exp_vals in expected.items():
+                if gene_id not in actual:
+                    if len(results["missing_genes"]) < cls.MAX_REPORTED_MISMATCHES:
+                        results["missing_genes"].append(f"{sample}/{gene_id}")
+                    continue
+                if actual[gene_id] != exp_vals:
+                    if len(results["value_mismatches"]) < cls.MAX_REPORTED_MISMATCHES:
+                        results["value_mismatches"].append(
+                            f"{sample}/{gene_id}: expected={exp_vals}, actual={actual[gene_id]}"
+                        )
+
+            results["samples_checked"] += 1
             print(
-                f"[notebook-match] ({i}/{total}) {sample}: "
-                f"{len(cog_db)} cog genes, {len(actual)} tsv rows",
+                f"[mappings-match] ({i}/{total}) {sample}: "
+                f"{len(expected)} expected genes, {len(actual)} tsv rows, {len(dupes)} dupes",
                 file=sys.stderr,
             )
-        print("[notebook-match] done loading.", file=sys.stderr)
-        return data
+            # expected/actual/gene_ids go out of scope here -- freed
+            # before the next sample loads, keeping peak memory roughly
+            # O(one sample) instead of O(all 128 samples).
+
+        print("[mappings-match] done checking.", file=sys.stderr)
+        return results
 
     def test_at_least_one_sample_found(self, sample_names):
         assert len(sample_names) > 0
 
-    def test_every_sample_has_a_corresponding_tsv(self, sample_data):
-        missing_tsv = [
-            sample for sample, (_, actual, _) in sample_data.items()
-            if not actual and not (BASE_DS / "Mappings_by_sample" / f"{sample}_mapping.tsv").exists()
-        ]
-        assert not missing_tsv, (
-            f"{len(missing_tsv)} sample(s) have COG JSON but no mapping TSV "
-            f"(first 10): {missing_tsv[:10]}"
+    def test_every_sample_has_a_corresponding_tsv(self, check_results):
+        assert not check_results["missing_tsv"], (
+            f"{len(check_results['missing_tsv'])} sample(s) have no mapping TSV "
+            f"(first 10): {check_results['missing_tsv'][:10]}"
         )
 
-    def test_gene_count_matches_cog_db_size(self, sample_data):
-        """The TSV's row count should equal the number of genes in that
-        sample's COG db (COG is the base gene list) -- a count mismatch
-        signals genes were dropped or duplicated during the merge."""
-        mismatches = []
-        for sample, (_, actual, cog_gene_count) in sample_data.items():
-            if not actual:
-                continue
-            if len(actual) != cog_gene_count:
-                mismatches.append(
-                    f"{sample}: cog_db has {cog_gene_count} genes, TSV has {len(actual)} rows"
-                )
-                if len(mismatches) >= self.MAX_REPORTED_MISMATCHES:
-                    break
-        assert not mismatches, "\n".join(mismatches)
+    def test_gene_count_matches_union_of_raw_sources(self, check_results):
+        """The TSV's row count should equal the number of unique genes
+        across all four raw sources for that sample (the union IS the new
+        base gene list) -- a count mismatch signals genes were dropped or
+        duplicated during the build."""
+        assert not check_results["count_mismatches"], "\n".join(
+            check_results["count_mismatches"][:self.MAX_REPORTED_MISMATCHES]
+        )
 
-    def test_every_gene_matches_expected_values(self, sample_data):
+    def test_every_gene_matches_expected_values(self, check_results):
         """
         The core check: for every gene in every sample, the TSV's
         scaffold_id/taxonomy/kegg/enzyme/cog values must exactly equal
         what expected_rows_for_sample() independently derives from the
-        same JSON sources. Any mismatch means the notebook's merge
-        produced a wrong match for that gene (e.g. a join key issue,
-        an off-by-one on which lookupId was kept, or a stale TSV that
-        no longer reflects the current JSON).
+        same raw JGI files.
         """
-        mismatches = []
-        missing_genes = []
-
-        for sample, (expected, actual, _) in sample_data.items():
-            if not actual:
-                continue
-
-            for gene_id, exp_vals in expected.items():
-                if gene_id not in actual:
-                    missing_genes.append(f"{sample}/{gene_id}")
-                    if len(missing_genes) >= self.MAX_REPORTED_MISMATCHES:
-                        break
-                    continue
-                if actual[gene_id] != exp_vals:
-                    mismatches.append(
-                        f"{sample}/{gene_id}: expected={exp_vals}, actual={actual[gene_id]}"
-                    )
-                    if len(mismatches) >= self.MAX_REPORTED_MISMATCHES:
-                        break
-
-            if len(missing_genes) >= self.MAX_REPORTED_MISMATCHES or \
-               len(mismatches) >= self.MAX_REPORTED_MISMATCHES:
-                break
-
         issues = []
-        if missing_genes:
-            issues.append(f"Genes missing from TSV (first 10): {missing_genes}")
-        if mismatches:
-            issues.append(f"Value mismatches (first 10): {mismatches}")
+        if check_results["missing_genes"]:
+            issues.append(f"Genes missing from TSV (first 10): {check_results['missing_genes']}")
+        if check_results["value_mismatches"]:
+            issues.append(f"Value mismatches (first 10): {check_results['value_mismatches']}")
         assert not issues, "\n".join(issues)
 
-    def test_no_gene_appears_twice_in_any_tsv(self, sample_data):
+    def test_no_gene_appears_twice_in_any_tsv(self, check_results):
         """Each gene_id should be a unique row per sample -- a duplicate
-        would indicate the merge produced a fan-out (e.g. a gene matching
-        multiple rows in one of the lookup tables before _first_or_none
-        was applied, or a join key collision).
-
-        Uses Counter (O(n)) rather than list.count() in a loop (O(n^2)),
-        since a 300k-row sample would make the O(n^2) version the real
-        bottleneck in this whole class.
-        """
-        mismatches = []
-        for sample, (_, actual, _) in sample_data.items():
-            if not actual:
-                continue
-            # actual is already keyed by gene_id (last-write-wins on dupes),
-            # so duplicates must be detected from the raw TSV rows instead.
-            tsv_path = BASE_DS / "Mappings_by_sample" / f"{sample}_mapping.tsv"
-            with open(tsv_path, newline="") as f:
-                reader = csv.DictReader(f, delimiter="\t")
-                gene_ids = [row["gene_id"] for row in reader]
-            counts = Counter(gene_ids)
-            dupes = [g for g, c in counts.items() if c > 1]
-            if dupes:
-                mismatches.append(f"{sample}: duplicate gene_id(s) {dupes[:5]}")
-                if len(mismatches) >= self.MAX_REPORTED_MISMATCHES:
-                    break
-        assert not mismatches, "\n".join(mismatches)
+        would indicate the build produced a fan-out somewhere."""
+        assert not check_results["duplicate_gene_ids"], "\n".join(
+            check_results["duplicate_gene_ids"][:self.MAX_REPORTED_MISMATCHES]
+        )
