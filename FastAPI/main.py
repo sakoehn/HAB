@@ -36,7 +36,7 @@ from api.config import FRONTEND_DIST, DATA_BACKEND
 from api.index import build_mapping_index, build_search_index
 from api import index as index_module
 from api import routes, correlation
-from api.db import connect_to_mongo, close_mongo_connection
+from api.db import connect_to_mongo, close_mongo_connection, connect_to_sql, close_sql_connection
 
 import os
 
@@ -73,11 +73,16 @@ async def lifespan(app: FastAPI):
         app.state.mongo_client = client
         app.state.mongo_db = db
         index_module._INDEX_READY = True
-
+    else: # DATA_BACKEND == "sql"
+        app.state.sql_conn = connect_to_sql()
+        index_module._INDEX_READY = True
+    
     yield
 
     if DATA_BACKEND == "mongo":
         close_mongo_connection(app.state.mongo_client)
+    elif DATA_BACKEND == "sql":
+        close_sql_connection(app.state.sql_conn)
 
 
 # ── App ───────────────────────────────────────────────────────────────────────

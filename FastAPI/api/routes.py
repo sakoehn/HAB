@@ -39,11 +39,23 @@ import os
 from fastapi import APIRouter, HTTPException, Query, Request
 from .cache_mongo import (
     get_all_sample_names_mongo,
+    get_annotation_scaffold_buckets_split,
     get_annotation_series_mongo,
+    get_annotation_series_split,
     get_taxonomy_children_mongo,
     get_top_annotations_mongo,
     taxon_exists_mongo,
 )
+from .cache_sql import (
+    get_annotation_scaffolds_sql, 
+    get_annotation_series_sql,
+    get_all_sample_names_sql,
+    get_taxonomy_children_sql,
+    get_top_annotations_sql,
+    taxon_exists_sql,
+    get_mappings_sql,
+    get_search_annotations
+)    
 
 from .astronomy import SUN_TIMES
 from .cache import (
@@ -61,6 +73,7 @@ from .cache import (
     _TSV_CACHE,
 )
 from .config import (
+    ACTIVE_DATASET_VERSION,
     BASE_DIR,
     DATA_BACKEND,
     LOCATION_LAT,
@@ -191,6 +204,7 @@ def _annotation_endpoint(
 
 _TOP_ANN_CACHE: dict[tuple, list] = {}
 _TOP_ANN_CACHE_MONGO: dict[tuple, list] = {}
+_TOP_ANN_CACHE_SQL: dict[tuple, list] = {}
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -230,6 +244,21 @@ async def mongo_annotations_test(request: Request, sample_name: str, source: str
     db = request.app.state.mongo_db
     series = await get_annotation_series_mongo(db, sample_name, source, annotation_id)
     return {"sample_name": sample_name, "source": source, "annotation_id": annotation_id, "series": series}
+
+@router.get("/sql-test")
+def sql_test(request: Request):
+    """ Test SQLite connection by a test query."""
+    db = request.app.state.sql_conn
+    try:
+        query = f"""
+            SELECT *
+            FROM annotation_series
+            LIMIT 1
+        """
+        cursor = db.execute(query)
+        return cursor.fetchall()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SQL operation failed: {str(e)}")
 
 @router.get("/status")
 def api_status():
@@ -314,7 +343,11 @@ def get_mappings(sample_name: str, page: int = 1, page_size: int = 100):
 
 
 @router.get("/mappings/search")
+# One route dispatching across json/sql backends inline -- accepted complexity,
+# not a candidate for splitting apart while the 3-way backend comparison is ongoing.
+# pylint: disable-next=too-many-locals,too-many-branches
 def search_mappings(
+    request:Request,
     annotation_id: str = Query(..., description="Annotation ID to search for"),
     source: AnnotationSource = Query(..., description="Source type: kegg, cog, enzyme, taxonomy"),
     sample_count: int = Query(128, ge=1, le=128),
@@ -336,35 +369,20 @@ def search_mappings(
     seen_keys: set[str] = set()
     results: list[dict] = []
 
-    if _MAPPING_INDEX.get(source.value):
-        src_index  = _MAPPING_INDEX[source.value]
-        candidates = src_index.get(annotation_id, [])
+    if DATA_BACKEND == 'json':
+        if _MAPPING_INDEX.get(source.value):
+            src_index  = _MAPPING_INDEX[source.value]
+            candidates = src_index.get(annotation_id, [])
 
-        if not candidates:
-            q_lower = annotation_id.lower()
-            for ann_id, entries in src_index.items():
-                if q_lower in ann_id.lower():
-                    candidates = candidates + entries
+            if not candidates:
+                q_lower = annotation_id.lower()
+                for ann_id, entries in src_index.items():
+                    if q_lower in ann_id.lower():
+                        candidates = candidates + entries
 
-        for sample_name, row in candidates:
-            if sample_name not in allowed_samples:
-                continue
-            if unique_pairs:
-                key = f"{row.taxonomy}|{row.kegg_id}|{row.enzyme}|{row.cog_id}"
-                if key in seen_keys:
+            for sample_name, row in candidates:
+                if sample_name not in allowed_samples:
                     continue
-                seen_keys.add(key)
-            results.append({"sample": sample_name, "timepoint": get_timepoint(sample_name), **row._asdict()})
-
-        results.sort(
-            key=lambda r: timepoint_dt_sort_key((r.get("timepoint") or {}).get("datetime"))
-        )
-
-    else:
-        for sample_name in samples_sorted[:sample_count]:
-            rows    = load_tsv(sample_name)
-            matched = _filter_mapping_rows(rows, source.value, annotation_id)
-            for row in matched:
                 if unique_pairs:
                     key = f"{row.taxonomy}|{row.kegg_id}|{row.enzyme}|{row.cog_id}"
                     if key in seen_keys:
@@ -372,6 +390,39 @@ def search_mappings(
                     seen_keys.add(key)
                 results.append({"sample": sample_name, "timepoint": get_timepoint(sample_name), **row._asdict()})
 
+            results.sort(
+                key=lambda r: timepoint_dt_sort_key((r.get("timepoint") or {}).get("datetime"))
+            )
+
+        else:
+            for sample_name in samples_sorted[:sample_count]:
+                rows    = load_tsv(sample_name)
+                matched = _filter_mapping_rows(rows, source.value, annotation_id)
+                for row in matched:
+                    if unique_pairs:
+                        key = f"{row.taxonomy}|{row.kegg_id}|{row.enzyme}|{row.cog_id}"
+                        if key in seen_keys:
+                            continue
+                        seen_keys.add(key)
+                    results.append({"sample": sample_name, "timepoint": get_timepoint(sample_name), **row._asdict()})
+
+    elif DATA_BACKEND == 'sql':
+        mappings = get_mappings_sql(request.app.state.sql_conn, source.value, annotation_id)
+        results = []
+        for row in mappings:
+            if row['sample'] not in allowed_samples:
+                continue
+            row['timepoint'] = get_timepoint(row['sample'])
+            if unique_pairs:
+                key = f"{row['taxonomy']}|{row['kegg_id']}|{row['enzyme']}|{row['cog_id']}"
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                results.append(row)
+            else:
+                results.append(row)
+
+        results.sort(key=lambda r: timepoint_dt_sort_key((r.get("timepoint") or {}).get("datetime")))
     return {
         "annotation_id": annotation_id,
         "source":        source.value,
@@ -489,7 +540,11 @@ def _search_annotations_scan(q, annotation_id, name_exact, sources, page, page_s
 
 
 @router.get("/search/annotations")
+# One route dispatching across json/sql backends inline -- accepted complexity,
+# not a candidate for splitting apart while the 3-way backend comparison is ongoing.
+# pylint: disable-next=too-many-locals,too-many-branches
 def search_annotations(
+    request:Request,
     q:             str | None = Query(None, min_length=1),
     annotation_id: str | None = Query(None),
     name_exact:    str | None = Query(None),
@@ -499,88 +554,99 @@ def search_annotations(
     """
     Search across all samples for one or more annotation sources.
 
-    Uses the inverted index for O(1) lookup when ready; falls back to a
-    full scan during warmup.
-
-    Relevance tiers (descending priority):
+    DATA_BACKEND=json: uses the inverted index for O(1) lookup when ready
+    (falls back to a full scan during warmup), and scores results across 4
+    relevance tiers (descending priority):
       4 — exact annotation_id match
       3 — exact name match
       2 — annotation_id starts with query / query is substring of name
       1 — token match (inverted index)
+
+    DATA_BACKEND=sql: queries `annotation_series` directly with LIKE
+    (native substring matching, no inverted index needed) and sorts by
+    mean_egc only -- deliberately skips the 4-tier relevance scoring above
+    for this first pass (see project notes). Also enforces a 3-character
+    minimum on `q`, which the json branch does not.
     """
     if not q and not annotation_id and not name_exact:
         raise HTTPException(
             status_code=400,
             detail="Provide at least one of: q, annotation_id, or name_exact",
         )
+    if DATA_BACKEND == 'json':
+        if not index_module._INDEX_READY:
+            return _search_annotations_scan(q, annotation_id, name_exact, sources, page, page_size)
 
-    if not index_module._INDEX_READY:
-        return _search_annotations_scan(q, annotation_id, name_exact, sources, page, page_size)
+        q_lower  = q.lower().strip() if q else None
+        results: list[dict] = []
 
-    q_lower  = q.lower().strip() if q else None
-    results: list[dict] = []
-
-    for source_str in sources:
-        try:
-            source = AnnotationSource(source_str)
-        except ValueError:
-            continue
-        src = source.value
-
-        if annotation_id:
-            ann_ids = {annotation_id} if annotation_id in _ANN_META[src] else set()
-        elif q:
-            ann_ids = search_index(src, q)
-        else:
-            ann_ids = set(_ANN_META[src].keys())
-
-        if name_exact:
-            name_lower = name_exact.lower()
-            ann_ids = {
-                aid for aid in ann_ids
-                if (_ANN_META[src].get(aid, {}).get("name") or "").lower() == name_lower
-            }
-
-        for ann_id in ann_ids:
-            meta = _ANN_META[src].get(ann_id)
-            if not meta:
+        for source_str in sources:
+            try:
+                source = AnnotationSource(source_str)
+            except ValueError:
                 continue
+            src = source.value
 
-            name  = (meta.get("name") or "").lower()
-            score = 1
-            if q_lower:
-                ann_id_lower = ann_id.lower()
-                if ann_id_lower == q_lower:
+            if annotation_id:
+                ann_ids = {annotation_id} if annotation_id in _ANN_META[src] else set()
+            elif q:
+                ann_ids = search_index(src, q)
+            else:
+                ann_ids = set(_ANN_META[src].keys())
+
+            if name_exact:
+                name_lower = name_exact.lower()
+                ann_ids = {
+                    aid for aid in ann_ids
+                    if (_ANN_META[src].get(aid, {}).get("name") or "").lower() == name_lower
+                }
+
+            for ann_id in ann_ids:
+                meta = _ANN_META[src].get(ann_id)
+                if not meta:
+                    continue
+
+                name  = (meta.get("name") or "").lower()
+                score = 1
+                if q_lower:
+                    ann_id_lower = ann_id.lower()
+                    if ann_id_lower == q_lower:
+                        score = 4
+                    elif name == q_lower:
+                        score = 3
+                    elif ann_id_lower.startswith(q_lower) or q_lower in name:
+                        score = 2
+                elif annotation_id:
                     score = 4
-                elif name == q_lower:
+                elif name_exact:
                     score = 3
-                elif ann_id_lower.startswith(q_lower) or q_lower in name:
-                    score = 2
-            elif annotation_id:
-                score = 4
-            elif name_exact:
-                score = 3
 
-            results.append({
-                "source":        src,
-                "sample":        "",
-                "timepoint":     None,
-                "annotation_id": ann_id,
-                "name":          meta["name"],
-                "parent":        meta.get("parent"),
-                "mean_egc":      meta.get("mean_egc"),
-                "max_egc":       meta.get("max_egc"),
-                "mean_norm_egc": meta.get("mean_norm_egc"),
-                "max_norm_egc":  meta.get("max_norm_egc"),
-                "sample_count":  meta.get("sample_count", 0),
-                "value":         meta["value"],
-                "_score":        score,
-            })
+                results.append({
+                    "source":        src,
+                    "sample":        "",
+                    "timepoint":     None,
+                    "annotation_id": ann_id,
+                    "name":          meta["name"],
+                    "parent":        meta.get("parent"),
+                    "mean_egc":      meta.get("mean_egc"),
+                    "max_egc":       meta.get("max_egc"),
+                    "mean_norm_egc": meta.get("mean_norm_egc"),
+                    "max_norm_egc":  meta.get("max_norm_egc"),
+                    "sample_count":  meta.get("sample_count", 0),
+                    "value":         meta["value"],
+                    "_score":        score,
+                })
 
-    results.sort(key=lambda r: (r["_score"], r["mean_egc"] or 0), reverse=True)
-    for r in results:
-        del r["_score"]
+        results.sort(key=lambda r: (r["_score"], r["mean_egc"] or 0), reverse=True)
+        for r in results:
+            del r["_score"]
 
+    if DATA_BACKEND == 'sql':
+        db = request.app.state.sql_conn
+        if q is not None and len(q) < 3:
+            raise HTTPException(status_code=400, detail="Search must have at least 3 characters.")
+        results = get_search_annotations(db, sources, q, annotation_id, name_exact)
+        results.sort(key=lambda r: r.get("mean_egc") or 0, reverse=True)
     return {
         "query":         q,
         "annotation_id": annotation_id,
@@ -647,18 +713,14 @@ async def annotation_time_series(
     annotation_id: str = Query(...),
     page: int = 1, page_size: int = 100,
 ):
-    """
-    Return EGC and norm_egc for one annotation across all samples,
-    sorted chronologically.
-
-    DATA_BACKEND=mongo pilot: currently only real data exists for
-    source="cog" (see tests/test_mongo.py) — other sources will just come
-    back empty until Step 6 loads the full dataset into Mongo.
-    """
+    """Return EGC and norm_egc for one annotation across all samples,
+    sorted chronologically."""
     results: list[dict] = []
 
     if DATA_BACKEND == "mongo":
-        docs = await get_annotation_series_mongo(request.app.state.mongo_db, source.value, annotation_id)
+        docs = await get_annotation_series_split(
+            request.app.state.mongo_db, source.value, annotation_id, ACTIVE_DATASET_VERSION
+        )
         for doc in docs:
             value_out = {
                 "name":     doc.get("name"),
@@ -676,6 +738,25 @@ async def annotation_time_series(
                 "norm_egc":      doc.get("norm_egc"),
                 "value":         value_out,
             })
+    elif DATA_BACKEND == "sql":
+        rows = get_annotation_series_sql(request.app.state.sql_conn, source.value, annotation_id)
+        for row in rows:
+            value_out = {
+                "name":     row.get("name"),
+                "category": row.get("category"),
+                "egc":      row.get("egc"),
+                "norm_egc": row.get("norm_egc"),
+            }
+            results.append({
+                "source":        source.value,
+                "sample":        row["sample_name"],
+                "timepoint":     get_timepoint(row["sample_name"]),
+                "annotation_id": annotation_id,
+                "name":          row.get("name"),
+                "egc":           row.get("egc"),
+                "norm_egc":      row.get("norm_egc"),
+                "value":         value_out,
+            })
     else:
         samples = get_all_sample_names()
         if not samples:
@@ -687,11 +768,7 @@ async def annotation_time_series(
             if value is None:
                 continue
             ann_name = annotation_id if source == AnnotationSource.taxonomy else extract_annotation_name(value)
-            # Drop 'scaffolds' — for high-level nodes (e.g. a taxonomy domain or
-            # KEGG A-level category) it can hold hundreds of thousands of entries,
-            # ballooning this per-sample, all-timepoints response. No frontend
-            # consumer of /series/annotations reads value.scaffolds (scaffold data
-            # comes from the dedicated /annotations/scaffolds endpoint instead).
+           
             value_out = (
                 {k: v for k, v in value.items() if k != "scaffolds"}
                 if isinstance(value, dict) else value
@@ -736,6 +813,13 @@ async def taxonomy_children(request: Request, parent: str | None = Query(None)):
 
     meta = _ANN_META["taxonomy"]
 
+    if DATA_BACKEND == 'sql':
+        db = request.app.state.sql_conn
+        if parent and not taxon_exists_sql(db, parent):
+            raise HTTPException(status_code=404, detail=f"Unknown taxon '{parent}'")
+        children = get_taxonomy_children_sql(db, parent)
+        return {'parent': parent, 'count': len(children), 'data': children}
+
     if parent:
         if parent not in meta:
             raise HTTPException(status_code=404, detail=f"Unknown taxon '{parent}'")
@@ -768,6 +852,7 @@ async def top_annotations_by_egc(
     """
     Return the top N annotations by mean EGC, optionally filtered by date range.
     Each result includes mean_egc, max_egc, mean_norm_egc, max_norm_egc.
+
     Cached per (source, date_from, date_to).
     """
     if DATA_BACKEND == "mongo":
@@ -806,77 +891,113 @@ async def top_annotations_by_egc(
             "date_to":      date_to,
             "data":         cached[:limit],
         }
+    elif DATA_BACKEND == 'sql':
+        db = request.app.state.sql_conn
+        samples = get_all_sample_names_sql(db)
+        if not samples:
+            raise HTTPException(status_code=404, detail="No samples found")
 
-    samples = get_all_sample_names()
-    if not samples:
-        raise HTTPException(status_code=404, detail="No samples found")
+        cache_key = (source.value, date_from or "", date_to or "")
 
-    cache_key = (source.value, date_from or "", date_to or "")
-
-    if cache_key not in _TOP_ANN_CACHE:
-        active_samples = []
-        for s in samples:
-            tp = get_timepoint(s)
-            if not tp:
-                continue
-            dt = tp.get("datetime", "")
-            if date_from and dt < date_from:
-                continue
-            if date_to and dt > date_to + "z":
-                continue
-            active_samples.append(s)
-
-        if not active_samples:
-            return {"source": source.value, "data": []}
-
-        egc_map: dict[str, dict] = {}
-
-        for sample_name in active_samples:
-            data = load_annotations_by_source(sample_name, source)
-            for annotation_id, value in data.items():
-                egc      = extract_egc(value)
-                norm_egc = extract_norm_egc(value)
-                if egc is None:
+        if cache_key not in _TOP_ANN_CACHE_SQL:
+            active_samples = []
+            for s in samples:
+                tp = get_timepoint(s)
+                if not tp:
                     continue
-                if annotation_id not in egc_map:
-                    ann_name = annotation_id if source == AnnotationSource.taxonomy else extract_annotation_name(value)
-                    egc_map[annotation_id] = {
-                        "annotation_id":   annotation_id,
-                        "name":            ann_name,
-                        "parent":          extract_parent(value, source.value),
-                        "egc_values":      [],
-                        "norm_egc_values": [],
-                    }
-                egc_map[annotation_id]["egc_values"].append(egc)
-                if norm_egc is not None:
-                    egc_map[annotation_id]["norm_egc_values"].append(norm_egc)
+                dt = tp.get("datetime", "")
+                if date_from and dt < date_from:
+                    continue
+                if date_to and dt > date_to + "z":
+                    continue
+                active_samples.append(s)
 
-        computed: list[dict] = []
-        for ann_id, info in egc_map.items():
-            vals      = info["egc_values"]
-            norm_vals = info["norm_egc_values"]
-            computed.append({
-                "annotation_id": ann_id,
-                "name":          info["name"],
-                "parent":        info["parent"],
-                "mean_egc":      sum(vals) / len(vals),
-                "max_egc":       max(vals),
-                "mean_norm_egc": sum(norm_vals) / len(norm_vals) if norm_vals else None,
-                "max_norm_egc":  max(norm_vals) if norm_vals else None,
-                "sample_count":  len(vals),
-            })
+            if not active_samples:
+                return {"source": source.value, "data": []}
 
-        computed.sort(key=lambda x: x["mean_egc"], reverse=True)
-        _TOP_ANN_CACHE[cache_key] = computed
+            _TOP_ANN_CACHE_SQL[cache_key] = get_top_annotations_sql(
+                db, source.value, active_samples
+            )
 
-    cached = _TOP_ANN_CACHE[cache_key]
-    return {
-        "source":       source.value,
-        "sample_count": len(samples),
-        "date_from":    date_from,
-        "date_to":      date_to,
-        "data":         cached[:limit],
-    }
+        cached = _TOP_ANN_CACHE_SQL[cache_key]
+        return {
+            "source":       source.value,
+            "sample_count": len(samples),
+            "date_from":    date_from,
+            "date_to":      date_to,
+            "data":         cached[:limit],
+        }
+    else:
+        samples = get_all_sample_names()
+        if not samples:
+            raise HTTPException(status_code=404, detail="No samples found")
+
+        cache_key = (source.value, date_from or "", date_to or "")
+
+        if cache_key not in _TOP_ANN_CACHE:
+            active_samples = []
+            for s in samples:
+                tp = get_timepoint(s)
+                if not tp:
+                    continue
+                dt = tp.get("datetime", "")
+                if date_from and dt < date_from:
+                    continue
+                if date_to and dt > date_to + "z":
+                    continue
+                active_samples.append(s)
+
+            if not active_samples:
+                return {"source": source.value, "data": []}
+
+            egc_map: dict[str, dict] = {}
+
+            for sample_name in active_samples:
+                data = load_annotations_by_source(sample_name, source)
+                for annotation_id, value in data.items():
+                    egc      = extract_egc(value)
+                    norm_egc = extract_norm_egc(value)
+                    if egc is None:
+                        continue
+                    if annotation_id not in egc_map:
+                        ann_name = annotation_id if source == AnnotationSource.taxonomy else extract_annotation_name(value)
+                        egc_map[annotation_id] = {
+                            "annotation_id":   annotation_id,
+                            "name":            ann_name,
+                            "parent":          extract_parent(value, source.value),
+                            "egc_values":      [],
+                            "norm_egc_values": [],
+                        }
+                    egc_map[annotation_id]["egc_values"].append(egc)
+                    if norm_egc is not None:
+                        egc_map[annotation_id]["norm_egc_values"].append(norm_egc)
+
+            computed: list[dict] = []
+            for ann_id, info in egc_map.items():
+                vals      = info["egc_values"]
+                norm_vals = info["norm_egc_values"]
+                computed.append({
+                    "annotation_id": ann_id,
+                    "name":          info["name"],
+                    "parent":        info["parent"],
+                    "mean_egc":      sum(vals) / len(vals),
+                    "max_egc":       max(vals),
+                    "mean_norm_egc": sum(norm_vals) / len(norm_vals) if norm_vals else None,
+                    "max_norm_egc":  max(norm_vals) if norm_vals else None,
+                    "sample_count":  len(vals),
+                })
+
+            computed.sort(key=lambda x: x["mean_egc"], reverse=True)
+            _TOP_ANN_CACHE[cache_key] = computed
+
+        cached = _TOP_ANN_CACHE[cache_key]
+        return {
+            "source":       source.value,
+            "sample_count": len(samples),
+            "date_from":    date_from,
+            "date_to":      date_to,
+            "data":         cached[:limit],
+        }
 
 
 @router.get("/annotations/scaffolds")
@@ -884,69 +1005,97 @@ async def annotation_scaffolds(
     request:       Request,
     source:        AnnotationSource = Query(...),
     annotation_id: str = Query(...),
+    sample:        str | None = Query(
+        None, description="Restrict to one sample — strongly recommended for interactive use"
+    ),
+    page:          int = Query(1, ge=1),
+    page_size:     int = Query(500, ge=1, le=5000),
 ):
     """
-    Return all scaffolds associated with an annotation across all timepoints.
+    Return scaffolds associated with an annotation, paginated.
 
-    Scaffold data lives on each annotation value:
-        value["scaffolds"] → { scaffold_name: gene_count }
+    Passing `sample` restricts results to one sample and is strongly
+    recommended for interactive use — without it, results span every
+    sample that has this annotation, which for high-level nodes (e.g. a
+    taxonomy domain) can still be very large even paginated, since sorting
+    a mixed-sample result requires materializing everything first.
 
-    Returns [{ sample, date, scaffold, count }] sorted by date ascending.
+    Returns { annotation_id, source, sample, total, page, page_size, data }
+    where data is [{ sample, date, scaffold, count }], sorted by date.
     """
     if DATA_BACKEND == "mongo":
-        docs = await get_annotation_series_mongo(request.app.state.mongo_db, source.value, annotation_id)
+        buckets = await get_annotation_scaffold_buckets_split(
+            request.app.state.mongo_db, source.value, annotation_id, ACTIVE_DATASET_VERSION, sample=sample,
+        )
         rows: list[dict] = []
-        for doc in docs:
-            scaffolds = doc.get("scaffolds") or {}
-            dt = (get_timepoint(doc["sample_name"]) or {}).get("datetime", "")
+        for bucket in buckets:
+            dt = (get_timepoint(bucket["sample_name"]) or {}).get("datetime", "")
+            for item in bucket["scaffolds"]:
+                rows.append({
+                    "sample":   bucket["sample_name"],
+                    "date":     dt,
+                    "scaffold": item["scaffold"],
+                    "count":    item["count"],
+                })
+    elif DATA_BACKEND == "sql":
+        scaffolds = get_annotation_scaffolds_sql(
+            request.app.state.sql_conn, source.value, annotation_id, sample=sample
+        )
+        rows: list[dict] = []
+        for scaff in scaffolds:
+            dt = (get_timepoint(scaff['sample_name']) or {}).get('datetime', '')
+            rows.append({
+                     "sample":   scaff["sample_name"],
+                     "date":     dt,
+                     "scaffold": scaff['scaffold_id'],
+                     "count":    scaff["gene_count"],
+            })
+    else: # json flatat files
+        samples = [sample] if sample else get_all_sample_names()
+        if not samples:
+            raise HTTPException(status_code=404, detail="No samples found")
+
+        rows = []
+        for sample_name in samples:
+            data  = load_annotations_by_source(sample_name, source)
+            value = data.get(annotation_id)
+            if not isinstance(value, dict):
+                continue
+            scaffolds = value.get("scaffolds")
+            if not isinstance(scaffolds, dict):
+                continue
+
+            dt = ((get_timepoint(sample_name) or {}).get("datetime", ""))
             for scaffold_name, count in scaffolds.items():
                 rows.append({
-                    "sample":   doc["sample_name"],
+                    "sample":   sample_name,
                     "date":     dt,
                     "scaffold": scaffold_name,
                     "count":    int(count) if isinstance(count, (int, float)) else 1,
                 })
 
-        if not rows:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No scaffolds found for '{annotation_id}' in source '{source.value}'",
-            )
-
-        rows.sort(key=lambda r: timepoint_dt_sort_key(r["date"]) if r["date"] else -1.0)
-        return {"annotation_id": annotation_id, "source": source.value, "total": len(rows), "data": rows}
-
-    samples = get_all_sample_names()
-    if not samples:
-        raise HTTPException(status_code=404, detail="No samples found")
-
-    rows: list[dict] = []
-    for sample_name in samples:
-        data  = load_annotations_by_source(sample_name, source)
-        value = data.get(annotation_id)
-        if not isinstance(value, dict):
-            continue
-        scaffolds = value.get("scaffolds")
-        if not isinstance(scaffolds, dict):
-            continue
-
-        dt = ((get_timepoint(sample_name) or {}).get("datetime", ""))
-        for scaffold_name, count in scaffolds.items():
-            rows.append({
-                "sample":   sample_name,
-                "date":     dt,
-                "scaffold": scaffold_name,
-                "count":    int(count) if isinstance(count, (int, float)) else 1,
-            })
-
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail=f"No scaffolds found for '{annotation_id}' in source '{source.value}'",
+            detail=f"No scaffolds found for '{annotation_id}' in source '{source.value}'"
+                   + (f" sample '{sample}'" if sample else ""),
         )
 
     rows.sort(key=lambda r: timepoint_dt_sort_key(r["date"]) if r["date"] else -1.0)
-    return {"annotation_id": annotation_id, "source": source.value, "total": len(rows), "data": rows}
+
+    total = len(rows)
+    start = (page - 1) * page_size
+    page_rows = rows[start:start + page_size]
+
+    return {
+        "annotation_id": annotation_id,
+        "source":        source.value,
+        "sample":        sample,
+        "total":         total,
+        "page":          page,
+        "page_size":     page_size,
+        "data":          page_rows,
+    }
 
 
 @router.get("/annotations/scaffolds/summary")
@@ -961,20 +1110,22 @@ async def annotation_scaffolds_summary(
     Each row: { sample, date, scaffold_count, gene_count }
     scaffold_count = unique scaffolds in that sample
     gene_count     = sum of all scaffold hit counts
+
     """
     if DATA_BACKEND == "mongo":
-        docs = await get_annotation_series_mongo(request.app.state.mongo_db, source.value, annotation_id)
+        docs = await get_annotation_series_split(
+            request.app.state.mongo_db, source.value, annotation_id, ACTIVE_DATASET_VERSION
+        )
         rows: list[dict] = []
         for doc in docs:
-            scaffolds = doc.get("scaffolds") or {}
-            if not scaffolds:
+            if not doc.get("scaffold_count"):
                 continue
             dt = (get_timepoint(doc["sample_name"]) or {}).get("datetime", "")
             rows.append({
                 "sample":         doc["sample_name"],
                 "date":           dt,
-                "scaffold_count": len(scaffolds),
-                "gene_count":     sum(scaffolds.values()),
+                "scaffold_count": doc["scaffold_count"],
+                "gene_count":     doc["gene_count"],
             })
 
         if not rows:
@@ -985,7 +1136,28 @@ async def annotation_scaffolds_summary(
 
         rows.sort(key=lambda r: timepoint_dt_sort_key(r["date"]) if r["date"] else -1.0)
         return {"annotation_id": annotation_id, "source": source.value, "total": len(rows), "data": rows}
-
+    if DATA_BACKEND == 'sql':
+        docs = get_annotation_series_sql(
+            request.app.state.sql_conn, source.value, annotation_id
+        )
+        rows: list[dict] = []
+        for doc in docs:
+            if not doc.get("scaffold_count"):
+                 continue
+            dt = (get_timepoint(doc["sample_name"]) or {}).get("datetime", "")
+            rows.append({
+                 "sample":         doc["sample_name"],
+                 "date":           dt,
+                 "scaffold_count": doc["scaffold_count"],
+                 "gene_count":     doc["gene_count"],
+            })
+        if not rows:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No scaffolds found for '{annotation_id}' in source '{source.value}'",
+            )
+        rows.sort(key=lambda r: timepoint_dt_sort_key(r["date"]) if r["date"] else -1.0)
+        return {"annotation_id": annotation_id, "source": source.value, "total": len(rows), "data": rows}
     samples = get_all_sample_names()
     if not samples:
         raise HTTPException(status_code=404, detail="No samples found")
