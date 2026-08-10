@@ -13,7 +13,7 @@ database (_TEST_DB_NAME) instead, so the 'samples' and 'annotations'
 collections you populated by hand in Compass are never touched.
 
 Run:
-    pytest tests/test_mongo.py -v -m mongo
+    pytest tests/mongo/test_mongo.py -v -m mongo
 """
 
 import json

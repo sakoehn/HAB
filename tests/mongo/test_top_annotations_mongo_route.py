@@ -4,7 +4,7 @@ test_top_annotations_mongo_route.py
 Live-API test for the DATA_BACKEND=mongo branch of /annotations/top in
 api/routes.py — the aggregation-pipeline endpoint.
 
-tests/test_mongo.py already cross-checks get_top_annotations_mongo()'s
+tests/mongo/test_mongo.py already cross-checks get_top_annotations_mongo()'s
 aggregation math directly. This file covers what only exists in the route:
 the _TOP_ANN_CACHE_MONGO caching (compute once, slice per request) and the
 `limit` query param slicing behavior.
@@ -13,7 +13,7 @@ Requires: a FastAPI server running with DATA_BACKEND=mongo. Skips
 automatically if unreachable or not in mongo mode.
 
 Run:
-    pytest tests/test_top_annotations_mongo_route.py -v
+    pytest tests/mongo/test_top_annotations_mongo_route.py -v
 """
 
 import os

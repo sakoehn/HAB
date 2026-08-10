@@ -8,14 +8,14 @@ These routes don't have their own cache_mongo.py function — they reuse
 get_annotation_series_mongo() and reshape its output differently, so the
 route-level reshaping logic (flatten-to-rows, per-sample summarize, sort,
 404-on-empty) is the only place this behavior actually lives. Nothing in
-tests/test_mongo.py covers it.
+tests/mongo/test_mongo.py covers it.
 
 Requires: a FastAPI server running with DATA_BACKEND=mongo. Skips
 automatically if the server isn't reachable, or isn't in mongo mode
 (detected via /mongo-test, same as test_series_annotations_mongo_route.py).
 
 Run:
-    pytest tests/test_scaffolds_mongo_route.py -v
+    pytest tests/mongo/test_scaffolds_mongo_route.py -v
 """
 
 import json
@@ -25,7 +25,7 @@ import sys
 import httpx
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "FastAPI"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"))
 
 from api.config import COG_DIR
 
@@ -79,24 +79,28 @@ def _cog0055_by_sample() -> dict:
 
 @mongo_route_required
 def test_annotation_scaffolds_matches_source_files(client):
-    """Every (sample, scaffold) row must match the real source files exactly."""
+    """Every (sample, scaffold) row must match the real source files exactly.
+
+    Requests one sample at a time, passing `sample=`, instead of a single
+    all-samples call: the route paginates (default page_size=500) and an
+    all-samples COG0055 result is 29,307 rows, so a single unpaginated
+    request would silently only see the first page. Every real sample's
+    COG0055 scaffold count is well under 500, so one request per sample is
+    guaranteed complete.
+    """
     expected_by_sample = _cog0055_by_sample()
-    expected_total_rows = sum(len(e["scaffolds"]) for e in expected_by_sample.values())
-
-    resp = client.get(
-        "/annotations/scaffolds",
-        params={"source": "cog", "annotation_id": "COG0055"},
-    )
-    resp.raise_for_status()
-    body = resp.json()
-
-    assert body["total"] == expected_total_rows
-    rows_by_sample: dict[str, dict[str, int]] = {}
-    for row in body["data"]:
-        rows_by_sample.setdefault(row["sample"], {})[row["scaffold"]] = row["count"]
 
     for sample, entry in expected_by_sample.items():
-        assert rows_by_sample[sample] == entry["scaffolds"]
+        resp = client.get(
+            "/annotations/scaffolds",
+            params={"source": "cog", "annotation_id": "COG0055", "sample": sample},
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+        assert body["total"] == len(entry["scaffolds"])
+        actual = {row["scaffold"]: row["count"] for row in body["data"]}
+        assert actual == entry["scaffolds"]
 
 
 @mongo_route_required

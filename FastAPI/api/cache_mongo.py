@@ -27,6 +27,50 @@ async def get_annotation_series_mongo(db, source: str, annotation_id: str) -> li
     return docs
 
 
+async def get_annotation_series_split(db, source: str, annotation_id: str, dataset_version: str) -> list[dict]:
+    """
+    New-schema equivalent of get_annotation_series_mongo, reading from the
+    split annotation_series collection instead of the legacy bundled
+    "annotations" collection. No scaffolds field to strip here — scaffolds
+    live in their own "scaffolds" collection now (see api/manifest.py and
+    scripts/migrate_*_split.py), so this never fetches or transfers them.
+    """
+    docs = await db.annotation_series.find({
+        "dataset_version": dataset_version,
+        "source":          source,
+        "annotation_id":   annotation_id,
+    }).to_list(length=None)
+    for doc in docs:
+        doc.pop("_id", None)
+    return docs
+
+
+async def get_annotation_scaffold_buckets_split(
+    db, source: str, annotation_id: str, dataset_version: str, sample: str | None = None,
+) -> list[dict]:
+    """
+    Reads from the bucketed "scaffolds" collection (see api/manifest.py and
+    scripts/migrate_*_split.py) instead of the legacy embedded scaffold
+    dict. Passing `sample` (strongly recommended for interactive use, per
+    MONGODB_MIGRATION_FOLLOWUP.md finding #7) bounds the query to that
+    sample's bucket(s) only — at most a few dozen documents even for the
+    largest scaffold map in the dataset — instead of every sample's data.
+    Returns the raw bucket documents; the caller flattens each bucket's
+    "scaffolds" list into individual rows.
+    """
+    query = {
+        "dataset_version": dataset_version,
+        "source":          source,
+        "annotation_id":   annotation_id,
+    }
+    if sample is not None:
+        query["sample_name"] = sample
+
+    return await db.scaffolds.find(query).sort(
+        [("sample_name", 1), ("bucket_index", 1)]
+    ).to_list(length=None)
+
+
 async def get_taxonomy_children_mongo(db, parent: str | None) -> list[dict]:
     """
     Mongo equivalent of the /taxonomy/children route logic — direct

@@ -4,7 +4,7 @@ test_series_annotations_mongo_route.py
 Live-API test for the DATA_BACKEND=mongo branch of /series/annotations in
 api/routes.py.
 
-tests/test_mongo.py already verifies api/cache_mongo.py's functions
+tests/mongo/test_mongo.py already verifies api/cache_mongo.py's functions
 directly, in isolation — this file exists to cover what that one can't:
 the route-level logic that only exists in routes.py itself (the
 value_out reconstruction, get_timepoint() lookup, chronological sort,
@@ -20,7 +20,7 @@ existing /mongo-test diagnostic route, which only succeeds when
 app.state.mongo_db exists).
 
 Run:
-    pytest tests/test_series_annotations_mongo_route.py -v
+    pytest tests/mongo/test_series_annotations_mongo_route.py -v
 """
 
 import json
@@ -30,7 +30,7 @@ import sys
 import httpx
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "FastAPI"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"))
 
 from api.config import COG_DIR
 from api.index import timepoint_dt_sort_key

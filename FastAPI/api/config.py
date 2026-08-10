@@ -84,3 +84,22 @@ JSON_CACHE_MAX_ENTRIES = 140
 MONGO_URI     = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 DATA_BACKEND  = os.getenv("DATA_BACKEND", "json")
+
+# ── Scaffold collection bucketing (split-schema migration) ──────────────────
+#
+# The new "scaffolds" collection buckets each (source, annotation_id, sample)
+# scaffold map into documents of at most this many entries, instead of one
+# document per scaffold. Measured 2026-07-28 against the real dataset: the
+# largest existing scaffold map (taxonomy/Bacteria, 485,842 entries) produces
+# a ~526 KB bucket at this cap -- ~3% of MongoDB's 16 MiB hard document limit
+# -- while a fully-flattened one-doc-per-scaffold design would have created
+# ~624 million documents (~100x the size of every other collection). See
+# MONGODB_MIGRATION_FOLLOWUP.md Phase 3 and project memory for the full
+# measurement.
+SCAFFOLD_BUCKET_CAP = 10_000
+
+# Hardcoded until the dataset_manifest "active version" pointer described in
+# MONGODB_MIGRATION_FOLLOWUP.md Phase 3 is actually built -- fine for now
+# since only one dataset_version exists. Revisit once a second ingestion
+# run happens and something needs to choose between them.
+ACTIVE_DATASET_VERSION = "2026-07-28-01"
