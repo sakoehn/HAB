@@ -30,6 +30,11 @@ MAPPINGS_DIR = os.path.join(BASE_DIR, "Mappings_by_Sample")
 TIMEPOINTS_CSV = os.path.join(BASE_DIR, "JGI_ID_Timepoints_128.csv")
 TIDES_CSV      = os.path.join(BASE_DIR, "tides.csv")
 
+# Metagenome_Samples/ is a repo-root sibling of DataStructures/, not nested
+# inside it (e.g. Metagenome_Samples/<sample>/<sample>.a.phylodist.txt), so
+# it's resolved relative to _HERE directly rather than via BASE_DIR.
+METAGENOME_SAMPLES_DIR = os.path.normpath(os.path.join(_HERE, "../../Metagenome_Samples"))
+
 # ── Frontend dist (production mode) ──────────────────────────────────────────
 
 FRONTEND_DIST = os.path.normpath(os.path.join(_HERE, "../../frontend/dist"))

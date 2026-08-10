@@ -34,6 +34,7 @@ from api.cache import (
 )
 from api.config import FRONTEND_DIST, DATA_BACKEND
 from api.index import build_mapping_index, build_search_index
+from api import index as index_module
 from api import routes, correlation
 from api.db import connect_to_mongo, close_mongo_connection
 
@@ -52,34 +53,26 @@ async def lifespan(app: FastAPI):
     Runs in a background daemon thread so the application becomes available
     immediately and /status can be polled to check index readiness.
     """
-    def _warm() -> None:
-        try:
-            samples = get_all_sample_names()
-            # build_search_index() reads every sample's KEGG/COG/Enzyme/
-            # Taxonomy JSON itself (via the uncached loader — see
-            # cache.load_json_uncached) to build the derived indexes, so
-            # pre-loading them into _JSON_CACHE here would just parse the
-            # entire dataset a second time for no benefit — worse, since
-            # _JSON_CACHE is bounded (see JSON_CACHE_MAX_ENTRIES), most of
-            # it would be evicted again before build_search_index() even
-            # runs. Only load_tsv is needed upfront, for build_mapping_index().
-            for sample in samples:
-                load_tsv(sample)
-            build_search_index()
-            build_mapping_index()
-            logger.info("Startup warmup complete (%d samples).", len(samples))
-        except Exception:
-            logger.exception("Startup warmup FAILED — index_ready will remain False.")
+    if DATA_BACKEND == 'json':
+        def _warm() -> None:
+            try:
+                samples = get_all_sample_names()
+                for sample in samples:
+                    load_tsv(sample)
+                build_search_index()
+                build_mapping_index()
+                logger.info("Startup warmup complete (%d samples).", len(samples))
+            except Exception:
+                logger.exception("Startup warmup FAILED — index_ready will remain False.")
 
-    thread = threading.Thread(target=_warm, daemon=True, name="cache-warmup")
-    thread.start()
+        thread = threading.Thread(target=_warm, daemon=True, name="cache-warmup")
+        thread.start()
 
-    # mongodb connection establish — only when DATA_BACKEND=mongo, so the
-    # default json backend never requires a running MongoDB instance.
-    if DATA_BACKEND == "mongo":
+    elif DATA_BACKEND == "mongo":
         client, db = connect_to_mongo()
         app.state.mongo_client = client
         app.state.mongo_db = db
+        index_module._INDEX_READY = True
 
     yield
 

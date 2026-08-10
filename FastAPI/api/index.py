@@ -8,8 +8,10 @@ Structures
 _SEARCH_INDEX        inverted text index: (source, token) → set of annotation_ids
 _SEARCH_INDEX_SORTED sorted key list per source (enables binary-search prefix matching)
 _ANN_META            one canonical record per (source, annotation_id)
-_EGC_MATRIX          source → annotation_id → [egc | None] per sample (chronological)
-_NORM_EGC_MATRIX     source → annotation_id → [norm_egc | None] per sample
+_EGC_MATRIX          source → annotation_id → [egc | None] per sample (chronological);
+                     NOT built by build_search_index() — built lazily, per source, on
+                     first /annotations/correlate call (see get_egc_vectors_from_matrix)
+_NORM_EGC_MATRIX     source → annotation_id → [norm_egc | None] per sample; same lazy build
 _EGC_NAME_MAP        source → annotation_id → name string
 _EGC_PARENT_MAP      source → annotation_id → parent string
 _EGC_SAMPLES         ordered sample list used when the matrices were built
@@ -163,7 +165,7 @@ def _build_sorted_key_lists() -> None:
         _SEARCH_INDEX_SORTED[src] = sorted(_SEARCH_INDEX[src].keys())
 
 
-def build_search_index() -> None:
+def build_search_index(build_matrices: bool = False) -> None:
     """
     Populate all in-memory indexes from the JSON caches in a single
     O(samples × annotations) pass.
@@ -171,8 +173,21 @@ def build_search_index() -> None:
     Builds simultaneously:
     - Inverted search index + sorted key lists (text search)
     - _ANN_META              (per-annotation aggregate stats)
-    - _EGC_MATRIX            (full EGC time-series for correlation)
-    - _NORM_EGC_MATRIX       (full norm_egc time-series)
+    - _EGC_MATRIX / _NORM_EGC_MATRIX, but ONLY if build_matrices=True
+
+    build_matrices defaults to False: the full per-sample time-series
+    arrays (_EGC_MATRIX/_NORM_EGC_MATRIX) are only ever read by
+    /annotations/correlate via get_egc_vectors_from_matrix(), which already
+    has its own on-demand, lock-protected, self-caching build path. Most
+    sessions never call correlate, so building those [None]*128 arrays for
+    every annotation across all 4 sources here was unconditional memory
+    cost most requests never used. Aggregate stats (mean/max egc/norm_egc)
+    only need accumulator lists regardless of build_matrices.
+
+    Pass build_matrices=True (e.g. from a test fixture that wants
+    _EGC_MATRIX pre-populated) to build everything in this SAME pass —
+    do not instead call get_egc_vectors_from_matrix() separately afterward,
+    since that re-reads every sample's JSON from disk a second time.
 
     Must be called after the JSON caches are warm (i.e. after load_kegg /
     load_cog / … have been called for every sample).
@@ -190,18 +205,21 @@ def build_search_index() -> None:
     _EGC_SAMPLES   = all_samples
     sample_idx_map = {s: i for i, s in enumerate(all_samples)}
 
-    # Accumulates raw EGC values per annotation for aggregate stats.
-    egc_acc: dict[str, dict[str, list[float]]] = {src: {} for _, src in source_loaders}
+    # Accumulates raw egc/norm_egc values per annotation for aggregate stats
+    # only — not the full per-sample-indexed matrix (see docstring above).
+    egc_acc:      dict[str, dict[str, list[float]]] = {src: {} for _, src in source_loaders}
+    norm_egc_acc: dict[str, dict[str, list[float]]] = {src: {} for _, src in source_loaders}
 
     for sample_name in all_samples:
         for source_enum, src in source_loaders:
-            data     = load_annotations_by_source_uncached(sample_name, source_enum)
-            meta     = _ANN_META[src]
-            acc      = egc_acc[src]
-            matrix   = _EGC_MATRIX[src]
-            norm_mat = _NORM_EGC_MATRIX[src]
-            nmap     = _EGC_NAME_MAP[src]
-            pmap     = _EGC_PARENT_MAP[src]
+            data   = load_annotations_by_source_uncached(sample_name, source_enum)
+            meta   = _ANN_META[src]
+            acc    = egc_acc[src]
+            nacc   = norm_egc_acc[src]
+            nmap   = _EGC_NAME_MAP[src]
+            pmap   = _EGC_PARENT_MAP[src]
+            matrix   = _EGC_MATRIX[src]      if build_matrices else None
+            norm_mat = _NORM_EGC_MATRIX[src] if build_matrices else None
 
             for annotation_id, value in data.items():
                 _index_annotation(src, annotation_id, value)
@@ -224,30 +242,32 @@ def build_search_index() -> None:
                         "max_norm_egc":  None,
                         "sample_count":  0,
                     }
-                    nmap[annotation_id]     = name
-                    pmap[annotation_id]     = parent
-                    matrix[annotation_id]   = [None] * len(all_samples)
-                    norm_mat[annotation_id] = [None] * len(all_samples)
+                    nmap[annotation_id] = name
+                    pmap[annotation_id] = parent
+                    if build_matrices:
+                        matrix[annotation_id]   = [None] * len(all_samples)
+                        norm_mat[annotation_id] = [None] * len(all_samples)
 
                 egc      = extract_egc(value)
                 norm_egc = extract_norm_egc(value)
-                idx      = sample_idx_map[sample_name]
 
                 if egc is not None:
-                    matrix[annotation_id][idx] = egc
-                if norm_egc is not None:
-                    norm_mat[annotation_id][idx] = norm_egc
-                if egc is not None:
                     acc.setdefault(annotation_id, []).append(egc)
+                    if build_matrices:
+                        matrix[annotation_id][sample_idx_map[sample_name]] = egc
+                if norm_egc is not None:
+                    nacc.setdefault(annotation_id, []).append(norm_egc)
+                    if build_matrices:
+                        norm_mat[annotation_id][sample_idx_map[sample_name]] = norm_egc
 
     # Compute aggregates — O(unique annotations).
     for _, src in source_loaders:
-        meta     = _ANN_META[src]
-        norm_mat = _NORM_EGC_MATRIX[src]
+        meta = _ANN_META[src]
+        nacc = norm_egc_acc[src]
         for annotation_id, vals in egc_acc[src].items():
             if annotation_id not in meta:
                 continue
-            norm_vals = [v for v in norm_mat.get(annotation_id, []) if v is not None]
+            norm_vals = nacc.get(annotation_id, [])
             meta[annotation_id]["mean_egc"]     = sum(vals) / len(vals)
             meta[annotation_id]["max_egc"]      = max(vals)
             meta[annotation_id]["sample_count"] = len(vals)
@@ -326,11 +346,12 @@ def get_egc_vectors_from_matrix(
     source: AnnotationSource,
 ) -> tuple[dict[str, list[float | None]], dict[str, str | None], dict[str, str | None]]:
     """
-    Return (egc_matrix, name_map, parent_map) for a source from the
-    pre-built _EGC_MATRIX — O(1), no file I/O.
-
-    Falls back to a file scan during startup warmup, serialised by a lock
-    so concurrent requests don't race on the same I/O.
+    Return (egc_matrix, name_map, parent_map) for a source, building and
+    caching it on first call (see build_search_index()'s docstring for why
+    this is lazy rather than built eagerly at startup) — O(1) on every call
+    after the first, same as if it had been pre-built. Serialised by a lock
+    so concurrent requests for the same source don't race on the same I/O
+    and each redo the scan.
     """
     src = source.value
     if _EGC_MATRIX.get(src):
@@ -342,6 +363,9 @@ def get_egc_vectors_from_matrix(
         vecs, names, parents = _build_egc_vectors_from_files(
             _EGC_SAMPLES or get_all_sample_names(), source
         )
+        _EGC_MATRIX[src]     = vecs
+        _EGC_NAME_MAP[src]   = names
+        _EGC_PARENT_MAP[src] = parents
         return vecs, names, parents
 
 
