@@ -90,6 +90,13 @@ MONGO_URI     = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 DATA_BACKEND  = os.getenv("DATA_BACKEND", "json")
 
+# ── SQLite connection ─────────────────────────────────────────────────────────
+#
+# Connection settings for the optional SQLite backend (learning/comparison
+# branch, additive alongside json/mongo -- see FastAPI/scripts/migrate_mappings_to_sql.py
+# and FastAPI/scripts/create_sql_schema.py). Only used when DATA_BACKEND=sql.
+SQLITE_DB_PATH = os.path.normpath(os.path.join(_HERE, "../../hab_mappings.db"))
+
 # ── Scaffold collection bucketing (split-schema migration) ──────────────────
 #
 # The new "scaffolds" collection buckets each (source, annotation_id, sample)
