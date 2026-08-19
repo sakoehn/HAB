@@ -10,17 +10,25 @@
 // full parity with every other chart (normalize, LOWESS smooth, day/night,
 // tide, day-band overlays) for free.
 
-import React, { useCallback, useEffect, useMemo } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { AnnotationItem, ApiStatus, SeriesCache } from '../types'
-import { apiFetch } from '../utils/api'
+import { apiFetch, downloadCsv } from '../utils/api'
 import { computeExclusionSeries, computeChartTitle } from '../utils/taxonomy'
+import { TAXONOMY_RANK_NAMES } from '../constants'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
 import { ChartErrorBoundary } from '../components/ui/ChartErrorBoundary'
 import { HelpTooltip } from '../components/ui/HelpTooltip'
 import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { TaxonomyTree } from '../components/taxonomy/TaxonomyTree'
 import { TaxonomyBrowseTree } from '../components/taxonomy/TaxonomyBrowseTree'
+
+// Rank dropdown options for the "download taxa list" export — value is the
+// lowercased form /taxonomy/export expects (e.g. "class", not the display
+// label "Class" or the backend's internal "class_" storage detail).
+const RANK_EXPORT_OPTIONS = Object.entries(TAXONOMY_RANK_NAMES)
+  .sort(([a], [b]) => Number(a) - Number(b))
+  .map(([depth, label]) => ({ value: label.toLowerCase(), label, depth }))
 
 // ── State shape + default ──────────────────────────────────────────────────
 // Co-located here because only TaxonomyPage uses TaxonomyState.
@@ -60,6 +68,26 @@ export function TaxonomyPage({
   setState:       (updater: (prev: TaxonomyState) => TaxonomyState) => void
   dataDateRange?: { min: string; max: string } | null
 }) {
+  // ── Download taxa list by rank ──────────────────────────────────────────
+  // Independent of the scope/exclusion state above -- a standalone export
+  // utility, so it gets its own local (non-persisted) state rather than
+  // living in the shared TaxonomyState.
+  const [exportRank, setExportRank]     = useState(RANK_EXPORT_OPTIONS[0].value)
+  const [exportStatus, setExportStatus] = useState<ApiStatus>('idle')
+
+  async function downloadTaxaAtRank() {
+    setExportStatus('loading')
+    try {
+      const taxa = await apiFetch<string[]>(
+        `/api/taxonomy/export?rank=${encodeURIComponent(exportRank)}`,
+      )
+      downloadCsv(taxa.map(name => ({ taxon: name })), `taxa_${exportRank}.csv`)
+      setExportStatus('ok')
+    } catch {
+      setExportStatus('error')
+    }
+  }
+
   async function searchRoot() {
     const q = state.rootQuery.trim()
     if (!q) return
@@ -275,6 +303,32 @@ export function TaxonomyPage({
                 overflowY:    'auto',
               }}>
                 <TaxonomyBrowseTree onSelectRoot={pickRoot} />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                <select
+                  className="field"
+                  style={{ width: 110 }}
+                  value={exportRank}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setExportRank(e.target.value)}
+                >
+                  {RANK_EXPORT_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <button
+                  className="btn sm"
+                  onClick={downloadTaxaAtRank}
+                  disabled={exportStatus === 'loading'}
+                >
+                  ↓ CSV
+                </button>
+                <HelpTooltip text="Download a CSV list of every unique taxon name at the selected rank (e.g. every order, every phylum) across the full dataset — not limited to a scope you've picked above." />
+                {exportStatus === 'error' && (
+                  <span style={{ font: '12px var(--sans)', color: 'var(--red, #d55e00)' }}>
+                    Download failed — try again.
+                  </span>
+                )}
               </div>
             </>
           )}

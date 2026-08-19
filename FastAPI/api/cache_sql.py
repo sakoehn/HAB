@@ -300,6 +300,32 @@ def get_top_annotations_sql(conn: sqlite3.Connection, source: str, sample_names:
         for row in rows
     ]
 
+def get_top_annotations_from_catalog_sql(conn: sqlite3.Connection, source: str) -> list[dict]:
+    query = f"""
+        SELECT annotation_id,
+               name, parent, mean_egc, max_egc,
+               mean_norm_egc, max_norm_egc,
+               sample_count
+        FROM annotation_catalog
+        WHERE source = ?
+        ORDER BY mean_egc DESC
+    """
+    cursor = conn.execute(query, (source,))
+    rows = cursor.fetchall()
+    return [
+        {
+            "annotation_id": row[0],
+            "name": row[1],
+            "parent": row[2],
+            "mean_egc": row[3],
+            "max_egc": row[4],
+            "mean_norm_egc": row[5],
+            "max_norm_egc": row[6],
+            "sample_count": row[7],
+        }
+        for row in rows
+    ]
+
 def get_search_annotations(conn: sqlite3.Connection, sources: list[str], q: str | None, annotation_id: str | None, name_exact: str | None) -> list[dict]:
     """Return annotation_catalog rows matching the given filters.
 
@@ -455,4 +481,34 @@ def get_mappings_sql(conn: sqlite3.Connection, source: str, annotation_id: str) 
             "enzyme": row[5],
             "taxonomy": row[6],
         })
+    return results
+
+def get_taxa_at_rank_sql(conn: sqlite3.Connection, depth: int) -> list[str]:
+    """Return every distinct taxon name at one rank of taxon_paths (e.g.
+    every order, every phylum), sorted ascending.
+
+    Args:
+        conn: Open SQLite connection.
+        depth: Rank to list, 1 (domain) through 8 (strain).
+
+    Returns:
+        Sorted list of distinct taxon names at that rank.
+
+    Raises:
+        ValueError: If depth is outside 1-8.
+    """
+    if depth < 1 or depth > 8:
+        raise ValueError(f"depth must be 1-8, got {depth}")
+    rank = RANK_COLUMNS.get(depth)
+    query = f"""
+        SELECT DISTINCT {rank}
+        FROM taxon_paths
+        WHERE {rank} IS NOT NULL
+        ORDER BY {rank}
+    """
+    cursor = conn.execute(query)
+    rows = cursor.fetchall()
+    results = []
+    for row in rows:
+        results.append(row[0])
     return results
