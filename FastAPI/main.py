@@ -110,6 +110,15 @@ app.add_middleware(
 app.include_router(routes.router)
 app.include_router(correlation.router)
 
+# Also register both under /api — the frontend's apiFetch always calls
+# /api/*. In dev, Vite's proxy strips that prefix before forwarding here
+# (see vite.config.ts), so the unprefixed routes above handle it. In
+# production (this server serving the built frontend directly, no proxy
+# in between), the browser hits /api/* unstripped, so it needs a matching
+# route too.
+app.include_router(routes.router, prefix="/api")
+app.include_router(correlation.router, prefix="/api")
+
 # Serve built frontend if present (production mode).
 if os.path.exists(FRONTEND_DIST):
     app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")

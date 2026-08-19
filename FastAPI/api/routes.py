@@ -29,6 +29,7 @@ GET /taxonomy/children
 GET /annotations/top
 GET /annotations/scaffolds
 GET /annotations/scaffolds/summary
+GET /taxonomy/export
 
 All business logic (pagination, search, EGC extraction) lives here or in
 cache.py / index.py — endpoints are intentionally thin.
@@ -54,7 +55,10 @@ from .cache_sql import (
     get_top_annotations_sql,
     taxon_exists_sql,
     get_mappings_sql,
-    get_search_annotations
+    get_search_annotations,
+    get_top_annotations_from_catalog_sql,
+    get_taxa_at_rank_sql,
+    RANK_COLUMNS
 )    
 
 from .astronomy import SUN_TIMES
@@ -278,9 +282,12 @@ def list_timepoints(page: int = 1, page_size: int = 50):
 
 
 @router.get("/samples")
-def list_samples(page: int = 1, page_size: int = 50):
+def list_samples(request: Request, page: int = 1, page_size: int = 50):
     """Return all sample names with their readable dates, paginated."""
-    samples = get_all_sample_names()
+    if DATA_BACKEND == 'sql':
+        samples = get_all_sample_names_sql(request.app.state.sql_conn)
+    else:
+        samples = get_all_sample_names()
     return paginate([{"sample": s, "timepoint": get_timepoint(s)} for s in samples], page, page_size)
 
 
@@ -360,7 +367,10 @@ def search_mappings(
     Falls back to a full file scan during startup warmup.
     Results are sorted chronologically and limited to sample_count samples.
     """
-    samples = get_all_sample_names()
+    if DATA_BACKEND == 'sql':
+        samples = get_all_sample_names_sql(request.app.state.sql_conn)
+    else:
+        samples = get_all_sample_names()
     if not samples:
         raise HTTPException(status_code=404, detail="No samples found")
 
@@ -900,24 +910,31 @@ async def top_annotations_by_egc(
         cache_key = (source.value, date_from or "", date_to or "")
 
         if cache_key not in _TOP_ANN_CACHE_SQL:
-            active_samples = []
-            for s in samples:
-                tp = get_timepoint(s)
-                if not tp:
-                    continue
-                dt = tp.get("datetime", "")
-                if date_from and dt < date_from:
-                    continue
-                if date_to and dt > date_to + "z":
-                    continue
-                active_samples.append(s)
+            if not date_from and not date_to:
+                # Unfiltered requests are the common case -- go straight to the
+                # precomputed annotation_catalog table instead of the per-sample
+                # timepoint scan below, which exists only to resolve date-range
+                # filters and would otherwise run needlessly on every request.
+                _TOP_ANN_CACHE_SQL[cache_key] = get_top_annotations_from_catalog_sql(db, source.value)
+            else:
+                active_samples = []
+                for s in samples:
+                    tp = get_timepoint(s)
+                    if not tp:
+                        continue
+                    dt = tp.get("datetime", "")
+                    if date_from and dt < date_from:
+                        continue
+                    if date_to and dt > date_to + "z":
+                        continue
+                    active_samples.append(s)
 
-            if not active_samples:
-                return {"source": source.value, "data": []}
+                if not active_samples:
+                    return {"source": source.value, "data": []}
 
-            _TOP_ANN_CACHE_SQL[cache_key] = get_top_annotations_sql(
-                db, source.value, active_samples
-            )
+                _TOP_ANN_CACHE_SQL[cache_key] = get_top_annotations_sql(
+                    db, source.value, active_samples
+                )
 
         cached = _TOP_ANN_CACHE_SQL[cache_key]
         return {
@@ -1188,3 +1205,21 @@ async def annotation_scaffolds_summary(
 
     rows.sort(key=lambda r: timepoint_dt_sort_key(r["date"]) if r["date"] else -1.0)
     return {"annotation_id": annotation_id, "source": source.value, "total": len(rows), "data": rows}
+
+
+@router.get("/taxonomy/export")
+async def taxonomy_rank_export(request: Request, rank: str):
+    """Return all taxa at the given taxonomic rank (e.g. "genus", "order")."""
+    db = request.app.state.sql_conn
+    depth = None
+    for d, column in RANK_COLUMNS.items():
+        # strip('"') undoes "order"'s SQL-reserved-word quoting;
+        # rstrip('_') undoes class_'s Python-keyword-avoidance suffix
+        if column.strip('"').rstrip('_') == rank:
+            depth = d
+            break
+
+    if depth is None:
+        raise HTTPException(status_code=400, detail=f"Rank '{rank}' not found")
+    rows = get_taxa_at_rank_sql(db, depth)
+    return rows
