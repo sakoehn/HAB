@@ -1,36 +1,14 @@
 """
 db.py
 =====
-Connection lifecycle for the optional Mongo/SQLite backends. Called from
-main.py's lifespan() at startup/shutdown; the returned connection/client
-objects are stored on app.state and consumed by api.cache_mongo /
-api.cache_sql.
+Connection lifecycle for the SQLite backend. Called from main.py's
+lifespan() at startup/shutdown; the returned connection is stored on
+app.state and consumed by api.cache_sql.
 """
 
 import sqlite3
 
-from api.config import MONGO_URI, MONGO_DB_NAME, SQLITE_DB_PATH
-from motor.motor_asyncio import AsyncIOMotorClient
-
-def connect_to_mongo():
-    """
-    Connect to MongoDB using the URI and database name from the environment variables.
-    Returns a (client db) tuple.
-    """
-
-    # Create a MongoClient using the URI
-    client = AsyncIOMotorClient(MONGO_URI)
-
-    # Access the specified database
-    db = client[MONGO_DB_NAME]
-
-    return client, db
-
-def close_mongo_connection(client):
-    """
-    Close the MongoDB connection.
-    """
-    client.close()
+from api.config import SQLITE_DB_PATH
 
 def connect_to_sql() -> sqlite3.Connection:
     """Open the SQLite database used by DATA_BACKEND=sql.

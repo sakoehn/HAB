@@ -7,8 +7,7 @@ lineage, e.g. "Bacteria;Bacteroidetes;...;Wenyingzhuangia heitensis DSM
 `taxon_paths` table.
 
 Data-layer test: no database, no server -- just the parsing function in
-isolation, same spirit as tests/mongo/test_mongo.py testing cache_mongo.py
-functions directly rather than going through a route.
+isolation, rather than going through a route.
 
 Design decisions this file locks in (see project memory / prior discussion
 for the reasoning):

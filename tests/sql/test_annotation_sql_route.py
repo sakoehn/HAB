@@ -6,11 +6,10 @@ Live-API test for the DATA_BACKEND=sql branch(es) of routes.py.
 tests/sql/test_cache_sql.py already verifies api/cache_sql.py's functions
 directly, in isolation -- this file exists to cover what that one can't:
 route-level logic that only exists in routes.py itself (response shape,
-404-on-empty handling, sorting, pagination), same role
-tests/mongo/test_series_annotations_mongo_route.py etc. play for the
-Mongo branch. Covers /series/annotations specifically -- the other sql
-routes (taxonomy children, top annotations, scaffolds, scaffolds summary)
-each have their own dedicated *_route.py test file in this folder.
+404-on-empty handling, sorting, pagination). Covers /series/annotations
+specifically -- the other sql routes (taxonomy children, top annotations,
+scaffolds, scaffolds summary) each have their own dedicated *_route.py
+test file in this folder.
 
 Requires: a FastAPI server already running with DATA_BACKEND=sql (see
 FastAPI/.env) -- e.g. `uvicorn main:app --reload` after setting that in
@@ -77,10 +76,9 @@ def client():
 def test_cog0055_vs_ground_truth(client):
     """
     Cross-check the real /series/annotations route (sql backend) against
-    ground truth read straight from the source COG JSON files -- same
-    shape as tests/mongo/test_series_annotations_mongo_route.py's
-    equivalent test. expected_by_sample is Side B (independent of the
-    database); body["data"] is Side A (what the route claims).
+    ground truth read straight from the source COG JSON files.
+    expected_by_sample is Side B (independent of the database);
+    body["data"] is Side A (what the route claims).
     """
     expected_by_sample = {}
     for filename in os.listdir(COG_DIR):

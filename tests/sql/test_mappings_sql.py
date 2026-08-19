@@ -2,10 +2,9 @@
 test_mappings_sql.py
 ======================
 Real-data tests against the populated SQLite database (hab_mappings.db) --
-same spirit as tests/mongo/test_mongo.py: verifies the actual data that's
-actually there, not a synthetic fixture. Skips automatically if the
-database doesn't exist yet (e.g. a fresh checkout that hasn't run
-migrate_mappings_to_sql.py).
+verifies the actual data that's actually there, not a synthetic fixture.
+Skips automatically if the database doesn't exist yet (e.g. a fresh
+checkout that hasn't run migrate_mappings_to_sql.py).
 
 Covers three things:
   1. Structural/referential integrity across the whole dataset (no

@@ -80,35 +80,17 @@ PERMUTATION_SEED = 42
 # ~0.26s, no thrashing.
 JSON_CACHE_MAX_ENTRIES = 140
 
-# ── MongoDB connection ────────────────────────────────────────────────────────
+# ── Data backend selection ────────────────────────────────────────────────────
 #
-# Connection settings for the optional MongoDB backend (see api/db.py). Only
-# used when DATA_BACKEND=mongo; the default "json" backend reads directly
-# from the DataStructures files above and never touches these.
-
-MONGO_URI     = os.getenv("MONGO_URI")
-MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
-DATA_BACKEND  = os.getenv("DATA_BACKEND", "json")
+# "json" reads directly from the DataStructures files above; "sql" reads from
+# the SQLite database below (see api/db.py, api/cache_sql.py).
+DATA_BACKEND = os.getenv("DATA_BACKEND", "json")
 
 # ── SQLite connection ─────────────────────────────────────────────────────────
 #
-# Connection settings for the optional SQLite backend (learning/comparison
-# branch, additive alongside json/mongo -- see FastAPI/scripts/migrate_mappings_to_sql.py
+# Connection settings for the SQLite backend (see FastAPI/scripts/migrate_mappings_to_sql.py
 # and FastAPI/scripts/create_sql_schema.py). Only used when DATA_BACKEND=sql.
 SQLITE_DB_PATH = os.path.normpath(os.path.join(_HERE, "../../hab_mappings.db"))
-
-# ── Scaffold collection bucketing (split-schema migration) ──────────────────
-#
-# The new "scaffolds" collection buckets each (source, annotation_id, sample)
-# scaffold map into documents of at most this many entries, instead of one
-# document per scaffold. Measured 2026-07-28 against the real dataset: the
-# largest existing scaffold map (taxonomy/Bacteria, 485,842 entries) produces
-# a ~526 KB bucket at this cap -- ~3% of MongoDB's 16 MiB hard document limit
-# -- while a fully-flattened one-doc-per-scaffold design would have created
-# ~624 million documents (~100x the size of every other collection). See
-# MONGODB_MIGRATION_FOLLOWUP.md Phase 3 and project memory for the full
-# measurement.
-SCAFFOLD_BUCKET_CAP = 10_000
 
 # Hardcoded until the dataset_manifest "active version" pointer described in
 # MONGODB_MIGRATION_FOLLOWUP.md Phase 3 is actually built -- fine for now

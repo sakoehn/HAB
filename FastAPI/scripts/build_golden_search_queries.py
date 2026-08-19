@@ -13,7 +13,7 @@ api/routes.py's /search/annotations -- not guessed examples. See
 MONGODB_MIGRATION_FOLLOWUP.md "Preserve The Contract Before Choosing An
 Engine" and project memory (2026-07-28 session) for why this exists.
 
-Requires a live server on BASE_URL with DATA_BACKEND=json (or mongo, to
+Requires a live server on BASE_URL with DATA_BACKEND=json (or sql, to
 compare backends against each other using the same fixture).
 
 Usage (from FastAPI/):

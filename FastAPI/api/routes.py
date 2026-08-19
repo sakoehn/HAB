@@ -6,9 +6,6 @@ All FastAPI endpoints except /annotations/correlate (in correlation.py).
 Endpoints
 ~~~~~~~~~
 GET /debug
-GET /mongo-test
-GET /mongo-samples-test
-GET /mongo-annotations-test
 GET /status
 GET /timepoints
 GET /samples
@@ -38,15 +35,7 @@ cache.py / index.py — endpoints are intentionally thin.
 import os
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from .cache_mongo import (
-    get_all_sample_names_mongo,
-    get_annotation_scaffold_buckets_split,
-    get_annotation_series_mongo,
-    get_annotation_series_split,
-    get_taxonomy_children_mongo,
-    get_top_annotations_mongo,
-    taxon_exists_mongo,
-)
+
 from .cache_sql import (
     get_annotation_scaffolds_sql, 
     get_annotation_series_sql,
@@ -77,7 +66,6 @@ from .cache import (
     _TSV_CACHE,
 )
 from .config import (
-    ACTIVE_DATASET_VERSION,
     BASE_DIR,
     DATA_BACKEND,
     LOCATION_LAT,
@@ -207,7 +195,6 @@ def _annotation_endpoint(
 # ── Top-annotations cache ─────────────────────────────────────────────────────
 
 _TOP_ANN_CACHE: dict[tuple, list] = {}
-_TOP_ANN_CACHE_MONGO: dict[tuple, list] = {}
 _TOP_ANN_CACHE_SQL: dict[tuple, list] = {}
 
 
@@ -222,32 +209,6 @@ def debug():
         "base_dir_exists":       os.path.exists(BASE_DIR),
         "base_dir_contents":     os.listdir(BASE_DIR) if os.path.exists(BASE_DIR) else "DIR NOT FOUND",
     }
-
-@router.get("/mongo-test")
-async def mongo_test(request: Request):
-    """ Test MongoDB connection by inserting and retrieving a test document."""
-    db = request.app.state.mongo_db
-    try:
-        result = await db.test_collection.insert_one({"test": "data"})
-        doc = await db.test_collection.find_one({"_id": result.inserted_id})
-        doc["_id"] = str(doc["_id"])
-        return {"status": "success", "inserted_id": str(result.inserted_id), "found_doc": doc}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"MongoDB operation failed: {str(e)}")
-
-@router.get("/mongo-samples-test")
-async def mongo_samples_test(request: Request):
-    """ Test MongoDB connection by retrieving sample names from the 'samples' collection. """
-    db = request.app.state.mongo_db
-    names = await get_all_sample_names_mongo(db)
-    return {"sample_names": names }
-
-@router.get("/mongo-annotations-test")
-async def mongo_annotations_test(request: Request, sample_name: str, source: str, annotation_id: str):
-    """Test MongoDB connection by retrieving annotation series from the 'annotations' collection."""
-    db = request.app.state.mongo_db
-    series = await get_annotation_series_mongo(db, sample_name, source, annotation_id)
-    return {"sample_name": sample_name, "source": source, "annotation_id": annotation_id, "series": series}
 
 @router.get("/sql-test")
 def sql_test(request: Request):
@@ -727,28 +688,7 @@ async def annotation_time_series(
     sorted chronologically."""
     results: list[dict] = []
 
-    if DATA_BACKEND == "mongo":
-        docs = await get_annotation_series_split(
-            request.app.state.mongo_db, source.value, annotation_id, ACTIVE_DATASET_VERSION
-        )
-        for doc in docs:
-            value_out = {
-                "name":     doc.get("name"),
-                "category": doc.get("category"),
-                "egc":      doc.get("egc"),
-                "norm_egc": doc.get("norm_egc"),
-            }
-            results.append({
-                "source":        source.value,
-                "sample":        doc["sample_name"],
-                "timepoint":     get_timepoint(doc["sample_name"]),
-                "annotation_id": annotation_id,
-                "name":          doc.get("name"),
-                "egc":           doc.get("egc"),
-                "norm_egc":      doc.get("norm_egc"),
-                "value":         value_out,
-            })
-    elif DATA_BACKEND == "sql":
+    if DATA_BACKEND == "sql":
         rows = get_annotation_series_sql(request.app.state.sql_conn, source.value, annotation_id)
         for row in rows:
             value_out = {
@@ -814,13 +754,6 @@ async def taxonomy_children(request: Request, parent: str | None = Query(None)):
 
     parent omitted/empty -> the 4 domain roots (value['parent'] is None).
     """
-    if DATA_BACKEND == "mongo":
-        db = request.app.state.mongo_db
-        if parent and not await taxon_exists_mongo(db, parent):
-            raise HTTPException(status_code=404, detail=f"Unknown taxon '{parent}'")
-        children = await get_taxonomy_children_mongo(db, parent)
-        return {"parent": parent, "count": len(children), "data": children}
-
     meta = _ANN_META["taxonomy"]
 
     if DATA_BACKEND == 'sql':
@@ -865,43 +798,7 @@ async def top_annotations_by_egc(
 
     Cached per (source, date_from, date_to).
     """
-    if DATA_BACKEND == "mongo":
-        db = request.app.state.mongo_db
-        samples = await get_all_sample_names_mongo(db)
-        if not samples:
-            raise HTTPException(status_code=404, detail="No samples found")
-
-        cache_key = (source.value, date_from or "", date_to or "")
-
-        if cache_key not in _TOP_ANN_CACHE_MONGO:
-            active_samples = []
-            for s in samples:
-                tp = get_timepoint(s)
-                if not tp:
-                    continue
-                dt = tp.get("datetime", "")
-                if date_from and dt < date_from:
-                    continue
-                if date_to and dt > date_to + "z":
-                    continue
-                active_samples.append(s)
-
-            if not active_samples:
-                return {"source": source.value, "data": []}
-
-            _TOP_ANN_CACHE_MONGO[cache_key] = await get_top_annotations_mongo(
-                db, source.value, active_samples
-            )
-
-        cached = _TOP_ANN_CACHE_MONGO[cache_key]
-        return {
-            "source":       source.value,
-            "sample_count": len(samples),
-            "date_from":    date_from,
-            "date_to":      date_to,
-            "data":         cached[:limit],
-        }
-    elif DATA_BACKEND == 'sql':
+    if DATA_BACKEND == 'sql':
         db = request.app.state.sql_conn
         samples = get_all_sample_names_sql(db)
         if not samples:
@@ -1040,21 +937,7 @@ async def annotation_scaffolds(
     Returns { annotation_id, source, sample, total, page, page_size, data }
     where data is [{ sample, date, scaffold, count }], sorted by date.
     """
-    if DATA_BACKEND == "mongo":
-        buckets = await get_annotation_scaffold_buckets_split(
-            request.app.state.mongo_db, source.value, annotation_id, ACTIVE_DATASET_VERSION, sample=sample,
-        )
-        rows: list[dict] = []
-        for bucket in buckets:
-            dt = (get_timepoint(bucket["sample_name"]) or {}).get("datetime", "")
-            for item in bucket["scaffolds"]:
-                rows.append({
-                    "sample":   bucket["sample_name"],
-                    "date":     dt,
-                    "scaffold": item["scaffold"],
-                    "count":    item["count"],
-                })
-    elif DATA_BACKEND == "sql":
+    if DATA_BACKEND == "sql":
         scaffolds = get_annotation_scaffolds_sql(
             request.app.state.sql_conn, source.value, annotation_id, sample=sample
         )
@@ -1129,30 +1012,6 @@ async def annotation_scaffolds_summary(
     gene_count     = sum of all scaffold hit counts
 
     """
-    if DATA_BACKEND == "mongo":
-        docs = await get_annotation_series_split(
-            request.app.state.mongo_db, source.value, annotation_id, ACTIVE_DATASET_VERSION
-        )
-        rows: list[dict] = []
-        for doc in docs:
-            if not doc.get("scaffold_count"):
-                continue
-            dt = (get_timepoint(doc["sample_name"]) or {}).get("datetime", "")
-            rows.append({
-                "sample":         doc["sample_name"],
-                "date":           dt,
-                "scaffold_count": doc["scaffold_count"],
-                "gene_count":     doc["gene_count"],
-            })
-
-        if not rows:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No scaffolds found for '{annotation_id}' in source '{source.value}'",
-            )
-
-        rows.sort(key=lambda r: timepoint_dt_sort_key(r["date"]) if r["date"] else -1.0)
-        return {"annotation_id": annotation_id, "source": source.value, "total": len(rows), "data": rows}
     if DATA_BACKEND == 'sql':
         docs = get_annotation_series_sql(
             request.app.state.sql_conn, source.value, annotation_id

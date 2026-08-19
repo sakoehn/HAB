@@ -153,9 +153,8 @@ def test_row_has_no_id_key():
 
 def test_taxonomy_row_name_falls_back_to_annotation_id():
     """Taxonomy's raw JSON has NO "name" key at all -- annotation_id IS
-    the name (e.g. "Bacteroidetes"), same convention already used by
-    migrate_taxonomy_split.py for the Mongo side. Without this fallback,
-    every taxonomy row's name would silently be NULL."""
+    the name (e.g. "Bacteroidetes"). Without this fallback, every
+    taxonomy row's name would silently be NULL."""
     row = build_annotation_series_row("taxonomy", "3300060358", "Bacteroidetes", TAXONOMY_ENTRY)
     assert row["name"] == "Bacteroidetes"
 

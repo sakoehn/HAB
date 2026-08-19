@@ -6,9 +6,7 @@ Tests for FastAPI/api/cache_sql.py -- the DATA_BACKEND=sql query layer.
   taxon_paths_under()       -- depth-picks-the-column join between a
                                taxonomy annotation_series node and the
                                taxon_paths rows it covers.
-  get_annotation_series_sql() -- SQL equivalent of cache_mongo's
-                               get_annotation_series_split(), for the
-                               /series/annotations route.
+  get_annotation_series_sql() -- backs the /series/annotations route.
 
 Runs against the REAL hab_mappings.db, read-only -- taxon_paths and
 annotation_series/cog/kegg are Phase 1/2 data already fully built (only
@@ -36,7 +34,9 @@ from api.cache_sql import (
     get_all_sample_names_sql,
     get_annotation_scaffolds_sql,
     get_annotation_series_sql,
+    get_taxa_at_rank_sql,
     get_taxonomy_children_sql,
+    get_top_annotations_from_catalog_sql,
     get_top_annotations_sql,
     taxon_exists_sql,
     taxon_paths_under,
@@ -132,13 +132,11 @@ def test_returns_one_row_per_sample_that_has_this_annotation(conn):
     assert len(rows) == EXPECTED_COG0055_SAMPLE_COUNT
 
 
-def test_row_shape_matches_the_mongo_equivalent(conn):
-    """Same keys get_annotation_series_split() returns (sample_name, name,
-    category, egc, norm_egc, scaffold_count, gene_count) -- even though
-    the underlying column is `sample`, not `sample_name` -- so routes.py's
-    future sql branches (both /series/annotations AND
-    /annotations/scaffolds/summary, which this same function backs) can
-    mirror their mongo branches almost line for line."""
+def test_row_shape_matches_the_annotation_series_contract(conn):
+    """Keys: sample_name, name, category, egc, norm_egc, scaffold_count,
+    gene_count -- even though the underlying column is `sample`, not
+    `sample_name`. This same function backs both /series/annotations and
+    /annotations/scaffolds/summary in routes.py."""
     rows = get_annotation_series_sql(conn, "cog", "COG0055")
     row = next(r for r in rows if r["sample_name"] == "3300060358")
     assert row == {
@@ -405,8 +403,7 @@ def test_sample_count_reflects_how_many_of_the_given_samples_actually_have_it(co
 
 def test_parent_comes_from_parent_name_for_kegg_no_resolve_parent_needed(conn):
     """K09014, real kegg example -- parent already resolved to parent_name
-    at migration time (no category/parent_id fallback logic needed here,
-    unlike the Mongo version's _resolve_parent())."""
+    at migration time (no category/parent_id fallback logic needed here)."""
     results = get_top_annotations_sql(conn, "kegg", TWO_SAMPLES)
     row = next(r for r in results if r["annotation_id"] == "K09014")
     assert row["parent"] == "General function prediction only"
@@ -425,3 +422,140 @@ def test_only_counts_the_requested_samples_not_every_sample(conn):
     assert top_two["sample_count"] == 2
     assert top_one["sample_count"] == 1
     assert top_two["mean_egc"] != top_one["mean_egc"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# get_top_annotations_from_catalog_sql -- the fast path for /annotations/top
+# when no date filter is applied: reads the pre-aggregated annotation_catalog
+# table (~81K rows total) instead of live-aggregating annotation_series
+# (millions of rows) on every request.
+# ═══════════════════════════════════════════════════════════════════════════
+
+EXPECTED_ROW_KEYS = {
+    "annotation_id", "name", "parent",
+    "mean_egc", "max_egc", "mean_norm_egc", "max_norm_egc", "sample_count",
+}
+
+
+def test_row_count_matches_annotation_catalog_for_this_source(conn):
+    rows = get_top_annotations_from_catalog_sql(conn, "cog")
+    expected = conn.execute(
+        "SELECT COUNT(*) FROM annotation_catalog WHERE source = ?", ("cog",)
+    ).fetchone()[0]
+    assert len(rows) == expected
+
+
+def test_sorted_by_mean_egc_descending_catalog(conn):
+    rows = get_top_annotations_from_catalog_sql(conn, "cog")
+    mean_egcs = [r["mean_egc"] for r in rows]
+    assert mean_egcs == sorted(mean_egcs, reverse=True)
+
+
+def test_row_shape_matches_get_top_annotations_sql(conn):
+    """Must return the exact same keys as the live-aggregation function --
+    the route treats these two as interchangeable, so any shape mismatch
+    would surface as a broken response only for the fast-path branch."""
+    rows = get_top_annotations_from_catalog_sql(conn, "cog")
+    assert set(rows[0].keys()) == EXPECTED_ROW_KEYS
+
+
+@pytest.mark.slow
+def test_matches_live_aggregation_across_all_samples(conn):
+    """The actual safety guarantee for this fast path: for the unfiltered
+    (all-128-samples) case, the pre-aggregated catalog must return EXACTLY
+    the same data as the live get_top_annotations_sql() aggregation -- not
+    an approximation. annotation_catalog was built as precisely this
+    GROUP BY over annotation_series with no date/sample restriction, so
+    the two must match row-for-row, or the fast path would be silently
+    wrong instead of just silently slow."""
+    all_samples = get_all_sample_names_sql(conn)
+    catalog_rows = get_top_annotations_from_catalog_sql(conn, "kegg")
+    live_rows = get_top_annotations_sql(conn, "kegg", all_samples)
+
+    catalog_by_id = {r["annotation_id"]: r for r in catalog_rows}
+    live_by_id = {r["annotation_id"]: r for r in live_rows}
+
+    assert catalog_by_id.keys() == live_by_id.keys()
+    for annotation_id, catalog_row in catalog_by_id.items():
+        assert catalog_row == live_by_id[annotation_id]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# get_taxa_at_rank_sql -- every distinct taxon name at one rank of
+# taxon_paths (e.g. every order, every phylum). Real counts independently
+# confirmed against the live database right before this section was
+# written. depth=4 ("order") is deliberately covered here: RANK_COLUMNS
+# stores it pre-quoted (`'"order"'`) since it's a SQL reserved word, so
+# this is the one case that would break first if that quoting were lost.
+# ═══════════════════════════════════════════════════════════════════════════
+
+EXPECTED_DOMAIN_LIST  = ["Archaea", "Bacteria", "Eukaryota", "Viruses"]
+EXPECTED_ORDER_COUNT  = 486
+EXPECTED_ORDER_FIRST  = "Acholeplasmatales"
+EXPECTED_ORDER_LAST   = "unclassified unassigned viruses"
+EXPECTED_PHYLUM_COUNT = 111
+
+
+def test_domain_rank_returns_exactly_the_four_real_domains(conn):
+    result = get_taxa_at_rank_sql(conn, depth=1)
+    assert sorted(result) == EXPECTED_DOMAIN_LIST
+
+
+def test_order_rank_handles_the_reserved_word_column(conn):
+    """depth=4 maps to RANK_COLUMNS[4] = '"order"' -- if that quoting were
+    ever dropped, this wouldn't return a wrong answer, it would raise a
+    sqlite3.OperationalError (SQL syntax error), since ORDER unquoted is
+    a keyword, not a column name. So this test failing to even run is
+    itself the signal, not just a wrong count."""
+    result = get_taxa_at_rank_sql(conn, depth=4)
+    assert len(result) == EXPECTED_ORDER_COUNT
+    assert sorted(result)[0]  == EXPECTED_ORDER_FIRST
+    assert sorted(result)[-1] == EXPECTED_ORDER_LAST
+    assert "Bacteroidales" in result
+
+
+def test_phylum_rank_count_and_known_value(conn):
+    result = get_taxa_at_rank_sql(conn, depth=2)
+    assert len(result) == EXPECTED_PHYLUM_COUNT
+    assert "Bacteroidetes" in result
+
+
+def test_matches_an_independently_recomputed_count_for_a_different_rank(conn):
+    """class_ (depth=3), deliberately checked via a raw query built in the
+    test itself rather than a hardcoded constant -- a second, independent
+    way of confirming the function's COUNT/DISTINCT logic, not just a
+    repeat of the same number used to write the function."""
+    result = get_taxa_at_rank_sql(conn, depth=3)
+    expected = conn.execute(
+        "SELECT COUNT(DISTINCT class_) FROM taxon_paths WHERE class_ IS NOT NULL"
+    ).fetchone()[0]
+    assert len(result) == expected
+
+
+def test_results_are_a_flat_list_of_strings_not_row_tuples(conn):
+    """Regression guard: an earlier draft of this function appended the
+    raw sqlite3 row tuple instead of unpacking it, which would have
+    returned [('Bacteria',), ...] instead of ['Bacteria', ...]."""
+    result = get_taxa_at_rank_sql(conn, depth=1)
+    assert all(isinstance(v, str) for v in result)
+
+
+def test_no_duplicates(conn):
+    result = get_taxa_at_rank_sql(conn, depth=2)
+    assert len(result) == len(set(result))
+
+
+def test_sorted_ascending(conn):
+    result = get_taxa_at_rank_sql(conn, depth=2)
+    assert result == sorted(result)
+
+
+@pytest.mark.parametrize("bad_depth", [0, 9, -1, 100])
+def test_taxa_at_rank_depth_outside_valid_range_raises(conn, bad_depth):
+    """Matches taxon_paths_under's existing convention for the identical
+    situation (see test_depth_outside_valid_range_raises above): an
+    invalid depth must fail loudly and immediately with a clear
+    ValueError, not return None and let a confusing failure (or a
+    silent empty-looking result) surface somewhere downstream instead."""
+    with pytest.raises(ValueError):
+        get_taxa_at_rank_sql(conn, depth=bad_depth)
