@@ -411,12 +411,13 @@ def get_mappings_sql(conn: sqlite3.Connection, source: str, annotation_id: str) 
         ValueError: If source is not one of the four known sources.
     """
     if source == "kegg":
+        kegg_id = annotation_id if annotation_id.startswith("KO:") else f"KO:{annotation_id}"
         where_sql = """
             SELECT id
             FROM mappings
             WHERE kegg_id = ?
         """
-        where_params = (annotation_id,)
+        where_params = (kegg_id,)
     elif source == "cog":
         where_sql = """
             SELECT gene_cog.mapping_id AS id
@@ -426,13 +427,14 @@ def get_mappings_sql(conn: sqlite3.Connection, source: str, annotation_id: str) 
         """
         where_params = (annotation_id,)
     elif source == "enzyme":
+        ec_id = annotation_id if annotation_id.startswith("EC:") else f"EC:{annotation_id}"
         where_sql = """
                 SELECT gene_enzyme.mapping_id AS id
                 FROM mappings
                 JOIN gene_enzyme ON gene_enzyme.mapping_id = mappings.id
                 WHERE gene_enzyme.ec_id = ?
         """
-        where_params = (annotation_id,)
+        where_params = (ec_id,)
     elif source == "taxonomy":
         depths = taxon_depth_sql(conn, annotation_id)
         columns = [RANK_COLUMNS[d] for d in depths]

@@ -326,6 +326,30 @@ def test_exact_match_only_search(conn):
 
 
 @pytest.mark.slow
+def test_bare_id_normalizes_to_prefixed_storage_form(conn):
+    """kegg_id/ec_id are stored with JGI's raw "KO:"/"EC:" prefix, but
+    every caller outside this function (the frontend included, via
+    annotation_catalog's bare-form annotation_id) passes the bare id --
+    e.g. "K02112", not "KO:K02112". get_mappings_sql must normalize the
+    bare form internally rather than silently returning zero rows, which
+    is exactly the bug this test locks in against regressing (kegg was
+    fixed first; enzyme had the identical bug and was fixed right after)."""
+    bare_kegg   = get_mappings_sql(conn, "kegg", "K02112")
+    prefix_kegg = get_mappings_sql(conn, "kegg", "KO:K02112")
+    assert bare_kegg, "bare KO id must not return zero rows"
+    assert len(bare_kegg) == len(prefix_kegg)
+
+    bare_enzyme   = get_mappings_sql(conn, "enzyme", "7.1.2.2")
+    prefix_enzyme = get_mappings_sql(conn, "enzyme", "EC:7.1.2.2")
+    assert bare_enzyme, "bare EC id must not return zero rows"
+    assert len(bare_enzyme) == len(prefix_enzyme)
+
+    # cog has no prefix in raw storage -- bare and "prefixed" are the same
+    # string already, included here so the four sources are covered together.
+    assert get_mappings_sql(conn, "cog", "COG0055")
+
+
+@pytest.mark.slow
 def test_search_values_correct(conn):
     result = get_mappings_sql(conn, "cog", "COG0055")
     matching_dict = next((item for item in result if item.get("gene_id") == "Ga0590986_0000001_100946_102454" and item.get("sample")=="3300060358"), None)

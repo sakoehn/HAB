@@ -103,6 +103,32 @@ def test_search_returns_correct_shape(client):
 
 
 @sql_route_required
+def test_search_returns_correct_shape_for_kegg_and_enzyme(client):
+    """Same shape check as test_search_returns_correct_shape, but for the
+    two sources whose SQL storage keeps JGI's raw prefix (kegg_id="KO:...",
+    ec_id="EC:...") while the route is called with the bare id -- the same
+    format the frontend actually sends via annotation_catalog. This is the
+    layer that would have caught both the kegg and enzyme prefix bugs:
+    calling the route the way a real client does, not calling
+    get_mappings_sql with an already-prefixed id."""
+    for source, bare_id in [("kegg", "K02112"), ("enzyme", "7.1.2.2")]:
+        resp = client.get(
+            "/mappings/search",
+            params={"annotation_id": bare_id, "source": source, "sample_count": 3},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+
+        assert body["annotation_id"] == bare_id
+        assert body["source"] == source
+        assert body["total"] == len(body["data"])
+        assert body["data"], f"expected at least one matching row for source={source}, id={bare_id}"
+
+        for row in body["data"]:
+            assert set(row.keys()) == EXPECTED_ROW_KEYS
+
+
+@sql_route_required
 def test_unique_pairs_dedupes_results(client):
     """unique_pairs=true returns a smaller total than the same request
     without it -- every remaining row has a distinct
