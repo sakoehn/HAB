@@ -5,7 +5,7 @@
 // Manages its own open/closed state so the parent only needs to pass
 // the annotation ID, source, and optional navigation callback.
 
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { ScaffoldModal } from './ScaffoldModal'
 
 export function ScaffoldBtn({

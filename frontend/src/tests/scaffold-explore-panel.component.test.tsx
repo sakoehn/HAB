@@ -45,6 +45,11 @@
  *   a failed detail fetch shows "Failed to load scaffolds"
  *   "Show all N scaffolds" appears only when > 10 rows
  *
+ * Drill-down detail — pagination (2026-07-28, split-collection backend):
+ *   detail fetch includes sample= for the clicked row
+ *   detail fetch includes page=1 and page_size=500
+ *   clicking Show all fetches additional pages when total exceeds what's loaded
+ *
  * initialTerms:
  *   pre-loads terms passed in from navigation
  *
@@ -91,6 +96,7 @@ const MANY_DETAIL_ROWS = {
   data: Array.from({ length: 15 }, (_, i) => ({
     sample: 's1', date: '5/9/21 13:00', scaffold: `scaffold_${i}`, count: i + 1,
   })),
+  total: 15,
 }
 
 function setupMocks(opts: {
@@ -152,14 +158,14 @@ describe('ScaffoldExplorePanel — empty state & suggestions', () => {
   it('shows the empty-state hint before any terms are loaded', () => {
     setupMocks({ topData: { data: [] } })
     render(<ScaffoldExplorePanel />)
-    expect(screen.getByText(/Loading top kegg annotations…/i)).toBeInTheDocument()
+    expect(screen.getByText(/Loading top taxonomy annotations…/i)).toBeInTheDocument()
   })
 
   it('auto-loads top-10 annotations as suggested terms', async () => {
     setupMocks({ topData: TOP_SUGGESTIONS })
     render(<ScaffoldExplorePanel />)
     await waitFor(() => {
-      expect(screen.getByText(/Showing top 1 kegg annotations by mean EGC/i)).toBeInTheDocument()
+      expect(screen.getByText(/Showing top 1 taxonomy annotations by mean EGC/i)).toBeInTheDocument()
     })
     // "K00001" legitimately appears twice — once in the active-terms row,
     // once in the (collapsed) per-term detail toggle button.
@@ -239,7 +245,7 @@ describe('ScaffoldExplorePanel — search', () => {
     await userEvent.type(input, 'zzz')
     await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
     await waitFor(() => {
-      expect(screen.getByText(/No results found for "zzz" in kegg/i)).toBeInTheDocument()
+      expect(screen.getByText(/No results found for "zzz" in taxonomy/i)).toBeInTheDocument()
     })
   })
 })
@@ -281,7 +287,7 @@ describe('ScaffoldExplorePanel — add/remove terms', () => {
     await waitFor(() => {
       expect(document.querySelector('.scaffold-summary-card')).toBeNull()
     })
-    expect(screen.getByText(/Loading top kegg annotations…/i)).toBeInTheDocument()
+    expect(screen.getByText(/Loading top taxonomy annotations…/i)).toBeInTheDocument()
   })
 })
 
@@ -456,6 +462,78 @@ describe('ScaffoldExplorePanel — drill-down detail', () => {
     await waitFor(() => {
       expect(screen.getByText('scaffold_14')).toBeInTheDocument()
     })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drill-down detail — pagination
+//
+// This is the exact regression the earlier version of this component had:
+// the detail fetch downloaded every sample and filtered client-side rather
+// than requesting one sample directly. These tests pin the fixed behavior
+// down so it can't silently reappear.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ScaffoldExplorePanel — drill-down pagination', () => {
+  async function expandTermAndTable() {
+    render(<ScaffoldExplorePanel />)
+    await addTermFromSearch()
+    await waitFor(() => document.querySelector('.mappings-toggle'))
+    await userEvent.click(document.querySelector('.mappings-toggle') as HTMLElement)
+    await waitFor(() => document.querySelector('.scaffold-summary-row'))
+  }
+
+  it('detail fetch includes sample= for the clicked row', async () => {
+    setupMocks()
+    await expandTermAndTable()
+    await userEvent.click(document.querySelector('.scaffold-summary-row') as HTMLElement)
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls.map(c => c[0] as string)
+      expect(calls.some(u => u.includes('/api/annotations/scaffolds?') && u.includes('sample=s1'))).toBe(true)
+    })
+  })
+
+  it('detail fetch includes page=1 and page_size=500', async () => {
+    setupMocks()
+    await expandTermAndTable()
+    await userEvent.click(document.querySelector('.scaffold-summary-row') as HTMLElement)
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls.map(c => c[0] as string)
+      expect(calls.some(u => u.includes('page=1') && u.includes('page_size=500'))).toBe(true)
+    })
+  })
+
+  it('clicking Show all fetches additional pages when total exceeds what is loaded', async () => {
+    let detailCallCount = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [] }) })
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => SEARCH_RESULTS })
+      if (url.includes('/api/annotations/scaffolds/summary'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => SUMMARY_ROWS })
+      if (url.includes('/api/annotations/scaffolds')) {
+        detailCallCount += 1
+        // First page realistically short of `total` — the shape a sample
+        // whose scaffold count exceeds one page actually returns.
+        const data = detailCallCount === 1
+          ? Array.from({ length: 3 }, (_, i) => ({ sample: 's1', date: '5/9/21 13:00', scaffold: `a_${i}`, count: 1 }))
+          : Array.from({ length: 9 }, (_, i) => ({ sample: 's1', date: '5/9/21 13:00', scaffold: `b_${i}`, count: 1 }))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data, total: 12 }) })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    await expandTermAndTable()
+    await userEvent.click(document.querySelector('.scaffold-summary-row') as HTMLElement)
+    await waitFor(() => screen.getByText('Show all 12 scaffolds ↓'))
+
+    await userEvent.click(screen.getByText('Show all 12 scaffolds ↓'))
+
+    await waitFor(() => {
+      expect(screen.getByText('b_8')).toBeInTheDocument()
+    })
+    expect(detailCallCount).toBe(2)
   })
 })
 

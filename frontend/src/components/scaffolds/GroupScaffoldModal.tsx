@@ -43,6 +43,7 @@ import { SOURCE_TAG_CLS } from '../../constants'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
+import { SkeletonStatTiles, SkeletonChart, SkeletonTable } from '../ui/Skeleton'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -98,8 +99,10 @@ export function GroupScaffoldModal({
   // Detail drill-down state: keyed by `${annotationId}::${sample}`
   const [expandedKey, setExpandedKey]         = useState<string | null>(null)
   const [detailCache, setDetailCache]         = useState<Record<string, ScaffoldDetailRow[]>>({})
+  const [detailTotalCache, setDetailTotalCache] = useState<Record<string, number>>({})
   const [detailStatus, setDetailStatus]       = useState<ApiStatus>('idle')
   const [detailShowAll, setDetailShowAll]     = useState(false)
+  const [detailLoadingMore, setDetailLoadingMore] = useState(false)
 
   // Fetches one member and reports whether it failed, rather than
   // silently collapsing a failure into "0 data" — a failed fetch and a
@@ -205,7 +208,12 @@ export function GroupScaffoldModal({
   const maxGenes       = useMemo(() => Math.max(0, ...rows.map(r => r.gene_count)), [rows])
 
   // ── Detail drill-down ─────────────────────────────────────────────────
-  // Cached by `${annotationId}::${sample}` — O(1) cache hit after first fetch.
+  // Cached by `${annotationId}::${sample}` — O(1) cache hit after first
+  // fetch. Requests only this one sample's scaffolds (bounded server-side
+  // — see api/routes.py 2026-07-28) instead of downloading every sample
+  // for this term and filtering client-side.
+  const DETAIL_FETCH_PAGE = 500
+
   async function loadDetail(annotationId: string, source: string, sample: string) {
     const key = `${annotationId}::${sample}`
     if (expandedKey === key) { setExpandedKey(null); return }
@@ -217,14 +225,45 @@ export function GroupScaffoldModal({
 
     setDetailStatus('loading')
     try {
-      const r = await apiFetch<{ data: ScaffoldDetailRow[] }>(
-        `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`,
+      const r = await apiFetch<{ data: ScaffoldDetailRow[]; total: number }>(
+        `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`
+        + `&sample=${encodeURIComponent(sample)}&page=1&page_size=${DETAIL_FETCH_PAGE}`,
       )
-      const filtered = (r.data ?? []).filter(d => d.sample === sample)
-      setDetailCache(prev => ({ ...prev, [key]: filtered }))
+      setDetailCache(prev => ({ ...prev, [key]: r.data ?? [] }))
+      setDetailTotalCache(prev => ({ ...prev, [key]: r.total ?? 0 }))
       setDetailStatus('ok')
     } catch {
       setDetailStatus('error')
+    }
+  }
+
+  // Reveals the full list for one (term, sample) pair. Instant if the
+  // first page already covered everything (true for virtually all real
+  // samples); fetches remaining pages first for the rare sample whose
+  // count exceeds DETAIL_FETCH_PAGE.
+  async function showAllDetail(annotationId: string, source: string, sample: string) {
+    const key = `${annotationId}::${sample}`
+    setDetailShowAll(true)
+    const current = detailCache[key] ?? []
+    const total   = detailTotalCache[key] ?? 0
+    if (current.length >= total) return
+
+    setDetailLoadingMore(true)
+    try {
+      let all = current
+      let page = 2 // page 1 was already loaded by loadDetail before this button can appear
+      while (all.length < total) {
+        const r = await apiFetch<{ data: ScaffoldDetailRow[]; total: number }>(
+          `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`
+          + `&sample=${encodeURIComponent(sample)}&page=${page}&page_size=${DETAIL_FETCH_PAGE}`,
+        )
+        if (!r.data || r.data.length === 0) break
+        all = all.concat(r.data)
+        page += 1
+      }
+      setDetailCache(prev => ({ ...prev, [key]: all }))
+    } finally {
+      setDetailLoadingMore(false)
     }
   }
 
@@ -314,8 +353,13 @@ export function GroupScaffoldModal({
         {/* ── Body ── */}
         <div className="scaffold-modal-body">
           {status === 'loading' && (
-            <div className="state-box" style={{ padding: 32 }}>
-              <span>Loading scaffold data for {members.length} annotations…</span>
+            <div style={{ padding: '16px 20px' }}>
+              <span className="sr-only">
+                Loading scaffold data for {members.length} annotations…
+              </span>
+              <SkeletonStatTiles count={6} />
+              <div style={{ marginTop: 16 }}><SkeletonChart height={180} /></div>
+              <div style={{ marginTop: 8 }}><SkeletonTable columns={7} rows={6} /></div>
             </div>
           )}
           {status === 'ok' && rows.length === 0 && failedMembers.length === 0 && (
@@ -524,6 +568,7 @@ export function GroupScaffoldModal({
                       const key         = `${row.annotationId}::${row.sample}`
                       const isExpanded  = expandedKey === key
                       const cached      = detailCache[key]
+                      const total       = detailTotalCache[key] ?? 0
                       const visible     = detailShowAll
                         ? (cached ?? [])
                         : (cached ?? []).slice(0, DETAIL_PAGE)
@@ -589,7 +634,7 @@ export function GroupScaffoldModal({
                                   {cached && cached.length > 0 && (
                                     <>
                                       <div className="scaffold-detail-label">
-                                        {cached.length} scaffold{cached.length !== 1 ? 's' : ''} ·{' '}
+                                        {total} scaffold{total !== 1 ? 's' : ''} ·{' '}
                                         <span style={{ color: 'var(--teal)' }}>{row.annotationId}</span>
                                         {row.name && (
                                           <span style={{ color: 'var(--text-dim)', marginLeft: 4 }}>
@@ -618,13 +663,21 @@ export function GroupScaffoldModal({
                                           ))}
                                         </tbody>
                                       </table>
-                                      {cached.length > DETAIL_PAGE && !detailShowAll && (
+                                      {total > DETAIL_PAGE && !detailShowAll && (
                                         <button
                                           className="scaffold-show-more"
-                                          onClick={e => { e.stopPropagation(); setDetailShowAll(true) }}
+                                          onClick={e => {
+                                            e.stopPropagation()
+                                            showAllDetail(row.annotationId, row.source, row.sample)
+                                          }}
                                         >
-                                          Show all {cached.length} scaffolds ↓
+                                          Show all {total} scaffolds ↓
                                         </button>
+                                      )}
+                                      {detailShowAll && detailLoadingMore && (
+                                        <div style={{ padding: '8px 16px', font: '12px var(--mono)', color: 'var(--text-dim)' }}>
+                                          Loading remaining scaffolds…
+                                        </div>
                                       )}
                                     </>
                                   )}

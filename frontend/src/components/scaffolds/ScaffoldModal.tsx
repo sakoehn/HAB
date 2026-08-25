@@ -36,6 +36,7 @@ import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
 import { minMeanMax } from '../../utils/stats'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
+import { SkeletonStatTiles, SkeletonChart, SkeletonTable } from '../ui/Skeleton'
 
 export function ScaffoldModal({
   annotationId,
@@ -54,8 +55,10 @@ export function ScaffoldModal({
   const [sortDir, setSortDir]             = useState<SortDir>('asc')
   const [expandedSample, setExpanded]     = useState<string | null>(null)
   const [detailRows, setDetailRows]       = useState<ScaffoldDetailRow[]>([])
+  const [detailTotal, setDetailTotal]     = useState(0)
   const [detailStatus, setDetailStatus]   = useState<ApiStatus>('idle')
   const [detailShowAll, setDetailShowAll] = useState(false)
+  const [detailLoadingMore, setDetailLoadingMore] = useState(false)
   const [showChart, setShowChart]         = useState(true)
   const [chartMetric, setChartMetric]     = useState<'scaffold_count' | 'gene_count'>('scaffold_count')
   const [retryTick, setRetryTick]         = useState(0)
@@ -69,20 +72,58 @@ export function ScaffoldModal({
       .catch(() => setStatus('error'))
   }, [annotationId, source, retryTick])
 
+  // Fetches only this one sample's scaffolds (bounded to that sample's
+  // bucket data server-side — see api/routes.py 2026-07-28) instead of
+  // downloading every sample and filtering client-side. DETAIL_FETCH_PAGE
+  // covers the overwhelming majority of real samples in one request; the
+  // rare sample whose scaffold count exceeds it gets the rest lazily, only
+  // if the user actually clicks "Show all".
+  const DETAIL_FETCH_PAGE = 500
+
   async function loadDetail(sample: string) {
     if (expandedSample === sample) { setExpanded(null); return }
     setExpanded(sample)
     setDetailRows([])
+    setDetailTotal(0)
     setDetailShowAll(false)
     setDetailStatus('loading')
     try {
-      const r = await apiFetch<{ data: ScaffoldDetailRow[] }>(
-        `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`,
+      const r = await apiFetch<{ data: ScaffoldDetailRow[]; total: number }>(
+        `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`
+        + `&sample=${encodeURIComponent(sample)}&page=1&page_size=${DETAIL_FETCH_PAGE}`,
       )
-      setDetailRows((r.data ?? []).filter(d => d.sample === sample))
+      setDetailRows(r.data ?? [])
+      setDetailTotal(r.total ?? 0)
       setDetailStatus('ok')
     } catch {
       setDetailStatus('error')
+    }
+  }
+
+  // Reveals the full list. If the first page already covered every
+  // scaffold (true for virtually all real samples), this is instant. For
+  // the rare sample whose count exceeds DETAIL_FETCH_PAGE, fetches the
+  // remaining pages before revealing them.
+  async function showAllDetail(sample: string) {
+    setDetailShowAll(true)
+    if (detailRows.length >= detailTotal) return
+
+    setDetailLoadingMore(true)
+    try {
+      let all = detailRows
+      let page = 2 // page 1 was already loaded by loadDetail before this button can appear
+      while (all.length < detailTotal) {
+        const r = await apiFetch<{ data: ScaffoldDetailRow[]; total: number }>(
+          `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`
+          + `&sample=${encodeURIComponent(sample)}&page=${page}&page_size=${DETAIL_FETCH_PAGE}`,
+        )
+        if (!r.data || r.data.length === 0) break
+        all = all.concat(r.data)
+        page += 1
+      }
+      setDetailRows(all)
+    } finally {
+      setDetailLoadingMore(false)
     }
   }
 
@@ -215,8 +256,11 @@ export function ScaffoldModal({
         {/* ── Modal body ── */}
         <div className="scaffold-modal-body">
           {status === 'loading' && (
-            <div className="state-box" data-testid="loading-state" style={{ padding: 32 }}>
-              <span>Loading scaffold summary…</span>
+            <div data-testid="loading-state" style={{ padding: '16px 20px' }}>
+              <span className="sr-only">Loading scaffold summary…</span>
+              <SkeletonStatTiles count={8} />
+              <div style={{ marginTop: 16 }}><SkeletonChart height={180} /></div>
+              <div style={{ marginTop: 8 }}><SkeletonTable columns={5} rows={6} /></div>
             </div>
           )}
           {status === 'error' && (
@@ -512,8 +556,8 @@ export function ScaffoldModal({
                                   {detailStatus === 'ok' && detailRows.length > 0 && (
                                     <>
                                       <div className="scaffold-detail-label">
-                                        {detailRows.length} scaffold
-                                        {detailRows.length !== 1 ? 's' : ''} in this sample
+                                        {detailTotal} scaffold
+                                        {detailTotal !== 1 ? 's' : ''} in this sample
                                       </div>
                                       <table className="scaffold-detail-table">
                                         <thead>
@@ -543,16 +587,25 @@ export function ScaffoldModal({
                                           ))}
                                         </tbody>
                                       </table>
-                                      {detailRows.length > DETAIL_PAGE && !detailShowAll && (
+                                      {detailTotal > DETAIL_PAGE && !detailShowAll && (
                                         <button
                                           className="scaffold-show-more"
                                           onClick={e => {
                                             e.stopPropagation()
-                                            setDetailShowAll(true)
+                                            showAllDetail(row.sample)
                                           }}
                                         >
-                                          Show all {detailRows.length} scaffolds ↓
+                                          Show all {detailTotal} scaffolds ↓
                                         </button>
+                                      )}
+                                      {detailShowAll && detailLoadingMore && (
+                                        <div style={{
+                                          padding: '8px 16px',
+                                          font:    '12px var(--mono)',
+                                          color:   'var(--text-dim)',
+                                        }}>
+                                          Loading remaining scaffolds…
+                                        </div>
                                       )}
                                     </>
                                   )}

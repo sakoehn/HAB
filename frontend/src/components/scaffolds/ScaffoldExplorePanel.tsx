@@ -85,7 +85,7 @@ import { HelpTooltip } from '../ui/HelpTooltip'
 const TERM_COLORS = [
   'var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)',
   '#0072B2',  // Blue — Wong CB-safe
-  '#D55E00',  // Vermilion — Wong (ok as 6th, won't be confused with orange at this slot)
+  '#D55E00',  // Vermilion — Wong 
   '#56B4E9',  // Sky Blue — Wong
   '#CC79A7',  // Reddish Purple — Wong
 ]
@@ -101,7 +101,7 @@ export function ScaffoldExplorePanel({
 }) {
   const [terms, setTerms]               = useState<ScaffoldExploreTerm[]>([])
   const [searchQ, setSearchQ]           = useState('')
-  const [searchSrc, setSearchSrc]       = useState('kegg')
+  const [searchSrc, setSearchSrc]       = useState('taxonomy')
   const [searchRes, setSearchRes]       = useState<TopAnnotation[]>([])
   const [searchStatus, setSearchStatus] = useState<ApiStatus>('idle')
   const [dateFrom, setDateFrom]         = useState('')
@@ -167,7 +167,8 @@ export function ScaffoldExplorePanel({
       const color = TERM_COLORS[prev.length % TERM_COLORS.length]
       return [...prev, {
         annotationId, source, summary: [], status: 'loading', color, expanded: false,
-        expandedSample: null, detailRows: [], detailStatus: 'idle', detailShowAll: false,
+        expandedSample: null, detailRows: [], detailTotal: 0, detailStatus: 'idle',
+        detailShowAll: false, detailLoadingMore: false,
         suggested, chartVisible: false,
       }]
     })
@@ -198,7 +199,15 @@ export function ScaffoldExplorePanel({
   function clearSuggestions() {
     setTerms(prev => prev.filter(t => !t.suggested))
   }
-async function loadTermDetail(annotationId: string, source: string, sample: string) {
+  // Requests only the clicked sample's scaffolds (bounded server-side —
+  // see api/routes.py 2026-07-28) instead of downloading every sample for
+  // this term and filtering client-side. DETAIL_FETCH_PAGE covers the
+  // overwhelming majority of real samples in one request; the rare sample
+  // whose scaffold count exceeds it is completed lazily via
+  // showAllTermDetail, only if the user clicks "Show all".
+  const DETAIL_FETCH_PAGE = 500
+
+  async function loadTermDetail(annotationId: string, source: string, sample: string) {
     const term = terms.find(t => t.annotationId === annotationId && t.source === source)
     if (!term) return
 
@@ -213,24 +222,73 @@ async function loadTermDetail(annotationId: string, source: string, sample: stri
 
     setTerms(prev => prev.map(t =>
       t.annotationId === annotationId && t.source === source
-        ? { ...t, expandedSample: sample, detailRows: [], detailShowAll: false, detailStatus: 'loading' }
+        ? {
+            ...t, expandedSample: sample, detailRows: [], detailTotal: 0,
+            detailShowAll: false, detailStatus: 'loading',
+          }
         : t,
     ))
 
     try {
-      const r = await apiFetch<{ data: ScaffoldDetailRow[] }>(
-        `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`,
+      const r = await apiFetch<{ data: ScaffoldDetailRow[]; total: number }>(
+        `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`
+        + `&sample=${encodeURIComponent(sample)}&page=1&page_size=${DETAIL_FETCH_PAGE}`,
       )
-      const rows = (r.data ?? []).filter(d => d.sample === sample)
       setTerms(prev => prev.map(t =>
         t.annotationId === annotationId && t.source === source
-          ? { ...t, detailRows: rows, detailStatus: 'ok' }
+          ? { ...t, detailRows: r.data ?? [], detailTotal: r.total ?? 0, detailStatus: 'ok' }
           : t,
       ))
     } catch {
       setTerms(prev => prev.map(t =>
         t.annotationId === annotationId && t.source === source
           ? { ...t, detailStatus: 'error' }
+          : t,
+      ))
+    }
+  }
+
+  // Reveals the full list for one (term, sample) pair. Instant if the
+  // first page already covered everything (true for virtually all real
+  // samples); fetches remaining pages first for the rare sample whose
+  // count exceeds DETAIL_FETCH_PAGE.
+  async function showAllTermDetail(annotationId: string, source: string, sample: string) {
+    setTerms(prev => prev.map(t =>
+      t.annotationId === annotationId && t.source === source
+        ? { ...t, detailShowAll: true }
+        : t,
+    ))
+
+    const term = terms.find(t => t.annotationId === annotationId && t.source === source)
+    if (!term || term.detailRows.length >= term.detailTotal) return
+
+    setTerms(prev => prev.map(t =>
+      t.annotationId === annotationId && t.source === source
+        ? { ...t, detailLoadingMore: true }
+        : t,
+    ))
+    try {
+      let all = term.detailRows
+      let page = 2 // page 1 was already loaded by loadTermDetail before this button can appear
+      while (all.length < term.detailTotal) {
+        const r = await apiFetch<{ data: ScaffoldDetailRow[]; total: number }>(
+          `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`
+          + `&sample=${encodeURIComponent(sample)}&page=${page}&page_size=${DETAIL_FETCH_PAGE}`,
+        )
+        if (!r.data || r.data.length === 0) break
+        all = all.concat(r.data)
+        page += 1
+      }
+      const finalRows = all
+      setTerms(prev => prev.map(t =>
+        t.annotationId === annotationId && t.source === source
+          ? { ...t, detailRows: finalRows }
+          : t,
+      ))
+    } finally {
+      setTerms(prev => prev.map(t =>
+        t.annotationId === annotationId && t.source === source
+          ? { ...t, detailLoadingMore: false }
           : t,
       ))
     }
@@ -834,8 +892,8 @@ async function loadTermDetail(annotationId: string, source: string, sample: stri
                                   {term.detailStatus === 'ok' && term.detailRows.length > 0 && (
                                     <>
                                       <div className="scaffold-detail-label">
-                                        {term.detailRows.length} scaffold
-                                        {term.detailRows.length !== 1 ? 's' : ''} in this sample
+                                        {term.detailTotal} scaffold
+                                        {term.detailTotal !== 1 ? 's' : ''} in this sample
                                       </div>
                                       <table className="scaffold-detail-table">
                                         <thead>
@@ -857,20 +915,21 @@ async function loadTermDetail(annotationId: string, source: string, sample: stri
                                           ))}
                                         </tbody>
                                       </table>
-                                      {term.detailRows.length > DETAIL_PAGE && !term.detailShowAll && (
+                                      {term.detailTotal > DETAIL_PAGE && !term.detailShowAll && (
                                         <button
                                           className="scaffold-show-more"
                                           onClick={e => {
                                             e.stopPropagation()
-                                            setTerms(prev => prev.map(t =>
-                                              t.annotationId === term.annotationId && t.source === term.source
-                                                ? { ...t, detailShowAll: true }
-                                                : t,
-                                            ))
+                                            showAllTermDetail(term.annotationId, term.source, row.sample)
                                           }}
                                         >
-                                          Show all {term.detailRows.length} scaffolds ↓
+                                          Show all {term.detailTotal} scaffolds ↓
                                         </button>
+                                      )}
+                                      {term.detailShowAll && term.detailLoadingMore && (
+                                        <div style={{ padding: '8px 16px', font: '12px var(--mono)', color: 'var(--text-dim)' }}>
+                                          Loading remaining scaffolds…
+                                        </div>
                                       )}
                                     </>
                                   )}

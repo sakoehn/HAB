@@ -62,6 +62,17 @@
  *   fetches from correct endpoint URL
  *   URL-encodes annotation_id (EC:1.1.1.1 → EC%3A1.1.1.1)
  *
+ * ScaffoldModal — detail pagination (2026-07-28, split-collection backend):
+ *   detail fetch includes sample= for the clicked row
+ *   detail fetch includes page=1 and page_size=500
+ *   Show all button hidden when total <= DETAIL_PAGE
+ *   Show all button shows the real total, not just what's loaded so far
+ *   clicking Show all fetches additional pages when total exceeds what's loaded
+ *   clicking Show all does NOT re-fetch when the first page already covered everything
+ *
+ * GroupScaffoldModal — detail pagination:
+ *   detail fetch includes sample= for the clicked row
+ *
  * ScaffoldBtn:
  *   renders Scaffolds button
  *   modal not shown before click
@@ -585,6 +596,148 @@ describe('ScaffoldModal — API URL construction', () => {
     await waitFor(() => {
       const url = mockFetch.mock.calls[0][0] as string
       expect(url).toContain('annotation_id=EC%3A1.1.1.1')
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ScaffoldModal — detail pagination (split-collection backend, 2026-07-28)
+//
+// The detail fetch (triggered by clicking a summary row) used to download
+// every sample's scaffolds and filter client-side. It now requests one
+// sample directly and paginates, only fetching more if a single sample's
+// scaffold count exceeds what the first page returned — these tests lock
+// that behavior in against regressions to the old "download everything"
+// pattern.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ScaffoldModal — detail pagination', () => {
+  it('detail fetch includes sample= for the clicked row', async () => {
+    mockApiSuccess({ data: MOCK_SUMMARY })
+    mockApiSuccess({ data: MOCK_DETAIL, total: 2 })
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => screen.getByTestId('row-s1'))
+    fireEvent.click(screen.getByTestId('row-s1'))
+    await waitFor(() => {
+      const url = mockFetch.mock.calls[1][0] as string
+      expect(url).toContain('sample=s1')
+    })
+  })
+
+  it('detail fetch includes page=1 and page_size=500', async () => {
+    mockApiSuccess({ data: MOCK_SUMMARY })
+    mockApiSuccess({ data: MOCK_DETAIL, total: 2 })
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => screen.getByTestId('row-s1'))
+    fireEvent.click(screen.getByTestId('row-s1'))
+    await waitFor(() => {
+      const url = mockFetch.mock.calls[1][0] as string
+      expect(url).toContain('page=1')
+      expect(url).toContain('page_size=500')
+    })
+  })
+
+  it('Show all button hidden when total <= DETAIL_PAGE (10)', async () => {
+    mockApiSuccess({ data: MOCK_SUMMARY })
+    mockApiSuccess({ data: MOCK_DETAIL, total: 2 })
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => screen.getByTestId('row-s1'))
+    fireEvent.click(screen.getByTestId('row-s1'))
+    await waitFor(() => screen.getByTestId('detail-s1'))
+    expect(screen.queryByText(/Show all/)).toBeNull()
+  })
+
+  it('Show all button shows the real total, not just what was loaded so far', async () => {
+    mockApiSuccess({ data: MOCK_SUMMARY })
+    // Server says 12 exist, but this page only returned 3 — the realistic
+    // shape once a sample's scaffold count exceeds one page.
+    mockApiSuccess({
+      data: [
+        { sample: 's1', date: '2021-05-10 08:00', scaffold: 'a', count: 1 },
+        { sample: 's1', date: '2021-05-10 08:00', scaffold: 'b', count: 1 },
+        { sample: 's1', date: '2021-05-10 08:00', scaffold: 'c', count: 1 },
+      ],
+      total: 12,
+    })
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => screen.getByTestId('row-s1'))
+    fireEvent.click(screen.getByTestId('row-s1'))
+    await waitFor(() => {
+      expect(screen.getByText('Show all 12 scaffolds ↓')).toBeTruthy()
+    })
+  })
+
+  it('clicking Show all fetches additional pages when total exceeds what is loaded', async () => {
+    mockApiSuccess({ data: MOCK_SUMMARY })
+    mockApiSuccess({
+      data: [
+        { sample: 's1', date: '2021-05-10 08:00', scaffold: 'a', count: 1 },
+        { sample: 's1', date: '2021-05-10 08:00', scaffold: 'b', count: 1 },
+        { sample: 's1', date: '2021-05-10 08:00', scaffold: 'c', count: 1 },
+      ],
+      total: 12,
+    })
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => screen.getByTestId('row-s1'))
+    fireEvent.click(screen.getByTestId('row-s1'))
+    await waitFor(() => screen.getByText('Show all 12 scaffolds ↓'))
+
+    mockApiSuccess({
+      data: Array.from({ length: 9 }, (_, i) => (
+        { sample: 's1', date: '2021-05-10 08:00', scaffold: `extra-${i}`, count: 1 }
+      )),
+      total: 12,
+    })
+    fireEvent.click(screen.getByText('Show all 12 scaffolds ↓'))
+
+    await waitFor(() => {
+      const rows = screen.getByTestId('detail-s1').querySelectorAll('.scaffold-detail-table tbody tr')
+      expect(rows.length).toBe(12)
+    })
+    // Fetch #1 = summary, #2 = detail page 1, #3 = detail page 2 (the load-more)
+    expect(mockFetch.mock.calls.length).toBe(3)
+    expect(mockFetch.mock.calls[2][0] as string).toContain('page=2')
+  })
+
+  it('clicking Show all does NOT re-fetch when the first page already covered everything', async () => {
+    mockApiSuccess({ data: MOCK_SUMMARY })
+    mockApiSuccess({ data: MOCK_DETAIL, total: MOCK_DETAIL.length })
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => screen.getByTestId('row-s1'))
+    fireEvent.click(screen.getByTestId('row-s1'))
+    await waitFor(() => screen.getByTestId('detail-s1'))
+
+    // total (2) <= DETAIL_PAGE (10), so there's no "Show all" button to click
+    // here — this confirms no phantom follow-up fetch happens on its own.
+    await new Promise(r => setTimeout(r, 50))
+    expect(mockFetch.mock.calls.length).toBe(2)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GroupScaffoldModal — detail pagination
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('GroupScaffoldModal — detail pagination', () => {
+  it('detail fetch includes sample= for the clicked row', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ data: MOCK_SUMMARY }) })
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ data: MOCK_DETAIL, total: 2 }) })
+    render(
+      <GroupScaffoldModal
+        members={[{ annotationId: 'COG0055', source: 'cog', name: 'foo' }]}
+        groupLabel="Grouped terms"
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() => screen.getByText(/Group totals/))
+    // "COG0055" also appears in the member-list badge above the table —
+    // only the second match is the actual table row (rows sort by date
+    // ascending by default, so s1 at 05-10 08:00 sorts first).
+    const rows = screen.getAllByText('COG0055')
+    fireEvent.click(rows[1].closest('tr')!)
+    await waitFor(() => {
+      const url = mockFetch.mock.calls[1][0] as string
+      expect(url).toContain('sample=s1')
     })
   })
 })
