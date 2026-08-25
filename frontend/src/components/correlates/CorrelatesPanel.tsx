@@ -25,6 +25,7 @@ import { SOURCE_TAG_CLS } from '../../constants'
 import { apiFetch } from '../../utils/api'
 import { ExternalLink } from '../ui/ExternalLinks'
 import { HelpTooltip } from '../ui/HelpTooltip'
+import { Skeleton } from '../ui/Skeleton'
 
 export function CorrelatesPanel({
   annotationId,
@@ -190,9 +191,18 @@ export function CorrelatesPanel({
           {/* ── Results ── */}
           <div className="corr-results">
             {status === 'loading' && (
-              <div className="corr-empty">
-                <span className="corr-empty-icon">⟳</span>
-                Computing correlations…
+              <div style={{ padding: '4px 0' }}>
+                <span className="sr-only">Computing correlations…</span>
+                {Array.from({ length: 7 }).map((_, i) => (
+                  <div
+                    key={i}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px' }}
+                    aria-hidden="true"
+                  >
+                    <Skeleton height={12} width={70} radius={3} />
+                    <Skeleton height={10} width={`${65 - i * 7}%`} />
+                  </div>
+                ))}
               </div>
             )}
             {status === 'error' && (

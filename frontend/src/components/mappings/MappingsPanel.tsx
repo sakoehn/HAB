@@ -17,6 +17,8 @@ import React, { useState, useMemo } from 'react'
 import type { ApiStatus, MappingSortCol, SortDir, MappingSearchRow } from '../../types'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime } from '../../utils/format'
+import { HelpTooltip } from '../ui/HelpTooltip'
+import { SkeletonTable } from '../ui/Skeleton'
 
 // ── MappingsSortTh ─────────────────────────────────────────────────────────
 // Reusable sortable table header cell.
@@ -49,7 +51,7 @@ function MappingsSortTh({
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const MAPPINGS_PAGE_SIZE = 100
+const MAPPINGS_PAGE_SIZE = 25
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
 // Exported so tests can exercise the real sort/paginate/URL logic directly.
@@ -241,8 +243,13 @@ export function MappingsPanel({
 
           {/* ── States ── */}
           {status === 'loading' && (
-            <div className="state-box" style={{ padding: '20px' }}>
-              <span>Searching mappings across {sampleCount} samples…</span>
+            <div style={{ padding: '12px 4px 0' }}>
+              <div style={{
+                font: '11px var(--mono)', color: 'var(--text-dim)', marginBottom: 4,
+              }}>
+                Searching mappings across {sampleCount} samples…
+              </div>
+              <SkeletonTable columns={6} rows={6} />
             </div>
           )}
           {status === 'error' && (
@@ -252,8 +259,11 @@ export function MappingsPanel({
           )}
           {status === 'ok' && allRows.length === 0 && (
             <div className="state-box" style={{ padding: '20px' }}>
+              <div className="state-icon">∅</div>
               <span>
                 No mappings found for <strong>{annotationId}</strong>.
+                {(source ==='kegg' || source ==='enzyme') &&
+                ( <HelpTooltip text="Category/pathway-level annotations (e.g. a KEGG BRITE category or pathway, or an Enzyme class like 6.3.2) aren't tagged directly on individual genes — only leaf-level IDs (e.g. KO:K02112, EC:7.1.2.2) appear in gene mappings." />)}
               </span>
             </div>
           )}

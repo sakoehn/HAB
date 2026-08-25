@@ -319,43 +319,46 @@ describe('mapping row sorting', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('mapping table pagination', () => {
-  it('page 1 returns first 100 rows', () => {
+  it('page 1 returns first 25 rows', () => {
     const rows = Array.from({ length: 250 }, (_, i) => ({ i }))
-    expect(paginateRows(rows, 1)).toHaveLength(100)
+    expect(paginateRows(rows, 1)).toHaveLength(25)
     expect(paginateRows(rows, 1)[0].i).toBe(0)
-    expect(paginateRows(rows, 1)[99].i).toBe(99)
+    expect(paginateRows(rows, 1)[24].i).toBe(24)
   })
 
-  it('page 2 returns rows 100-199', () => {
+  it('page 2 returns rows 25-49', () => {
     const rows = Array.from({ length: 250 }, (_, i) => ({ i }))
-    expect(paginateRows(rows, 2)[0].i).toBe(100)
-    expect(paginateRows(rows, 2)[99].i).toBe(199)
+    expect(paginateRows(rows, 2)[0].i).toBe(25)
+    expect(paginateRows(rows, 2)[24].i).toBe(49)
   })
 
   it('last page returns remaining rows', () => {
-    const rows = Array.from({ length: 250 }, (_, i) => ({ i }))
-    expect(paginateRows(rows, 3)).toHaveLength(50)
+    // 260 rows, not 250 -- 250 divides evenly by the 25-row page size (10
+    // full pages exactly), which wouldn't actually exercise a partial last
+    // page. 260 leaves a 10-row remainder on page 11.
+    const rows = Array.from({ length: 260 }, (_, i) => ({ i }))
+    expect(paginateRows(rows, 11)).toHaveLength(10)
   })
 
-  it('totalPages for 250 rows = 3', () => {
-    expect(totalPages(250)).toBe(3)
+  it('totalPages for 250 rows = 10', () => {
+    expect(totalPages(250)).toBe(10)
   })
 
-  it('totalPages for 100 rows = 1', () => {
-    expect(totalPages(100)).toBe(1)
+  it('totalPages for 100 rows = 4', () => {
+    expect(totalPages(100)).toBe(4)
   })
 
-  it('totalPages for 101 rows = 2', () => {
-    expect(totalPages(101)).toBe(2)
+  it('totalPages for 101 rows = 5', () => {
+    expect(totalPages(101)).toBe(5)
   })
 
   it('totalPages for 0 rows = 0', () => {
     expect(totalPages(0)).toBe(0)
   })
 
-  it('single page: no pagination shown when rows ≤ 100', () => {
-    expect(totalPages(50)).toBe(1)
-    expect(totalPages(100)).toBe(1)
+  it('single page: no pagination shown when rows ≤ 25', () => {
+    expect(totalPages(10)).toBe(1)
+    expect(totalPages(25)).toBe(1)
   })
 })
 
