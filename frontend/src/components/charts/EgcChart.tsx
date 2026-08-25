@@ -1,7 +1,7 @@
 // @ts-expect-error plotly.js-dist-min ships no .d.ts; types from @types/plotly.js
 import PlotlyBase from 'plotly.js-dist-min'
 import createPlotlyComponent from 'react-plotly.js/factory'
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
@@ -24,6 +24,14 @@ function resolveCssVar(value: string, fallback: string): string {
   if (typeof document === 'undefined' || !value.startsWith('var(')) return value
   const name = value.slice(4, -1).trim()
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+// Zero-pads the hour so pill labels read unambiguously as 24h time
+// (raw JGI timestamps are unpadded, e.g. "1:00", "13:00" — display-only,
+// the underlying unpadded string is still what's used for Set membership).
+function padTime(time: string): string {
+  const [h, m] = time.split(':')
+  return `${(h ?? '').padStart(2, '0')}:${m ?? ''}`
 }
 
 export function EgcChart({
@@ -49,6 +57,7 @@ export function EgcChart({
   const [showStats, setShowStats]             = useState(false)
   const [tpPanelOpen, setTpPanelOpen]         = useState(false)
   const [selectedDates, setSelectedDates]     = useState<Set<string> | null>(null)
+  const [selectedTimes, setSelectedTimes]     = useState<Set<string> | null>(null)
   const [showNightShading, setShowNightShading] = useState(false)
   const [showTide, setShowTide]                 = useState(false)
   const [showDayBands, setShowDayBands]         = useState(false)
@@ -75,23 +84,39 @@ export function EgcChart({
       .filter(d => d.egc !== null)
   ), [data])
 
-  const allDates = useMemo(() => {
+  const [allDates, allTimes] = useMemo(() => {
     const seen  = new Set<string>()
     const dates: string[] = []
+    const times: string[] = []
     for (const pt of allPoints) {
       const day = pt.datetime.split(' ')[0] ?? ''
       if (!seen.has(day)) { seen.add(day); dates.push(day) }
+      const time = pt.datetime.split(' ')[1] ?? ''
+      if (!seen.has(time)) {seen.add(time); times.push(time)}
     }
-    return dates
+    times.sort((a,b) => parseInt(a) - parseInt(b))
+    return [dates, times]
   }, [allPoints])
+
+  // Date pills drop the year (M/D) by default -- fine for single-season data,
+  // but ambiguous once the dataset spans a year boundary, so show the full
+  // M/D/YY only when that's actually true.
+  const spansMultipleYears = useMemo(
+    () => new Set(allDates.map(d => d.split('/')[2])).size > 1,
+    [allDates],
+  )
 
   useEffect(() => {
     if (allDates.length > 0 && selectedDates === null) {
       setSelectedDates(new Set(allDates))
     }
+    if (allTimes.length > 0 && selectedTimes === null) {
+      setSelectedTimes(new Set(allTimes))
+    }
   }, [allDates]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const allSelected = selectedDates === null || selectedDates.size === allDates.length
+  const allTimesSelected = selectedTimes == null || selectedTimes.size === allTimes.length 
 
   const filteredPoints = useMemo(() =>
     allPoints.filter(d => {
@@ -101,9 +126,13 @@ export function EgcChart({
         const day = d.datetime.split(' ')[0] ?? ''
         if (!selectedDates.has(day)) return false
       }
+      if (!allTimesSelected && selectedTimes) {
+        const time = d.datetime.split(' ')[1] ?? ''
+        if (!selectedTimes.has(time)) return false
+      }
       return true
     }),
-  [allPoints, dateFrom, dateTo, selectedDates, allSelected])
+  [allPoints, dateFrom, dateTo, selectedDates, allSelected, selectedTimes, allTimesSelected])
 
   const processedPoints = useMemo(() => {
     let pts = (metric === 'norm_egc'
@@ -161,7 +190,7 @@ export function EgcChart({
         x0: toPlotlyDate(band.x1Ts),
         x1: toPlotlyDate(band.x2Ts),
         y0: 0, y1: 1,
-        fillcolor: 'rgba(0,0,0,0.035)',
+        fillcolor: 'rgba(0,0,0,0.07)',
         line: { width: 0 },
         layer: 'below',
       })
@@ -228,6 +257,10 @@ export function EgcChart({
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {
+    // Resolved fresh here (not memoized separately on an empty dep array) so
+    // it stays correct if this memo re-runs after a theme change, same
+    // approach as resolvedColor above.
+    const gridColor = resolveCssVar('var(--border-l)', '#d9d9d9')
     const base: Record<string, unknown> = {
       height: 320,
       margin: { t: 10, r: showTide ? 70 : 20, b: 30, l: 80 },
@@ -242,13 +275,13 @@ export function EgcChart({
         tickfont:    { size: 11, family: 'monospace' },
         tickangle:   -40,
         showgrid:    false,
-        linecolor:   '#d9d9d9',
+        linecolor:   gridColor,
         rangeslider: { visible: true, thickness: 0.06, bgcolor: 'rgba(0,0,0,0.02)' },
       },
       yaxis: {
         title:    { text: yLabel, font: { size: 10, family: 'monospace' } },
         tickfont: { size: 11, family: 'monospace' },
-        gridcolor: '#d9d9d9',
+        gridcolor: gridColor,
         zeroline:  false,
       },
     }
@@ -307,9 +340,14 @@ export function EgcChart({
     )
   }
 
-  const tpBadge = !allSelected && selectedDates
-    ? ` (${selectedDates.size} of ${allDates.length})`
-    : ''
+  const tpBadgeParts: string[] = []
+  if (!allSelected && selectedDates) {
+    tpBadgeParts.push(`${selectedDates.size} of ${allDates.length} dates`)
+  }
+  if (!allTimesSelected && selectedTimes) {
+    tpBadgeParts.push(`${selectedTimes.size} of ${allTimes.length} times`)
+  }
+  const tpBadge = tpBadgeParts.length > 0 ? ` (${tpBadgeParts.join(', ')})` : ''
 
   return (
     <div className="chart-card">
@@ -331,7 +369,7 @@ export function EgcChart({
             className={`toggle-pill sm ${tpPanelOpen ? 'on' : ''}`}
             onClick={() => setTpPanelOpen(o => !o)}
             title="Select which timepoints to display"
-            style={!allSelected ? { outline: '1.5px solid var(--teal)' } : undefined}
+            style={(!allSelected || !allTimesSelected) ? { outline: '1.5px solid var(--teal)' } : undefined}
           >
             ⚙ Timepoints{tpBadge}
           </button>
@@ -351,23 +389,29 @@ export function EgcChart({
       {showStats && <StatsPanel vals={egcVals} yLabel={yLabel} />}
 
       {/* ── Timepoint selector panel ── */}
-      {tpPanelOpen && allDates.length > 0 && (
+      {tpPanelOpen && allDates.length > 0 && allTimes.length > 0 && (
         <div className="expand-anim" style={{
           padding: '10px 14px 12px',
           background: 'var(--surface2)',
           borderRadius: 6,
           marginBottom: 10,
-          border: '1px solid var(--border)',
+          border: '1px solid var(--border-l)',
         }}>
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            marginBottom: 8, flexWrap: 'wrap',
+            font: '600 10px var(--mono)', color: 'var(--text-dim)',
+            textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 8,
+          }}>
+            Filter by:
+          </div>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            marginBottom: 3, flexWrap: 'wrap',
           }}>
             <span style={{
-              font: '600 10px var(--mono)', color: 'var(--text-dim)',
-              textTransform: 'uppercase', letterSpacing: '.1em',
+              font: '600 9px var(--mono)', color: 'var(--text-dim)',
+              textTransform: 'uppercase', letterSpacing: '.08em',
             }}>
-              Filter by date
+              Dates
             </span>
             <button
               className="btn ghost sm"
@@ -388,7 +432,9 @@ export function EgcChart({
             {allDates.map(day => {
               const active = selectedDates?.has(day) ?? true
               const parts  = day.split('/')
-              const label  = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : day
+              const label  = parts.length >= 2
+                ? (spansMultipleYears ? day : `${parts[0]}/${parts[1]}`)
+                : day
               return (
                 <button
                   key={day}
@@ -404,6 +450,53 @@ export function EgcChart({
                   style={{ fontFamily: 'var(--mono)', fontSize: 11 }}
                 >
                   {label}
+                </button>
+              )
+            })}
+          </div>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            marginTop: 8, marginBottom: 3, flexWrap: 'wrap',
+          }}>
+            <span style={{
+              font: '600 9px var(--mono)', color: 'var(--text-dim)',
+              textTransform: 'uppercase', letterSpacing: '.08em',
+            }}>
+              Times
+            </span>
+            <button
+              className="btn ghost sm"
+              onClick={() => setSelectedTimes(new Set(allTimes))}
+              style={{ fontSize: 10, padding: '1px 7px' }}
+            >
+              All
+            </button>
+            <button
+              className="btn ghost sm"
+              onClick={() => setSelectedTimes(new Set())}
+              style={{ fontSize: 10, padding: '1px 7px' }}
+            >
+              None
+            </button>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {allTimes.map(time => {
+              const active = selectedTimes?.has(time) ?? true
+              return (
+                <button
+                  key={time}
+                  className={`toggle-pill sm ${active ? 'on' : ''}`}
+                  onClick={() => {
+                    setSelectedTimes(prev => {
+                      const next = new Set(prev ?? allTimes)
+                      if (next.has(time)) next.delete(time)
+                      else next.add(time)
+                      return next
+                    })
+                  }}
+                  style={{ fontFamily: 'var(--mono)', fontSize: 11 }}
+                >
+                  {padTime(time)}
                 </button>
               )
             })}

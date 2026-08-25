@@ -42,10 +42,12 @@
  *   no BRENDA           — legacy links removed
  *
  * Dark mode contrast (WCAG AA):
- *   --text-dim          — passes ≥ 4.5:1 on dark bg
+ *   --text-dim          — passes ≥ 4.5:1 on dark bg, and sits dimmer than --text
  *   --text              — passes ≥ 4.5:1
  *   --text-h            — passes ≥ 7:1 (AAA)
  *   old --text-dim      — documents the original failing value
+ *   overcorrected --text-dim — documents the interim value that passed WCAG
+ *                              but was brighter than --text (backwards)
  *
  * About page calculations content:
  *   required terms      — EGC, norm_egc, Z-score, LOWESS, Spearman, CLR, etc.
@@ -495,19 +497,23 @@ function contrastRatio(hex1: string, hex2: string): number {
 }
 
 // Exact values from App.css [data-theme="dark"]
-// Hierarchy in dark mode (against #0c0f18 background):
-//   --text-dim  (#cbd5e1)  is the lightest of the three — most legible dim text
-//   --text      (#b8c4d8)  is the mid-tone body text
-//   --text-h    (#e8eeff)  is the brightest heading text
-// Note: TEXT_DIM > BODY_TEXT in luminance because dim text in dark mode is
-// paradoxically brighter than body text to achieve readable contrast on the
-// very dark background. The "dim" refers to reduced visual weight via opacity
-// in some contexts, not lower absolute luminance.
+// Hierarchy in dark mode (against #0c0f18 background), correctly ordered by
+// visual prominence: --text-h (brightest, headings) > --text (body) >
+// --text-dim (dimmest, secondary/hint text) > background.
+//
+// History: the original value (#5a6880, OLD_TEXT_DIM below) failed WCAG AA.
+// It was bumped to #cbd5e1 to fix that — but overshot and ended up *brighter*
+// than --text itself, backwards from what "dim" should mean (caught by an
+// independent UI review, not by these tests, which had locked the backwards
+// behavior in as intentional). #8194b6 fixes both problems at once: still
+// clears WCAG AA with room to spare, while sitting below --text in luminance
+// like the name promises.
 const DARK_BG      = '#0c0f18'
-const TEXT_DIM     = '#cbd5e1'  // --text-dim: readable accent / metadata text
+const TEXT_DIM     = '#8194b6'  // --text-dim: secondary / hint text (dimmer than body)
 const BODY_TEXT    = '#b8c4d8'  // --text: body / label text
 const HEADING      = '#e8eeff'  // --text-h: heading text (brightest)
 const OLD_TEXT_DIM = '#5a6880'  // original value that failed WCAG AA
+const OVERCORRECTED_TEXT_DIM = '#cbd5e1'  // interim value: passed WCAG AA but was brighter than BODY_TEXT — the backwards bug
 
 describe('dark mode text contrast — WCAG 2.1', () => {
   it('current --text-dim passes WCAG AA (≥ 4.5:1) on dark bg', () => {
@@ -534,11 +540,19 @@ describe('dark mode text contrast — WCAG 2.1', () => {
     expect(relativeLuminance(TEXT_DIM)).toBeGreaterThan(relativeLuminance(OLD_TEXT_DIM))
   })
 
-  it('TEXT_DIM is brighter than BODY_TEXT (both pass AA, dim is accent not darker)', () => {
-    // On a very dark background, --text-dim (#cbd5e1) is actually lighter than
-    // --text (#b8c4d8). Both pass WCAG AA. The "dim" label refers to reduced
-    // visual prominence in certain contexts, not lower luminance.
-    expect(relativeLuminance(TEXT_DIM)).toBeGreaterThan(relativeLuminance(BODY_TEXT))
+  it('TEXT_DIM is dimmer than BODY_TEXT (both pass AA, dim is lower-emphasis not brighter)', () => {
+    // --text-dim (#8194b6) sits below --text (#b8c4d8) in luminance, matching
+    // what "dim" actually means. Both still clear WCAG AA independently.
+    expect(relativeLuminance(TEXT_DIM)).toBeLessThan(relativeLuminance(BODY_TEXT))
+  })
+
+  it('the overcorrected interim value (#cbd5e1) is a documented regression, not current behavior', () => {
+    // Guards against reintroducing the backwards fix: OVERCORRECTED_TEXT_DIM
+    // passed WCAG AA (which is why it shipped) but was brighter than body
+    // text, which TEXT_DIM must not be.
+    expect(contrastRatio(OVERCORRECTED_TEXT_DIM, DARK_BG)).toBeGreaterThanOrEqual(4.5)
+    expect(relativeLuminance(OVERCORRECTED_TEXT_DIM)).toBeGreaterThan(relativeLuminance(BODY_TEXT))
+    expect(relativeLuminance(TEXT_DIM)).toBeLessThan(relativeLuminance(OVERCORRECTED_TEXT_DIM))
   })
 
   it('heading text (--text-h) is the brightest of the three', () => {
@@ -567,7 +581,7 @@ const ABOUT_CALC_TEXT = `
   Relative Abundance (norm_egc)
   norm_egc = EGC(annotation, sample) / total_coverage(sample)
   Z-score Normalisation
-  Z = ( EGC − μ ) / s where s = sample std dev (÷ n−1, Bessel-corrected)
+  Z = ( EGC − μ ) / σ where σ = population std dev (÷ n)
   LOWESS Smoothing
   local weighted linear regression span = ceil(bandwidth × n) tricube kernel
   Spearman CLR Correlation

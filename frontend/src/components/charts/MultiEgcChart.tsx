@@ -1,7 +1,7 @@
 // @ts-expect-error plotly.js-dist-min ships no .d.ts; types from @types/plotly.js
 import PlotlyBase from 'plotly.js-dist-min'
 import createPlotlyComponent from 'react-plotly.js/factory'
-import React, { useState, useRef, useMemo } from 'react'
+import { useState, useRef, useMemo } from 'react'
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
@@ -37,6 +37,7 @@ type SeriesEntry = {
   color:        string
   source:       string
   isGrouped?:   boolean
+  scaffoldsDisabled?: boolean
 }
 
 export function MultiEgcChart({
@@ -172,7 +173,7 @@ export function MultiEgcChart({
         x0: toPlotlyDate(band.x1Ts),
         x1: toPlotlyDate(band.x2Ts),
         y0: 0, y1: 1,
-        fillcolor: 'rgba(0,0,0,0.035)',
+        fillcolor: 'rgba(0,0,0,0.07)',
         line: { width: 0 },
         layer: 'below',
       })
@@ -252,6 +253,7 @@ export function MultiEgcChart({
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {
+    const gridColor = resolveCssVar('var(--border-l)', '#d9d9d9')
     const base: Record<string, unknown> = {
       height: 340,
       margin: { t: 10, r: showTide ? 70 : 20, b: 30, l: 80 },
@@ -266,13 +268,13 @@ export function MultiEgcChart({
         tickfont:    { size: 11, family: 'monospace' },
         tickangle:   -40,
         showgrid:    false,
-        linecolor:   '#d9d9d9',
+        linecolor:   gridColor,
         rangeslider: { visible: true, thickness: 0.06, bgcolor: 'rgba(0,0,0,0.02)' },
       },
       yaxis: {
         title:    { text: yLabel, font: { size: 10, family: 'monospace' } },
         tickfont: { size: 11, family: 'monospace' },
-        gridcolor: '#d9d9d9',
+        gridcolor: gridColor,
         zeroline:  false,
       },
     }
@@ -357,11 +359,13 @@ export function MultiEgcChart({
               <div className="legend-item" key={s.annotationId}>
                 <div className="legend-dot" style={{ background: s.color }} />
                 <span title={s.name ?? s.annotationId}>{s.annotationId}</span>
-                <ScaffoldBtn
-                  annotationId={s.annotationId}
-                  source={s.source}
-                  onGoExplore={onGoScaffoldExplore}
-                />
+                {!s.scaffoldsDisabled && (
+                  <ScaffoldBtn
+                    annotationId={s.annotationId}
+                    source={s.source}
+                    onGoExplore={onGoScaffoldExplore}
+                  />
+                )}
               </div>
             ))}
           </div>

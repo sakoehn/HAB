@@ -1,7 +1,7 @@
 // @ts-expect-error plotly.js-dist-min ships no .d.ts; types from @types/plotly.js
 import PlotlyBase from 'plotly.js-dist-min'
 import createPlotlyComponent from 'react-plotly.js/factory'
-import React, { useState, useRef, useMemo } from 'react'
+import { useState, useRef, useMemo } from 'react'
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
@@ -136,7 +136,7 @@ export function GroupedEgcChart({
         x0: toPlotlyDate(band.x1Ts),
         x1: toPlotlyDate(band.x2Ts),
         y0: 0, y1: 1,
-        fillcolor: 'rgba(0,0,0,0.035)',
+        fillcolor: 'rgba(0,0,0,0.07)',
         line: { width: 0 },
         layer: 'below',
       })
@@ -198,6 +198,7 @@ export function GroupedEgcChart({
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {
+    const gridColor = resolveCssVar('var(--border-l)', '#d9d9d9')
     const base: Record<string, unknown> = {
       height: 280,
       margin: { t: 10, r: showTide ? 70 : 20, b: 30, l: 80 },
@@ -212,13 +213,13 @@ export function GroupedEgcChart({
         tickfont:    { size: 11, family: 'monospace' },
         tickangle:   -40,
         showgrid:    false,
-        linecolor:   '#d9d9d9',
+        linecolor:   gridColor,
         rangeslider: { visible: true, thickness: 0.06, bgcolor: 'rgba(0,0,0,0.02)' },
       },
       yaxis: {
         title:    { text: yLabel, font: { size: 10, family: 'monospace' } },
         tickfont: { size: 11, family: 'monospace' },
-        gridcolor: '#d9d9d9',
+        gridcolor: gridColor,
         zeroline:  false,
       },
     }
