@@ -129,6 +129,18 @@ CREATE TABLE IF NOT EXISTS scaffolds(
     scaffold_id         TEXT NOT NULL,
     gene_count          INTEGER NOT NULL   -- the count value from entry["scaffolds"][scaffold]
 );
+
+CREATE TABLE IF NOT EXISTS correlations(
+    id     INTEGER PRIMARY KEY,
+    catalog_id_a    INTEGER NOT NULL REFERENCES annotation_catalog(id),
+    catalog_id_b    INTEGER NOT NULL REFERENCES annotation_catalog(id),
+    mode    TEXT NOT NULL, --'cross' | 'within',
+    spearman_r      REAL NOT NULL,  
+    lag_samples     INTEGER NOT NULL,
+    p_value     REAL,
+    n_tps     INTEGER NOT NULL,
+    UNIQUE (catalog_id_a, catalog_id_b, mode)
+);
 """
 
 

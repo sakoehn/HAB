@@ -91,9 +91,3 @@ DATA_BACKEND = os.getenv("DATA_BACKEND", "json")
 # Connection settings for the SQLite backend (see FastAPI/scripts/migrate_mappings_to_sql.py
 # and FastAPI/scripts/create_sql_schema.py). Only used when DATA_BACKEND=sql.
 SQLITE_DB_PATH = os.path.normpath(os.path.join(_HERE, "../../hab_mappings.db"))
-
-# Hardcoded until the dataset_manifest "active version" pointer described in
-# MONGODB_MIGRATION_FOLLOWUP.md Phase 3 is actually built -- fine for now
-# since only one dataset_version exists. Revisit once a second ingestion
-# run happens and something needs to choose between them.
-ACTIVE_DATASET_VERSION = "2026-07-28-01"

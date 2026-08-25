@@ -37,10 +37,6 @@ tests/sql/test_mappings_sql.py), not "index everything":
       strain is effectively as unique as full_path itself, which is
       already indexed via its UNIQUE constraint.
 
-Not indexed (yet): mappings.taxon_path_id (the reverse FK direction --
-"which genes have this exact taxon" hasn't come up as a real query need
-yet). Add it if/when an actual query needs it.
-
 Run:
     python scripts/create_sql_indexes.py
 """
@@ -64,6 +60,9 @@ CREATE INDEX IF NOT EXISTS idx_gene_cog_mapping_id ON gene_cog(mapping_id);
 
 CREATE INDEX IF NOT EXISTS idx_gene_enzyme_ec_id ON gene_enzyme(ec_id);
 CREATE INDEX IF NOT EXISTS idx_gene_enzyme_mapping_id ON gene_enzyme(mapping_id);
+
+CREATE INDEX IF NOT EXISTS idx_mappings_kegg_id ON mappings(kegg_id);
+CREATE INDEX IF NOT EXISTS idx_mappings_taxon_path_id ON mappings(taxon_path_id);
 
 CREATE INDEX IF NOT EXISTS idx_taxon_paths_phylum ON taxon_paths(phylum);
 CREATE INDEX IF NOT EXISTS idx_taxon_paths_class ON taxon_paths(class_);
