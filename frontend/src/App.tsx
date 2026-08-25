@@ -5,7 +5,7 @@
 // Pages are always mounted (display toggled via style) so their state, scroll
 // position, and loaded data survive navigation without re-fetching.
 
-import React, { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 
 import type { Page, Theme, SharedAnnotation } from './types'
 import { NAV_ITEMS, resetSourceCounters } from './constants'
@@ -116,6 +116,20 @@ export default function App() {
     setCompareStateRaw(makeDefaultCompareState())
     setTaxonomyStateRaw(makeDefaultTaxonomyState())
     resetSourceCounters()
+  }
+
+  function handleResetAnalyze() {
+    setAnalyzeStateRaw(makeDefaultAnalyzeState())
+  }
+  function handleResetExplore() {
+    setResetKey(k => k + 1)
+    setExploreStateRaw(makeDefaultExploreState())
+  }
+  function handleResetCompare() {
+    setCompareStateRaw(makeDefaultCompareState())
+  }
+  function handleResetTaxonomy() {
+    setTaxonomyStateRaw(makeDefaultTaxonomyState())
   }
 
   // ── Cross-page navigation ─────────────────────────────────────────────
@@ -263,6 +277,7 @@ export default function App() {
             onSendToCompare={handleSendToCompare}
             onGoScaffoldExplore={handleGoScaffoldExplore}
             onGoScaffoldExploreGroup={handleGoScaffoldExploreGroup}
+            onReset={handleResetAnalyze}
           />
         </div>
 
@@ -275,6 +290,7 @@ export default function App() {
             dataDateRange={dataDateRange}
             onGoScaffoldExplore={handleGoScaffoldExplore}
             onGoScaffoldExploreGroup={handleGoScaffoldExploreGroup}
+            onReset={handleResetCompare}
           />
         </div>
 
@@ -287,6 +303,7 @@ export default function App() {
             indexReady={indexReady}
             onSendToAnalyze={handleSendToAnalyze}
             onGoScaffoldExplore={handleGoScaffoldExplore}
+            onReset={handleResetExplore}
           />
         </div>
 
@@ -295,6 +312,8 @@ export default function App() {
             state={taxonomyState}
             setState={setTaxonomyState}
             dataDateRange={dataDateRange}
+            onGoScaffoldExplore={handleGoScaffoldExplore}
+            onReset={handleResetTaxonomy}
           />
         </div>
 

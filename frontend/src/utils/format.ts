@@ -249,7 +249,7 @@ function parseGroupDate(dateStr: string): Date {
 // unchanged — only the lookup mechanism changed, not the function's role.
 
 export function makeTickFormatter(
-  points: { datetime: string; ts: number }[],
+  _points: { datetime: string; ts: number }[],
   uniqueDayCount: number,
 ): (value: number) => string {
   if (uniqueDayCount > 2) {

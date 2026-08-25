@@ -10,7 +10,6 @@
  * --------
  * makeDefaultCompareState:
  *   default query is empty string
- *   default querySource is kegg
  *   default searchResults is []
  *   default searchStatus is idle
  *   default entries is []
@@ -21,7 +20,7 @@
  * ComparePage — shell:
  *   renders "Compare Annotations" heading
  *   search input renders with correct placeholder
- *   source selector renders with all 4 sources
+ *   no source selector needed before searching -- search spans all 4 sources at once
  *   empty state message rendered when no entries
  *   "Find" button present and enabled
  *   "Find" button disabled when 4 entries loaded
@@ -67,6 +66,8 @@
  * ComparePage — deduplication:
  *   adding same annotation twice is a no-op
  *   search results deduplicate by annotation_id
+ *   search results with the same annotation_id but different sources are NOT deduplicated against each other
+ *   checking a result row only selects that row's (annotation_id, source) pair, not same-id rows from other sources
  *
  * Run: npx vitest run src/tests/compare-page.component.test.tsx
  */
@@ -199,6 +200,7 @@ function ManagedComparePage({
       initialAnnotations={pending}
       onConsumed={handleConsumed}
       dataDateRange={dataDateRange}
+      onReset={vi.fn()}
     />
   )
 }
@@ -223,10 +225,6 @@ afterEach(() => {
 describe('makeDefaultCompareState', () => {
   it('default query is empty string', () => {
     expect(makeDefaultCompareState().query).toBe('')
-  })
-
-  it('default querySource is kegg', () => {
-    expect(makeDefaultCompareState().querySource).toBe('kegg')
   })
 
   it('default searchResults is empty array', () => {
@@ -278,21 +276,27 @@ describe('ComparePage — shell', () => {
     ).toBeInTheDocument()
   })
 
-  it('source selector renders with all 4 sources', async () => {
+  it('no source selector needed before searching -- search spans all 4 sources at once', async () => {
     render(<ManagedComparePage />)
-    await screen.findByText('Compare Annotations')
-    const select = screen.getByRole('combobox') as HTMLSelectElement
-    const opts   = Array.from(select.options).map(o => o.value)
-    expect(opts).toContain('kegg')
-    expect(opts).toContain('cog')
-    expect(opts).toContain('enzyme')
-    expect(opts).toContain('taxonomy')
+    const input = await screen.findByPlaceholderText(/search annotation id or name/i)
+    await userEvent.type(input, 'K02014')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+
+    await waitFor(() => {
+      const call = mockFetch.mock.calls.find(([url]) => String(url).includes('/api/search/annotations'))
+      expect(call).toBeTruthy()
+      const url = String(call![0])
+      expect(url).toContain('sources=kegg')
+      expect(url).toContain('sources=cog')
+      expect(url).toContain('sources=enzyme')
+      expect(url).toContain('sources=taxonomy')
+    })
   })
 
   it('empty state message rendered when no entries', async () => {
     render(<ManagedComparePage />)
     await waitFor(() => {
-      expect(screen.getByText(/search for annotations above/i)).toBeInTheDocument()
+      expect(document.querySelector('.first-run-hint')).toBeInTheDocument()
     })
   })
 
@@ -537,7 +541,7 @@ describe('ComparePage — entries panel', () => {
     const removeBtn = screen.getByText('×')
     await userEvent.click(removeBtn)
     await waitFor(() => {
-      expect(screen.getByText(/search for annotations above/i)).toBeInTheDocument()
+      expect(document.querySelector('.first-run-hint')).toBeInTheDocument()
     })
   })
 })
@@ -723,6 +727,46 @@ describe('ComparePage — deduplication', () => {
     await waitFor(() => {
       expect(screen.getByText(/1 results?/i)).toBeInTheDocument()
     })
+  })
+
+  it('search results with the same annotation_id but different sources are NOT deduplicated against each other', async () => {
+    // Same annotation_id string, but a real different source -- e.g. a COG
+    // ID that happens to collide with a KEGG ID string. Must NOT be
+    // collapsed into one result the way a genuine same-source duplicate is.
+    const crossSourceSearch = {
+      data: [SEARCH_RESULT_1, { ...SEARCH_RESULT_1, source: 'cog', name: 'Different annotation, same ID string' }],
+      total: 2,
+    }
+    setupMocks({ searchData: crossSourceSearch })
+    render(<ManagedComparePage />)
+    const input = await screen.findByPlaceholderText(/search annotation id or name/i)
+    await userEvent.type(input, 'K02014')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/2 results?/i)).toBeInTheDocument()
+    })
+  })
+
+  it("checking a result row only selects that row's (annotation_id, source) pair, not same-id rows from other sources", async () => {
+    const crossSourceSearch = {
+      data: [SEARCH_RESULT_1, { ...SEARCH_RESULT_1, source: 'cog', name: 'Different annotation, same ID string' }],
+      total: 2,
+    }
+    setupMocks({ searchData: crossSourceSearch })
+    render(<ManagedComparePage />)
+    const input = await screen.findByPlaceholderText(/search annotation id or name/i)
+    await userEvent.type(input, 'K02014')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+    await waitFor(() => expect(screen.getByText(/2 results?/i)).toBeInTheDocument())
+
+    const checkboxes = screen.getAllByRole('checkbox').filter(cb => cb.closest('label') === null)
+    await userEvent.click(checkboxes[0])
+
+    // Only the clicked row's checkbox should be checked -- the other
+    // same-ID, different-source row must remain unchecked.
+    expect((checkboxes[0] as HTMLInputElement).checked).toBe(true)
+    expect((checkboxes[1] as HTMLInputElement).checked).toBe(false)
   })
 
   it('adding a duplicate annotation via initialAnnotations is a no-op', async () => {

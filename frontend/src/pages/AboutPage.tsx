@@ -3,8 +3,6 @@
 // usage guide, and API endpoint reference.
 // No props, no state — purely informational.
 
-import React from 'react'
-
 export function AboutPage() {
   return (
     <div className="page-fade">
@@ -95,14 +93,17 @@ export function AboutPage() {
                 padding:     '2px 6px',
                 borderRadius: 4,
               }}>
-                norm_egc = EGC(annotation, sample) / total_coverage(sample)
+                norm_egc = EGC(annotation, sample) / Σ scaffold ( gene_count × coverage ), summed over ALL scaffolds in the sample
               </code>
               <br />
               <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
-                Divides raw EGC by the total sequencing depth of the sample. Removes
-                sequencing effort bias — samples sequenced more deeply are directly
-                comparable to shallower ones. Use the Relative Abundance metric when
-                comparing relative abundance across samples.
+                Divides raw EGC by that same gene-weighted depth sum, but computed
+                across every scaffold in the sample rather than just this annotation's.
+                This bounds norm_egc to [0, 1] — it's the fraction of all annotated gene
+                copies in the sample that belong to this annotation — and removes
+                sequencing-depth bias without letting high-coverage scaffolds push values
+                above 1 (a plain total-coverage denominator could). Use the Relative
+                Abundance metric when comparing across samples.
               </span>
             </p>
 
@@ -116,7 +117,7 @@ export function AboutPage() {
                 padding:     '2px 6px',
                 borderRadius: 4,
               }}>
-                Z = ( EGC − μ ) / s &nbsp;&nbsp; where s = sample std dev (÷ n−1, Bessel-corrected)
+                Z = ( EGC − μ ) / σ &nbsp;&nbsp; where σ = population std dev (÷ n)
               </code>
               <br />
               <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
@@ -242,8 +243,8 @@ export function AboutPage() {
                 Metric:
               </strong>{' '}
               <em>EGC</em> — raw values.{' '}
-              <em>Relative Abundance</em> — depth-normalised EGC (norm_egc = egc / total sample
-              sequencing depth), directly comparable across samples.{' '}
+              <em>Relative Abundance</em> — depth-normalised EGC (norm_egc = egc /
+              gene-weighted total depth, bounded to [0, 1]), directly comparable across samples.{' '}
               <strong style={{ color: 'var(--text-dim)' }}>
                 Standardize:
               </strong>{' '}
@@ -303,8 +304,8 @@ export function AboutPage() {
                'Spearman+lag correlation, cross-source or within-source parent-filtered. Returns spearman_r, lag_hours, p_value, n_pairs. Add &skip_pvalue=true for instant exploratory results.'],
               ['/api/annotations/scaffolds/summary?source=…&annotation_id=…',
                'Per-sample scaffold and gene counts for one annotation'],
-              ['/api/annotations/scaffolds?source=…&annotation_id=…',
-               'Individual scaffold names and gene counts across all samples'],
+              ['/api/annotations/scaffolds?source=…&annotation_id=…&sample=…&page=1&page_size=500',
+               'Individual scaffold names and gene counts, paginated — sample= strongly recommended'],
               ['/api/status',
                'Index build status and dataset date range (date_min, date_max)'],
             ] as [string, string][]).map(([path, desc], i) => (

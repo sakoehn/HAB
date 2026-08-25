@@ -13,7 +13,7 @@
 
   --text:      #b8c4d8;
   --text-h:    #e8eeff;
-  --text-dim:  #cbd5e1;  
+  --text-dim:  #8194b6;
 
   --teal:      #3dd9b8;
   --teal-dim:  rgba(61,217,184,.1);
@@ -96,7 +96,7 @@ html, body, #root {
 
 #root {
   display: grid;
-  grid-template-columns: var(--sidebar-w) 1fr;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   grid-template-rows: var(--topbar-h) 1fr;
   height: 100vh;
   overflow: hidden;
@@ -239,6 +239,8 @@ select.field { cursor: pointer; }
 .refresh-btn svg { transition: transform .45s ease; }
 .refresh-btn:hover svg { transform: rotate(180deg); }
 [data-theme="light"] .refresh-btn { background: rgba(0,0,0,.04); }
+.refresh-btn.sm { padding: 3px 8px; font-size: 10px; gap: 4px; }
+.page-header-actions { display: flex; gap: 8px; align-items: center; align-self: flex-end; }
 
 /* â”€â”€ Sidebar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .sidebar {
@@ -309,11 +311,22 @@ select.field { cursor: pointer; }
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 16px; flex-wrap: wrap;
 }
-.page-header-left { display: flex; flex-direction: column; gap: 5px; }
+.page-header-left {
+  display: flex; flex-direction: column; gap: 5px;
+  /* Without this, flex's default min-width:auto lets this item's width
+     track its longest content (varies by page -- a longer subtitle string
+     shifts the effective wrap threshold for .page-header-actions next to
+     it), so the action button drops to its own line on some pages but not
+     others at the identical viewport width. min-width:0 lets the subtitle
+     wrap its own text freely instead, so wrapping stays consistent
+     regardless of subtitle length. */
+  min-width: 0;
+  flex: 1 1 auto;
+}
 .page-header-left .subtitle {
   font: 400 11px var(--mono); color: var(--text-dim); letter-spacing: .04em;
 }
-.page-header-actions { display: flex; gap: 8px; align-items: center; }
+.page-header-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
 .page-body { padding: 28px 36px; display: flex; flex-direction: column; gap: 24px; }
 
 /* â”€â”€ Search bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
@@ -442,8 +455,15 @@ select.field { cursor: pointer; }
 }
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+  /* Always exactly 9 fields (n, Mean, Median, Std Dev s, CV, Min, Q1, Q3,
+     Max) -- fixed column counts that are factors of 9 (3 or 9) so a row is
+     always complete, unlike width-driven auto-fill which can land on any
+     count and orphan the last field alone on its own row. */
+  grid-template-columns: repeat(3, 1fr);
   gap: 6px;
+}
+@media (min-width: 640px) {
+  .stats-grid { grid-template-columns: repeat(9, 1fr); }
 }
 .stat-cell { display: flex; flex-direction: column; gap: 2px; }
 .stat-cell-label {
@@ -557,6 +577,48 @@ select.field { cursor: pointer; }
 .state-box.error { color: var(--coral); }
 .state-box.error .state-icon { opacity: .7; }
 
+/* -- Skeleton loading placeholders ------------------------------------- */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface2) 25%, var(--surface3) 37%, var(--surface2) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+.skeleton-table { display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+.skeleton-table-row { display: grid; gap: 16px; align-items: center; }
+.skeleton-table-header { padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+
+.skeleton-chart { display: flex; gap: 8px; padding: 4px 0; }
+.skeleton-chart-yaxis { display: flex; flex-direction: column; justify-content: space-between; padding: 6px 0; }
+.skeleton-chart-plot  { flex: 1; }
+
+.skeleton-stat-tiles {
+  display: flex; border-bottom: 1px solid var(--border); background: var(--surface3);
+}
+.skeleton-stat-tile {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  padding: 10px 8px; border-right: 1px solid var(--border); gap: 6px;
+}
+.skeleton-stat-tile:last-child { border-right: none; }
+
+.skeleton-tree { display: flex; flex-direction: column; gap: 8px; padding: 6px 4px; }
+.skeleton-tree-row { display: flex; align-items: center; gap: 8px; }
+
+/* Visually hidden but still announced by screen readers -- used to pair a
+   real status message with skeleton placeholders, which are aria-hidden. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
 /* â”€â”€ Tooltip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .chart-tooltip {
   background: var(--surface2); border: 1px solid var(--border-l);
@@ -584,6 +646,11 @@ select.field { cursor: pointer; }
 .date-range { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .date-range-label { font: 400 11px var(--mono); color: var(--text-dim); white-space: nowrap; letter-spacing: .04em; }
 .date-field { width: 135px; padding: 6px 10px; font-size: 12px; }
+/* Native calendar icon/dropdown otherwise ignores the app's theme entirely
+   (always renders in the OS's light-mode chrome) -- color-scheme tells the
+   browser to draw its own date-picker UI in a theme-appropriate palette. */
+[data-theme="dark"]  .date-field { color-scheme: dark; }
+[data-theme="light"] .date-field { color-scheme: light; }
 
 /* â”€â”€ Pagination â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .pagination {
@@ -601,10 +668,10 @@ select.field { cursor: pointer; }
 
 .sidebar-toggle-btn {
   background: none; border: none; cursor: pointer;
-  color: var(--text-dim); font-size: 11px; padding: 4px 6px;
+  color: var(--text-dim); font-size: 14px; padding: 6px 9px;
   border-radius: 5px; transition: all .15s; flex-shrink: 0; line-height: 1;
 }
-.sidebar-toggle-btn:hover { color: var(--text-h); background: rgba(255,255,255,.05); }
+.sidebar-toggle-btn:hover { color: var(--text-h); background: rgba(255,255,255,.08); }
 
 /* â”€â”€ Multi-term results columns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 /* Each term gets its own column; columns scroll independently if overflow */
@@ -634,7 +701,7 @@ select.field { cursor: pointer; }
 .explore-card-label  { font: 600 13px var(--sans); color: var(--text-h); margin-bottom: 2px; }
 .explore-card-desc   { font: 400 10px var(--mono); color: var(--text-dim); letter-spacing: .02em; }
 .explore-card.active .explore-card-label { color: var(--teal); }
-.explore-card.active .explore-card-desc  { color: var(--teal); opacity: .7; }
+.explore-card.active .explore-card-desc  { color: var(--teal); }
 
 .explore-panel {
   border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
@@ -684,7 +751,7 @@ select.field { cursor: pointer; }
 /* Two-column workspace â€” align-items:flex-start so each col is its natural height */
 .al-workspace {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 320px minmax(0, 1fr);
   align-items: flex-start;
   flex: 1;
 }
@@ -1076,7 +1143,7 @@ select.field { cursor: pointer; }
 
 .al-drawer-body {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: 220px minmax(0, 1fr);
   flex: 1;
   overflow: hidden;
   min-height: 0;

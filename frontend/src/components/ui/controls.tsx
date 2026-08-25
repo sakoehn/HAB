@@ -76,26 +76,37 @@ export function ThemeToggle({
 // ── ResetBtn ───────────────────────────────────────────────────────────────
 // Rotating arrow button that resets all page state.
 
-export function ResetBtn({ onClick }: { onClick: () => void }) {
+export function ResetBtn({ 
+  onClick, 
+  title = 'Reset all page states',
+  label='Reset',
+  small=false,
+ }: { 
+  onClick: () => void
+  title?: string
+  label?: string
+  small?: boolean
+
+}) {
   return (
     <button
-      className="refresh-btn"
+      className={`refresh-btn${small ? ' sm' : ''}`}
       onClick={onClick}
-      title="Reset all page states"
+      title={title}
     >
       <svg
         viewBox="0 0 20 20"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.8"
+        strokeWidth="1.5"
         strokeLinecap="round"
-        width="15"
-        height="15"
+        width={small ? 12 : 15}
+        height={small ? 12 : 15}
       >
         <path d="M4 4v5h5M16 16v-5h-5" />
         <path d="M4 9a7 7 0 0 1 12.9-2.7M16 11a7 7 0 0 1-12.9 2.7" />
       </svg>
-      <span>Reset</span>
+      <span>{label}</span>
     </button>
   )
 }

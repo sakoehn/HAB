@@ -12,7 +12,7 @@
 // Designed to be reusable — takes only the four metadata fields it needs,
 // no dependency on page-level state.
 
-import React, { useState } from 'react'
+import { useState } from 'react'
 
 import { SOURCE_TAG_CLS, expandParentLabel } from '../../constants'
 import { ExternalLinks } from '../ui/ExternalLinks'

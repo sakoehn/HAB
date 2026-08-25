@@ -361,7 +361,11 @@ describe('App shell', () => {
 
   it('reset button is present', async () => {
     render(<App />)
-    expect(await screen.findByText('Reset')).toBeInTheDocument()
+    // Scoped by title -- every page now also has its own "Reset" button
+    // (added so resetting one page doesn't clear the others), so a bare
+    // getByText('Reset') would match multiple elements since all pages
+    // stay mounted simultaneously (display:none, not conditional render).
+    expect(await screen.findByTitle('Reset all page states')).toBeInTheDocument()
   })
 
   it('does NOT render Basic/Advanced mode toggle (removed feature)', async () => {
@@ -383,13 +387,26 @@ describe('AnalyzePage — search', () => {
     expect(await getAnalyzeSearchInput()).toBeInTheDocument()
   })
 
-  it('renders source checkboxes for all four sources', async () => {
+  it('search queries all four sources at once -- no source picker needed', async () => {
+    // Previously asserted by checking for stray "kegg"/"cog"/etc. text
+    // anywhere in the whole rendered <App/>, which happened to pass only
+    // because ComparePage's old (now-removed) source dropdown was always
+    // visible -- not because it verified anything about Analyze's own
+    // search. Analyze has no source picker at all; it always queries every
+    // source, so the real check is the outgoing request itself.
     render(<App />)
+    const input = await getAnalyzeSearchInput()
+    await userEvent.type(input, 'K00001')
+    await userEvent.keyboard('{Enter}')
+
     await waitFor(() => {
-      expect(screen.getAllByText('kegg').length).toBeGreaterThan(0)
-      expect(screen.getAllByText('cog').length).toBeGreaterThan(0)
-      expect(screen.getAllByText('enzyme').length).toBeGreaterThan(0)
-      expect(screen.getAllByText('taxonomy').length).toBeGreaterThan(0)
+      const call = mockFetch.mock.calls.find(([url]) => String(url).includes('/api/search/annotations'))
+      expect(call).toBeTruthy()
+      const url = String(call![0])
+      expect(url).toContain('sources=kegg')
+      expect(url).toContain('sources=cog')
+      expect(url).toContain('sources=enzyme')
+      expect(url).toContain('sources=taxonomy')
     })
   })
 
@@ -928,12 +945,21 @@ describe('ExplorePage — help tooltips', () => {
       selector: '.explore-card-label',
     })
     await userEvent.click(cardLabel)
+    let groupTrendButton: HTMLElement
     await waitFor(() => {
-      expect(screen.getByText('Individual annotations')).toBeInTheDocument()
+      groupTrendButton = screen.getByText('Group trend & detail')
+      expect(groupTrendButton).toBeInTheDocument()
     })
-    await userEvent.click(screen.getByTitle('Help'))
+    // Scoped to this toggle's own container, not the whole document -- App
+    // keeps every page mounted (display:none, not unmounted) even when
+    // navigated away from, and HelpTooltip's button title is always the
+    // generic "Help" regardless of content, so a global getByTitle('Help')
+    // is ambiguous the moment any second HelpTooltip is simultaneously
+    // present anywhere in the app, not just on this page.
+    const container = within(groupTrendButton!.closest('div') as HTMLElement)
+    await userEvent.click(container.getByTitle('Help'))
     await waitFor(() => {
-      expect(screen.getByText(/adds up all annotations under the same parent/i)).toBeInTheDocument()
+      expect(screen.getByText(/breaking that total down by individual annotation/i)).toBeInTheDocument()
     })
   })
 
@@ -1056,13 +1082,13 @@ describe('ScaffoldExplorePanel — help tooltips', () => {
     })
     await userEvent.click(cardLabel)
     await waitFor(() => {
-      expect(screen.getByText(/Showing top 2 kegg annotations/i)).toBeInTheDocument()
+      expect(screen.getByText(/Showing top 2 taxonomy annotations/i)).toBeInTheDocument()
     })
   }
 
   it('"Suggested" terms banner has a help tooltip', async () => {
     await openScaffoldPanelWithTwoTerms()
-    const banner = screen.getByText(/Showing top 2 kegg annotations/i).closest('div') as HTMLElement
+    const banner = screen.getByText(/Showing top 2 taxonomy annotations/i).closest('div') as HTMLElement
     await userEvent.click(within(banner).getByTitle('Help'))
     await waitFor(() => {
       expect(screen.getByText(/replaced automatically if you change the source/i)).toBeInTheDocument()
@@ -1337,6 +1363,73 @@ describe('MappingsPanel', () => {
     const toggles = screen.queryAllByText(/View Annotation Mappings/i)
     // Should appear exactly once per chart card
     expect(toggles.length).toBe(1)
+  })
+
+  it('shows a help tooltip when no kegg mappings found', async () => {
+    // DEFAULT_SEARCH's result card is source=kegg, so the default
+    // renderWithChartAndWait() flow already exercises the kegg case.
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/mappings/search'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [], total: 0 }) })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    await renderWithChartAndWait()
+    await userEvent.click(screen.getByText(/View Annotation Mappings/i))
+    await waitFor(() => screen.getByText('Load'))
+    await userEvent.click(screen.getByText('Load'))
+    await waitFor(() => {
+      expect(screen.getByText(/no mappings found/i)).toBeInTheDocument()
+    })
+    const stateBox = screen.getByText(/no mappings found/i).closest('.state-box') as HTMLElement
+    expect(within(stateBox).getByTitle('Help')).toBeInTheDocument()
+  })
+
+  it('does NOT show a help tooltip when no cog mappings found', async () => {
+    const cogSearch = {
+      data: [{
+        annotation_id: 'COG0001',
+        source:        'cog',
+        name:          'ring hydroxylase',
+        parent:        null,
+        mean_egc:      100.0,
+        max_egc:       200.0,
+        sample_count:  128,
+        value:         { egc: 100.0, norm_egc: 0.00001 },
+        timepoint:     null,
+        sample:        '',
+      }],
+      total: 1,
+    }
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/mappings/search'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [], total: 0 }) })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => cogSearch })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    await renderWithChartAndWait()
+    await userEvent.click(screen.getByText(/View Annotation Mappings/i))
+    await waitFor(() => screen.getByText('Load'))
+    await userEvent.click(screen.getByText('Load'))
+    await waitFor(() => {
+      expect(screen.getByText(/no mappings found/i)).toBeInTheDocument()
+    })
+    const stateBox = screen.getByText(/no mappings found/i).closest('.state-box') as HTMLElement
+    expect(within(stateBox).queryByTitle('Help')).not.toBeInTheDocument()
   })
 })
 
@@ -1674,7 +1767,7 @@ describe('ExplorePage — AnnotationsByParentPanel retry', () => {
       selector: '.explore-card-label',
     })
     await userEvent.click(cardLabel)
-    await waitFor(() => screen.getByText('Individual annotations'))
+    await waitFor(() => screen.getByText('Group trend & detail'))
   }
 
   it('top-level fetch failure shows a retry button', async () => {

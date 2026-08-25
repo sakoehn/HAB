@@ -251,8 +251,10 @@ export type ScaffoldExploreTerm = {
   expanded:            boolean
   expandedSample:      string | null
   detailRows:          ScaffoldDetailRow[]
+  detailTotal:         number
   detailStatus:        ApiStatus
   detailShowAll:       boolean
+  detailLoadingMore:   boolean
   suggested:           boolean
   chartVisible:        boolean
 }

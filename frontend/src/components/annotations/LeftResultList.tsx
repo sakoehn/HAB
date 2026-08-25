@@ -11,7 +11,7 @@
 // All checked state and action callbacks are owned by AnalyzePage —
 // this component is purely presentational given those values.
 
-import React, { useMemo, useRef, useState, useEffect } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 
 import type { AnnotationItem, SeriesCache } from '../../types'
 import { SOURCE_COLORS, SOURCE_TAG_CLS } from '../../constants'
@@ -148,19 +148,8 @@ export function LeftResultList({
           </span>
         </label>
 
-        {!someChecked && rows.length > 0 && (
-          <span style={{
-            font:       '10px var(--sans)',
-            color:      'var(--text-dim)',
-            fontStyle:  'italic',
-            marginLeft: 4,
-          }}>
-            ← check rows to group or bulk-add
-          </span>
-        )}
-
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', alignItems: 'center' }}>
-          <HelpTooltip text="+ Add N puts each checked item on its own chart. ∑ Group sums all checked items into one combined chart (max 20)." />
+          <HelpTooltip text="Check rows below to group or bulk-add them. + Add N puts each checked item on its own chart. ∑ Group sums all checked items into one combined chart (max 20)." />
           <button
             className="btn sm ghost"
             onClick={onGroupSelected}
@@ -175,6 +164,7 @@ export function LeftResultList({
           >
             ∑ Group
           </button>
+          <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--border)', margin: '0 4px' }} />
           <button
             className="btn sm primary"
             onClick={onAddSelected}

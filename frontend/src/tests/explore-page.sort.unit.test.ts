@@ -471,8 +471,8 @@ describe('makeDefaultExploreState', () => {
     expect(makeDefaultExploreState().openSection).toBeNull()
   })
 
-  it('default parentSource is kegg', () => {
-    expect(makeDefaultExploreState().parentSource).toBe('kegg')
+  it('default parentSource is taxonomy', () => {
+    expect(makeDefaultExploreState().parentSource).toBe('taxonomy')
   })
 
   it('each call returns a new object (no shared reference)', () => {

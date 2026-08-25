@@ -181,7 +181,7 @@ export function expandParentLabel(parent: string, source: string): string {
 // extra intermediate NCBI ranks that don't fit this ladder, so depths for
 // category === 'Eukaryota' fall back to "Level N" instead.
 
-export const PROKARYOTE_RANK_NAMES: Record<number, string> = {
+export const TAXONOMY_RANK_NAMES: Record<number, string> = {
   1: 'Domain',
   2: 'Phylum',
   3: 'Class',
@@ -192,10 +192,10 @@ export const PROKARYOTE_RANK_NAMES: Record<number, string> = {
   8: 'Strain',
 }
 
-export function taxonomyRankLabel(depth: number | null, category: string | null): string {
+export function taxonomyRankLabel(depth: number | null): string {
   if (depth == null) return 'Unknown rank'
-  if (category !== 'Eukaryota' && PROKARYOTE_RANK_NAMES[depth]) {
-    return PROKARYOTE_RANK_NAMES[depth]
+  if (TAXONOMY_RANK_NAMES[depth]) {
+    return TAXONOMY_RANK_NAMES[depth]
   }
   return `Level ${depth}`
 }

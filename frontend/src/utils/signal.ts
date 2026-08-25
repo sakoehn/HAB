@@ -41,7 +41,13 @@ export function applyL1Normalize(
 
 // ── applyZScore ────────────────────────────────────────────────────────────
 // Z-score standardisation per series.
-// Subtracts the series mean and divides by sample std dev (÷ n-1).
+// Subtracts the series mean and divides by population std dev (÷ n) --
+// deliberately population, not the Bessel-corrected sample std dev used by
+// computeStats(). This rescales the complete, fully-observed series in
+// front of the user (no inference beyond it), matching the convention most
+// "Z-score normalize" tooling uses (e.g. sklearn's StandardScaler, ddof=0)
+// -- as opposed to computeStats()'s Std Dev "s", which reports a
+// generalizable estimate and correctly uses n-1 for that different purpose.
 //
 // Result: all series centred at 0, scaled by their own variance.
 // Best for comparing trend shapes across annotations with very different

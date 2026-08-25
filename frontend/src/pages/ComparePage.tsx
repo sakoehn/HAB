@@ -20,7 +20,7 @@
 import React, { useState, useEffect } from 'react'
 
 import type {
-  CompareState, CompareEntry, CompareEntryMember,
+  CompareEntry, CompareEntryMember,
   AnnotationItem, TimepointMeta, ApiStatus, SharedAnnotation,
 } from '../types'
 import { SOURCE_TAG_CLS } from '../constants'
@@ -29,18 +29,18 @@ import { apiFetch, downloadCsv } from '../utils/api'
 import { isoDate } from '../utils/format'
 import { extractEgc, extractNormEgc } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
-import { CopyBtn } from '../components/ui/controls'
+import { CopyBtn, ResetBtn } from '../components/ui/controls'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
 import { ChartErrorBoundary } from '../components/ui/ChartErrorBoundary'
 import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { MappingsPanel } from '../components/mappings/MappingsPanel'
+import { GroupScaffoldModal } from '../components/scaffolds/GroupScaffoldModal'
 
 // ── State shape + default ──────────────────────────────────────────────────
 // Co-located here because only ComparePage uses CompareState.
 
 export type CompareState = {
   query:         string
-  querySource:   string
   searchResults: AnnotationItem[]
   searchStatus:  ApiStatus
   entries:       CompareEntry[]
@@ -52,7 +52,6 @@ export type CompareState = {
 export function makeDefaultCompareState(): CompareState {
   return {
     query:         '',
-    querySource:   'kegg',
     searchResults: [],
     searchStatus:  'idle',
     entries:       [],
@@ -119,6 +118,40 @@ function sumMemberSeries(members: CompareEntryMember[], label: string): Annotati
     }))
 }
 
+// ── CompareFirstRunHint ──────────────────────────────────────────────────────
+// Same visual pattern as AnalyzePage's FirstRunHint — reuses the existing
+// .first-run-hint/.frh-* CSS, just with Compare-specific copy.
+
+function CompareFirstRunHint() {
+  return (
+    <div className="first-run-hint">
+      <div className="frh-steps">
+        <div className="frh-step">
+          <div className="frh-step-num">1</div>
+          <div className="frh-step-text">
+            <strong>Search</strong> for a gene function or ID above — try{' '}
+            <em>iron transport</em> or <em>COG0055</em>
+          </div>
+        </div>
+        <div className="frh-step">
+          <div className="frh-step-num">2</div>
+          <div className="frh-step-text">
+            <strong>Check the boxes</strong> for annotations to compare (or
+            click a row directly), then click &quot;Add N selected&quot;
+          </div>
+        </div>
+        <div className="frh-step">
+          <div className="frh-step-num">3</div>
+          <div className="frh-step-text">
+            Once you've added <strong>2 or more</strong>, an overlaid
+            comparison chart appears below — up to 4 max
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── ComparePage ────────────────────────────────────────────────────────────
 
 export function ComparePage({
@@ -128,15 +161,20 @@ export function ComparePage({
   onConsumed,
   dataDateRange,
   onGoScaffoldExplore,
+  onGoScaffoldExploreGroup,
+  onReset
 }: {
-  state:                CompareState
-  setState:             (updater: (prev: CompareState) => CompareState) => void
-  initialAnnotations:   SharedAnnotation[]
-  onConsumed:           () => void
-  dataDateRange?:       { min: string; max: string } | null
-  onGoScaffoldExplore?: (annotationId: string, source: string) => void
+  state:                    CompareState
+  setState:                 (updater: (prev: CompareState) => CompareState) => void
+  initialAnnotations:       SharedAnnotation[]
+  onConsumed:               () => void
+  dataDateRange?:           { min: string; max: string } | null
+  onGoScaffoldExplore?:     (annotationId: string, source: string) => void
+  onGoScaffoldExploreGroup?: (members: { annotationId: string; source: string }[]) => void
+  onReset:                  () => void
 }) {
   const { copiedId, copy } = useCopyId()
+  const [scaffoldModalFor, setScaffoldModalFor] = useState<string | null>(null)
 
   // Load annotations arriving from the Analyze page Compare drawer.
   // Singles: fetch one series directly.
@@ -260,12 +298,13 @@ export function ComparePage({
     setBulkSelected(new Set())
     try {
       const json = await apiFetch<{ data: AnnotationItem[] }>(
-        `/api/search/annotations?q=${encodeURIComponent(q)}&sources=${state.querySource}&page_size=500`,
+        `/api/search/annotations?q=${encodeURIComponent(q)}&sources=kegg&sources=cog&sources=enzyme&sources=taxonomy&page_size=500`,
       )
       const seen   = new Set<string>()
       const unique = (json.data ?? []).filter(r => {
-        if (seen.has(r.annotation_id)) return false
-        seen.add(r.annotation_id)
+        const key = `${r.annotation_id}::${r.source}`
+        if (seen.has(key)) return false
+        seen.add(key)
         return true
       })
       setState(prev => ({ ...prev, searchResults: unique, searchStatus: 'ok' }))
@@ -274,20 +313,21 @@ export function ComparePage({
     }
   }
 
-  function toggleBulkSelect(annotationId: string) {
+  function toggleBulkSelect(annotationId: string, source: string) {
+    const compositeKey = `${annotationId}::${source}`
     setBulkSelected(prev => {
       const next = new Set(prev)
-      if (next.has(annotationId)) {
-        next.delete(annotationId)
+      if (next.has(compositeKey)) {
+        next.delete(compositeKey)
       } else if (state.entries.length + next.size < 4) {
-        next.add(annotationId)
+        next.add(compositeKey)
       }
       return next
     })
   }
 
   async function addSelectedAnnotations() {
-    const toAdd  = state.searchResults.filter(r => bulkSelected.has(r.annotation_id))
+    const toAdd  = state.searchResults.filter(r => bulkSelected.has(`${r.annotation_id}::${r.source}`))
     if (!toAdd.length) return
 
     const colors     = toAdd.map(ann => nextColorForSource(ann.source))
@@ -450,6 +490,9 @@ export function ComparePage({
             4 max keeps the chart readable
           </p>
         </div>
+        <div className="page-header-actions">
+          <ResetBtn onClick={onReset} title="Clear Comparisons" label="Clear Page" small/>
+        </div>
       </div>
 
       <div className="page-body">
@@ -458,18 +501,6 @@ export function ComparePage({
         <div>
           <div style={{ marginBottom: 8 }}><h2>Add Annotations</h2></div>
           <div className="search-bar" style={{ marginBottom: 10 }}>
-            <select
-              className="field"
-              style={{ width: 130, flex: 'none' }}
-              value={state.querySource}
-              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                setState(prev => ({ ...prev, querySource: e.target.value }))
-              }
-            >
-              {['kegg', 'cog', 'enzyme', 'taxonomy'].map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
             <input
               className="field"
               placeholder="Search annotation ID or name…"
@@ -522,13 +553,13 @@ export function ComparePage({
                         bulkSelected.size > 0 &&
                         state.searchResults
                           .slice(0, slotsRemaining)
-                          .every(r => bulkSelected.has(r.annotation_id))
+                          .every(r => bulkSelected.has(`${r.annotation_id}::${r.source}`))
                       }
                       onChange={() => {
                         const allSlice = state.searchResults
                           .slice(0, slotsRemaining)
-                          .map(r => r.annotation_id)
-                        const allSelected = allSlice.every(id => bulkSelected.has(id))
+                          .map(r => `${r.annotation_id}::${r.source}`)
+                        const allSelected = allSlice.every(key => bulkSelected.has(key))
                         setBulkSelected(new Set(allSelected ? [] : allSlice))
                       }}
                     />
@@ -562,7 +593,7 @@ export function ComparePage({
                   const alreadyAdded = state.entries.some(
                     e => e.annotationId === r.annotation_id && e.source === r.source,
                   )
-                  const isChecked = bulkSelected.has(r.annotation_id)
+                  const isChecked = bulkSelected.has(`${r.annotation_id}::${r.source}`)
                   const canAdd    = !alreadyAdded && slotsRemaining > 0
 
                   return (
@@ -596,7 +627,7 @@ export function ComparePage({
                         type="checkbox"
                         checked={isChecked}
                         disabled={!canAdd}
-                        onChange={() => toggleBulkSelect(r.annotation_id)}
+                        onChange={() => toggleBulkSelect(r.annotation_id, r.source)}
                         onClick={e => e.stopPropagation()}
                         style={{ flexShrink: 0 }}
                       />
@@ -707,6 +738,16 @@ export function ComparePage({
                         {e.membersExpanded ? '▲ members' : '▼ members'}
                       </button>
                     )}
+                    {e.isGrouped && e.status === 'ok' && (
+                      <button
+                        className="btn sm ghost"
+                        style={{ fontFamily: 'var(--mono)', fontSize: 11, padding: '2px 8px' }}
+                        onClick={() => setScaffoldModalFor(`${e.annotationId}::${e.source}`)}
+                        title={`View scaffolds for all ${e.members?.length ?? 0} annotations in this group`}
+                      >
+                        🧬 Scaffolds
+                      </button>
+                    )}
                     <button
                       className="chip-remove"
                       onClick={() => setState(prev => {
@@ -720,6 +761,23 @@ export function ComparePage({
                       ×
                     </button>
                   </div>
+
+                  {e.isGrouped && scaffoldModalFor === `${e.annotationId}::${e.source}` && (
+                    <GroupScaffoldModal
+                      members={(e.members ?? []).map(m => ({
+                        annotationId: m.annotationId,
+                        source:       m.source,
+                        // Member names aren't stored on CompareEntryMember --
+                        // GroupScaffoldModal shows '—' for unknown names,
+                        // same as AnalyzePage's equivalent RightGroupCard usage.
+                        name: null,
+                      }))}
+                      groupLabel={e.annotationId}
+                      onClose={() => setScaffoldModalFor(null)}
+                      onGoExplore={onGoScaffoldExplore}
+                      onGoExploreGroup={onGoScaffoldExploreGroup}
+                    />
+                  )}
 
                   {/* Inline member list — shown when expanded */}
                   {e.isGrouped && e.membersExpanded && e.members && (
@@ -835,6 +893,15 @@ export function ComparePage({
                       data:         e.data,
                       color:        e.color,
                       source:       e.source,
+                      isGrouped:    e.isGrouped ?? false,
+                      // Group entries' annotationId is a synthetic label
+                      // (e.g. "Grouped: label"), not a real backend
+                      // annotation_id -- there's nothing for the scaffold
+                      // route to look up, so the legend button is disabled
+                      // for those; the group entry gets its own dedicated
+                      // "🧬 Scaffolds" button + GroupScaffoldModal instead
+                      // (below, in the entries panel).
+                      scaffoldsDisabled: e.isGrouped ?? false,
                     }))}
                     dateFrom={state.dateFrom}
                     dateTo={state.dateTo}
@@ -900,16 +967,7 @@ export function ComparePage({
         )}
 
         {/* ── Empty state ── */}
-        {state.entries.length === 0 && (
-          <div className="state-box">
-            <div className="state-icon">📊</div>
-            <span>
-              Search for annotations above. Select one or more checkboxes,
-              then click &quot;Add N selected&quot; — or click any row directly
-              to add it.
-            </span>
-          </div>
-        )}
+        {state.entries.length === 0 && <CompareFirstRunHint />}
 
       </div>
     </div>

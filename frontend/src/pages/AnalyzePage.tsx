@@ -38,6 +38,9 @@ import { AnnotationInfoDrawer } from '../components/annotations/AnnotationInfoDr
 import { LeftResultList }      from '../components/annotations/LeftResultList'
 import { ScaffoldBtn }            from '../components/scaffolds/ScaffoldBtn'
 import { GroupScaffoldModal }     from '../components/scaffolds/GroupScaffoldModal'
+import { ResetBtn } from '../components/ui/controls'
+import { HelpTooltip } from '../components/ui/HelpTooltip'
+import { SkeletonChart } from '../components/ui/Skeleton'
 
 // ── AnalyzeState + default ─────────────────────────────────────────────────
 
@@ -155,7 +158,7 @@ function RightSingleCard({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           {quickStats && (
             <span style={{
-              font:       '400 11px var(--mono)',
+              font:       '600 11px var(--mono)',
               color:      'var(--text-dim)',
               whiteSpace: 'nowrap',
             }}>
@@ -184,8 +187,9 @@ function RightSingleCard({
       </div>
 
       {cached?.status === 'loading' && (
-        <div className="state-box" style={{ padding: 20 }}>
-          <span>Loading time series…</span>
+        <div style={{ padding: '4px 4px 0' }}>
+          <span className="sr-only">Loading time series…</span>
+          <SkeletonChart />
         </div>
       )}
       {cached?.status === 'error' && (
@@ -436,7 +440,8 @@ function CompareDrawer({
           data:         cached.data,
           color:        c.color,
           source:       c.source,
-          isGrouped:    false as const,
+          isGrouped:    false,
+          scaffoldsDisabled: false
         }]
       }
 
@@ -493,7 +498,8 @@ function CompareDrawer({
         data:         summedData,
         color:        'var(--chart-2)',
         source:       c.sources[0] ?? 'kegg',
-        isGrouped:    true as const,
+        isGrouped:    true,
+        scaffoldsDisabled: true
       }]
     })
 
@@ -701,6 +707,7 @@ export function AnalyzePage({
   onGoScaffoldExplore,
   onGoScaffoldExploreGroup,
   dataDateRange,
+  onReset
 }: {
   state:                    AnalyzeState
   setState:                 (updater: (prev: AnalyzeState) => AnalyzeState) => void
@@ -709,6 +716,7 @@ export function AnalyzePage({
   onGoScaffoldExplore:      (annotationId: string, source: string) => void
   onGoScaffoldExploreGroup: (members: { annotationId: string; source: string }[]) => void
   dataDateRange?:           { min: string; max: string } | null
+  onReset:                  () => void
 }) {
   const { copiedId, copy } = useCopyId()
   const firstInputRef      = useRef<HTMLInputElement>(null)
@@ -964,6 +972,9 @@ export function AnalyzePage({
             compare overlays
           </p>
         </div>
+        <div className="page-header-actions">
+          <ResetBtn onClick={onReset} title="Clear All Results" label="Clear Page" small/>
+        </div>
       </div>
 
       {/* ── Search section ── */}
@@ -1106,22 +1117,25 @@ export function AnalyzePage({
                     .filter(c => c.kind === 'single' && c.source === 'kegg')
                     .map(c => (c as Extract<RightCard, { kind: 'single' }>).annotationId)
                   return keggIds.length > 0 ? (
-                    <button
-                      className="btn sm ghost"
-                      title={`Copy ${keggIds.length} KEGG ID${keggIds.length > 1 ? 's' : ''} to clipboard, then open KEGG Color Mapper`}
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(keggIds.join('\n'))
-                        } catch {}
-                        window.open(
-                          'https://www.genome.jp/kegg/mapper/color.html',
-                          '_blank',
-                          'noopener',
-                        )
-                      }}
-                    >
-                      Color Mapper ({keggIds.length}) ⎘
-                    </button>
+                    <>
+                      <HelpTooltip text="Copies the KEGG IDs of every open chart to your clipboard and opens KEGG's Color Mapper tool in a new tab — paste into its Objects box to visualize them on a pathway map." />
+                      <button
+                        className="btn sm ghost"
+                        title={`Copy ${keggIds.length} KEGG ID${keggIds.length > 1 ? 's' : ''} to clipboard, then open KEGG Color Mapper`}
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(keggIds.join('\n'))
+                          } catch {}
+                          window.open(
+                            'https://www.genome.jp/kegg/mapper/color.html',
+                            '_blank',
+                            'noopener',
+                          )
+                        }}
+                      >
+                        Color Mapper ({keggIds.length}) ⎘
+                      </button>
+                    </>
                   ) : null
                 })()}
                 <button

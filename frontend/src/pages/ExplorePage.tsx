@@ -25,12 +25,13 @@ import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel } from '../constants'
 import { apiFetch, downloadCsv } from '../utils/api'
 import { extractEgc, computeTrend } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
-import { CopyBtn } from '../components/ui/controls'
+import { CopyBtn, ResetBtn } from '../components/ui/controls'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
 import { ChartErrorBoundary } from '../components/ui/ChartErrorBoundary'
 import { StatsPanel } from '../components/ui/StatsPanel'
 import { ExternalLinks } from '../components/ui/ExternalLinks'
 import { HelpTooltip } from '../components/ui/HelpTooltip'
+import { Skeleton, SkeletonTable, SkeletonStatTiles, SkeletonChart } from '../components/ui/Skeleton'
 import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { GroupedEgcChart } from '../components/charts/GroupedEgcChart'
 import { ScaffoldBtn } from '../components/scaffolds/ScaffoldBtn'
@@ -66,7 +67,7 @@ export type ExploreState = {
 export function makeDefaultExploreState(): ExploreState {
   return {
     openSection:  null,
-    source:       'kegg',
+    source:       'taxonomy',
     limit:        25,
     dateFrom:     '',
     dateTo:       '',
@@ -75,7 +76,7 @@ export function makeDefaultExploreState(): ExploreState {
     status:       'idle',
     sortCol:      'mean_egc',
     sortDir:      'desc',
-    parentSource: 'kegg',
+    parentSource: 'taxonomy',
     topFilter:    '',
     lookupId:       '',
     lookupSource:   'kegg',
@@ -120,7 +121,7 @@ function DatasetOverviewPanel({
   resetKey:      number
   dataDateRange: { min: string; max: string } | null
 }) {
-  const [source, setSource]             = useState('kegg')
+  const [source, setSource]             = useState('taxonomy')
   const [dateFrom, setDateFrom]         = useState('')
   const [dateTo, setDateTo]             = useState('')
   const [rows, setRows]                 = useState<TopAnnotation[]>([])
@@ -131,7 +132,7 @@ function DatasetOverviewPanel({
   const [seriesFailed, setSeriesFailed] = useState<string[]>([])
 
   useEffect(() => {
-    setSource('kegg'); setDateFrom(''); setDateTo('')
+    setSource('taxonomy'); setDateFrom(''); setDateTo('')
     setRows([]); setSampleCount(null); setStatus('idle')
     setSeriesData({}); setSeriesStatus('idle'); setSeriesFailed([])
   }, [resetKey])
@@ -273,8 +274,18 @@ function DatasetOverviewPanel({
         </div>
       )}
       {status === 'loading' && (
-        <div className="state-box" style={{ padding: 32 }}>
-          <span>Loading dataset…</span>
+        <div>
+          <span className="sr-only">Loading dataset…</span>
+          <Skeleton height={12} width={280} style={{ marginBottom: 16 }} />
+          <SkeletonStatTiles count={9} />
+          <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }} aria-hidden="true">
+                <Skeleton height={10} width={18} />
+                <Skeleton height={10} width={`${70 - i * 8}%`} />
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {status === 'error' && (
@@ -577,13 +588,13 @@ function AnnotationsByParentPanel({
         <span style={{ font: '400 11px var(--mono)', color: 'var(--text-dim)' }}>
           View:
         </span>
-        <HelpTooltip text="Individual shows each annotation's own trend. Summed by parent adds up all annotations under the same parent category into one line." />
+        <HelpTooltip text="Group trend & detail shows each parent group's summed trend over time, with a table below it breaking that total down by individual annotation. Summed by parent instead shows a static ranked table of parent-group totals — no time series." />
         <button
           className={`toggle-pill ${!showSummed ? 'on' : ''}`}
           onClick={() => setShowSummed(false)}
-          title="Show each annotation as its own time series — expand a parent group to see individual lines and compare trends"
+          title="Expand a parent group to see its summed trend over time, plus a table of each individual annotation's own stats"
         >
-          Individual annotations
+          Group trend & detail
         </button>
         <button
           className={`toggle-pill ${showSummed ? 'on' : ''}`}
@@ -680,8 +691,11 @@ function AnnotationsByParentPanel({
                     style={{ borderTop: '1px solid var(--border)', padding: '16px 20px' }}
                   >
                     {gs?.status === 'loading' && (
-                      <div className="state-box" style={{ padding: 20 }}>
-                        <span>Loading time series for {group.count} annotations…</span>
+                      <div style={{ marginBottom: 16 }}>
+                        <span className="sr-only">
+                          Loading time series for {group.count} annotations…
+                        </span>
+                        <SkeletonChart height={280} />
                       </div>
                     )}
                     {gs?.status === 'ok' && gs.failed.length > 0 && (
@@ -804,6 +818,7 @@ export function ExplorePage({
   indexReady,
   onSendToAnalyze,
   onGoScaffoldExplore,
+  onReset
 }: {
   state:               ExploreState
   setState:            (updater: (prev: ExploreState) => ExploreState) => void
@@ -812,6 +827,7 @@ export function ExplorePage({
   indexReady:          boolean
   onSendToAnalyze:     (annotationId: string) => void
   onGoScaffoldExplore: (annotationId: string, source: string) => void
+  onReset:             () => void
 }) {
   const { copiedId, copy } = useCopyId()
 
@@ -908,6 +924,9 @@ export function ExplorePage({
           <p className="subtitle">
             Dataset overview · top annotations by abundance · parent groupings
           </p>
+        </div>
+        <div className="page-header-actions">
+          <ResetBtn onClick={onReset} title="Clear All Tabs" label="Clear Page" small/>
         </div>
       </div>
 
@@ -1092,13 +1111,16 @@ export function ExplorePage({
 
             {state.status === 'idle' && (
               <div className="state-box" style={{ padding: 32 }}>
-                <div className="state-icon">📊</div>
+                <div className="state-icon">🏆</div>
                 <span>Choose a source type and click Load to view top annotations.</span>
               </div>
             )}
             {state.status === 'loading' && (
-              <div className="state-box" style={{ padding: 32 }}>
-                <span>Computing top annotations…</span>
+              <div style={{ padding: '20px 16px 4px' }}>
+                <div style={{ font: '11px var(--mono)', color: 'var(--text-dim)', marginBottom: 4 }}>
+                  Computing top annotations…
+                </div>
+                <SkeletonTable columns={8} rows={8} />
               </div>
             )}
             {state.status === 'error' && (
