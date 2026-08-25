@@ -12,11 +12,10 @@
 // already-excluded node can be separately excluded, so there's no reason to
 // let the user drill into it.
 
-import React from 'react'
-
 import type { TaxonomyTreeNode } from '../../types'
 import { taxonomyRankLabel } from '../../constants'
 import { useTaxonomyTree } from '../../hooks/useTaxonomyTree'
+import { SkeletonTreeRows } from '../ui/Skeleton'
 
 export function TaxonomyTree({
   rootId,
@@ -30,7 +29,12 @@ export function TaxonomyTree({
   const { nodes, status, toggleExpand } = useTaxonomyTree(rootId)
 
   if (status === 'loading' && nodes.length === 0) {
-    return <div className="tax-tree-status">Loading taxa…</div>
+    return (
+      <>
+        <span className="sr-only">Loading taxa…</span>
+        <SkeletonTreeRows rows={5} />
+      </>
+    )
   }
   if (status === 'error') {
     return <div className="tax-tree-status tax-tree-error">Failed to load taxonomy tree.</div>
@@ -70,7 +74,7 @@ function TaxonomyNodeRow({
   onToggleExpand:  (node: TaxonomyTreeNode) => void
 }) {
   const isExcluded = excludedIds.has(node.annotationId)
-  const rank       = taxonomyRankLabel(node.depth, node.category)
+  const rank       = taxonomyRankLabel(node.depth)
 
   return (
     <div className="tax-node">

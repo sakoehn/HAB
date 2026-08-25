@@ -68,13 +68,13 @@ describe('TaxonomyTree — rendering', () => {
     expect(screen.getByText('Phylum')).toBeInTheDocument()
   })
 
-  it('falls back to "Level N" rank label for Eukaryota', async () => {
+  it('uses the same rank ladder for Eukaryota as every other domain', async () => {
     mockFetch.mockResolvedValue(jsonResponse({
       data: [{ annotation_id: 'Chordata', depth: 2, category: 'Eukaryota' }],
     }))
     render(<TaxonomyTree rootId="Eukaryota" excludedIds={new Set()} onToggleExclude={vi.fn()} />)
 
-    expect(await screen.findByText('Level 2')).toBeInTheDocument()
+    expect(await screen.findByText('Phylum')).toBeInTheDocument()
   })
 })
 

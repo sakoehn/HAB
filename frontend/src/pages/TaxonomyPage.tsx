@@ -22,6 +22,7 @@ import { HelpTooltip } from '../components/ui/HelpTooltip'
 import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { TaxonomyTree } from '../components/taxonomy/TaxonomyTree'
 import { TaxonomyBrowseTree } from '../components/taxonomy/TaxonomyBrowseTree'
+import { ResetBtn } from '../components/ui/controls'
 
 // Rank dropdown options for the "download taxa list" export — value is the
 // lowercased form /taxonomy/export expects (e.g. "class", not the display
@@ -63,10 +64,14 @@ export function TaxonomyPage({
   state,
   setState,
   dataDateRange,
+  onGoScaffoldExplore,
+  onReset
 }: {
   state:          TaxonomyState
   setState:       (updater: (prev: TaxonomyState) => TaxonomyState) => void
   dataDateRange?: { min: string; max: string } | null
+  onGoScaffoldExplore?: (annotationId: string, source: string) => void
+  onReset:        () => void
 }) {
   // ── Download taxa list by rank ──────────────────────────────────────────
   // Independent of the scope/exclusion state above -- a standalone export
@@ -205,6 +210,7 @@ export function TaxonomyPage({
       data:         computeExclusionSeries(rootData, excludedSeriesArrays, `${state.rootId}__excl`, null),
       color:        '#D55E00',
       source:       'taxonomy',
+      scaffoldsDisabled: true
     }
     return [full, minus]
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -218,6 +224,9 @@ export function TaxonomyPage({
           <p className="subtitle">
             Pick a taxon, then exclude branches to see the total without them
           </p>
+        </div>
+        <div className="page-header-actions">
+          <ResetBtn onClick={onReset} title="Clear Taxonomy" label="Clear Page" small/>
         </div>
       </div>
 
@@ -402,6 +411,7 @@ export function TaxonomyPage({
                       dateTo={state.dateTo}
                       dataDateRange={dataDateRange}
                       title={computeChartTitle(state.rootId, excludedList)}
+                      onGoScaffoldExplore={onGoScaffoldExplore}
                     />
                   </ChartErrorBoundary>
                 </>

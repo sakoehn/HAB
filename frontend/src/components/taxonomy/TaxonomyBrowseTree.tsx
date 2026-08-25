@@ -6,11 +6,10 @@
 // TaxonomyTree via useTaxonomyTree; unlike that tree, rows have no checkbox —
 // clicking a name selects it directly.
 
-import React from 'react'
-
 import type { TaxonomyTreeNode } from '../../types'
 import { taxonomyRankLabel } from '../../constants'
 import { useTaxonomyTree } from '../../hooks/useTaxonomyTree'
+import { SkeletonTreeRows } from '../ui/Skeleton'
 
 export function TaxonomyBrowseTree({
   onSelectRoot,
@@ -20,7 +19,12 @@ export function TaxonomyBrowseTree({
   const { nodes, status, toggleExpand } = useTaxonomyTree(null)
 
   if (status === 'loading' && nodes.length === 0) {
-    return <div className="tax-tree-status">Loading taxa…</div>
+    return (
+      <>
+        <span className="sr-only">Loading taxa…</span>
+        <SkeletonTreeRows rows={4} />
+      </>
+    )
   }
   if (status === 'error') {
     return <div className="tax-tree-status tax-tree-error">Failed to load taxonomy tree.</div>
@@ -49,7 +53,7 @@ function BrowseNodeRow({
   onSelectRoot:   (annotationId: string) => void
   onToggleExpand: (node: TaxonomyTreeNode) => void
 }) {
-  const rank = taxonomyRankLabel(node.depth, node.category)
+  const rank = taxonomyRankLabel(node.depth)
 
   return (
     <div className="tax-node">
