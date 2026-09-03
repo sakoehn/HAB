@@ -254,9 +254,10 @@ export function CorrelatesPanel({
                             <ExternalLink
                               annotationId={row.annotation_id}
                               source={row.source}
+                              name={row.name}
                             />
                           </span>
-                          {row.name && (
+                          {row.name && row.source !== 'taxonomy' && (
                             <span className="corr-row-name" title={row.name}>
                               {row.name}
                             </span>

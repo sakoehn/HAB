@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'vitest'
 
-import { computeExclusionSeries, computeChartTitle } from '../utils/taxonomy'
+import { computeExclusionSeries, computeChartTitle, bareTaxonName, taxonomyDepthFromId } from '../utils/taxonomy'
 import type { AnnotationItem } from '../types'
 
 function item(sample: string, egc: number | null, normEgc: number | null = null): AnnotationItem {
@@ -106,5 +106,37 @@ describe('computeChartTitle', () => {
   it('preserves exclusion order as given', () => {
     expect(computeChartTitle('Bacteria', ['Firmicutes', 'Proteobacteria']))
       .toBe('Bacteria — Excluding Firmicutes, Proteobacteria')
+  })
+})
+
+describe('bareTaxonName', () => {
+  it('returns a domain-level id unchanged (no semicolons)', () => {
+    expect(bareTaxonName('Bacteria')).toBe('Bacteria')
+  })
+
+  it('returns the last segment of a multi-segment lineage-prefix', () => {
+    expect(bareTaxonName('Bacteria;Proteobacteria;Alphaproteobacteria')).toBe('Alphaproteobacteria')
+  })
+})
+
+describe('taxonomyDepthFromId', () => {
+  it('a domain-level id has depth 1', () => {
+    expect(taxonomyDepthFromId('Bacteria')).toBe(1)
+  })
+
+  it('depth equals the segment count of the lineage-prefix', () => {
+    expect(taxonomyDepthFromId('Bacteria;Proteobacteria')).toBe(2)
+    expect(taxonomyDepthFromId('Bacteria;Proteobacteria;Alphaproteobacteria')).toBe(3)
+  })
+
+  it('matches the real Bosea cross-lineage homonym at genus depth (6)', () => {
+    // Same real, verified homonym used throughout the SQL test suite
+    // (see tests/sql/test_cache_sql.py) — both lineages are genus-level.
+    expect(taxonomyDepthFromId(
+      'Bacteria;Proteobacteria;Alphaproteobacteria;Rhizobiales;Bradyrhizobiaceae;Bosea',
+    )).toBe(6)
+    expect(taxonomyDepthFromId(
+      'Bacteria;Proteobacteria;Alphaproteobacteria;Hyphomicrobiales;Boseaceae;Bosea',
+    )).toBe(6)
   })
 })

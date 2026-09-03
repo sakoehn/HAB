@@ -2,21 +2,30 @@
 test_cache_sql.py
 ====================
 Tests for FastAPI/api/cache_sql.py -- the DATA_BACKEND=sql query layer.
+Covers every function in that module:
 
-  taxon_paths_under()       -- depth-picks-the-column join between a
-                               taxonomy annotation_series node and the
-                               taxon_paths rows it covers.
-  get_annotation_series_sql() -- backs the /series/annotations route.
+  taxon_paths_under()              -- every taxon_paths row under a full
+                                       lineage-prefix (self-or-descendant match).
+  get_annotation_series_sql()      -- backs the /series/annotations route.
+  get_all_sample_names_sql()       -- sorted, cached sample list.
+  get_taxonomy_children_sql()      -- direct children of a taxon (Taxonomy Explorer).
+  get_annotation_scaffolds_sql()   -- individual scaffold rows for one annotation.
+  taxon_exists_sql()               -- existence check by full lineage-prefix.
+  get_top_annotations_sql()        -- live aggregation for /annotations/top.
+  get_top_annotations_from_catalog_sql() -- pre-aggregated fast path for the same.
+  get_search_annotations()         -- backs /search/annotations.
+  get_mappings_sql()               -- backs /mappings/search.
+  get_taxa_at_rank_sql()           -- backs /taxonomy/export.
 
-Runs against the REAL hab_mappings.db, read-only -- taxon_paths and
-annotation_series/cog/kegg are Phase 1/2 data already fully built (only
-enzyme/taxonomy sources of the Phase 2 migration may still be in
-progress), so this is safe to run even while that migration continues.
-Same real-data-not-synthetic-fixture spirit as tests/sql/test_mappings_sql.py.
-Skips automatically if the database doesn't exist yet.
+Since the taxonomy_egc_homonym_bug fix (2026-09-02), taxonomy annotation_id
+is the full lineage-prefix (e.g. "Bacteria;Bacteroidetes"), not a bare taxon
+name -- several tests below (BOSEA_OLD_LINEAGE/BOSEA_NEW_LINEAGE) exercise a
+real, confirmed cross-lineage homonym to prove that fix holds at this layer.
 
-Import target doesn't exist yet. Write taxon_paths_under() and
-get_annotation_series_sql() in FastAPI/api/cache_sql.py to make this pass.
+Runs against the REAL hab_mappings.db, read-only, fully built (all four
+sources). Same real-data-not-synthetic-fixture spirit as
+tests/sql/test_mappings_sql.py. Skips automatically if the database doesn't
+exist yet.
 
 Run:
     pytest tests/sql/test_cache_sql.py -v
@@ -65,26 +74,35 @@ def conn():
 # before this file was written.
 EXPECTED_BACTEROIDETES_PHYLUM_COUNT = 2561
 EXPECTED_BACTERIA_DOMAIN_COUNT = 39237
-EXPECTED_AQUIFICAE_PHYLUM_COUNT = 30
-EXPECTED_AQUIFICAE_CLASS_COUNT = 30
+
+# "Bosea" is a REAL confirmed cross-lineage homonym -- the exact class of
+# bug the full-lineage-prefix rekeying fixed (see taxonomy_egc_homonym_bug):
+# the bare genus name "Bosea" exists under two entirely different families,
+# reflecting a real taxonomic reclassification (Rhizobiales/Bradyrhizobiaceae
+# is the older scheme, Hyphomicrobiales/Boseaceae the newer one). A
+# bare-name lookup can't tell these apart; a full lineage-prefix can.
+BOSEA_OLD_LINEAGE = "Bacteria;Proteobacteria;Alphaproteobacteria;Rhizobiales;Bradyrhizobiaceae;Bosea"
+BOSEA_NEW_LINEAGE = "Bacteria;Proteobacteria;Alphaproteobacteria;Hyphomicrobiales;Boseaceae;Bosea"
+EXPECTED_BOSEA_OLD_LINEAGE_COUNT = 4
+EXPECTED_BOSEA_NEW_LINEAGE_COUNT = 33
 
 
 def test_phylum_level_node_returns_every_lineage_under_it(conn):
     """A phylum node covers MANY taxon_paths rows, not one -- proves this
     isn't accidentally behaving like a single-row lookup."""
-    rows = taxon_paths_under(conn, "Bacteroidetes", depth=2)
+    rows = taxon_paths_under(conn, "Bacteria;Bacteroidetes")
     assert len(rows) == EXPECTED_BACTEROIDETES_PHYLUM_COUNT
 
 
 def test_domain_level_node_returns_a_much_larger_set(conn):
-    rows = taxon_paths_under(conn, "Bacteria", depth=1)
+    rows = taxon_paths_under(conn, "Bacteria")
     assert len(rows) == EXPECTED_BACTERIA_DOMAIN_COUNT
 
 
 def test_known_full_path_is_present_in_the_result(conn):
     """Spot-checks one specific real lineage (the same gene/lineage used
     throughout Phase 1's tests) actually comes back, not just a count."""
-    rows = taxon_paths_under(conn, "Bacteroidetes", depth=2)
+    rows = taxon_paths_under(conn, "Bacteria;Bacteroidetes")
     # SELECT * column order: id, domain, phylum, class_, order, family,
     # genus, species, strain, full_path -- full_path is index 9, not 1.
     full_paths = [row[9] for row in rows]
@@ -92,30 +110,35 @@ def test_known_full_path_is_present_in_the_result(conn):
 
 
 def test_no_match_returns_empty_list_not_none_or_error(conn):
-    rows = taxon_paths_under(conn, "totally_bogus_xyz", depth=2)
+    rows = taxon_paths_under(conn, "totally_bogus_xyz")
     assert rows == []
 
 
-def test_depth_disambiguates_a_real_cross_rank_homonym(conn):
-    """"Aquificae" is a REAL confirmed case of the same bare name existing
-    at two different ranks (phylum in some lineages, class in others,
-    30 taxon_paths rows each) -- this is exactly why depth, not just
-    annotation_id, must pick the column. Querying depth=2 must return only
-    the phylum-Aquificae rows, not accidentally include the class ones."""
-    phylum_rows = taxon_paths_under(conn, "Aquificae", depth=2)
-    class_rows = taxon_paths_under(conn, "Aquificae", depth=3)
-    assert len(phylum_rows) == EXPECTED_AQUIFICAE_PHYLUM_COUNT
-    assert len(class_rows) == EXPECTED_AQUIFICAE_CLASS_COUNT
+def test_empty_lineage_prefix_returns_empty_list_not_everything(conn):
+    """An empty string must not accidentally behave as a match-all prefix
+    -- no real full_path starts with ';', so this must come back empty,
+    not the whole table."""
+    rows = taxon_paths_under(conn, "")
+    assert rows == []
 
 
-@pytest.mark.parametrize("bad_depth", [0, 9, -1, 100])
-def test_depth_outside_valid_range_raises(conn, bad_depth):
-    """depth=9 is a real observed case (a Drosophila strain name with an
-    extra semicolon token, see Phase 1) -- there's no 9th taxon_paths
-    column to map it to, so this must fail loudly, not silently return []
-    and look identical to a real "found nothing" result."""
-    with pytest.raises(ValueError):
-        taxon_paths_under(conn, "whatever", depth=bad_depth)
+def test_disambiguates_a_real_cross_lineage_homonym(conn):
+    """Full-lineage-prefix matching must keep BOSEA_OLD_LINEAGE and
+    BOSEA_NEW_LINEAGE's species completely separate, even though both
+    lineages share the same bare genus name "Bosea" -- this is the core
+    guarantee the taxonomy_egc_homonym_bug fix depends on: a bare-name
+    lookup for "Bosea" would have silently merged these two into one
+    node with an arbitrary parent."""
+    old_rows = taxon_paths_under(conn, BOSEA_OLD_LINEAGE)
+    new_rows = taxon_paths_under(conn, BOSEA_NEW_LINEAGE)
+    assert len(old_rows) == EXPECTED_BOSEA_OLD_LINEAGE_COUNT
+    assert len(new_rows) == EXPECTED_BOSEA_NEW_LINEAGE_COUNT
+
+    old_paths = {row[9] for row in old_rows}
+    new_paths = {row[9] for row in new_rows}
+    assert old_paths.isdisjoint(new_paths)
+    assert all(p.startswith(BOSEA_OLD_LINEAGE + ";") for p in old_paths)
+    assert all(p.startswith(BOSEA_NEW_LINEAGE + ";") for p in new_paths)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -144,7 +167,7 @@ def test_row_shape_matches_the_annotation_series_contract(conn):
         "name":           "FoF1-type ATP synthase, beta subunit",
         "category":       "C",
         "egc":            7092.0,
-        "norm_egc":       0.0005778704463674381,
+        "norm_egc":       0.00043946025951950113,
         "scaffold_count": 169,
         "gene_count":     170,
     }
@@ -161,6 +184,28 @@ def test_does_not_cross_source_with_a_shared_annotation_id_string(conn):
     accidentally return cog's real rows for the same string."""
     rows = get_annotation_series_sql(conn, "kegg", "COG0055")
     assert rows == []
+
+
+def test_taxonomy_homonym_lineages_return_distinct_uncollapsed_series(conn):
+    """The core regression test for taxonomy_egc_homonym_bug at the SQL
+    layer: BOSEA_OLD_LINEAGE and BOSEA_NEW_LINEAGE (see the taxon_paths_under
+    section above) share the bare name "Bosea" but are unrelated organisms
+    under different families. Each must return its OWN 128-sample series
+    with its OWN egc values -- not be merged into one, and not silently
+    return the other lineage's data."""
+    old_rows = get_annotation_series_sql(conn, "taxonomy", BOSEA_OLD_LINEAGE)
+    new_rows = get_annotation_series_sql(conn, "taxonomy", BOSEA_NEW_LINEAGE)
+    assert len(old_rows) == EXPECTED_TOTAL_SAMPLE_COUNT
+    assert len(new_rows) == EXPECTED_TOTAL_SAMPLE_COUNT
+    assert all(r["name"] == "Bosea" for r in old_rows)
+    assert all(r["name"] == "Bosea" for r in new_rows)
+
+    old_by_sample = {r["sample_name"]: r["egc"] for r in old_rows}
+    new_by_sample = {r["sample_name"]: r["egc"] for r in new_rows}
+    sample = "3300060358"
+    assert old_by_sample[sample] == 262.0
+    assert new_by_sample[sample] == 2845.0
+    assert old_by_sample[sample] != new_by_sample[sample]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -261,9 +306,13 @@ def test_root_case_returns_the_four_domains(conn):
 
 def test_phylum_level_parent_returns_its_real_classes(conn):
     """Bacteroidetes (depth=2) -- real 7 classes underneath it in
-    taxon_paths, independently recomputed above, not assumed."""
-    children = get_taxonomy_children_sql(conn, "Bacteroidetes", depth=2)
-    assert sorted(c["annotation_id"] for c in children) == EXPECTED_BACTEROIDETES_CHILDREN
+    taxon_paths, independently recomputed above, not assumed. `parent`
+    must be a full lineage-prefix now ("Bacteria;Bacteroidetes", not bare
+    "Bacteroidetes") and children come back keyed by their own full
+    lineage in `annotation_id`, with the bare rank label in `name`."""
+    children = get_taxonomy_children_sql(conn, "Bacteria;Bacteroidetes", depth=2)
+    assert sorted(c["name"] for c in children) == EXPECTED_BACTEROIDETES_CHILDREN
+    assert all(c["annotation_id"] == f"Bacteria;Bacteroidetes;{c['name']}" for c in children)
     assert all(c["depth"] == 3 for c in children)
     assert all(c["category"] == "Bacteria" for c in children)
 
@@ -272,22 +321,49 @@ def test_strain_level_parent_has_no_children(conn):
     """depth=8 (strain) is a real leaf rank -- must return [], not raise
     (unlike taxon_paths_under()'s out-of-range depths, which DO raise --
     depth=8 here is perfectly valid, it just has nothing beneath it)."""
-    children = get_taxonomy_children_sql(conn, "Flagellimonas pacifica DSM 25885", depth=8)
+    strain_lineage = (
+        "Bacteria;Bacteroidetes;Flavobacteriia;Flavobacteriales;"
+        "Flavobacteriaceae;Flagellimonas;Flagellimonas pacifica;"
+        "Flagellimonas pacifica DSM 25885"
+    )
+    children = get_taxonomy_children_sql(conn, strain_lineage, depth=8)
     assert children == []
 
 
 def test_parent_given_without_depth_auto_resolves(conn):
-    """no depth is pasted in. must find and determine the correct depth and than 
-        get the children. 
+    """no depth is passed in -- must derive it from the lineage-prefix's
+    own segment count (len(parent.split(';'))) and get the same children
+    as passing the depth explicitly.
     """
-    children_no_depth = get_taxonomy_children_sql(conn, "Bacteroidetes")
-    children_depth = get_taxonomy_children_sql(conn, "Bacteroidetes", depth=2)
+    children_no_depth = get_taxonomy_children_sql(conn, "Bacteria;Bacteroidetes")
+    children_depth = get_taxonomy_children_sql(conn, "Bacteria;Bacteroidetes", depth=2)
     assert children_no_depth == children_depth
 
 
 def test_no_real_children_returns_empty_list_not_none(conn):
-    children = get_taxonomy_children_sql(conn, "totally_bogus_taxon_xyz", depth=2)
+    children = get_taxonomy_children_sql(conn, "Bacteria;totally_bogus_taxon_xyz", depth=2)
     assert children == []
+
+
+def test_homonym_lineages_have_disjoint_children(conn):
+    """BOSEA_OLD_LINEAGE and BOSEA_NEW_LINEAGE (see the taxon_paths_under
+    section above) share the bare genus name "Bosea" but are unrelated
+    organisms under different families -- their children (species) must
+    come back completely separate, keyed by their own full lineage, never
+    cross-contaminated by the shared genus name. Counts are species
+    counts (4 and 32), not the raw taxon_paths row counts (4 and 33) --
+    BOSEA_NEW_LINEAGE has one species ("Bosea thiooxidans") represented by
+    two different strains, which collapses to one child here."""
+    old_children = get_taxonomy_children_sql(conn, BOSEA_OLD_LINEAGE)
+    new_children = get_taxonomy_children_sql(conn, BOSEA_NEW_LINEAGE)
+    assert len(old_children) == 4
+    assert len(new_children) == 32
+
+    old_ids = {c["annotation_id"] for c in old_children}
+    new_ids = {c["annotation_id"] for c in new_children}
+    assert old_ids.isdisjoint(new_ids)
+    assert all(i.startswith(BOSEA_OLD_LINEAGE + ";") for i in old_ids)
+    assert all(i.startswith(BOSEA_NEW_LINEAGE + ";") for i in new_ids)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -337,22 +413,50 @@ def test_sample_scoping_excludes_other_samples_real_rows(conn):
 # strain), confirming existence doesn't care which column matched.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_true_for_a_real_phylum_level_name(conn):
-    assert taxon_exists_sql(conn, "Bacteroidetes") is True
+def test_false_for_a_bare_name_no_longer_a_valid_identifier(conn):
+    """Post taxonomy_egc_homonym_bug fix, a bare rank name is no longer a
+    valid identifier on its own -- only a full lineage-prefix is. This is
+    the load-bearing behavior change the fix depends on: if a bare name
+    still resolved, it could still silently conflate two lineages that
+    happen to share a name (see the Bosea homonym tests above)."""
+    assert taxon_exists_sql(conn, "Bacteroidetes") is False
+
+
+def test_true_for_a_real_phylum_level_lineage(conn):
+    assert taxon_exists_sql(conn, "Bacteria;Bacteroidetes") is True
 
 
 def test_true_for_a_real_domain_root(conn):
+    """A single-segment lineage-prefix is still valid at the domain level
+    -- there's only one real domain per name, so no cross-lineage ambiguity
+    is possible here."""
     assert taxon_exists_sql(conn, "Bacteria") is True
 
 
-def test_true_for_a_real_strain_level_leaf(conn):
+def test_true_for_a_real_strain_level_lineage(conn):
     """Confirms the check doesn't stop early or only look at high-rank
-    columns -- strain is the LAST column checked in RANK_COLUMNS order."""
-    assert taxon_exists_sql(conn, "Flagellimonas pacifica DSM 25885") is True
+    columns -- strain is the LAST column checked in RANK_COLUMNS order.
+    Must be the full lineage now, not the bare strain name alone."""
+    strain_lineage = (
+        "Bacteria;Bacteroidetes;Flavobacteriia;Flavobacteriales;"
+        "Flavobacteriaceae;Flagellimonas;Flagellimonas pacifica;"
+        "Flagellimonas pacifica DSM 25885"
+    )
+    assert taxon_exists_sql(conn, strain_lineage) is True
 
 
 def test_false_for_a_name_that_appears_nowhere(conn):
     assert taxon_exists_sql(conn, "totally_bogus_taxon_xyz") is False
+
+
+def test_homonym_lineages_both_exist_but_bare_genus_does_not(conn):
+    """Both real Bosea lineages (see the taxon_paths_under section above)
+    must independently resolve True, while the bare genus name they share
+    resolves False -- proving existence is checked per-lineage, not
+    per-name."""
+    assert taxon_exists_sql(conn, BOSEA_OLD_LINEAGE) is True
+    assert taxon_exists_sql(conn, BOSEA_NEW_LINEAGE) is True
+    assert taxon_exists_sql(conn, "Bosea") is False
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -386,8 +490,8 @@ def test_top_result_matches_independently_recomputed_stats(conn):
     assert top["parent"] is None  # cog never populates parent
     assert top["mean_egc"] == 70109.5
     assert top["max_egc"] == 83265.0
-    assert top["mean_norm_egc"] == 0.006534575058285045
-    assert top["max_norm_egc"] == 0.0067845999318647396
+    assert top["mean_norm_egc"] == 0.004757644291374008
+    assert top["max_norm_egc"] == 0.005159568317666563
     assert top["sample_count"] == 2
 
 

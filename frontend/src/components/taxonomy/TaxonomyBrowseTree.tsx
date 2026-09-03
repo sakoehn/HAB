@@ -70,10 +70,11 @@ function BrowseNodeRow({
         <button
           className="tax-node-select"
           onClick={() => onSelectRoot(node.annotationId)}
-          title={`Use ${node.annotationId} as the scope`}
+          title={`Use ${node.name} as the scope`}
         >
-          {node.annotationId}
-        </button>
+          {node.name}
+      </button>
+
 
         <span className="tax-node-rank">{rank}</span>
       </div>

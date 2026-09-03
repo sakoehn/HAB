@@ -50,7 +50,12 @@ export function AnnotationInfoDrawer({
           {name && (
             <div className="card-info-row">
               <span className="card-info-label">Name</span>
-              <span className="card-info-value">{name}</span>
+              <span
+                className="card-info-value"
+                style={source === 'taxonomy' ? { fontStyle: 'italic' } : undefined}
+              >
+                {name}
+              </span>
             </div>
           )}
 

@@ -29,6 +29,7 @@ export type AnnotationItem = {
   timepoint:     TimepointMeta | null
   annotation_id: string
   name:          string | null
+  depth?:        number | null
   value:         unknown
   mean_egc?:     number | null
   max_egc?:      number | null
@@ -56,6 +57,7 @@ export type AnnotationValue = {
 // Response row shape from GET /taxonomy/children.
 export type TaxonomyChildNode = {
   annotation_id: string
+  name:          string
   depth:         number | null
   category:      string | null
 }
@@ -66,6 +68,7 @@ export type TaxonomyChildNode = {
 export type TaxonomyTreeNode = {
   annotationId:   string
   depth:          number | null
+  name:           string
   category:       string | null
   expanded:       boolean
   loadStatus:     ApiStatus
@@ -83,6 +86,13 @@ export type TopAnnotation = {
   max_norm_egc?:  number | null
   sample_count:   number
   value?:         AnnotationValue | null
+  // Only present on rows from /api/search/annotations (annotation_catalog
+  // carries it; /api/annotations/top's aggregation does not) — taxonomic
+  // rank, 1=domain..8=strain. Null/undefined for cog (see create_sql_schema.py).
+  depth?:         number | null
+  // Also only on /api/search/annotations rows — a single-source
+  // /annotations/top request has no need to repeat its own source per row.
+  source?:        string
 }
 
 // ── Mapping row types ──────────────────────────────────────────────────────
@@ -174,6 +184,7 @@ export type RightCard =
       annotationId: string
       source:       string
       name:         string | null
+      depth:        number | null
       color:        string
       parent:       string | null
     }

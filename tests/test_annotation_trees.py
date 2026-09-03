@@ -48,6 +48,7 @@ Run:
 
 import json
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Optional
@@ -61,8 +62,6 @@ from conftest import (
     EGC_ABS_FLOOR,
     EGC_PCT_TOLERANCE,
     load_sample_annotation_dir,
-    depth_file_for_sample,
-    parse_depth_file,
 )
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -597,10 +596,19 @@ class TestEnzymeFormat:
 
 class TestTaxonomyFormat:
     """
-    Taxonomy .tax.json uses a different schema by design to avoid redundancy:
+    Taxonomy .tax.json schema (as of the 2026-09-02 full-lineage rekeying,
+    see taxonomy_egc_homonym_bug):
 
-      - The dict KEY is the taxon name (e.g. "Bacteria") — no separate 'name' field
-      - Uses 'parent' (a string taxon name or null) instead of 'parent_id'/'parent_name'
+      - The dict KEY is the full lineage prefix through this rank
+        (e.g. "Bacteria;Bacteroidetes"), NOT the bare taxon name — the same
+        bare name can legitimately appear under more than one ancestry
+        (taxonomic reclassification across samples/pipeline versions), so
+        keying by full lineage instead of bare name avoids silently merging
+        two such occurrences into one node with a wrong parent.
+      - A separate 'name' field holds the bare rank label (e.g. "Bacteroidetes")
+        for display, matching how KEGG/COG/Enzyme already carry 'name'.
+      - Uses 'parent' (the parent's own lineage-prefix string, or null for
+        roots) instead of 'parent_id'/'parent_name'.
       - Shares the common fields: depth, category, egc, norm_egc, scaffolds
     """
 
@@ -622,19 +630,20 @@ class TestTaxonomyFormat:
         assert n >= EXPECTED_SAMPLES
 
     def test_keys_are_taxon_names_not_ids(self):
-        """Keys must be taxon name strings, not numeric IDs."""
+        """Keys must be taxon lineage-prefix strings, not numeric IDs."""
         data = self._load_spot()
         numeric = [k for k in data if re.match(r'^\d+$', k)]
-        assert not numeric, f"Numeric keys found (expected taxon names): {numeric[:5]}"
+        assert not numeric, f"Numeric keys found (expected taxon lineage strings): {numeric[:5]}"
 
-    def test_entries_have_no_name_field(self):
-        """The taxon name is the key — a redundant 'name' subfield should not exist."""
+    def test_entries_have_name_field(self):
+        """The dict key is now the full lineage prefix, not the display name,
+        so a separate 'name' field (the bare rank label) must exist."""
         data  = self._load_spot()
         first = next(iter(data.values()))
-        assert "name" not in first, "'name' field present — redundant with dict key"
+        assert "name" in first, "'name' field missing"
 
     def test_entries_use_parent_not_parent_id(self):
-        """Taxonomy uses 'parent' (taxon name string) not 'parent_id'."""
+        """Taxonomy uses 'parent' (taxon lineage-prefix string) not 'parent_id'."""
         data  = self._load_spot()
         first = next(iter(data.values()))
         assert "parent" in first, "'parent' field missing"
@@ -836,9 +845,16 @@ class TestEGCMathSynthetic:
       egc      = Σ (gene_count × scaffold_coverage)
       norm_egc = Σ (gene_count × (scaffold_coverage / total_sample_depth))
 
-    total_sample_depth is the sum of AvgFold across ALL scaffolds in the
-    sample — not just the scaffolds carrying genes for this annotation.
-    It is stored as allfold[sample]['total'] in the processing notebooks.
+    total_sample_depth is the shared, cross-source denominator computed by
+    Notebooks/weighted_totals.py (calculate_denominator_egc): Σ(gene_count
+    × AvgFold) across every scaffold with at least one annotated gene in
+    the sample, from ANY of the four sources -- not just the scaffolds
+    carrying genes for this specific annotation, and not the plain
+    Σ(AvgFold) that allfold[sample]['total'] holds (that's the old,
+    superseded denominator). This test's own arithmetic below is
+    self-contained (TOTAL is a hand-picked stand-in, not read from real
+    data), so it stays correct regardless of the formula change -- only
+    this docstring's description of what TOTAL represents needed updating.
     """
 
     SCAFFOLDS = {"scafA": 3, "scafB": 1, "scafC": 2}
@@ -1294,17 +1310,28 @@ class TestNormEgc:
         assert not bad, f"norm_egc/egc not uniform in {sid}:\n" + "\n".join(bad)
 
     def test_norm_egc_matches_depth_file(self):
-        sid  = self.SPOT_SAMPLE
-        path = depth_file_for_sample(sid)
-        if not path.exists():
-            pytest.skip(f".a.depth not found: {path}")
-        total = parse_depth_file(path)
-        assert total > 0
+        """total_sample_depth is now the shared, cross-source
+        weighted_totals[sample] from Notebooks/weighted_totals.py -- NOT
+        the plain Σ(AvgFold) that parse_depth_file() returns (that helper
+        is explicitly documented in conftest.py as the OLD, superseded
+        denominator; it must not be used as ground truth here)."""
+        sid = self.SPOT_SAMPLE
 
         ko_json = KEGG_JSON_DIR / f"{sid}.ko.json"
         if not ko_json.exists():
             pytest.skip()
         data = json.loads(ko_json.read_text())
+
+        notebooks_dir = str(DATA_ROOT / "Notebooks")
+        if notebooks_dir not in sys.path:
+            sys.path.insert(0, notebooks_dir)
+        try:
+            from weighted_totals import calculate_denominator_egc
+        except ImportError:
+            pytest.skip("weighted_totals.py not importable (real data root required)")
+
+        total = calculate_denominator_egc([sid])[sid]
+        assert total > 0
 
         violations: list[str] = []
         for node_id, entry in data.items():
@@ -1396,7 +1423,7 @@ class TestNormEgc:
 class TestAncestorAggregation:
     """
     Parent nodes accumulate all descendant scaffolds, so parent EGC ≥ child EGC.
-    Verified for KEGG, COG, and Enzyme.
+    Verified for KEGG, COG, Enzyme, and Taxonomy.
     """
 
     SPOT_SAMPLE = "3300060590"
@@ -1443,40 +1470,23 @@ class TestAncestorAggregation:
     def test_taxonomy_parent_egc_geq_child_egc(self):
         """
         Same aggregation invariant as KEGG/COG/Enzyme, but taxonomy stores its
-        parent link under 'parent' (a taxon name string) rather than 'parent_id'
-        — see TestTaxonomyFormat.test_entries_use_parent_not_parent_id.
+        parent link under 'parent' (a taxon lineage-prefix string) rather than
+        'parent_id' — see TestTaxonomyFormat.test_entries_use_parent_not_parent_id.
 
-        KNOWN FAILING (confirmed 2026-07-06, re-verified after the EGC_TAX_TREE
-        rerun that collapsed JGI's repeated-placeholder path segments — see
-        notebook cell 8). That fix shrank the violation rate sharply: from
-        ~0.8% (307 / 36,456) to 4 / 36,452 (~0.011%) for the spot sample, and
-        649 / 4,475,518 (~0.0145%) across all 128 samples — present in every
-        sample file but tiny in magnitude per file. Independently re-verified
-        by a separate subagent, which reproduced the same 649/4,475,518 figure
-        from a fresh script.
+        Previously known-failing: the tree was keyed by bare taxon name only,
+        and the same bare name can legitimately be reachable via more than one
+        distinct immediate predecessor across different gene rows (confirmed
+        649 / 4,475,518 violations, ~0.0145%, across all 128 samples). Fixed
+        by re-keying EGC_TAX_TREE.ipynb's tree by full lineage prefix instead
+        of bare name (e.g. "Bacteria;Bacteroidetes" instead of just
+        "Bacteroidetes") — verified 0 / 4,483,100 violations across all 128
+        samples after the fix (2026-09-02).
 
-        Root cause (confirmed against raw .a.phylodist.txt): the tree builder
-        keys nodes by bare taxon name only and fixes 'parent' on first sight
-        (`if tax_id not in tax_tree: ... parent = taxpath[i-1]`), never
-        updating it afterward. JGI's phylodist paths resolve to inconsistent
-        depths, so the same bare name is legitimately reachable via more than
-        one distinct immediate predecessor across different gene rows, e.g.
-        (sample 3300060590) "Nitrospira" follows "Nitrospirae" in 225 rows but
-        "Nitrospiraceae" in another 158; (sample 3300060358) "Prochlorococcus"
-        follows "Prochlorococcaceae" in 601 rows but "Prochloraceae" in 17.
-        Every occurrence still contributes its EGC to the one shared node, but
-        only the rows matching the recorded parent string feed that parent's
-        own EGC — so a child can outgrow its parent. Left failing intentionally
-        to flag this as a real (now small) data-pipeline bug rather than
-        masking it with a tolerance threshold; fix at the source (key tree
-        nodes by full lineage path, or disambiguate collisions by (name,
-        parent) pair) and this should go green.
-
-        This is a distinct failure mode from "child present but its parent
-        missing from the file entirely" — that scenario is structurally
-        prevented by the tree-building loop (every prefix of every taxonomy
-        path is registered as a node for the same sample in the same pass)
-        and confirmed absent in all 128 files by test_parent_value_is_a_key_in_same_file
+        This is a distinct check from "child present but its parent missing
+        from the file entirely" — that scenario is structurally prevented by
+        the tree-building loop (every prefix of every taxonomy path is
+        registered as a node for the same sample in the same pass) and
+        confirmed absent in all 128 files by test_parent_value_is_a_key_in_same_file
         and test_ancestor_chain_reaches_root_no_cycles below, both of which pass.
         """
         if not TAXONOMY_JSON_DIR.exists():

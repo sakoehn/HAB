@@ -39,7 +39,7 @@ function resolveCssVar(value: string, fallback: string): string {
 
 import type { ApiStatus, ScaffoldSummaryRow, ScaffoldDetailRow, SortDir } from '../../types'
 import type { Data as PlotlyData, Layout as PlotlyLayout } from 'plotly.js'
-import { SOURCE_TAG_CLS } from '../../constants'
+import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel } from '../../constants'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
@@ -325,7 +325,7 @@ export function GroupScaffoldModal({
               · Scaffold Summary
             </span>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8, alignItems: 'center' }}>
             {status === 'ok' && rows.length > 0 && (
               <button className="btn sm" onClick={handleExportCsv}>↓ CSV</button>
             )}
@@ -446,10 +446,17 @@ export function GroupScaffoldModal({
                     key={`${m.annotationId}::${m.source}`}
                     style={{ display: 'flex', alignItems: 'center', gap: 5 }}
                   >
-                    <span style={{ font: '600 11px var(--mono)', color: 'var(--teal)' }}>
-                      {m.annotationId}
+                    <span
+                      title={m.annotationId}
+                      style={{
+                        font:      '600 11px var(--mono)',
+                        color:     'var(--teal)',
+                        fontStyle: m.source === 'taxonomy' ? 'italic' : 'normal',
+                      }}
+                    >
+                      {taxonomyAwarePrimaryLabel(m.source, m.annotationId, m.name)}
                     </span>
-                    {m.name && (
+                    {m.name && m.source !== 'taxonomy' && (
                       <span style={{ font: '11px var(--sans)', color: 'var(--text-dim)' }}>
                         {m.name}
                       </span>
@@ -585,8 +592,18 @@ export function GroupScaffoldModal({
                             <td style={{ fontFamily: 'var(--mono)', fontSize: 12, whiteSpace: 'nowrap' }}>
                               {fmtTime(row.date) || '—'}
                             </td>
-                            <td style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--teal)' }}>
-                              {row.annotationId}
+                            <td
+                              title={row.annotationId}
+                              style={{
+                                fontFamily:    'var(--mono)',
+                                fontSize:      12,
+                                color:         'var(--teal)',
+                                fontStyle:     row.source === 'taxonomy' ? 'italic' : 'normal',
+                                maxWidth:      200,
+                                overflowWrap:  'anywhere', // taxonomy IDs are long, space-free lineage strings
+                              }}
+                            >
+                              {taxonomyAwarePrimaryLabel(row.source, row.annotationId, row.name)}
                             </td>
                             <td style={{
                               fontSize:     12,
@@ -635,8 +652,16 @@ export function GroupScaffoldModal({
                                     <>
                                       <div className="scaffold-detail-label">
                                         {total} scaffold{total !== 1 ? 's' : ''} ·{' '}
-                                        <span style={{ color: 'var(--teal)' }}>{row.annotationId}</span>
-                                        {row.name && (
+                                        <span
+                                          title={row.annotationId}
+                                          style={{
+                                            color:     'var(--teal)',
+                                            fontStyle: row.source === 'taxonomy' ? 'italic' : 'normal',
+                                          }}
+                                        >
+                                          {taxonomyAwarePrimaryLabel(row.source, row.annotationId, row.name)}
+                                        </span>
+                                        {row.name && row.source !== 'taxonomy' && (
                                           <span style={{ color: 'var(--text-dim)', marginLeft: 4 }}>
                                             {row.name}
                                           </span>

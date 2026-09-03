@@ -50,14 +50,16 @@ def test_all_unique(conn):
 def test_correct_shape(conn):
     """Every column on the real table is exactly the set of fields the
     catalog is supposed to have -- source/annotation_id/name/parent plus
-    the 5 aggregate stats, plus the id surrogate key. Catches a column
-    typo/omission in the schema itself, not just in query results."""
+    the 5 aggregate stats, plus the id surrogate key and `depth` (added
+    alongside the taxonomy_egc_homonym_bug fix so search results can show
+    taxonomic rank). Catches a column typo/omission in the schema itself,
+    not just in query results."""
     cursor = conn.execute("SELECT * FROM annotation_catalog LIMIT 1")
     row = cursor.fetchone()
     assert row is not None, "expected at least one row in annotation_catalog"
     columns = {desc[0] for desc in cursor.description}
     expected = {
-        "id", "source", "annotation_id", "name", "parent",
+        "id", "source", "annotation_id", "name", "parent", "depth",
         "mean_egc", "max_egc", "mean_norm_egc", "max_norm_egc", "sample_count",
     }
     assert columns == expected
@@ -90,9 +92,10 @@ def test_matches_annotation_series_exactly(conn):
 
 def test_correct_values(conn):
     """No NULLs in any column where a real value is always expected.
-    `parent` is deliberately excluded -- annotation_series documents it as
-    legitimately NULL for cog (no equivalent field for that source), so a
-    blanket NULL check there would fail on real, valid data, not a bug."""
+    `parent` and `depth` are deliberately excluded -- create_sql_schema.py
+    documents both as legitimately NULL for cog (see its column comments
+    on annotation_series/annotation_catalog), so a blanket NULL check
+    there would fail on real, valid data, not a bug."""
     never_null_columns = [
         "source", "annotation_id", "name",
         "mean_egc", "max_egc", "mean_norm_egc", "max_norm_egc", "sample_count",
@@ -117,3 +120,46 @@ def test_correct_values(conn):
     assert isinstance(by_name["mean_norm_egc"], float)
     assert isinstance(by_name["max_norm_egc"], float)
     assert isinstance(by_name["sample_count"], int)
+
+
+def test_depth_is_null_only_for_cog(conn):
+    """`depth` (added for the taxonomy_egc_homonym_bug fix, see
+    test_correct_shape) is NULL for every cog row and non-NULL for every
+    kegg/enzyme/taxonomy row -- matches create_sql_schema.py's column
+    comment exactly, not just "some are null somewhere"."""
+    for source, expect_null in [
+        ("cog", True), ("kegg", False), ("enzyme", False), ("taxonomy", False),
+    ]:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM annotation_catalog WHERE source = ?", (source,)
+        ).fetchone()[0]
+        nulls = conn.execute(
+            "SELECT COUNT(*) FROM annotation_catalog WHERE source = ? AND depth IS NULL", (source,)
+        ).fetchone()[0]
+        assert total > 0, f"no {source} rows found"
+        assert nulls == (total if expect_null else 0), (
+            f"{source}: {nulls}/{total} rows have NULL depth, expected "
+            f"{'all' if expect_null else 'none'}"
+        )
+
+
+def test_taxonomy_homonym_produces_two_distinct_catalog_rows(conn):
+    """Real, confirmed cross-lineage homonym: the taxonomy source has a
+    genus called "Bosea" that legitimately exists under two different
+    families (a taxonomic reclassification -- see taxonomy_egc_homonym_bug
+    and tests/sql/test_cache_sql.py's BOSEA_OLD_LINEAGE/BOSEA_NEW_LINEAGE).
+    The catalog must carry BOTH as separate rows sharing `name` but with
+    distinct `annotation_id` (full lineage) and `parent` -- not collapsed
+    into one via the (source, annotation_id) UNIQUE constraint, which only
+    protects against exact-id duplicates, not same-name-different-lineage."""
+    rows = conn.execute(
+        "SELECT annotation_id, parent, depth FROM annotation_catalog "
+        "WHERE source = 'taxonomy' AND name = 'Bosea'"
+    ).fetchall()
+    assert len(rows) == 2, f"expected exactly 2 'Bosea' rows, found {len(rows)}"
+
+    annotation_ids = {row[0] for row in rows}
+    parents = {row[1] for row in rows}
+    assert len(annotation_ids) == 2, "the two Bosea rows must have distinct annotation_id"
+    assert len(parents) == 2, "the two Bosea rows must have distinct parent (different families)"
+    assert all(row[2] == 6 for row in rows), "both are genus-level (depth=6)"

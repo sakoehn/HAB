@@ -13,6 +13,7 @@ import { computeNightBands, alignTideToChartPoints } from '../../utils/solar'
 import { useSolarTideData } from '../../utils/useSolarTideData'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
+import { taxonomyAwarePrimaryLabel } from '../../constants'
 import { StatsPanel }   from '../ui/StatsPanel'
 import { HelpTooltip } from '../ui/HelpTooltip'
 import { ChartControls } from './ChartControls'
@@ -358,11 +359,17 @@ export function MultiEgcChart({
             {series.map(s => (
               <div className="legend-item" key={s.annotationId}>
                 <div className="legend-dot" style={{ background: s.color }} />
-                <span title={s.name ?? s.annotationId}>{s.annotationId}</span>
+                <span
+                  title={s.annotationId}
+                  style={s.source === 'taxonomy' ? { fontStyle: 'italic' } : undefined}
+                >
+                  {taxonomyAwarePrimaryLabel(s.source, s.annotationId, s.name)}
+                </span>
                 {!s.scaffoldsDisabled && (
                   <ScaffoldBtn
                     annotationId={s.annotationId}
                     source={s.source}
+                    name={s.name}
                     onGoExplore={onGoScaffoldExplore}
                   />
                 )}

@@ -288,6 +288,15 @@ def test_no_duplicate_cog_id_within_one_gene(conn):
 #=============================================================
 #  Test Mapping Search
 #=============================================================
+# Post taxonomy_egc_homonym_bug, get_mappings_sql's taxonomy branch matches
+# against taxon_paths.full_path (a lineage-prefix), so a bare species name
+# no longer matches -- it must be the full lineage through that rank.
+TAXONOMY_SPECIES_LINEAGE = (
+    "Bacteria;Bacteroidetes;Flavobacteriia;Flavobacteriales;"
+    "Flavobacteriaceae;Wenyingzhuangia;Wenyingzhuangia heitensis"
+)
+
+
 @pytest.mark.slow
 def test_search_response_shape_correct(conn):
     expected_keys = {"sample", "gene_id", "contig_id", "kegg_id", "cog_id", "enzyme", "taxonomy"}
@@ -295,7 +304,7 @@ def test_search_response_shape_correct(conn):
         ("kegg", "KO:K02112"),
         ("cog", "COG0055"),
         ("enzyme", "EC:7.1.2.2"),
-        ("taxonomy", "Wenyingzhuangia heitensis"),
+        ("taxonomy", TAXONOMY_SPECIES_LINEAGE),
     ]:
         result = get_mappings_sql(conn, source, annotation_id)
         assert result, f"expected at least one row for {source}"

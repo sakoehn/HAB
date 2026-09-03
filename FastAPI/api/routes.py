@@ -6,6 +6,7 @@ All FastAPI endpoints except /annotations/correlate (in correlation.py).
 Endpoints
 ~~~~~~~~~
 GET /debug
+GET /sql-test
 GET /status
 GET /timepoints
 GET /samples
@@ -117,7 +118,7 @@ def _normalize_annotation_dict(data: dict, source: str, sample_name: str) -> lis
             "sample":        sample_name,
             "timepoint":     get_timepoint(sample_name),
             "annotation_id": annotation_id,
-            "name":          annotation_id if source == "taxonomy" else extract_annotation_name(value),
+            "name":          extract_annotation_name(value),
             "value":         value,
         }
         for annotation_id, value in data.items()
@@ -717,7 +718,7 @@ async def annotation_time_series(
             value = data.get(annotation_id)
             if value is None:
                 continue
-            ann_name = annotation_id if source == AnnotationSource.taxonomy else extract_annotation_name(value)
+            ann_name = extract_annotation_name(value)
            
             value_out = (
                 {k: v for k, v in value.items() if k != "scaffolds"}
@@ -874,7 +875,7 @@ async def top_annotations_by_egc(
                     if egc is None:
                         continue
                     if annotation_id not in egc_map:
-                        ann_name = annotation_id if source == AnnotationSource.taxonomy else extract_annotation_name(value)
+                        ann_name = extract_annotation_name(value)
                         egc_map[annotation_id] = {
                             "annotation_id":   annotation_id,
                             "name":            ann_name,

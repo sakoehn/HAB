@@ -316,9 +316,9 @@ def get_all_sample_names() -> list[str]:
 def extract_annotation_name(value) -> str | None:
     """Return the human-readable name from an annotation JSON value.
 
-    Note: for Taxonomy the name IS the dict key, not inside the value.
-    Call sites that know the annotation_id should use it directly for taxonomy
-    rather than calling this function.
+    Works uniformly across all four sources -- Taxonomy entries carry their
+    own 'name' field (the bare rank label) since the dict key became the
+    full lineage prefix, so no source-specific bypass is needed here.
     """
     if isinstance(value, str):
         return value

@@ -5,6 +5,9 @@
 //
 // Features:
 //   - Search by annotation ID or name within a chosen source (all 4 types)
+//   - Taxonomy rank filter pills — one for the search results dropdown,
+//     one (separate) for the tracked/active terms list below it, which
+//     also narrows the chart and per-term detail tables it feeds
 //   - Multiple terms tracked in parallel (each gets a color)
 //   - Aggregated or split-by-term line/bar chart
 //   - Per-term expandable detail table (date, time, scaffolds, genes)
@@ -74,11 +77,12 @@ function filterSummaryForChart(
 }
 
 import type { ApiStatus, ScaffoldExploreTerm, ScaffoldSummaryRow, ScaffoldDetailRow, TopAnnotation } from '../../types'
-import { SOURCE_TAG_CLS } from '../../constants'
+import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel, taxonomyRankLabel } from '../../constants'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
 import { minMeanMax } from '../../utils/stats'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
+import { taxonomyDepthFromId } from '../../utils/taxonomy'
 import { DateRangePicker } from '../ui/DateRangePicker'
 import { HelpTooltip } from '../ui/HelpTooltip'
 
@@ -104,6 +108,17 @@ export function ScaffoldExplorePanel({
   const [searchSrc, setSearchSrc]       = useState('taxonomy')
   const [searchRes, setSearchRes]       = useState<TopAnnotation[]>([])
   const [searchStatus, setSearchStatus] = useState<ApiStatus>('idle')
+  // Taxonomy rank multi-select filter for the search results below — only
+  // shown when searchSrc === 'taxonomy'. Real `depth` comes straight off
+  // each row (search results carry it, unlike /annotations/top).
+  const [rankFilter, setRankFilter]     = useState<Set<number>>(new Set())
+  // Separate rank filter for the tracked/active terms list (and the chart +
+  // detail table it feeds) — terms can span multiple sources at once
+  // (unlike the search dropdown, which is scoped to one source), so this
+  // only ever narrows the taxonomy subset of `terms`, same rule as
+  // LeftResultList's rank filter on the Analyze page. ScaffoldExploreTerm
+  // has no `depth` field, so rank is derived from the lineage-prefix id.
+  const [termRankFilter, setTermRankFilter] = useState<Set<number>>(new Set())
   const [dateFrom, setDateFrom]         = useState('')
   const [dateTo, setDateTo]             = useState('')
   const [chartMetric, setChartMetric]   = useState<'scaffold_count' | 'gene_count'>('scaffold_count')
@@ -317,12 +332,61 @@ export function ScaffoldExplorePanel({
     setSearchRes([])
     setSearchStatus('idle')
     setSearchQ('')
+    setRankFilter(new Set())
   }
+
+  function toggleRank(depth: number) {
+    setRankFilter(prev => {
+      const next = new Set(prev)
+      if (next.has(depth)) next.delete(depth); else next.add(depth)
+      return next
+    })
+  }
+
+  const clearRankFilter = () => setRankFilter(new Set())
+
+  const availableRanks = useMemo(
+    () => searchSrc !== 'taxonomy'
+      ? []
+      : [...new Set(searchRes.map(r => r.depth).filter((d): d is number => d != null))].sort((a, b) => a - b),
+    [searchRes, searchSrc],
+  )
+
+  const visibleSearchRes = useMemo(
+    () => rankFilter.size === 0 || searchSrc !== 'taxonomy'
+      ? searchRes
+      : searchRes.filter(r => r.depth != null && rankFilter.has(r.depth)),
+    [searchRes, rankFilter, searchSrc],
+  )
+
+  function toggleTermRank(depth: number) {
+    setTermRankFilter(prev => {
+      const next = new Set(prev)
+      if (next.has(depth)) next.delete(depth); else next.add(depth)
+      return next
+    })
+  }
+
+  const clearTermRankFilter = () => setTermRankFilter(new Set())
+
+  const availableTermRanks = useMemo(
+    () => [...new Set(
+      terms.filter(t => t.source === 'taxonomy').map(t => taxonomyDepthFromId(t.annotationId)),
+    )].sort((a, b) => a - b),
+    [terms],
+  )
+
+  const visibleTerms = useMemo(
+    () => termRankFilter.size === 0
+      ? terms
+      : terms.filter(t => t.source !== 'taxonomy' || termRankFilter.has(taxonomyDepthFromId(t.annotationId))),
+    [terms, termRankFilter],
+  )
 
   // ── Chart data ─────────────────────────────────────────────────────────
 
   const chartSeries = useMemo(() => {
-    const readyTerms = terms.filter(t => t.status === 'ok' && t.summary.length > 0)
+    const readyTerms = visibleTerms.filter(t => t.status === 'ok' && t.summary.length > 0)
     if (!readyTerms.length) return []
 
     if (splitByTerm) {
@@ -359,7 +423,7 @@ export function ScaffoldExplorePanel({
       color: 'var(--chart-1)',
       data:  Object.values(dateMap).sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date)),
     }]
-  }, [terms, dateFrom, dateTo, splitByTerm])
+  }, [visibleTerms, dateFrom, dateTo, splitByTerm])
 
   const chartRows = useMemo(() => {
     const dateSet = new Set<string>()
@@ -473,7 +537,29 @@ export function ScaffoldExplorePanel({
       )}
 
       {searchStatus === 'ok' && searchRes.length > 0 && (
-        <div style={{
+        <>
+          {availableRanks.length > 1 && (
+            <div className="al-source-filter al-rank-filter" style={{ marginBottom: 8, borderRadius: 6 }}>
+              <span className="al-rank-filter-label">Rank</span>
+              <button
+                className={`al-source-pill ${rankFilter.size === 0 ? 'al-source-pill-active' : ''}`}
+                onClick={clearRankFilter}
+              >
+                All
+              </button>
+              <HelpTooltip text="Narrows the results below to the selected taxonomic rank(s) — doesn't re-search, just filters what's already loaded." />
+              {availableRanks.map(depth => (
+                <button
+                  key={depth}
+                  className={`al-source-pill ${rankFilter.has(depth) ? 'al-source-pill-active' : ''}`}
+                  onClick={() => toggleRank(depth)}
+                >
+                  {taxonomyRankLabel(depth)}
+                </button>
+              ))}
+            </div>
+          )}
+          <div style={{
           border: '1px solid var(--border)', borderRadius: 7,
           background: 'var(--surface)', overflow: 'hidden',
           maxHeight: 260, overflowY: 'auto',
@@ -482,9 +568,12 @@ export function ScaffoldExplorePanel({
             padding: '6px 12px', font: '10px var(--mono)', color: 'var(--text-dim)',
             background: 'var(--surface3)', borderBottom: '1px solid var(--border)',
           }}>
-            {searchRes.length} results — click to add
+            {rankFilter.size > 0
+              ? <>{visibleSearchRes.length} of {searchRes.length} results</>
+              : <>{searchRes.length} results</>
+            } — click to add
           </div>
-          {searchRes.map(r => {
+          {visibleSearchRes.map(r => {
             const already = terms.some(t => t.annotationId === r.annotation_id && t.source === searchSrc)
             return (
               <div
@@ -500,19 +589,29 @@ export function ScaffoldExplorePanel({
                 onMouseEnter={e => { if (!already) e.currentTarget.style.background = 'var(--surface2)' }}
                 onMouseLeave={e => { e.currentTarget.style.background = '' }}
               >
-                <span style={{ font: '600 12px var(--mono)', color: 'var(--teal)' }}>
-                  {r.annotation_id}
+                <span
+                  title={r.annotation_id}
+                  style={{
+                    font:      '600 12px var(--mono)',
+                    color:     'var(--teal)',
+                    fontStyle: r.source === 'taxonomy' ? 'italic' : 'normal',
+                  }}
+                >
+                  {taxonomyAwarePrimaryLabel(r.source ?? searchSrc, r.annotation_id, r.name)}
                 </span>
-                <span style={{ font: '13px var(--sans)', color: 'var(--text-dim)', flex: 1 }}>
-                  {r.name ?? '—'}
-                </span>
+                {r.source !== 'taxonomy' && (
+                  <span style={{ font: '13px var(--sans)', color: 'var(--text-dim)', flex: 1 }}>
+                    {r.name ?? '—'}
+                  </span>
+                )}
                 <span style={{ font: '11px var(--mono)', color: already ? 'var(--text-dim)' : 'var(--teal)' }}>
                   {already ? 'added' : '+'}
                 </span>
               </div>
             )
           })}
-        </div>
+          </div>
+        </>
       )}
 
       {/* ── Active terms list ── */}
@@ -540,11 +639,41 @@ export function ScaffoldExplorePanel({
               </button>
             </div>
           )}
-          {terms.map(term => (
+          {availableTermRanks.length > 1 && (
+            <div className="al-source-filter al-rank-filter">
+              <span className="al-rank-filter-label">Rank</span>
+              <button
+                className={`al-source-pill ${termRankFilter.size === 0 ? 'al-source-pill-active' : ''}`}
+                onClick={clearTermRankFilter}
+              >
+                All
+              </button>
+              <HelpTooltip text="Narrows this list (and the chart/table below) to the selected taxonomic rank(s) — non-taxonomy terms are unaffected." />
+              {availableTermRanks.map(depth => (
+                <button
+                  key={depth}
+                  className={`al-source-pill ${termRankFilter.has(depth) ? 'al-source-pill-active' : ''}`}
+                  onClick={() => toggleTermRank(depth)}
+                >
+                  {taxonomyRankLabel(depth)}
+                </button>
+              ))}
+            </div>
+          )}
+          {visibleTerms.map(term => (
             <div key={`${term.annotationId}::${term.source}`} className="scaffold-summary-card-row">
               <div style={{ width: 10, height: 10, borderRadius: '50%', background: term.color, flexShrink: 0 }} />
-              <span style={{ font: '600 12px var(--mono)', color: 'var(--teal)', minWidth: 80 }}>
-                {term.annotationId}
+              <span
+                title={term.annotationId}
+                style={{
+                  font:      '600 12px var(--mono)',
+                  color:     'var(--teal)',
+                  fontStyle: term.source === 'taxonomy' ? 'italic' : 'normal',
+                  minWidth:  80,
+                  overflowWrap: 'anywhere',
+                }}
+              >
+                {taxonomyAwarePrimaryLabel(term.source, term.annotationId, null)}
               </span>
               <span className={`tag ${SOURCE_TAG_CLS[term.source] ?? ''}`}>
                 {term.source}
@@ -608,9 +737,9 @@ export function ScaffoldExplorePanel({
                   marginTop: 2,
                 }}>
                   Sum of {chartMetric === 'scaffold_count' ? 'scaffold counts' : 'gene counts'}{' '}
-                  across all {terms.filter(t => t.status === 'ok').length} annotations listed
+                  across all {visibleTerms.filter(t => t.status === 'ok').length} annotations listed
                   below, per sample — not a single annotation's value.{' '}
-                  {terms.length > 1 && 'Use "Split by term" to see each one separately.'}
+                  {visibleTerms.length > 1 && 'Use "Split by term" to see each one separately.'}
                 </div>
               )}
             </div>
@@ -710,7 +839,7 @@ export function ScaffoldExplorePanel({
       )}
 
       {/* ── Per-term detail tables ── */}
-      {terms.filter(t => t.status === 'ok').map(term => (
+      {visibleTerms.filter(t => t.status === 'ok').map(term => (
         <div key={`${term.annotationId}::${term.source}`} className="parent-group">
           <button
             className={`mappings-toggle ${term.expanded ? 'open' : ''}`}
@@ -727,8 +856,16 @@ export function ScaffoldExplorePanel({
           >
             <div style={{ width: 8, height: 8, borderRadius: '50%', background: term.color, flexShrink: 0 }} />
             <span className="toggle-icon">▶</span>
-            <span className="toggle-label" style={{ fontWeight: 600, color: 'var(--text-h)' }}>
-              {term.annotationId}
+            <span
+              className="toggle-label"
+              title={term.annotationId}
+              style={{
+                fontWeight: 600,
+                color:      'var(--text-h)',
+                fontStyle:  term.source === 'taxonomy' ? 'italic' : 'normal',
+              }}
+            >
+              {taxonomyAwarePrimaryLabel(term.source, term.annotationId, null)}
             </span>
             <span className={`tag ${SOURCE_TAG_CLS[term.source] ?? ''}`}>{term.source}</span>
             <span className="toggle-count">

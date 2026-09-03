@@ -225,11 +225,7 @@ def build_search_index(build_matrices: bool = False) -> None:
                 _index_annotation(src, annotation_id, value)
 
                 if annotation_id not in meta:
-                    # Taxonomy: the name IS the dict key (no 'name' field in value).
-                    if source_enum == AnnotationSource.taxonomy:
-                        name = annotation_id
-                    else:
-                        name = extract_annotation_name(value)
+                    name = extract_annotation_name(value)
                     parent = extract_parent(value, src)
                     meta[annotation_id] = {
                         "annotation_id": annotation_id,

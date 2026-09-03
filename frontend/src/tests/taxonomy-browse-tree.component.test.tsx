@@ -55,8 +55,8 @@ describe('TaxonomyBrowseTree — rendering', () => {
   it('renders the domain-level nodes with rank labels', async () => {
     mockFetch.mockResolvedValue(jsonResponse({
       data: [
-        { annotation_id: 'Bacteria', depth: 1, category: 'Bacteria' },
-        { annotation_id: 'Archaea',  depth: 1, category: 'Archaea' },
+        { annotation_id: 'Bacteria', name: 'Bacteria', depth: 1, category: 'Bacteria' },
+        { annotation_id: 'Archaea',  name: 'Archaea',  depth: 1, category: 'Archaea' },
       ],
     }))
     render(<TaxonomyBrowseTree onSelectRoot={vi.fn()} />)
@@ -68,7 +68,7 @@ describe('TaxonomyBrowseTree — rendering', () => {
 
   it('does not render an exclusion checkbox (unlike TaxonomyTree)', async () => {
     mockFetch.mockResolvedValue(jsonResponse({
-      data: [{ annotation_id: 'Bacteria', depth: 1, category: 'Bacteria' }],
+      data: [{ annotation_id: 'Bacteria', name: 'Bacteria', depth: 1, category: 'Bacteria' }],
     }))
     render(<TaxonomyBrowseTree onSelectRoot={vi.fn()} />)
     await screen.findByText('Bacteria')
@@ -82,7 +82,7 @@ describe('TaxonomyBrowseTree — interaction', () => {
     const user = userEvent.setup()
     const onSelectRoot = vi.fn()
     mockFetch.mockResolvedValue(jsonResponse({
-      data: [{ annotation_id: 'Bacteria', depth: 1, category: 'Bacteria' }],
+      data: [{ annotation_id: 'Bacteria', name: 'Bacteria', depth: 1, category: 'Bacteria' }],
     }))
     render(<TaxonomyBrowseTree onSelectRoot={onSelectRoot} />)
     await screen.findByText('Bacteria')
@@ -94,13 +94,13 @@ describe('TaxonomyBrowseTree — interaction', () => {
   it('clicking the chevron fetches and renders children', async () => {
     const user = userEvent.setup()
     mockFetch.mockResolvedValueOnce(jsonResponse({
-      data: [{ annotation_id: 'Bacteria', depth: 1, category: 'Bacteria' }],
+      data: [{ annotation_id: 'Bacteria', name: 'Bacteria', depth: 1, category: 'Bacteria' }],
     }))
     render(<TaxonomyBrowseTree onSelectRoot={vi.fn()} />)
     await screen.findByText('Bacteria')
 
     mockFetch.mockResolvedValueOnce(jsonResponse({
-      data: [{ annotation_id: 'Proteobacteria', depth: 2, category: null }],
+      data: [{ annotation_id: 'Proteobacteria', name: 'Proteobacteria', depth: 2, category: null }],
     }))
     await user.click(screen.getByTitle('Expand'))
 

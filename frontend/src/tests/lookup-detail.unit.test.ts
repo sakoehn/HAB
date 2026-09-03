@@ -237,8 +237,8 @@ describe('category display via expandParentLabel', () => {
     expect(result!.length).toBeGreaterThan(1)
   })
 
-  it('taxonomy category passes through (no special expansion)', () => {
-    expect(resolveCategory({ category: 'Bacteria' }, 'taxonomy')).toBe('Bacteria')
+  it('taxonomy category gets a rank suffix (domain-level values have no lineage prefix)', () => {
+    expect(resolveCategory({ category: 'Bacteria' }, 'taxonomy')).toBe('Bacteria (Domain)')
   })
 })
 

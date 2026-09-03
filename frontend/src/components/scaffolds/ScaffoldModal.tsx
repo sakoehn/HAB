@@ -31,7 +31,7 @@ import type {
   ApiStatus, ScaffoldSummaryRow, ScaffoldDetailRow, ScaffoldSortCol, SortDir,
 } from '../../types'
 import type { Data as PlotlyData, Layout as PlotlyLayout } from 'plotly.js'
-import { SOURCE_TAG_CLS } from '../../constants'
+import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel } from '../../constants'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
 import { minMeanMax } from '../../utils/stats'
@@ -41,11 +41,13 @@ import { SkeletonStatTiles, SkeletonChart, SkeletonTable } from '../ui/Skeleton'
 export function ScaffoldModal({
   annotationId,
   source,
+  name,
   onClose,
   onGoExplore,
 }: {
   annotationId: string
   source:       string
+  name?:        string | null
   onClose:      () => void
   onGoExplore?: (annotationId: string, source: string) => void
 }) {
@@ -221,9 +223,14 @@ export function ScaffoldModal({
           }}>
             <span
               data-testid="annotation-id"
-              style={{ font: '600 14px var(--mono)', color: 'var(--teal)' }}
+              title={annotationId}
+              style={{
+                font:       '600 14px var(--mono)',
+                color:      'var(--teal)',
+                fontStyle:  source === 'taxonomy' ? 'italic' : 'normal',
+              }}
             >
-              {annotationId}
+              {taxonomyAwarePrimaryLabel(source, annotationId, name)}
             </span>
             <span data-testid="source-tag" className={`tag ${SOURCE_TAG_CLS[source] ?? ''}`}>{source}</span>
             <span style={{ font: '12px var(--mono)', color: 'var(--text-dim)' }}>
@@ -231,10 +238,11 @@ export function ScaffoldModal({
             </span>
           </div>
           <div style={{
-            display:    'flex',
-            gap:        8,
-            flexShrink: 0,
-            alignItems: 'center',
+            display:        'flex',
+            flexWrap:       'wrap',
+            justifyContent: 'flex-end',
+            gap:            8,
+            alignItems:     'center',
           }}>
             {status === 'ok' && summary.length > 0 && (
               <button data-testid="csv-btn" className="btn sm" onClick={handleExportCsv}>↓ CSV</button>

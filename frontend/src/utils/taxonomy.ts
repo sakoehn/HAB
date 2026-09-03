@@ -1,6 +1,11 @@
-// ── Taxonomy Explorer Utilities ──────────────────────────────────────────────
-// Pure functions for computing "scope root minus excluded subtrees" series.
-// No React imports — fully testable in Node.
+// ── Taxonomy Utilities ────────────────────────────────────────────────────────
+// Pure functions for taxonomy annotation ids and lineage math: computing
+// "scope root minus excluded subtrees" series (Taxonomy Explorer only), plus
+// general-purpose lineage-prefix helpers (bareTaxonName, taxonomyDepthFromId,
+// computeChartTitle) used across Analyze/Compare/Explore/Taxonomy Explorer
+// wherever a taxonomy annotation_id needs a short display label or its rank
+// derived without a `depth` field on hand. No React imports — fully testable
+// in Node.
 
 import type { AnnotationItem } from '../types'
 import { extractEgc, extractNormEgc } from './stats'
@@ -74,14 +79,38 @@ export function computeExclusionSeries(
   return out
 }
 
+// bareTaxonName
+// annotation_id for taxonomy is the full lineage-prefix (e.g.
+// "Bacteria;Proteobacteria;Alphaproteobacteria") — the bare rank label is
+// always its last segment, by construction of the full-lineage-prefix
+// keying scheme (see taxonomy_egc_homonym_bug). Domain-level ids have no
+// semicolon at all, so they pass through unchanged.
+
+export function bareTaxonName(taxonId: string): string {
+  const segments = taxonId.split(';')
+  return segments[segments.length - 1]
+}
+
+// taxonomyDepthFromId
+// The rank (1=domain..8=strain) is just the lineage-prefix's segment
+// count — usable anywhere a taxonomy id is available but the record
+// itself doesn't carry a `depth` field (e.g. /annotations/top, which
+// only annotation_catalog/search results carry depth on).
+
+export function taxonomyDepthFromId(taxonId: string): number {
+  return taxonId.split(';').length
+}
+
 // computeChartTitle
 // Builds the Taxonomy Explorer chart title: the scope root's name, plus
 // the excluded branches when there are any. Used instead of MultiEgcChart's
 // generic "{yLabel} — N Annotations" default, which doesn't say what's
-// actually being shown.
+// actually being shown. Both the root and each exclusion are reduced to
+// their bare rank label — the full lineage is still one hover/click away
+// (the chart legend and info drawer), just not crammed into the title.
 
 export function computeChartTitle(rootId: string, excludedList: string[]): string {
   return excludedList.length === 0
-    ? rootId
-    : `${rootId} — Excluding ${excludedList.join(', ')}`
+    ? bareTaxonName(rootId)
+    : `${bareTaxonName(rootId)} — Excluding ${excludedList.map(bareTaxonName).join(', ')}`
 }

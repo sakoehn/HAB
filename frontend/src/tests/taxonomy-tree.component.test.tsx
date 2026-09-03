@@ -60,7 +60,7 @@ describe('TaxonomyTree — states', () => {
 describe('TaxonomyTree — rendering', () => {
   it('renders a node name and its prokaryote rank label', async () => {
     mockFetch.mockResolvedValue(jsonResponse({
-      data: [{ annotation_id: 'Proteobacteria', depth: 2, category: 'Bacteria' }],
+      data: [{ annotation_id: 'Proteobacteria', name: 'Proteobacteria', depth: 2, category: 'Bacteria' }],
     }))
     render(<TaxonomyTree rootId="Bacteria" excludedIds={new Set()} onToggleExclude={vi.fn()} />)
 
@@ -70,7 +70,7 @@ describe('TaxonomyTree — rendering', () => {
 
   it('uses the same rank ladder for Eukaryota as every other domain', async () => {
     mockFetch.mockResolvedValue(jsonResponse({
-      data: [{ annotation_id: 'Chordata', depth: 2, category: 'Eukaryota' }],
+      data: [{ annotation_id: 'Chordata', name: 'Chordata', depth: 2, category: 'Eukaryota' }],
     }))
     render(<TaxonomyTree rootId="Eukaryota" excludedIds={new Set()} onToggleExclude={vi.fn()} />)
 
@@ -82,13 +82,13 @@ describe('TaxonomyTree — expand/collapse', () => {
   it('clicking the chevron fetches and renders children', async () => {
     const user = userEvent.setup()
     mockFetch.mockResolvedValueOnce(jsonResponse({
-      data: [{ annotation_id: 'Proteobacteria', depth: 2, category: null }],
+      data: [{ annotation_id: 'Proteobacteria', name: 'Proteobacteria', depth: 2, category: null }],
     }))
     render(<TaxonomyTree rootId="Bacteria" excludedIds={new Set()} onToggleExclude={vi.fn()} />)
     await screen.findByText('Proteobacteria')
 
     mockFetch.mockResolvedValueOnce(jsonResponse({
-      data: [{ annotation_id: 'Alphaproteobacteria', depth: 3, category: null }],
+      data: [{ annotation_id: 'Alphaproteobacteria', name: 'Alphaproteobacteria', depth: 3, category: null }],
     }))
     await user.click(screen.getByTitle('Expand'))
 
@@ -101,7 +101,7 @@ describe('TaxonomyTree — exclusion', () => {
     const user = userEvent.setup()
     const onToggleExclude = vi.fn()
     mockFetch.mockResolvedValue(jsonResponse({
-      data: [{ annotation_id: 'Proteobacteria', depth: 2, category: null }],
+      data: [{ annotation_id: 'Proteobacteria', name: 'Proteobacteria', depth: 2, category: null }],
     }))
     render(<TaxonomyTree rootId="Bacteria" excludedIds={new Set()} onToggleExclude={onToggleExclude} />)
     await screen.findByText('Proteobacteria')
@@ -112,7 +112,7 @@ describe('TaxonomyTree — exclusion', () => {
 
   it('an excluded node cannot be expanded (chevron disabled)', async () => {
     mockFetch.mockResolvedValue(jsonResponse({
-      data: [{ annotation_id: 'Proteobacteria', depth: 2, category: null }],
+      data: [{ annotation_id: 'Proteobacteria', name: 'Proteobacteria', depth: 2, category: null }],
     }))
     render(
       <TaxonomyTree

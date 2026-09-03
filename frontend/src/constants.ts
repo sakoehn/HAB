@@ -172,6 +172,16 @@ export function expandParentLabel(parent: string, source: string): string {
     return parent
   }
 
+  if (source === 'taxonomy') {
+    // parent is the ancestor's own full lineage-prefix (e.g.
+    // "Bacteria;Proteobacteria;Alphaproteobacteria") — show just its bare
+    // rank label, not the whole chain.
+    const segments = parent.split(';')
+    const bareName = segments[segments.length - 1]
+    const rank = TAXONOMY_RANK_NAMES[segments.length]
+    return rank ? `${bareName} (${rank})` : bareName
+  }
+
   return parent
 }
 
@@ -198,6 +208,28 @@ export function taxonomyRankLabel(depth: number | null): string {
     return TAXONOMY_RANK_NAMES[depth]
   }
   return `Level ${depth}`
+}
+
+// ── Taxonomy-aware primary label ────────────────────────────────────────────
+// annotation_id is the full lineage-prefix for taxonomy (e.g.
+// "Bacteria;Proteobacteria;...;Bosea") — far too crowded to print as the
+// headline label everywhere it appears (legends, modal headers, member
+// lists). For taxonomy, the bare `name` is what should read as the primary
+// label, with the full lineage available on demand (title/hover, or an
+// explicit toggle) rather than always inline. For every other source,
+// annotation_id already IS the short, meaningful label, so it's unchanged.
+export function taxonomyAwarePrimaryLabel(
+  source: string,
+  annotationId: string,
+  name: string | null | undefined,
+): string {
+  if (source !== 'taxonomy') return annotationId
+  if (name) return name
+  // `name` isn't always plumbed through (e.g. group-card members) — still
+  // recoverable from the id itself, since the bare rank label is always
+  // its last lineage segment.
+  const segments = annotationId.split(';')
+  return segments[segments.length - 1]
 }
 
 // ── Navigation items ───────────────────────────────────────────────────────

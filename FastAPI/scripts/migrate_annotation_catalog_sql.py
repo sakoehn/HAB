@@ -36,6 +36,7 @@ def populate_annotation_catalog(conn: sqlite3.Connection) -> int:
         SELECT source, annotation_id,
                MIN(name) AS name,
                MIN(parent) AS parent,
+               MIN(depth) AS depth,
                AVG(egc) AS mean_egc,
                MAX(egc) AS max_egc,
                AVG(norm_egc) AS mean_norm_egc,
@@ -48,8 +49,8 @@ def populate_annotation_catalog(conn: sqlite3.Connection) -> int:
     conn.executemany(
         """
         INSERT INTO annotation_catalog
-            (source, annotation_id, name, parent, mean_egc, max_egc, mean_norm_egc, max_norm_egc, sample_count)
-        VALUES (:source, :annotation_id, :name, :parent, :mean_egc, :max_egc, :mean_norm_egc, :max_norm_egc, :sample_count)
+            (source, annotation_id, name, parent, depth, mean_egc, max_egc, mean_norm_egc, max_norm_egc, sample_count)
+        VALUES (:source, :annotation_id, :name, :parent, :depth, :mean_egc, :max_egc, :mean_norm_egc, :max_norm_egc, :sample_count)
         """,
         rows,
     )

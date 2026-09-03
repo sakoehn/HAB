@@ -10,9 +10,6 @@ Data-layer test: no database, no server, no real files -- just the
 transform function in isolation, same spirit as test_taxon_paths.py
 testing parse_taxon_path().
 
-Import target doesn't exist yet. Write build_annotation_series_row() in
-FastAPI/scripts/migrate_annotations_to_sql.py to make this pass.
-
 Run:
     pytest tests/sql/test_migrate_annotations.py -v
 """
@@ -38,14 +35,17 @@ COG_ENTRY = {
     },
 }
 
-# Real Taxonomy entry, sample 3300060358, DataStructures/Taxonomy/3300060358.tax.json
-# Note: NO "name" key -- confirmed absent from the raw file, unlike COG/KEGG/Enzyme.
+# Real Taxonomy entry, sample 3300060358, DataStructures/Taxonomy/3300060358.tax.json,
+# keyed "Bacteria;Bacteroidetes" post taxonomy_egc_homonym_bug's full-lineage
+# rekeying. Unlike the old format, taxonomy entries now DO carry a "name"
+# field (the bare rank label) alongside the lineage-prefix key.
 TAXONOMY_ENTRY = {
+    "name": "Bacteroidetes",
     "depth": 2,
     "category": "Bacteria",
     "parent": "Bacteria",
     "egc": 3555560.0,
-    "norm_egc": 0.22798534249867464,
+    "norm_egc": 0.22032252119813275,
     "scaffolds": {
         "scaffold_a": 5,
         "scaffold_b": 2,
@@ -55,11 +55,12 @@ TAXONOMY_ENTRY = {
 # Real Taxonomy ROOT entry (sample 3300060358, "Bacteria" itself) -- "parent"
 # key IS present but explicitly None, must not be confused with "missing".
 TAXONOMY_ROOT_ENTRY = {
+    "name": "Bacteria",
     "depth": 1,
     "category": "Bacteria",
     "parent": None,
     "egc": 13121942.0,
-    "norm_egc": 0.8413893848276344,
+    "norm_egc": 0.8131094242413764,
     "scaffolds": {"scaffold_a": 1},
 }
 
@@ -118,14 +119,14 @@ def test_cog_row_derives_scaffold_count_and_gene_count():
 
 
 def test_taxonomy_row_carries_parent_and_depth():
-    row = build_annotation_series_row("taxonomy", "3300060358", "Bacteroidetes", TAXONOMY_ENTRY)
+    row = build_annotation_series_row("taxonomy", "3300060358", "Bacteria;Bacteroidetes", TAXONOMY_ENTRY)
     assert row["parent"] == "Bacteria"
     assert row["depth"] == 2
     assert row["category"] == "Bacteria"
 
 
 def test_taxonomy_row_derives_scaffold_count_and_gene_count():
-    row = build_annotation_series_row("taxonomy", "3300060358", "Bacteroidetes", TAXONOMY_ENTRY)
+    row = build_annotation_series_row("taxonomy", "3300060358", "Bacteria;Bacteroidetes", TAXONOMY_ENTRY)
     assert row["scaffold_count"] == 2
     assert row["gene_count"] == 7  # 5 + 2
 
@@ -148,15 +149,30 @@ def test_row_has_no_id_key():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Taxonomy's missing "name" key -- real gap, no test previously caught it
+# Taxonomy's "name" field (added by the taxonomy_egc_homonym_bug fix's
+# full-lineage rekeying -- annotation_id is now the lineage-prefix, e.g.
+# "Bacteria;Bacteroidetes", so a separate bare-label "name" field is
+# required for display; see taxonomy_egc_homonym_bug)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_taxonomy_row_name_falls_back_to_annotation_id():
-    """Taxonomy's raw JSON has NO "name" key at all -- annotation_id IS
-    the name (e.g. "Bacteroidetes"). Without this fallback, every
-    taxonomy row's name would silently be NULL."""
-    row = build_annotation_series_row("taxonomy", "3300060358", "Bacteroidetes", TAXONOMY_ENTRY)
+def test_taxonomy_row_uses_its_own_name_field():
+    """Taxonomy entries now carry a real "name" field (the bare rank
+    label) distinct from annotation_id (the full lineage-prefix) -- the
+    row's name must come from entry["name"], not be derived from the
+    lineage-prefix id."""
+    row = build_annotation_series_row("taxonomy", "3300060358", "Bacteria;Bacteroidetes", TAXONOMY_ENTRY)
     assert row["name"] == "Bacteroidetes"
+    assert row["name"] == TAXONOMY_ENTRY["name"]
+
+
+def test_taxonomy_row_name_falls_back_to_annotation_id_if_name_missing():
+    """Defensive coverage for the fallback branch itself
+    (entry.get("name", annotation_id)): if an entry somehow lacked "name"
+    (the pre-fix raw format, or a future source), the row must still get
+    a usable name instead of silently going NULL."""
+    entry_without_name = {k: v for k, v in TAXONOMY_ENTRY.items() if k != "name"}
+    row = build_annotation_series_row("taxonomy", "3300060358", "Bacteria;Bacteroidetes", entry_without_name)
+    assert row["name"] == "Bacteria;Bacteroidetes"
 
 
 def test_taxonomy_root_node_parent_is_explicitly_none_not_missing():

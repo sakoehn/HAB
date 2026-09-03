@@ -115,6 +115,9 @@ CREATE TABLE IF NOT EXISTS annotation_catalog(
     annotation_id TEXT NOT NULL,
     name TEXT,
     parent TEXT,
+    depth INTEGER,         -- MEANING IS SOURCE-SPECIFIC: taxonomic rank for
+                            -- taxonomy; kegg/enzyme's own pathway/EC hierarchy
+                            -- depth otherwise (NOT a taxonomic rank). NULL for cog.
     mean_egc REAL,
     max_egc REAL,
     mean_norm_egc REAL,
@@ -130,17 +133,20 @@ CREATE TABLE IF NOT EXISTS scaffolds(
     gene_count          INTEGER NOT NULL   -- the count value from entry["scaffolds"][scaffold]
 );
 
-CREATE TABLE IF NOT EXISTS correlations(
+DROP TABLE IF EXISTS correlations;
+CREATE TABLE IF NOT EXISTS correlations_cache(
     id     INTEGER PRIMARY KEY,
     catalog_id_a    INTEGER NOT NULL REFERENCES annotation_catalog(id),
     catalog_id_b    INTEGER NOT NULL REFERENCES annotation_catalog(id),
-    mode    TEXT NOT NULL, --'cross' | 'within',
-    spearman_r      REAL NOT NULL,  
+    r               REAL NOT NULL,  
+    metric          TEXT NOT NULL, -- 'egc' | 'norm_egc',
+    method          TEXT NOT NULL, -- 'spearman' | 'log_pearson' | 'raw_pearson',
     lag_samples     INTEGER NOT NULL,
-    p_value     REAL,
-    n_tps     INTEGER NOT NULL,
-    UNIQUE (catalog_id_a, catalog_id_b, mode)
+    p_value     REAL NOT NULL,
+    n_pairs     INTEGER NOT NULL,
+    UNIQUE (catalog_id_a, catalog_id_b, metric, method)
 );
+CREATE INDEX IF NOT EXISTS idx_correlations_cache_catalog_id_b ON correlations_cache(catalog_id_b);
 """
 
 

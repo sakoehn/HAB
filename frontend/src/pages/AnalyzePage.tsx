@@ -22,21 +22,20 @@ import type {
   ApiStatus, AnnotationItem, RightCard,
   SeriesCache, SharedAnnotation,
 } from '../types'
-import { SOURCE_COLORS, SOURCE_TAG_CLS, CHART_COLORS } from '../constants'
+import { SOURCE_COLORS, SOURCE_TAG_CLS, CHART_COLORS, taxonomyAwarePrimaryLabel } from '../constants'
 import { nextColorForSource } from '../constants'
 import { apiFetch } from '../utils/api'
 import { extractEgc, extractNormEgc } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
 import { ChartErrorBoundary }  from '../components/ui/ChartErrorBoundary'
 import { DateRangePicker }     from '../components/ui/DateRangePicker'
-import { EgcChart }      from '../components/charts/EgcChart'
+import { EgcChart, type EgcChartHandle } from '../components/charts/EgcChart'
 import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { GroupedEgcChart }     from '../components/charts/GroupedEgcChart'
 import { MappingsPanel }       from '../components/mappings/MappingsPanel'
 import { CorrelatesPanel }     from '../components/correlates/CorrelatesPanel'
 import { AnnotationInfoDrawer } from '../components/annotations/AnnotationInfoDrawer'
 import { LeftResultList }      from '../components/annotations/LeftResultList'
-import { ScaffoldBtn }            from '../components/scaffolds/ScaffoldBtn'
 import { GroupScaffoldModal }     from '../components/scaffolds/GroupScaffoldModal'
 import { ResetBtn } from '../components/ui/controls'
 import { HelpTooltip } from '../components/ui/HelpTooltip'
@@ -125,6 +124,7 @@ function RightSingleCard({
   dataDateRange?:  { min: string; max: string } | null
 }) {
   const cached = seriesCache[card.key]
+  const chartRef = useRef<EgcChartHandle>(null)
 
   const quickStats = useMemo(() => {
     if (cached?.status !== 'ok' || !cached.data.length) return null
@@ -147,34 +147,34 @@ function RightSingleCard({
             background:   card.color,
             flexShrink:   0,
           }} />
-          <span className="al-right-card-id">{card.annotationId}</span>
-          <span className={`tag ${SOURCE_TAG_CLS[card.source] ?? ''}`}>
+          <span style={{
+            font:  '600 clamp(11px, 1.6vw, 13px) var(--mono)',
+            color: SOURCE_COLORS[card.source] ?? 'var(--text-dim)',
+          }}>
             {card.source}
           </span>
-          {card.name && (
-            <span className="al-right-card-name">— {card.name}</span>
-          )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 }}>
           {quickStats && (
             <span style={{
-              font:       '600 11px var(--mono)',
-              color:      'var(--text-dim)',
-              whiteSpace: 'nowrap',
+              font:  '600 11px var(--mono)',
+              color: 'var(--text-dim)',
             }}>
               mean {quickStats.mean.toExponential(2)} · {quickStats.n} samples
             </span>
+          )}
+          {cached?.status === 'ok' && (
+            <>
+              <button className="btn xs" onClick={() => chartRef.current?.exportPng()}>↓ PNG</button>
+              <button className="btn xs" onClick={() => chartRef.current?.exportSvg()}>↓ SVG</button>
+              <button className="btn xs" onClick={() => chartRef.current?.exportCsv()}>↓ CSV</button>
+            </>
           )}
           <AnnotationInfoDrawer
             annotationId={card.annotationId}
             source={card.source}
             name={card.name}
             parent={card.parent}
-          />
-          <ScaffoldBtn
-            annotationId={card.annotationId}
-            source={card.source}
-            onGoExplore={onGoExplore}
           />
           <button
             className="al-card-close"
@@ -202,12 +202,15 @@ function RightSingleCard({
         <>
           <ChartErrorBoundary label={card.annotationId}>
             <EgcChart
+              ref={chartRef}
               data={cached.data}
               annotationId={card.annotationId}
               annotationName={card.name}
               color={card.color}
               source={card.source}
+              depth={card.depth}
               dataDateRange={dataDateRange}
+              onGoExplore={onGoExplore}
             />
           </ChartErrorBoundary>
 <MappingsPanel
@@ -304,9 +307,11 @@ function RightGroupCard({
           members={card.annotationIds.map((id, i) => ({
             annotationId: id,
             source:       card.sources[i],
-            // name not stored on RightCard group — GroupScaffoldModal
-            // shows '—' for unknown names, which is acceptable here.
-            // Names are available in the drill-down from the API response.
+            // name not stored on RightCard group — non-taxonomy members
+            // show '—' for name (acceptable; names are available in the
+            // drill-down from the API response). Taxonomy members still
+            // get a real bare label, though: taxonomyAwarePrimaryLabel
+            // derives it from the id itself when name is null.
             name: null,
           }))}
           groupLabel={card.label}
@@ -318,16 +323,22 @@ function RightGroupCard({
 
       {/* Compact annotation list */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
-        {card.annotationIds.map(id => (
-          <span key={id} style={{
-            font:        '400 10px var(--mono)',
-            color:       'var(--text-dim)',
-            background:  'var(--surface2)',
-            border:      '1px solid var(--border)',
-            borderRadius: 3,
-            padding:     '1px 6px',
-          }}>
-            {id}
+        {card.annotationIds.map((id, i) => (
+          <span
+            key={id}
+            title={id}
+            style={{
+              font:        '400 10px var(--mono)',
+              color:       'var(--text-dim)',
+              background:  'var(--surface2)',
+              border:      '1px solid var(--border)',
+              borderRadius: 3,
+              padding:     '1px 6px',
+              fontStyle:   card.sources[i] === 'taxonomy' ? 'italic' : 'normal',
+              overflowWrap: 'anywhere',
+            }}
+          >
+            {taxonomyAwarePrimaryLabel(card.sources[i], id, null)}
           </span>
         ))}
       </div>
@@ -607,15 +618,23 @@ function CompareDrawer({
                     background:   c.color,
                     flexShrink:   0,
                   }} />
-                  <span style={{
-                    fontFamily: 'var(--mono)',
-                    fontSize:   12,
-                    color:      'var(--teal)',
-                    flexShrink: 0,
-                  }}>
-                    {c.annotationId}
+                  <span
+                    title={c.annotationId}
+                    style={{
+                      fontFamily: 'var(--mono)',
+                      fontSize:   12,
+                      color:      'var(--teal)',
+                      fontStyle:  c.source === 'taxonomy' ? 'italic' : 'normal',
+                      flexShrink: c.source === 'taxonomy' ? 1 : 0,
+                      minWidth:   c.source === 'taxonomy' ? 0 : undefined,
+                      overflow:     c.source === 'taxonomy' ? 'hidden' : undefined,
+                      textOverflow: c.source === 'taxonomy' ? 'ellipsis' : undefined,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {taxonomyAwarePrimaryLabel(c.source, c.annotationId, c.name)}
                   </span>
-                  {c.name && (
+                  {c.name && c.source !== 'taxonomy' && (
                     <span style={{
                       fontSize:     11,
                       color:        'var(--text-dim)',
@@ -720,6 +739,37 @@ export function AnalyzePage({
 }) {
   const { copiedId, copy } = useCopyId()
   const firstInputRef      = useRef<HTMLInputElement>(null)
+
+  // ── Drag-to-resize left column ──────────────────────────────────────────
+  const [leftWidth, setLeftWidth] = useState(320)
+  const [resizing, setResizing]   = useState(false)
+  const resizingRef = useRef(false)
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!resizingRef.current) return
+      setLeftWidth(Math.min(600, Math.max(240, e.clientX)))
+    }
+    function onMouseUp() {
+      resizingRef.current = false
+      setResizing(false)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
+
+  function startResize() {
+    resizingRef.current = true
+    setResizing(true)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
 
   useEffect(() => { firstInputRef.current?.focus() }, [])
 
@@ -852,6 +902,7 @@ export function AnalyzePage({
       annotationId: ann.annotation_id,
       source:       ann.source,
       name:         ann.name,
+      depth:        ann.depth ?? null,
       color:        nextColorForSource(ann.source),
       parent:       (ann as AnnotationItem & { parent?: string | null }).parent ?? null,
     }
@@ -878,6 +929,7 @@ export function AnalyzePage({
       annotationId: ann.annotation_id,
       source:       ann.source,
       name:         ann.name,
+      depth:        ann.depth ?? null,
       color:        nextColorForSource(ann.source),
       parent:       (ann as AnnotationItem & { parent?: string | null }).parent ?? null,
     }))
@@ -1065,10 +1117,15 @@ export function AnalyzePage({
 
       {/* ── Two-column workspace ── */}
       {hasResults && (
-        <div className="al-workspace">
+        <div className="al-workspace" style={{ gridTemplateColumns: `${leftWidth}px minmax(0, 1fr)` }}>
 
           {/* LEFT COLUMN */}
-          <div className="al-left">
+          <div className="al-left" style={{ position: 'relative' }}>
+            <div
+              className={`al-resize-handle ${resizing ? 'active' : ''}`}
+              onMouseDown={startResize}
+              title="Drag to resize"
+            />
             <div className="al-term-tabs">
               {activeTerms.map((term, i) => (
                 <button
@@ -1110,7 +1167,7 @@ export function AnalyzePage({
                   ? 'Click + on results to add charts'
                   : `${state.rightCards.length} chart${state.rightCards.length !== 1 ? 's' : ''} open`}
               </span>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 6, alignItems: 'center' }}>
                 {/* Copy all open KEGG IDs + open Color Mapper */}
                 {(() => {
                   const keggIds = state.rightCards

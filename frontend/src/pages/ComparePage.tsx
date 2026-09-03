@@ -23,7 +23,7 @@ import type {
   CompareEntry, CompareEntryMember,
   AnnotationItem, TimepointMeta, ApiStatus, SharedAnnotation,
 } from '../types'
-import { SOURCE_TAG_CLS } from '../constants'
+import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel } from '../constants'
 import { nextColorForSource, resetSourceCounters } from '../constants'
 import { apiFetch, downloadCsv } from '../utils/api'
 import { isoDate } from '../utils/format'
@@ -631,24 +631,34 @@ export function ComparePage({
                         onClick={e => e.stopPropagation()}
                         style={{ flexShrink: 0 }}
                       />
-                      <span style={{
-                        fontFamily: 'var(--mono)',
-                        fontSize:   13,
-                        color:      'var(--teal)',
-                        flexShrink: 0,
-                      }}>
-                        {r.annotation_id}
+                      <span
+                        title={r.annotation_id}
+                        style={{
+                          fontFamily: 'var(--mono)',
+                          fontSize:   13,
+                          color:      'var(--teal)',
+                          fontStyle:  r.source === 'taxonomy' ? 'italic' : 'normal',
+                          flexShrink: r.source === 'taxonomy' ? 1 : 0,
+                          minWidth:   r.source === 'taxonomy' ? 0 : undefined,
+                          overflow:     r.source === 'taxonomy' ? 'hidden' : undefined,
+                          textOverflow: r.source === 'taxonomy' ? 'ellipsis' : undefined,
+                          whiteSpace:   'nowrap',
+                        }}
+                      >
+                        {taxonomyAwarePrimaryLabel(r.source, r.annotation_id, r.name)}
                       </span>
-                      <span style={{
-                        fontSize:     14,
-                        color:        'var(--text-h)',
-                        flex:         1,
-                        overflow:     'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace:   'nowrap',
-                      }}>
-                        {r.name ?? '—'}
-                      </span>
+                      {r.source !== 'taxonomy' && (
+                        <span style={{
+                          fontSize:     14,
+                          color:        'var(--text-h)',
+                          flex:         1,
+                          overflow:     'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace:   'nowrap',
+                        }}>
+                          {r.name ?? '—'}
+                        </span>
+                      )}
                       <span className={`tag ${SOURCE_TAG_CLS[r.source] ?? ''}`}>
                         {r.source}
                       </span>
@@ -684,7 +694,12 @@ export function ComparePage({
                     ) : (
                       <CopyBtn id={e.annotationId} copiedId={copiedId} onCopy={copy} />
                     )}
-                    <span>{e.annotationId}</span>
+                    <span
+                      title={e.annotationId}
+                      style={!e.isGrouped && e.source === 'taxonomy' ? { fontStyle: 'italic' } : undefined}
+                    >
+                      {e.isGrouped ? e.annotationId : taxonomyAwarePrimaryLabel(e.source, e.annotationId, e.name)}
+                    </span>
                     {e.isGrouped ? (
                       <span style={{
                         font:        '400 10px var(--mono)',
@@ -768,8 +783,10 @@ export function ComparePage({
                         annotationId: m.annotationId,
                         source:       m.source,
                         // Member names aren't stored on CompareEntryMember --
-                        // GroupScaffoldModal shows '—' for unknown names,
-                        // same as AnalyzePage's equivalent RightGroupCard usage.
+                        // non-taxonomy members show '—', same as AnalyzePage's
+                        // equivalent RightGroupCard usage. Taxonomy members
+                        // still get a real bare label via
+                        // taxonomyAwarePrimaryLabel's id-derived fallback.
                         name: null,
                       }))}
                       groupLabel={e.annotationId}
@@ -813,7 +830,16 @@ export function ComparePage({
                             font:       '11px var(--mono)',
                           }}
                         >
-                          <span style={{ color: 'var(--teal)' }}>{m.annotationId}</span>
+                          <span
+                            title={m.annotationId}
+                            style={{
+                              color:        'var(--teal)',
+                              fontStyle:    m.source === 'taxonomy' ? 'italic' : 'normal',
+                              overflowWrap: 'anywhere',
+                            }}
+                          >
+                            {taxonomyAwarePrimaryLabel(m.source, m.annotationId, null)}
+                          </span>
                           <span style={{ color: 'var(--text-dim)' }}>{m.source}</span>
                           {m.status === 'error' && (
                             <span style={{ color: 'var(--coral)', fontSize: 10 }}>
@@ -936,6 +962,7 @@ export function ComparePage({
                       marginBottom: 6,
                       display:      'flex',
                       alignItems:   'center',
+                      flexWrap:     'wrap',
                       gap:          8,
                     }}>
                       <div style={{
@@ -944,12 +971,16 @@ export function ComparePage({
                         borderRadius: '50%',
                         background:   e.color,
                       }} />
-                      <span style={{
-                        fontSize:   13,
-                        fontFamily: 'var(--mono)',
-                        color:      'var(--text-h)',
-                      }}>
-                        {e.annotationId}
+                      <span
+                        title={e.annotationId}
+                        style={{
+                          fontSize:   13,
+                          fontFamily: 'var(--mono)',
+                          color:      'var(--text-h)',
+                          fontStyle:  !e.isGrouped && e.source === 'taxonomy' ? 'italic' : 'normal',
+                        }}
+                      >
+                        {e.isGrouped ? e.annotationId : taxonomyAwarePrimaryLabel(e.source, e.annotationId, e.name)}
                       </span>
                       <span className={`tag ${SOURCE_TAG_CLS[e.source] ?? ''}`}>
                         {e.source}

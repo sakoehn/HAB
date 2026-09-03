@@ -1951,11 +1951,14 @@ describe('ExplorePage — Dataset Overview happy path', () => {
     await userEvent.click(await screen.findByText('Load Overview'))
 
     // p1 (2 annotations) and p2 (1 annotation) are the two parent groups
-    // that should fall out of grouping THREE_ROW_TOP by `parent`.
+    // that should fall out of grouping THREE_ROW_TOP by `parent`. ExplorePage
+    // defaults to source: 'taxonomy' (no source picked in this test), and
+    // expandParentLabel appends a rank suffix for taxonomy parents — see
+    // taxonomy_egc_homonym_bug — so the label is "p1 (Domain)", not "p1".
     await waitFor(() => {
-      expect(screen.getByTitle('p1')).toBeInTheDocument()
+      expect(screen.getByTitle('p1 (Domain)')).toBeInTheDocument()
     })
-    expect(screen.getByTitle('p2')).toBeInTheDocument()
+    expect(screen.getByTitle('p2 (Domain)')).toBeInTheDocument()
     expect(screen.getAllByText(/↓ CSV/i).length).toBeGreaterThanOrEqual(1)
   })
 
@@ -1982,7 +1985,7 @@ describe('ExplorePage — Dataset Overview happy path', () => {
     })
     await openDatasetOverview()
     await userEvent.click(await screen.findByText('Load Overview'))
-    await waitFor(() => screen.getByTitle('p1'))
+    await waitFor(() => screen.getByTitle('p1 (Domain)'))
 
     await userEvent.click(await screen.findByText('Load time series →'))
 

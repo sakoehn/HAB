@@ -19,6 +19,7 @@ import { apiFetch } from '../utils/api'
 function makeNode(child: TaxonomyChildNode): TaxonomyTreeNode {
   return {
     annotationId:   child.annotation_id,
+    name:           child.name,
     depth:          child.depth,
     category:       child.category,
     expanded:       false,

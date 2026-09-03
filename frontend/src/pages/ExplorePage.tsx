@@ -21,9 +21,10 @@ import type {
   ApiStatus, TopAnnotation, AnnotationValue, AnnotationItem,
   ExploreSection, ExploreSortCol, SortDir,
 } from '../types'
-import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel } from '../constants'
+import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel, taxonomyRankLabel, taxonomyAwarePrimaryLabel } from '../constants'
 import { apiFetch, downloadCsv } from '../utils/api'
 import { extractEgc, computeTrend } from '../utils/stats'
+import { taxonomyDepthFromId } from '../utils/taxonomy'
 import { useCopyId } from '../hooks/useCopyId'
 import { CopyBtn, ResetBtn } from '../components/ui/controls'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
@@ -53,6 +54,12 @@ export type ExploreState = {
   sortDir:      SortDir
   parentSource: string
   topFilter:    string
+  // Taxonomy rank multi-select filter for the Top EGC Annotations table —
+  // only meaningful (and only shown) when source === 'taxonomy'. Depth
+  // isn't in TopAnnotation's /annotations/top rows (only annotation_catalog/
+  // search results carry it), so rank is derived client-side from the
+  // lineage-prefix id itself via taxonomyDepthFromId — no backend change needed.
+  topRankFilter: Set<number>
   // Lookup section
   lookupId:       string
   lookupSource:   string
@@ -60,6 +67,10 @@ export type ExploreState = {
   lookupSelected: TopAnnotation | null
   lookupTotal:    number
   lookupStatus:   ApiStatus
+  // Same taxonomy rank filter, applied to the lookup result list. Unlike
+  // topRankFilter, lookupResults DOES carry real `depth` (it's fetched from
+  // /api/search/annotations), so this reads row.depth directly.
+  lookupRankFilter: Set<number>
   // Scaffold section
   scaffoldInitialTerms?: { annotationId: string; source: string }[]
 }
@@ -78,12 +89,14 @@ export function makeDefaultExploreState(): ExploreState {
     sortDir:      'desc',
     parentSource: 'taxonomy',
     topFilter:    '',
+    topRankFilter: new Set(),
     lookupId:       '',
     lookupSource:   'kegg',
     lookupResults:  [],
     lookupSelected: null,
     lookupTotal:    0,
     lookupStatus:   'idle',
+    lookupRankFilter: new Set(),
     scaffoldInitialTerms: undefined,
   }
 }
@@ -789,6 +802,7 @@ function AnnotationsByParentPanel({
                                 <ScaffoldBtn
                                   annotationId={row.annotation_id}
                                   source={source}
+                                  name={row.name}
                                   onGoExplore={onGoScaffoldExplore}
                                 />
                               </td>
@@ -859,6 +873,48 @@ export function ExplorePage({
     }))
   }
 
+  function toggleTopRank(depth: number) {
+    setState(prev => {
+      const next = new Set(prev.topRankFilter)
+      if (next.has(depth)) next.delete(depth); else next.add(depth)
+      return { ...prev, topRankFilter: next }
+    })
+  }
+
+  function clearTopRankFilter() {
+    setState(prev => ({ ...prev, topRankFilter: new Set() }))
+  }
+
+  function toggleLookupRank(depth: number) {
+    setState(prev => {
+      const next = new Set(prev.lookupRankFilter)
+      if (next.has(depth)) next.delete(depth); else next.add(depth)
+      return { ...prev, lookupRankFilter: next }
+    })
+  }
+
+  function clearLookupRankFilter() {
+    setState(prev => ({ ...prev, lookupRankFilter: new Set() }))
+  }
+
+  const availableLookupRanks = useMemo(
+    () => state.lookupSource !== 'taxonomy'
+      ? []
+      : [...new Set(
+          state.lookupResults
+            .map(r => r.depth)
+            .filter((d): d is number => d != null),
+        )].sort((a, b) => a - b),
+    [state.lookupResults, state.lookupSource],
+  )
+
+  const visibleLookupResults = useMemo(
+    () => state.lookupRankFilter.size === 0 || state.lookupSource !== 'taxonomy'
+      ? state.lookupResults
+      : state.lookupResults.filter(r => r.depth != null && state.lookupRankFilter.has(r.depth)),
+    [state.lookupResults, state.lookupRankFilter, state.lookupSource],
+  )
+
   // A failed request and a genuinely empty result must stay distinguishable
   // (status 'error' vs. 'ok' with an empty lookupResults) — otherwise a
   // timeout looks identical to "this annotation doesn't exist."
@@ -882,6 +938,17 @@ export function ExplorePage({
     }
   }
 
+  // Ranks actually present among the loaded rows — mirrors LeftResultList's
+  // availableSources/availableRanks pattern on the Analyze page. Only
+  // meaningful for source: 'taxonomy'; empty (and the pill row hidden)
+  // otherwise, same as when the source is switched away on Analyze.
+  const availableTopRanks = useMemo(
+    () => state.source !== 'taxonomy'
+      ? []
+      : [...new Set(state.rows.map(r => taxonomyDepthFromId(r.annotation_id)))].sort((a, b) => a - b),
+    [state.rows, state.source],
+  )
+
   const sorted = useMemo(() => {
     const q = state.topFilter.toLowerCase().trim()
     return [...state.rows]
@@ -889,6 +956,10 @@ export function ExplorePage({
         || r.annotation_id.toLowerCase().includes(q)
         || (r.name   ?? '').toLowerCase().includes(q)
         || (r.parent ?? '').toLowerCase().includes(q),
+      )
+      .filter(r => state.topRankFilter.size === 0
+        || state.source !== 'taxonomy'
+        || state.topRankFilter.has(taxonomyDepthFromId(r.annotation_id)),
       )
       .sort((a, b) => {
         const av = a[state.sortCol] as number | string
@@ -900,7 +971,7 @@ export function ExplorePage({
           ? String(av).localeCompare(String(bv))
           : String(bv).localeCompare(String(av))
       })
-  }, [state.rows, state.sortCol, state.sortDir, state.topFilter])
+  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter, state.source])
 
   const maxMean = Math.max(...state.rows.map(r => r.mean_egc), 1)
 
@@ -1066,6 +1137,28 @@ export function ExplorePage({
                 )}
               </div>
 
+              {availableTopRanks.length > 1 && (
+                <div className="al-source-filter al-rank-filter" style={{ marginBottom: 10, borderRadius: 6 }}>
+                  <span className="al-rank-filter-label">Rank</span>
+                  <button
+                    className={`al-source-pill ${state.topRankFilter.size === 0 ? 'al-source-pill-active' : ''}`}
+                    onClick={clearTopRankFilter}
+                  >
+                    All
+                  </button>
+                  <HelpTooltip text="Narrows the table below to the selected taxonomic rank(s) — doesn't re-fetch, just filters what's already loaded." />
+                  {availableTopRanks.map(depth => (
+                    <button
+                      key={depth}
+                      className={`al-source-pill ${state.topRankFilter.has(depth) ? 'al-source-pill-active' : ''}`}
+                      onClick={() => toggleTopRank(depth)}
+                    >
+                      {taxonomyRankLabel(depth)}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {state.status === 'ok' && state.sampleCount !== null && (
                 <div style={{
                   marginBottom: 8,
@@ -1199,6 +1292,7 @@ export function ExplorePage({
                           <ScaffoldBtn
                             annotationId={row.annotation_id}
                             source={state.source}
+                            name={row.name}
                             onGoExplore={onGoScaffoldExplore}
                           />
                         </td>
@@ -1356,7 +1450,29 @@ export function ExplorePage({
               )}
 
               {state.lookupStatus === 'ok' && state.lookupResults.length > 0 && (
-                <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+                <>
+                  {availableLookupRanks.length > 1 && (
+                    <div className="al-source-filter al-rank-filter" style={{ marginBottom: 10, borderRadius: 6 }}>
+                      <span className="al-rank-filter-label">Rank</span>
+                      <button
+                        className={`al-source-pill ${state.lookupRankFilter.size === 0 ? 'al-source-pill-active' : ''}`}
+                        onClick={clearLookupRankFilter}
+                      >
+                        All
+                      </button>
+                      <HelpTooltip text="Narrows the result list below to the selected taxonomic rank(s) — doesn't re-search, just filters what's already loaded." />
+                      {availableLookupRanks.map(depth => (
+                        <button
+                          key={depth}
+                          className={`al-source-pill ${state.lookupRankFilter.has(depth) ? 'al-source-pill-active' : ''}`}
+                          onClick={() => toggleLookupRank(depth)}
+                        >
+                          {taxonomyRankLabel(depth)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
                   {/* Result list */}
                   <div style={{ flex: '0 0 300px', minWidth: 0 }}>
                     <div style={{
@@ -1366,9 +1482,11 @@ export function ExplorePage({
                       textTransform: 'uppercase',
                       padding:       '0 2px 8px',
                     }}>
-                      {state.lookupTotal} result
-                      {state.lookupTotal !== 1 ? 's' : ''}
-                      {state.lookupTotal > state.lookupResults.length &&
+                      {state.lookupRankFilter.size > 0
+                        ? <>{visibleLookupResults.length} of {state.lookupResults.length}</>
+                        : <>{state.lookupTotal} result{state.lookupTotal !== 1 ? 's' : ''}</>
+                      }
+                      {state.lookupRankFilter.size === 0 && state.lookupTotal > state.lookupResults.length &&
                         ` · showing ${state.lookupResults.length}`}
                       {' · click to view details'}
                     </div>
@@ -1379,7 +1497,7 @@ export function ExplorePage({
                       maxHeight:    480,
                       overflowY:    'auto',
                     }}>
-                      {state.lookupResults.map(row => {
+                      {visibleLookupResults.map(row => {
                         const isSelected =
                           state.lookupSelected?.annotation_id === row.annotation_id
                         return (
@@ -1407,20 +1525,30 @@ export function ExplorePage({
                               gap:          6,
                               marginBottom: 2,
                             }}>
-                              <span style={{
-                                font:  '600 12px var(--mono)',
-                                color: 'var(--teal)',
-                              }}>
-                                {row.annotation_id}
+                              <span
+                                title={row.annotation_id}
+                                style={{
+                                  font:      '600 12px var(--mono)',
+                                  color:     'var(--teal)',
+                                  fontStyle: state.lookupSource === 'taxonomy' ? 'italic' : 'normal',
+                                  whiteSpace:   'nowrap',
+                                  overflow:     'hidden',
+                                  textOverflow: 'ellipsis',
+                                  flex:         1,
+                                  minWidth:     0,
+                                }}
+                              >
+                                {taxonomyAwarePrimaryLabel(state.lookupSource, row.annotation_id, row.name)}
                               </span>
                               <span style={{
                                 font:  '400 10px var(--mono)',
                                 color: 'var(--text-dim)',
+                                flexShrink: 0,
                               }}>
                                 {row.mean_egc.toExponential(2)}
                               </span>
                             </div>
-                            {row.name && (
+                            {row.name && state.lookupSource !== 'taxonomy' && (
                               <div style={{
                                 font:         '12px var(--sans)',
                                 color:        'var(--text-dim)',
@@ -1453,9 +1581,10 @@ export function ExplorePage({
                         : null
 
                       const depthLabel = (depth: number) => {
-                        if (state.lookupSource === 'kegg')    return { 1: 'pathway class', 2: 'subcategory', 3: 'pathway', 4: 'leaf (KO)' }[depth] ?? String(depth)
-                        if (state.lookupSource === 'cog')     return { 1: 'category', 2: 'leaf (COG)' }[depth] ?? String(depth)
-                        if (state.lookupSource === 'enzyme')  return { 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' }[depth] ?? String(depth)
+                        if (state.lookupSource === 'kegg')     return { 1: 'pathway class', 2: 'subcategory', 3: 'pathway', 4: 'leaf (KO)' }[depth] ?? String(depth)
+                        if (state.lookupSource === 'cog')      return { 1: 'category', 2: 'leaf (COG)' }[depth] ?? String(depth)
+                        if (state.lookupSource === 'enzyme')   return { 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' }[depth] ?? String(depth)
+                        if (state.lookupSource === 'taxonomy') return taxonomyRankLabel(depth)
                         return String(depth)
                       }
 
@@ -1465,8 +1594,14 @@ export function ExplorePage({
                             <span className={`tag ${SOURCE_TAG_CLS[state.lookupSource] ?? ''}`}>
                               {state.lookupSource}
                             </span>
-                            <span className="lookup-id">{r.annotation_id}</span>
-                            {r.name && (
+                            <span
+                              className="lookup-id"
+                              title={r.annotation_id}
+                              style={state.lookupSource === 'taxonomy' ? { fontStyle: 'italic' } : undefined}
+                            >
+                              {taxonomyAwarePrimaryLabel(state.lookupSource, r.annotation_id, r.name)}
+                            </span>
+                            {r.name && state.lookupSource !== 'taxonomy' && (
                               <span className="lookup-name">{r.name}</span>
                             )}
                           </div>
@@ -1593,7 +1728,8 @@ export function ExplorePage({
                       </div>
                     )}
                   </div>
-                </div>
+                  </div>
+                </>
               )}
             </div>
           </div>

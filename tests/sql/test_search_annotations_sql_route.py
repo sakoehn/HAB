@@ -14,14 +14,16 @@ Known real example used throughout: q="synthase" is a real cross-source
 substring, independently confirmed against the live database (cog=178,
 kegg=441, enzyme=296 distinct matches, taxonomy=0).
 
-Note: get_search_annotations()'s rows only have 9 keys (source,
-annotation_id, name, parent, mean_egc, max_egc, mean_norm_egc,
+Note: get_search_annotations()'s rows only have 10 keys (source,
+annotation_id, name, parent, depth, mean_egc, max_egc, mean_norm_egc,
 max_norm_egc, sample_count) -- unlike the JSON branch's per-row dict,
 which always adds "sample": "" and "timepoint": None (always-placeholder
 values, never real per-search-result data) plus a "value" field. Confirmed
 the frontend's LeftResultList.tsx never reads any of those three for
 search results, so this is a real but low-risk shape difference between
-backends, not something this test pretends doesn't exist.
+backends, not something this test pretends doesn't exist. `depth` was
+added alongside the taxonomy_egc_homonym_bug fix so search results can
+show taxonomic rank.
 
 Run:
     # in FastAPI/.env or as an env var: DATA_BACKEND=sql
@@ -76,7 +78,7 @@ def client():
 
 
 EXPECTED_ROW_KEYS = {
-    "source", "annotation_id", "name", "parent",
+    "source", "annotation_id", "name", "parent", "depth",
     "mean_egc", "max_egc", "mean_norm_egc", "max_norm_egc", "sample_count",
 }
 

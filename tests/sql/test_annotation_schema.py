@@ -7,12 +7,13 @@ Taxonomy annotation JSONs (name/category/egc/norm_egc + per-scaffold gene
 counts), analogous to Mongo's split annotation_series/scaffolds
 collections but without bucketing (SQLite has no document-size limit).
 
-These tables are empty until the per-source migration scripts exist, so
-these tests exercise the schema itself directly -- column shape,
+These tests exercise the schema itself directly -- column shape,
 constraints, insert/query round-trips -- against a fresh throwaway
-database per test (tmp_path), never the real hab_mappings.db. Same spirit
-as tests/sql/test_taxon_paths.py testing logic in isolation before real
-data exists.
+database per test (tmp_path), never the real hab_mappings.db (the real
+tables are fully populated now, but a schema test wants a controlled,
+disposable database it can insert arbitrary/edge-case rows into, not
+migrated real data). Same spirit as tests/sql/test_taxon_paths.py testing
+logic in isolation.
 
 Run:
     pytest tests/sql/test_annotation_schema.py -v
@@ -199,18 +200,20 @@ def test_round_trip_cog_row_has_no_parent_or_depth(conn):
 def test_round_trip_taxonomy_row_with_parent_and_depth(conn):
     """Taxonomy is the one source that populates parent/depth for real --
     confirms those columns actually round-trip real values, not just
-    NULL (real numbers from sample 3300060358's Bacteroidetes node)."""
+    NULL (real numbers from sample 3300060358's "Bacteria;Bacteroidetes"
+    node -- annotation_id is the full lineage-prefix post
+    taxonomy_egc_homonym_bug, `name` holds the bare rank label)."""
     conn.execute(
         """INSERT INTO annotation_series
            (source, sample, annotation_id, name, category, parent, depth, egc, norm_egc, scaffold_count, gene_count)
-           VALUES ('taxonomy', '3300060358', 'Bacteroidetes', 'Bacteroidetes', 'Bacteria',
-                   'Bacteria', 2, 3555560.0, 0.22798534249867464, 55898, 60000)"""
+           VALUES ('taxonomy', '3300060358', 'Bacteria;Bacteroidetes', 'Bacteroidetes', 'Bacteria',
+                   'Bacteria', 2, 3555560.0, 0.22032252119813275, 55898, 104616)"""
     )
     conn.commit()
     row = conn.execute(
-        "SELECT name, category, parent, depth, egc, norm_egc FROM annotation_series WHERE annotation_id='Bacteroidetes'"
+        "SELECT name, category, parent, depth, egc, norm_egc FROM annotation_series WHERE annotation_id='Bacteria;Bacteroidetes'"
     ).fetchone()
-    assert row == ("Bacteroidetes", "Bacteria", "Bacteria", 2, 3555560.0, 0.22798534249867464)
+    assert row == ("Bacteroidetes", "Bacteria", "Bacteria", 2, 3555560.0, 0.22032252119813275)
 
 
 def test_ids_autoincrement_and_are_unique(conn):

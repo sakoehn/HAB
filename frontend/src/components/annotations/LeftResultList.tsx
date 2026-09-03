@@ -2,6 +2,9 @@
 // Left column of the Analyze page two-column workspace.
 // Renders the search result rows for the active term tab, with:
 //   - Source filter pills (multi-select, per-term, inherited by new tabs)
+//   - Taxonomy rank filter pills (multi-select, only shown when taxonomy
+//     is part of what the source filter currently includes) — narrows
+//     just the taxonomy rows, other sources pass through untouched
 //   - Custom checkbox per row (select for bulk add or group)
 //   - Select-all / bulk action bar
 //   - Result count and sort hint strip
@@ -14,12 +17,13 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
 
 import type { AnnotationItem, SeriesCache } from '../../types'
-import { SOURCE_COLORS, SOURCE_TAG_CLS } from '../../constants'
+import { SOURCE_COLORS, SOURCE_TAG_CLS, TAXONOMY_RANK_NAMES, taxonomyRankLabel } from '../../constants'
 import { CopyBtn } from '../ui/controls'
 import { HelpTooltip } from '../ui/HelpTooltip'
 
 // Stable empty set — avoids creating a new reference every render
 const EMPTY_FILTER = new Set<string>()
+const EMPTY_RANK_FILTER = new Set<number>()
 
 export function LeftResultList({
   rows,
@@ -50,14 +54,22 @@ export function LeftResultList({
 }) {
   // Multi-select filter stored per term (empty Set = All)
   const [filtersByTerm, setFiltersByTerm] = useState<Record<string, Set<string>>>({})
+  // Taxonomy rank multi-select filter, same per-term pattern — only ever
+  // narrows the taxonomy subset of rows, never hides cog/kegg/enzyme rows
+  const [rankFiltersByTerm, setRankFiltersByTerm] = useState<Record<string, Set<number>>>({})
   const prevTermRef = useRef<string>(termLabel)
   const filterSet = filtersByTerm[termLabel] ?? EMPTY_FILTER
+  const rankFilterSet = rankFiltersByTerm[termLabel] ?? EMPTY_RANK_FILTER
 
   // When switching to a never-visited term, inherit the previous term's selection
   useEffect(() => {
     const prev = prevTermRef.current
     if (termLabel !== prev) {
       setFiltersByTerm(cur => {
+        if (termLabel in cur) return cur
+        return { ...cur, [termLabel]: new Set(cur[prev] ?? []) }
+      })
+      setRankFiltersByTerm(cur => {
         if (termLabel in cur) return cur
         return { ...cur, [termLabel]: new Set(cur[prev] ?? []) }
       })
@@ -75,16 +87,47 @@ export function LeftResultList({
   const clearFilter = () =>
     setFiltersByTerm(prev => ({ ...prev, [termLabel]: new Set() }))
 
+  const toggleRank = (depth: number) =>
+    setRankFiltersByTerm(prev => {
+      const next = new Set(prev[termLabel] ?? [])
+      if (next.has(depth)) next.delete(depth); else next.add(depth)
+      return { ...prev, [termLabel]: next }
+    })
+
+  const clearRankFilter = () =>
+    setRankFiltersByTerm(prev => ({ ...prev, [termLabel]: new Set() }))
+
   // Sources present in the current result set
   const availableSources = useMemo(
     () => [...new Set(rows.map(r => r.source))].sort(),
     [rows],
   )
 
-  // Rows after applying multi-select filter (sort order unchanged)
+  // Rank filter is only meaningful when taxonomy is actually part of what
+  // the source filter currently shows — e.g. with "COG" alone selected,
+  // picking a rank would filter nothing, so the pills stay hidden.
+  const taxonomyIncluded = filterSet.size === 0 || filterSet.has('taxonomy')
+
+  // Taxonomy ranks present in the current result set, in domain-to-strain order
+  const availableRanks = useMemo(
+    () => taxonomyIncluded
+      ? [...new Set(
+          rows.filter(r => r.source === 'taxonomy' && r.depth != null).map(r => r.depth as number),
+        )].sort((a, b) => a - b)
+      : [],
+    [rows, taxonomyIncluded],
+  )
+
+  // Rows after applying source + rank filters (sort order unchanged).
+  // Rank filter only ever narrows taxonomy rows — other sources have no
+  // rank concept, so they pass through untouched.
   const visibleRows = useMemo(
-    () => filterSet.size === 0 ? rows : rows.filter(r => filterSet.has(r.source)),
-    [rows, filterSet],
+    () => rows.filter(r => {
+      if (filterSet.size > 0 && !filterSet.has(r.source)) return false
+      if (rankFilterSet.size > 0 && r.source === 'taxonomy' && !rankFilterSet.has(r.depth ?? -1)) return false
+      return true
+    }),
+    [rows, filterSet, rankFilterSet],
   )
 
   const maxEgc = useMemo(
@@ -117,6 +160,29 @@ export function LeftResultList({
               onClick={() => toggleSource(src)}
             >
               {src}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── Taxonomy rank filter pills — narrows only the taxonomy rows ── */}
+      {availableRanks.length > 1 && (
+        <div className="al-source-filter al-rank-filter">
+          <span className="al-rank-filter-label">Rank</span>
+          <button
+            className={`al-source-pill ${rankFilterSet.size === 0 ? 'al-source-pill-active' : ''}`}
+            onClick={clearRankFilter}
+          >
+            All
+          </button>
+          <HelpTooltip text="Narrows taxonomy results to the selected rank(s) — cog/kegg/enzyme rows are unaffected." />
+          {availableRanks.map(depth => (
+            <button
+              key={depth}
+              className={`al-source-pill ${rankFilterSet.has(depth) ? 'al-source-pill-active' : ''}`}
+              onClick={() => toggleRank(depth)}
+            >
+              {TAXONOMY_RANK_NAMES[depth] ?? `Level ${depth}`}
             </button>
           ))}
         </div>
@@ -184,7 +250,7 @@ export function LeftResultList({
       {rows.length > 0 && (
         <div className="al-result-info">
           <span className="al-result-count">
-            {filterSet.size > 0
+            {filterSet.size > 0 || rankFilterSet.size > 0
               ? <>{visibleRows.length.toLocaleString()} <span className="al-result-showing">of {total.toLocaleString()}</span></>
               : <>{total.toLocaleString()} result{total !== 1 ? 's' : ''}</>
             }
@@ -238,7 +304,9 @@ export function LeftResultList({
                     copiedId={copiedId}
                     onCopy={onCopy}
                   />
-                  <span className="al-row-id">{ann.annotation_id}</span>
+                  <span className="al-row-id">
+                    {ann.source === 'taxonomy' ? taxonomyRankLabel(ann.depth ?? null) : ann.annotation_id}
+                  </span>
                   <span className={`tag ${SOURCE_TAG_CLS[ann.source] ?? ''}`}>
                     {ann.source}
                   </span>

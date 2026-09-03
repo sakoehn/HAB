@@ -1,7 +1,7 @@
 // @ts-expect-error plotly.js-dist-min ships no .d.ts; types from @types/plotly.js
 import PlotlyBase from 'plotly.js-dist-min'
 import createPlotlyComponent from 'react-plotly.js/factory'
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react'
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
@@ -13,9 +13,11 @@ import { computeNightBands, alignTideToChartPoints, resolveSunTimes } from '../.
 import { useSolarTideData } from '../../utils/useSolarTideData'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL, getEgcYLabel, getEgcHoverYLabel } from '../../utils/chartTheme'
+import { taxonomyRankLabel, SOURCE_COLORS } from '../../constants'
 import { StatsPanel }     from '../ui/StatsPanel'
 import { DateRangePicker } from '../ui/DateRangePicker'
 import { ChartControls }  from './ChartControls'
+import { ScaffoldBtn }    from '../scaffolds/ScaffoldBtn'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = createPlotlyComponent(PlotlyBase as any)
@@ -34,22 +36,34 @@ function padTime(time: string): string {
   return `${(h ?? '').padStart(2, '0')}:${m ?? ''}`
 }
 
-export function EgcChart({
-  data,
-  annotationId,
-  annotationName,
-  color = 'var(--chart-1)',
-  dataDateRange,
-}: {
+export type EgcChartHandle = {
+  exportPng: () => void
+  exportSvg: () => void
+  exportCsv: () => void
+}
+
+export const EgcChart = forwardRef<EgcChartHandle, {
   data:           AnnotationItem[]
   annotationId:   string
   annotationName: string | null
   color?:         string
   source?:        string
+  depth?:         number | null
   dataDateRange?: { min: string; max: string } | null
-}) {
+  onGoExplore?:   (annotationId: string, source: string) => void
+}>(function EgcChart({
+  data,
+  annotationId,
+  annotationName,
+  color = 'var(--chart-1)',
+  source,
+  depth = null,
+  dataDateRange,
+  onGoExplore,
+}, ref) {
   const [dateFrom, setDateFrom]               = useState('')
   const [dateTo, setDateTo]                   = useState('')
+  const [showLineage, setShowLineage]         = useState(false)
   const [metric, setMetric]                   = useState<ChartMetric>('egc')
   const [standardize, setStandardize]         = useState(false)
   const [smoothed, setSmoothed]               = useState(false)
@@ -331,6 +345,12 @@ export function EgcChart({
     `${annotationId}_egc_timeseries.csv`,
   )
 
+  useImperativeHandle(ref, () => ({
+    exportPng: handleExportPng,
+    exportSvg: handleExportSvg,
+    exportCsv: handleExportCsv,
+  }))
+
   if (allPoints.length === 0) {
     return (
       <div className="state-box" style={{ padding: '24px' }}>
@@ -348,15 +368,38 @@ export function EgcChart({
     tpBadgeParts.push(`${selectedTimes.size} of ${allTimes.length} times`)
   }
   const tpBadge = tpBadgeParts.length > 0 ? ` (${tpBadgeParts.join(', ')})` : ''
+  const sourceColor = SOURCE_COLORS[source ?? ''] ?? 'var(--teal)'
 
   return (
     <div className="chart-card">
       {/* ── Header ── */}
       <div className="chart-card-header">
         <div>
-          <div className="chart-card-title">
-            {annotationId}{annotationName ? ` — ${annotationName}` : ''}
-          </div>
+          {source === 'taxonomy' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="chart-card-title" style={{ fontStyle: 'italic' }}>{annotationName ?? annotationId}</div>
+              <button
+                className={`toggle-pill sm ${showLineage ? 'on' : ''}`}
+                style={{ color: 'var(--teal)', borderColor: 'var(--teal)', borderRadius: 6 }}
+                onClick={() => setShowLineage(s => !s)}
+                title={showLineage ? 'Hide full lineage' : 'Show full lineage'}
+              >
+                {taxonomyRankLabel(depth)} {showLineage ? '▴' : '▾'}
+              </button>
+            </div>
+          ) : (
+            <div className="chart-card-title">
+              {annotationId}{annotationName ? ` — ${annotationName}` : ''}
+            </div>
+          )}
+          {source === 'taxonomy' && showLineage && (
+            <div style={{
+              fontSize: 12, fontFamily: 'var(--mono)',
+              color: 'var(--text-dim)', marginTop: 2,
+            }}>
+              {annotationId}
+            </div>
+          )}
           <div style={{
             fontSize: 12, fontFamily: 'var(--mono)',
             color: 'var(--text-dim)', marginTop: 2,
@@ -365,28 +408,51 @@ export function EgcChart({
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <button
-            className={`toggle-pill sm ${tpPanelOpen ? 'on' : ''}`}
-            onClick={() => setTpPanelOpen(o => !o)}
-            title="Select which timepoints to display"
-            style={(!allSelected || !allTimesSelected) ? { outline: '1.5px solid var(--teal)' } : undefined}
-          >
-            ⚙ Timepoints{tpBadge}
-          </button>
+          <ScaffoldBtn
+            annotationId={annotationId}
+            source={source ?? ''}
+            name={annotationName}
+            onGoExplore={onGoExplore}
+            className="toggle-pill sm"
+          />
           <button
             className={`toggle-pill sm ${showStats ? 'on' : ''}`}
             onClick={() => setShowStats(s => !s)}
           >
             Σ Stats
           </button>
-          <button className="btn sm" onClick={handleExportPng}>↓ PNG</button>
-          <button className="btn sm" onClick={handleExportSvg}>↓ SVG</button>
-          <button className="btn sm" onClick={handleExportCsv}>↓ CSV</button>
         </div>
       </div>
 
       {/* ── Stats panel ── */}
       {showStats && <StatsPanel vals={egcVals} yLabel={yLabel} />}
+
+      {/* ── Filter dates ── */}
+      <div className="chart-filter-box" style={{ borderColor: sourceColor }}>
+        <span className="chart-filter-label" style={{ color: sourceColor }}>Filter dates</span>
+        <div className="chart-filter-dates">
+          <DateRangePicker
+            from={dateFrom}
+            to={dateTo}
+            onFrom={setDateFrom}
+            onTo={setDateTo}
+            onClear={() => { setDateFrom(''); setDateTo('') }}
+            minDate={dataDateRange?.min}
+            maxDate={dataDateRange?.max}
+          />
+          <button
+            className={`toggle-pill sm ${tpPanelOpen ? 'on' : ''}`}
+            onClick={() => setTpPanelOpen(o => !o)}
+            title="Select which timepoints to display"
+            style={{
+              fontSize: 11,
+              ...((!allSelected || !allTimesSelected) ? { outline: '1.5px solid var(--teal)' } : {}),
+            }}
+          >
+            ⚙ Timepoints{tpBadge}
+          </button>
+        </div>
+      </div>
 
       {/* ── Timepoint selector panel ── */}
       {tpPanelOpen && allDates.length > 0 && allTimes.length > 0 && (
@@ -504,19 +570,6 @@ export function EgcChart({
         </div>
       )}
 
-      {/* ── Date range picker ── */}
-      <div style={{ marginBottom: 10 }}>
-        <DateRangePicker
-          from={dateFrom}
-          to={dateTo}
-          onFrom={setDateFrom}
-          onTo={setDateTo}
-          onClear={() => { setDateFrom(''); setDateTo('') }}
-          minDate={dataDateRange?.min}
-          maxDate={dataDateRange?.max}
-        />
-      </div>
-
       {/* ── Chart controls ── */}
       <ChartControls
         metric={metric}
@@ -592,4 +645,4 @@ export function EgcChart({
       )}
     </div>
   )
-}
+})

@@ -14,8 +14,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { AnnotationItem, ApiStatus, SeriesCache } from '../types'
 import { apiFetch, downloadCsv } from '../utils/api'
-import { computeExclusionSeries, computeChartTitle } from '../utils/taxonomy'
-import { TAXONOMY_RANK_NAMES } from '../constants'
+import { computeExclusionSeries, computeChartTitle, bareTaxonName } from '../utils/taxonomy'
+import { TAXONOMY_RANK_NAMES, taxonomyRankLabel } from '../constants'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
 import { ChartErrorBoundary } from '../components/ui/ChartErrorBoundary'
 import { HelpTooltip } from '../components/ui/HelpTooltip'
@@ -183,9 +183,10 @@ export function TaxonomyPage({
   const chartSeries = useMemo(() => {
     if (!state.rootId || rootStatus !== 'ok') return []
 
+    const rootName = bareTaxonName(state.rootId)
     const full = {
       annotationId: state.rootId,
-      name:         `${state.rootId} (full)`,
+      name:         `${rootName} (full)`,
       data:         rootData,
       // Literal hex, not a CSS var() string — Plotly's SVG traces can't
       // resolve custom properties the way regular DOM/CSS elements can, so
@@ -199,13 +200,13 @@ export function TaxonomyPage({
     if (excludedList.length === 0 || !excludedReady) return [full]
 
     const excludedSeriesArrays = excludedList.map(id => cache[`${id}::taxonomy`]?.data ?? [])
-    // MultiEgcChart's legend/hover/CSV all key off SeriesEntry.annotationId
-    // (not .name — see its legend-item span, which renders {s.annotationId}
-    // and only uses .name as a title tooltip), so the friendly label goes
-    // directly into annotationId here to actually show up on the chart.
-    const minusLabel = `${state.rootId} (minus ${excludedList.length} exclusion${excludedList.length !== 1 ? 's' : ''})`
+    // annotationId just needs to be distinct from the root's own (see
+    // computeExclusionSeries' doc comment) — MultiEgcChart's legend shows
+    // .name, not annotationId, for taxonomy series, so this doesn't need to
+    // be human-readable itself.
+    const minusLabel = `${rootName} (minus ${excludedList.length} exclusion${excludedList.length !== 1 ? 's' : ''})`
     const minus = {
-      annotationId: minusLabel,
+      annotationId: `${state.rootId}__minus`,
       name:         minusLabel,
       data:         computeExclusionSeries(rootData, excludedSeriesArrays, `${state.rootId}__excl`, null),
       color:        '#D55E00',
@@ -281,8 +282,21 @@ export function TaxonomyPage({
                       onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface2)' }}
                       onMouseLeave={e => { e.currentTarget.style.background = '' }}
                     >
-                      <span style={{ fontFamily: 'var(--mono)', fontSize: 13, color: 'var(--teal)' }}>
-                        {r.annotation_id}
+                      <span style={{
+                        fontFamily:    'var(--mono)',
+                        fontSize:      10,
+                        color:         'var(--text-dim)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '.06em',
+                        flexShrink:    0,
+                      }}>
+                        {taxonomyRankLabel(r.depth ?? null)}
+                      </span>
+                      <span
+                        title={r.annotation_id}
+                        style={{ fontFamily: 'var(--mono)', fontSize: 13, color: 'var(--teal)', fontStyle: 'italic' }}
+                      >
+                        {r.name ?? r.annotation_id}
                       </span>
                     </div>
                   ))}
@@ -343,9 +357,9 @@ export function TaxonomyPage({
           )}
 
           {state.rootId && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <span style={{ font: '13px var(--mono)', color: 'var(--teal)' }}>
-                Scope: {state.rootId}
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+              <span title={state.rootId} style={{ font: '13px var(--mono)', color: 'var(--teal)' }}>
+                Scope: <span style={{ fontStyle: 'italic' }}>{bareTaxonName(state.rootId)}</span>
               </span>
               <button className="btn ghost sm" onClick={changeRoot}>✕ change scope</button>
               <HelpTooltip text="Changing the scope taxon clears your current exclusions — they don't carry over to a new scope." />

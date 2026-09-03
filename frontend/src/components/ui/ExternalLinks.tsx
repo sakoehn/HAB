@@ -4,9 +4,12 @@
 //
 // Exports:
 //   ExternalLinks  — returns link badges as a React node, or null if no links
-//   ExternalLink   — inline version: ID styled in teal + badge links beside it
+//   ExternalLink   — inline version: primary label (annotation_id, or the
+//     bare taxon name when source is 'taxonomy' — see taxonomyAwarePrimaryLabel)
+//     styled in teal, full annotation_id always on hover, + badge links beside it
 
 import React from 'react'
+import { taxonomyAwarePrimaryLabel } from '../../constants'
 
 // ── link helper ────────────────────────────────────────────────────────────
 // Shared anchor factory used by all source branches below.
@@ -133,9 +136,11 @@ export function ExternalLinks({
 export function ExternalLink({
   annotationId,
   source,
+  name,
 }: {
   annotationId: string
   source:       string
+  name?:        string | null
 }) {
   return (
     <span
@@ -147,14 +152,17 @@ export function ExternalLink({
       }}
     >
       <span
+        title={annotationId}
         style={{
           fontFamily: 'var(--mono)',
           fontSize:   12,
           color:      'var(--teal)',
           fontWeight: 600,
+          fontStyle:  source === 'taxonomy' ? 'italic' : 'normal',
+          overflowWrap: 'anywhere',
         }}
       >
-        {annotationId}
+        {taxonomyAwarePrimaryLabel(source, annotationId, name)}
       </span>
       <ExternalLinks annotationId={annotationId} source={source} />
     </span>

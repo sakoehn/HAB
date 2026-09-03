@@ -160,6 +160,7 @@ h3 { font: 600 14px var(--sans); color: var(--text-h); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--text-dim); }
 .btn.ghost:hover { color: var(--text-h); background: var(--surface2); }
 .btn.sm { padding: 5px 10px; font-size: 11px; border-radius: 5px; }
+.btn.xs { padding: 3px 7px; font-size: 10px; border-radius: 4px; gap: 3px; }
 
 /* â”€â”€ Form fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .field {
@@ -365,6 +366,7 @@ select.field { cursor: pointer; }
 .ann-table td.id-cell {
   font-family: var(--mono); font-size: 12px;
   color: var(--teal); font-weight: 500; letter-spacing: .02em;
+  max-width: 260px; overflow-wrap: anywhere; /* taxonomy IDs are long, space-free lineage strings */
 }
 .ann-table td.name-cell { color: var(--text-h); max-width: 300px; }
 
@@ -383,13 +385,14 @@ select.field { cursor: pointer; }
   background-color: var(--surface);
   background-image: radial-gradient(var(--dot-color) 1px, transparent 1px);
   background-size: 18px 18px;
+  --text-dim: var(--text-h);
 }
 .chart-card-header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 14px; flex-wrap: wrap; gap: 8px;
 }
 .chart-card-title {
-  font: italic 600 14px var(--serif);
+  font: italic 600 clamp(12px, 1.8vw, 14px) var(--serif);
   color: var(--text-h);
 }
 .chart-legend { display: flex; gap: 14px; flex-wrap: wrap; }
@@ -474,7 +477,7 @@ select.field { cursor: pointer; }
 
 /* â”€â”€ Mappings section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mappings-toggle {
-  display: flex; align-items: center; gap: 10px; cursor: pointer;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px; cursor: pointer;
   padding: 12px 0; border: none; background: none;
   font: 500 13px var(--sans); color: var(--text);
   transition: color .15s; width: 100%;
@@ -484,7 +487,7 @@ select.field { cursor: pointer; }
   transition: transform .2s; font-size: 10px; color: var(--text-dim);
 }
 .mappings-toggle.open .toggle-icon { transform: rotate(90deg); }
-.mappings-toggle .toggle-label { flex: 1; text-align: left; }
+.mappings-toggle .toggle-label { flex: 1; min-width: 0; overflow-wrap: anywhere; text-align: left; }
 .mappings-toggle .toggle-count { font: 400 11px var(--mono); color: var(--text-dim); }
 
 .mappings-controls {
@@ -646,6 +649,32 @@ select.field { cursor: pointer; }
 .date-range { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .date-range-label { font: 400 11px var(--mono); color: var(--text-dim); white-space: nowrap; letter-spacing: .04em; }
 .date-field { width: 135px; padding: 6px 10px; font-size: 12px; }
+
+.chart-filter-box {
+  position: relative;
+  border: 1px solid var(--border-l);
+  border-radius: 8px;
+  padding: 14px 12px 10px;
+  margin-bottom: 10px;
+}
+.chart-filter-label {
+  position: absolute;
+  top: -9px;
+  left: 10px;
+  background: var(--surface);
+  padding: 0 6px;
+  font: 600 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.chart-filter-dates {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.chart-filter-dates .date-range-label { display: none; }
+.chart-filter-dates .date-field { width: 88px; padding: 3px 6px; font-size: 10px; }
 /* Native calendar icon/dropdown otherwise ignores the app's theme entirely
    (always renders in the OS's light-mode chrome) -- color-scheme tells the
    browser to draw its own date-picker UI in a theme-appropriate palette. */
@@ -768,6 +797,21 @@ select.field { cursor: pointer; }
   overflow: hidden;
   align-self: flex-start;
   z-index: 10;
+}
+
+.al-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 11;
+  background: transparent;
+}
+.al-resize-handle:hover,
+.al-resize-handle.active {
+  background: var(--teal-dim);
 }
 
 /* Term tabs */
@@ -993,6 +1037,7 @@ select.field { cursor: pointer; }
 .al-right-actionbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
@@ -1043,20 +1088,21 @@ select.field { cursor: pointer; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   margin-bottom: 12px;
   gap: 8px;
   min-width: 0;
 }
 
 .al-right-card-id {
-  font: 600 13px var(--mono);
+  font: 600 clamp(11px, 1.6vw, 13px) var(--mono);
   color: var(--teal);
   letter-spacing: .02em;
   white-space: nowrap;
 }
 
 .al-right-card-name {
-  font: 400 12px var(--sans);
+  font: 400 clamp(10px, 1.4vw, 12px) var(--sans);
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -1590,6 +1636,13 @@ select.field { cursor: pointer; }
   filter: brightness(1.15);
   box-shadow: 0 0 0 1px currentColor;
 }
+.al-rank-filter-label {
+  font: 600 10px var(--mono);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
 
 /* â”€â”€ Result info strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .al-result-info {
@@ -1662,7 +1715,11 @@ select.field { cursor: pointer; }
   color: var(--text);
   font-size: 12.5px;
 }
-.card-info-value.mono { font-family: var(--mono); color: var(--teal); }
+.card-info-value.mono {
+  font-family: var(--mono);
+  color: var(--teal);
+  overflow-wrap: anywhere; /* taxonomy IDs are long, space-free lineage strings */
+}
 .card-info-links-row { align-items: flex-start; margin-top: 2px; }
 .card-info-links {
   display: flex; flex-wrap: wrap; gap: 4px;
@@ -1731,6 +1788,7 @@ select.field { cursor: pointer; }
   font: 700 16px var(--mono);
   color: var(--teal);
   letter-spacing: .02em;
+  overflow-wrap: anywhere; /* taxonomy IDs are long, space-free lineage strings */
 }
 .lookup-name {
   font: 400 14px var(--sans);
@@ -1818,6 +1876,7 @@ select.field { cursor: pointer; }
 .scaffold-modal-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 14px 18px;
   border-bottom: 1px solid var(--border);

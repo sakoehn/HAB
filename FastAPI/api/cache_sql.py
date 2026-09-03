@@ -32,29 +32,21 @@ RANK_COLUMNS = {
 
 _ALL_SAMPLES_SQL_CACHE = None
 
-def taxon_paths_under(conn: sqlite3.Connection, annotation_id: str, depth: int) -> list[sqlite3.Row]:
-    """Return every taxon_paths row whose rank-`depth` column matches
-    `annotation_id` -- e.g. depth=2, annotation_id="Bacteroidetes" returns
+def taxon_paths_under(conn: sqlite3.Connection, lineage_prefix: str) -> list[sqlite3.Row]:
+    """Return every taxon_paths row that IS `lineage_prefix` or has it as
+    an ancestor -- e.g. lineage_prefix="Bacteria;Bacteroidetes" returns
     every full lineage under that phylum, not a single row.
 
     Args:
         conn: Open SQLite connection.
-        annotation_id: Taxon name to match, e.g. "Bacteroidetes".
-        depth: Rank to search, 1 (domain) through 8 (strain). A bare name
-            can be valid at more than one rank (e.g. "Aquificae" is both a
-            phylum and a class), so depth picks which column to search.
+        lineage_prefix: Lineage-prefix string to match, e.g.
+            "Bacteria;Bacteroidetes".
 
     Returns:
         Matching taxon_paths rows, possibly empty.
-
-    Raises:
-        ValueError: If depth is outside 1-8.
     """
-    column = RANK_COLUMNS.get(depth)
-    if column is None:
-        raise ValueError(f"depth must be 1-8, got {depth}")
-    query = f"SELECT * FROM taxon_paths WHERE {column} = ?"
-    cursor = conn.execute(query, (annotation_id,))
+    query = "SELECT * FROM taxon_paths WHERE full_path = ? OR substr(full_path, 1, ?) = ?"
+    cursor = conn.execute(query, (lineage_prefix, len(lineage_prefix) + 1, lineage_prefix + ';'))
     return cursor.fetchall()
 
 
@@ -115,36 +107,6 @@ def get_all_sample_names_sql(conn: sqlite3.Connection) -> list[str]:
         _ALL_SAMPLES_SQL_CACHE = [row[0] for row in rows]
     return _ALL_SAMPLES_SQL_CACHE
 
-
-def taxon_depth_sql(conn: sqlite3.Connection, parent: str) -> list[int]:
-    """Return every rank depth at which `parent` appears as a value in
-    taxon_paths.
-
-    A bare taxon name can exist at more than one rank (e.g. "Aquificae" is
-    both a phylum and a class), so this may return more than one depth.
-
-    Args:
-        conn: Open SQLite connection.
-        parent: Taxon name to search for across all rank columns.
-
-    Returns:
-        Matching depths (1-8), possibly empty.
-    """
-    depths = []
-    for depth, column in RANK_COLUMNS.items():
-        query = f"""
-            SELECT 1
-            FROM taxon_paths
-            WHERE {column} = ?
-            LIMIT 1
-        """
-        cursor = conn.execute(query, (parent,))
-        results = cursor.fetchall()
-        if results:
-            depths.append(depth)
-    return depths
-
-
 def get_taxonomy_children_sql(conn: sqlite3.Connection, parent: str | None, depth: int | None = None) -> list[dict]:
     """Return the direct children of a taxon, built from `taxon_paths`.
 
@@ -153,8 +115,8 @@ def get_taxonomy_children_sql(conn: sqlite3.Connection, parent: str | None, dept
         parent: Taxon name to find children of. None returns the four
             domain roots (Archaea, Bacteria, Eukaryota, Viruses).
         depth: Rank of `parent`, if already known (e.g. echoed back from a
-            prior response). If None, resolves every rank `parent`
-            matches via taxon_depth_sql() and unions their children.
+            prior response). If None, derived from `parent`'s own lineage
+            length.
 
     Returns:
         List of dicts keyed annotation_id, depth, category, sorted by
@@ -163,39 +125,35 @@ def get_taxonomy_children_sql(conn: sqlite3.Connection, parent: str | None, dept
     """
     if parent is None:
         # domain roots, no depth needed
-        query = "SELECT DISTINCT domain AS annotation_id, 1 AS depth, domain AS category FROM taxon_paths"
+        query = "SELECT DISTINCT domain AS annotation_id, domain AS name, 1 AS depth, domain AS category FROM taxon_paths"
         cursor = conn.execute(query)
         rows = cursor.fetchall()
-        return [{"annotation_id": row[0], "depth": row[1], "category": row[2]} for row in rows]
+        return [{"annotation_id": row[0], "name": row[1], "depth": row[2], "category": row[3]} for row in rows]
 
     if depth is None:
-        # find depth
-        depths = taxon_depth_sql(conn, parent)
-    else:
-        depths = [depth]
+        depth = len(parent.split(';'))
+    next_depth = depth + 1
+    next_column = RANK_COLUMNS.get(next_depth)
+    if next_column is None:
+        return []  # strain is a real leaf rank -- no children below it
 
+    rows = taxon_paths_under(conn, parent)
     children_by_id = {}
-    for rank in depths:
-        next_depth = rank + 1
-        next_column = RANK_COLUMNS.get(next_depth)
-        if next_column is None:
-            # strain (depth=8) is a real leaf rank -- no children below it
+    for row in rows:
+        child_name = row[next_depth]
+        if not child_name:
             continue
-        depth_rows = taxon_paths_under(conn, parent, rank)
-
-        for row in depth_rows:
-            child = row[next_depth]
-            if not child:
-                continue
-
-            if child not in children_by_id:
-                children_by_id[child] = {
-                    "annotation_id": child,
-                    "depth": next_depth,
-                    "category": row[1]
-                }
+        child_key = f"{parent};{child_name}"
+        if child_key not in children_by_id:
+            children_by_id[child_key] = {
+                "annotation_id": child_key,
+                "name":          child_name,
+                "depth":         next_depth,
+                "category":      row[1],
+            }
 
     return sorted(children_by_id.values(), key=lambda c: c["annotation_id"])
+
 
 
 def get_annotation_scaffolds_sql(
@@ -233,22 +191,23 @@ def get_annotation_scaffolds_sql(
         for row in rows
     ]
 
-def taxon_exists_sql(conn: sqlite3.Connection, annotation_id: str) -> bool:
-    """Return whether `annotation_id` appears anywhere in taxon_paths, at
-    any rank.
+def taxon_exists_sql(conn: sqlite3.Connection, lineage_prefix: str) -> bool:
+    """Return whether `lineage_prefix` exists in taxon_paths -- either as
+    a complete path itself, or as an ancestor of one.
 
     Args:
         conn: Open SQLite connection.
-        annotation_id: Taxon name to check.
+        lineage_prefix: Lineage-prefix string to check, e.g.
+            "Bacteria;Bacteroidetes".
 
     Returns:
-        True if found at any rank, False otherwise.
+        True if found, False otherwise.
     """
-    for column in RANK_COLUMNS.values():
-        row = conn.execute(f"SELECT 1 FROM taxon_paths WHERE {column} = ? LIMIT 1", (annotation_id,)).fetchone()
-        if row is not None:
-            return True
-    return False
+    row = conn.execute(
+        "SELECT 1 FROM taxon_paths WHERE full_path = ? OR substr(full_path, 1, ?) = ? LIMIT 1",
+        (lineage_prefix, len(lineage_prefix) + 1, lineage_prefix + ';'),
+    ).fetchone()
+    return row is not None
 
 
 def get_top_annotations_sql(conn: sqlite3.Connection, source: str, sample_names: list[str]) -> list[dict]:
@@ -337,8 +296,8 @@ def get_search_annotations(conn: sqlite3.Connection, sources: list[str], q: str 
         name_exact: If given, additionally requires an exact name match.
 
     Returns:
-        List of dicts keyed source, annotation_id, name, parent, mean_egc,
-        max_egc, mean_norm_egc, max_norm_egc, sample_count.
+        List of dicts keyed source, annotation_id, name, parent, depth,
+        mean_egc, max_egc, mean_norm_egc, max_norm_egc, sample_count.
     """
     clauses = []
     params  = []
@@ -353,7 +312,12 @@ def get_search_annotations(conn: sqlite3.Connection, sources: list[str], q: str 
         clauses.append("annotation_id = ?")
         params.append(annotation_id)
     elif q:
-        clauses.append("(annotation_id LIKE ? OR name LIKE ?)")
+        # annotation_id is a meaningful, searchable ID for cog/kegg/enzyme
+        # (e.g. "K00001"), but for taxonomy it's now the full lineage
+        # string -- matching against it there would hit on any ancestor's
+        # name, not just this node's own name, so taxonomy only matches
+        # on `name`.
+        clauses.append("(name LIKE ? OR (source != 'taxonomy' AND annotation_id LIKE ?))")
         params.append(f"%{q}%")
         params.append(f"%{q}%")
     else:
@@ -371,7 +335,7 @@ def get_search_annotations(conn: sqlite3.Connection, sources: list[str], q: str 
     SELECT source, annotation_id,
            name, parent, mean_egc, max_egc,
            mean_norm_egc, max_norm_egc,
-           sample_count
+           sample_count, depth
         FROM annotation_catalog
         WHERE {where_sql}
     """
@@ -388,6 +352,7 @@ def get_search_annotations(conn: sqlite3.Connection, sources: list[str], q: str 
             "mean_norm_egc": row[6],
             "max_norm_egc": row[7],
             "sample_count": row[8],
+            "depth": row[9],
         }
         for row in rows
     ]
@@ -436,19 +401,16 @@ def get_mappings_sql(conn: sqlite3.Connection, source: str, annotation_id: str) 
         """
         where_params = (ec_id,)
     elif source == "taxonomy":
-        depths = taxon_depth_sql(conn, annotation_id)
-        columns = [RANK_COLUMNS[d] for d in depths]
-        subquery = " UNION ".join(
-            f"SELECT id FROM taxon_paths WHERE {col} = ?" for col in columns
-        )
-        where_sql = f"""
+        where_sql = """
             SELECT id
             FROM mappings
             WHERE taxon_path_id IN (
-               {subquery}
+                SELECT id FROM taxon_paths
+                WHERE full_path = ? OR substr(full_path, 1, ?) = ?
             )
         """
-        where_params = tuple(annotation_id for _ in depths)
+        where_params = (annotation_id, len(annotation_id) + 1, annotation_id + ';')
+
     else:
         raise ValueError(f"Unknown source: {source}")
 

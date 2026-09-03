@@ -105,7 +105,7 @@ function TaxonomyNodeRow({
           {isExcluded && <span className="tax-node-checkbox-tick">✓</span>}
         </button>
 
-        <span className="tax-node-name">{node.annotationId}</span>
+        <span className="tax-node-name">{node.name}</span>
         <span className="tax-node-rank">{rank}</span>
       </div>
 

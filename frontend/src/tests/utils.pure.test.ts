@@ -1068,8 +1068,16 @@ describe('expandParentLabel', () => {
     expect(expandParentLabel('99123', 'kegg')).toBe('BRITE group 99123')
   })
 
-  it('taxonomy returns parent unchanged', () => {
-    expect(expandParentLabel('Bacteria', 'taxonomy')).toBe('Bacteria')
+  it('taxonomy domain-level parent gets a rank suffix', () => {
+    expect(expandParentLabel('Bacteria', 'taxonomy')).toBe('Bacteria (Domain)')
+  })
+
+  it('taxonomy multi-segment parent is reduced to its bare rank label', () => {
+    // parent is the ancestor's own full lineage-prefix — too crowded to
+    // print as-is (see taxonomy_egc_homonym_bug); only the last segment
+    // (the bare name) plus its rank should show.
+    expect(expandParentLabel('Bacteria;Proteobacteria;Alphaproteobacteria', 'taxonomy'))
+      .toBe('Alphaproteobacteria (Class)')
   })
 
   it('empty string returns empty string for any source', () => {

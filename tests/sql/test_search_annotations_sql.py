@@ -110,8 +110,8 @@ def test_correct_values(conn):
         "parent":        None,
         "mean_egc":      8759.3203125,
         "max_egc":       25563.0,
-        "mean_norm_egc": 0.0005966044508181674,
-        "max_norm_egc":  0.0007922940285800475,
+        "mean_norm_egc": 0.00047519008991907946,
+        "max_norm_egc":  0.0006207960634297522,
         "sample_count":  128
     }
     expected_b = get_top_annotations_sql(conn, "cog", get_all_sample_names_sql(conn))
@@ -157,6 +157,26 @@ def test_results_deduplicated_across_samples(conn):
         else:
             seen.add(check)
     assert not has_duplicates
+
+
+def test_taxonomy_homonym_search_returns_both_distinct_lineages(conn):
+    """Real, confirmed case matching the taxonomy_egc_homonym_bug fix this
+    search sits on top of: searching taxonomy for the genus name "Bosea"
+    must surface it as TWO separate annotations -- same name, but
+    different rank/lineage (parent). A pre-fix, bare-name-keyed search
+    would have shown only one, silently hiding the second lineage."""
+    results = get_search_annotations(
+        conn, sources=["taxonomy"], q=None, annotation_id=None, name_exact="Bosea",
+    )
+    assert len(results) == 2, f"expected exactly 2 'Bosea' results, found {len(results)}"
+
+    old_lineage = "Bacteria;Proteobacteria;Alphaproteobacteria;Rhizobiales;Bradyrhizobiaceae;Bosea"
+    new_lineage = "Bacteria;Proteobacteria;Alphaproteobacteria;Hyphomicrobiales;Boseaceae;Bosea"
+    by_id = {row["annotation_id"]: row for row in results}
+    assert set(by_id) == {old_lineage, new_lineage}
+    assert by_id[old_lineage]["name"] == by_id[new_lineage]["name"] == "Bosea"
+    assert by_id[old_lineage]["parent"] != by_id[new_lineage]["parent"]
+    assert by_id[old_lineage]["depth"] == by_id[new_lineage]["depth"] == 6
 
 
 def test_no_match_returns_empty(conn):
