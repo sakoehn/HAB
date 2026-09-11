@@ -21,7 +21,7 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   ApiStatus, AnnotationSourceKey, ChartMetric, CorrMethod, CorrelationFamilyResult,
 } from '../../types'
-import { SOURCE_TAG_CLS } from '../../constants'
+import { SOURCE_TAG_CLS, taxonomyRankLabel } from '../../constants'
 import { apiFetch } from '../../utils/api'
 import { ExternalLink } from '../ui/ExternalLinks'
 import { HelpTooltip } from '../ui/HelpTooltip'
@@ -152,6 +152,9 @@ export function CorrelatesPanel({
               </button>
             ))}
             <HelpTooltip text="Includes this annotation's own source -- same-source candidates that are siblings, ancestors, or descendants of this one are excluded automatically to avoid compositional/containment artifacts." />
+            {targetSource === 'taxonomy' && (
+              <HelpTooltip text="Taxonomy candidates are limited to genus-and-coarser ranks (domain through genus). Species and strain-level taxa make up the large majority of the ~60,000 taxonomy annotations, and including them made this search too slow to run -- this keeps it fast without losing the coarser ranks most cross-source comparisons care about." />
+            )}
           </div>
 
           {/* ── Method + metric selectors ── */}
@@ -270,7 +273,11 @@ export function CorrelatesPanel({
                               name={row.name}
                             />
                           </span>
-                          {row.name && targetSource !== 'taxonomy' && (
+                          {targetSource === 'taxonomy' ? (
+                            <span className="corr-row-name" title={`Taxonomic rank: ${taxonomyRankLabel(row.depth)}`}>
+                              ({taxonomyRankLabel(row.depth)})
+                            </span>
+                          ) : row.name && (
                             <span className="corr-row-name" title={row.name}>
                               {row.name}
                             </span>

@@ -80,7 +80,11 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
     included -- except cog, which has no parent concept at all and is
     exempted below), and its ancestors/descendants at any depth.
 
-    Returns a list of dicts: {"id": ..., "annotation_id": ..., "parent": ..., "name": ...}
+    Returns a list of dicts:
+        {"id": ..., "annotation_id": ..., "parent": ..., "name": ..., "depth": ...}
+    `depth` is the taxonomic rank (1=domain..8=strain) for taxonomy rows,
+    source-specific pathway/EC hierarchy depth for kegg/enzyme, always
+    None for cog (see annotation_catalog's own depth column docs).
 
     Taxonomy candidates are capped at genus-and-coarser (depth <=
     TAXONOMY_DEPTH_CUTOFF) -- species+strain alone are ~89% of taxonomy's
@@ -101,19 +105,22 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
 
     if target_source == AnnotationSource.taxonomy.value:
         cursor = conn.execute(
-            "SELECT id, annotation_id, parent, name FROM annotation_catalog "
+            "SELECT id, annotation_id, parent, name, depth FROM annotation_catalog "
             "WHERE source = ? AND depth <= ?",
             (target_source, TAXONOMY_DEPTH_CUTOFF),
         )
     else:
         cursor = conn.execute(
-            "SELECT id, annotation_id, parent, name FROM annotation_catalog WHERE source = ?",
+            "SELECT id, annotation_id, parent, name, depth FROM annotation_catalog WHERE source = ?",
             (target_source,),
         )
     target_rows = cursor.fetchall()
 
     def _shape(rows):
-        return [{"id": r[0], "annotation_id": r[1], "parent": r[2], "name": r[3]} for r in rows]
+        return [
+            {"id": r[0], "annotation_id": r[1], "parent": r[2], "name": r[3], "depth": r[4]}
+            for r in rows
+        ]
 
     if ref_source != target_source:
         return _shape(target_rows)
@@ -123,7 +130,7 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
     if target_source != AnnotationSource.cog.value:
         by_id: dict = {}        # annotation_id -> parent
         children_of: dict = {}  # parent (NULL included) -> [annotation_id, ...]
-        for _cat_id, annotation_id, parent, _name in target_rows:
+        for _cat_id, annotation_id, parent, _name, _depth in target_rows:
             by_id[annotation_id] = parent
             children_of.setdefault(parent, []).append(annotation_id)
 
@@ -318,6 +325,7 @@ def correlation_family_endpoint(ref_source: str, ref_annotation_id: str, target_
                 "catalog_id":    cand["id"],
                 "annotation_id": cand["annotation_id"],
                 "name":          cand["name"],
+                "depth":         cand["depth"],
                 "r":             result["r"],
                 "p":             result["p"],
                 "lag_samples":   result["lag_samples"],

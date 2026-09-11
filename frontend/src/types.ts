@@ -151,6 +151,7 @@ export type CorrelationFamilyResult = {
   catalog_id:    number
   annotation_id: string
   name:          string | null
+  depth:         number | null
   r:             number
   p:             number
   q:             number

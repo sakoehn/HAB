@@ -57,7 +57,7 @@ def client(tmp_path, monkeypatch):
     # ref (taxonomy) vs two kegg candidates -- cross-source, so no
     # exclusion-rule complexity, this file is only testing the HTTP layer.
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (1, 'taxonomy', 'Bacteria')")
-    conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id, name) VALUES (2, 'kegg', 'K00002', 'Nitrogenase')")
+    conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id, name, depth) VALUES (2, 'kegg', 'K00002', 'Nitrogenase', 3)")
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (3, 'kegg', 'K00003')")
 
     # Pair (1,2): strong, clearly-significant correlation, lag=3 samples.
@@ -146,5 +146,6 @@ class TestCorrelationFamilyEndpoint:
         assert entry["r"] == 0.9
         assert entry["q"] < 0.05
         assert entry["name"] == "Nitrogenase"
+        assert entry["depth"] == 3
         assert entry["lag_samples"] == 3
         assert entry["lag_hours"] == 12  # 3 samples * LAG_HOURS_PER_SAMPLE (4)

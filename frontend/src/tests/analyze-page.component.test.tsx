@@ -1529,6 +1529,54 @@ describe('CorrelatesPanel', () => {
     })
   })
 
+  it('taxonomy pill shows a depth-cutoff tooltip and results show the rank', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/correlations/family'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ([{
+            catalog_id: 9, annotation_id: 'Bacteria;Proteobacteria;Rhizobiaceae;Bosea',
+            name: 'Bosea', depth: 6,
+            r: 0.72, p: 0.02, q: 0.03, lag_samples: 0, lag_hours: 0, n_pairs: 40,
+          }]),
+        })
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    await renderWithChartAndWait()
+    await userEvent.click(screen.getByText(/Find Correlates/i))
+    const bar = await waitFor(() => {
+      const el = document.querySelector('.corr-pill-bar')
+      expect(el).toBeTruthy()
+      return el as HTMLElement
+    })
+
+    // No taxonomy-specific tooltip yet -- default target is enzyme/cog.
+    expect(within(bar).getAllByTitle('Help')).toHaveLength(1)
+
+    await userEvent.click(within(bar).getByText('taxonomy', { exact: true }))
+
+    const helpButtons = await waitFor(() => within(bar).getAllByTitle('Help'))
+    expect(helpButtons).toHaveLength(2)
+    await userEvent.click(helpButtons[1])
+    await waitFor(() => {
+      expect(screen.getByText(/genus-and-coarser/i)).toBeInTheDocument()
+    })
+
+    const panel = document.querySelector('.corr-panel') as HTMLElement
+    await waitFor(() => {
+      expect(within(panel).getByText('(Genus)')).toBeInTheDocument()
+    })
+  })
+
   it('lag value has a help tooltip explaining the sign convention', async () => {
     await renderWithChartAndWait()
     await userEvent.click(screen.getByText(/Find Correlates/i))
