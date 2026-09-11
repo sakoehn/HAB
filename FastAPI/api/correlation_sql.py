@@ -275,10 +275,26 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
 
 
 
+def _connect() -> sqlite3.Connection:
+    """
+    Open a connection with a busy timeout set, instead of sqlite3's default
+    of failing instantly with "database is locked" the moment a second
+    connection tries to write while another's write is still in-flight.
+    Found live under real concurrent traffic: two requests both writing to
+    correlations_cache around the same time, one got an uncaught
+    sqlite3.OperationalError and 500'd. A 10s timeout comfortably covers a
+    single-row INSERT (milliseconds) without masking a genuinely stuck
+    connection.
+    """
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn.execute("PRAGMA busy_timeout = 10000")
+    return conn
+
+
 # ── Endpoint: thin HTTP wrapper ──────────────────────────────────
 @router.get("/correlation")
 def correlate_endpoint(catalog_id_a: int, catalog_id_b: int, metric: str, method: str):
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect()
     try:
         result = _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method)
     finally:
@@ -293,7 +309,7 @@ def correlation_family_endpoint(ref_source: str, ref_annotation_id: str, target_
     if target_source not in valid_sources:
         raise HTTPException(status_code=400, detail=f"target_source must be one of {valid_sources}")
 
-    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn = _connect()
     try:
         ref_row = conn.execute(
             "SELECT id FROM annotation_catalog WHERE source = ? AND annotation_id = ?",
