@@ -151,13 +151,27 @@ CREATE INDEX IF NOT EXISTS idx_correlations_cache_catalog_id_b ON correlations_c
 
 
 def create_schema(db_path: str = SQLITE_DB_PATH) -> None:
-    """Create every table in SCHEMA if it doesn't already exist.
+    """Create every table in SCHEMA if it doesn't already exist, and switch
+    the db to WAL journal mode.
 
     Args:
         db_path: Path to the SQLite database file.
+
+    WAL is a one-time, persistent, database-file-level setting (not a
+    per-connection one) -- the default rollback-journal mode locks the
+    ENTIRE file for the duration of any writer's transaction, blocking
+    every other reader/writer; WAL lets readers keep working concurrently
+    with a writer. Set here, at schema-creation time, deliberately -- not
+    from request-handling code (see api/correlation_sql.py's _connect())
+    -- since switching journal mode itself requires no OTHER connection
+    have a write transaction open, and doing that from live request code
+    means every request risks racing a concurrent writer and hitting
+    "database is locked" trying to perform the switch itself. Safe/
+    idempotent to re-run: if the db is already WAL, this is a no-op.
     """
     conn = sqlite3.connect(db_path)
     try:
+        conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
         conn.commit()
     finally:

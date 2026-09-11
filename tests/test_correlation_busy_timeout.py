@@ -5,6 +5,16 @@ one got an uncaught sqlite3.OperationalError("database is locked") and
 500'd, because sqlite3's default busy_timeout is 0 (fail instantly instead
 of waiting for the other write to finish).
 
+Switching the db to WAL journal mode (the deeper fix for sustained
+concurrent load -- the default journal mode locks the whole file per
+writer, blocking every other reader/writer) is deliberately NOT part of
+_connect() or these tests -- see create_sql_schema.py's create_schema(),
+where it's applied once, at setup time, with nothing else connected.
+Doing it from request-handling code was tried first and was itself racy:
+switching journal mode requires no OTHER connection have a write
+transaction open, a stricter condition than busy_timeout's wait-and-retry
+covers, so the very first request after a restart could lose that race.
+
 Uses a real temp file db (not :memory:) with two real connections -- file
 locking semantics only apply across separate connections to the same file,
 an in-memory db can't reproduce this.

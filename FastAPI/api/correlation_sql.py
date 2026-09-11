@@ -280,11 +280,20 @@ def _connect() -> sqlite3.Connection:
     Open a connection with a busy timeout set, instead of sqlite3's default
     of failing instantly with "database is locked" the moment a second
     connection tries to write while another's write is still in-flight.
-    Found live under real concurrent traffic: two requests both writing to
-    correlations_cache around the same time, one got an uncaught
-    sqlite3.OperationalError and 500'd. A 10s timeout comfortably covers a
-    single-row INSERT (milliseconds) without masking a genuinely stuck
-    connection.
+
+    Deliberately does NOT try to switch the db to WAL mode here -- WAL is a
+    persistent, database-file-level setting (not a per-connection one), so
+    it only needs to be set once, ever, for a given db file (see
+    create_sql_schema.py, where it's applied as a one-time setup step, the
+    same way the schema itself is). Tried doing it here first (guarded to
+    only run once per process) and it was still wrong: switching journal
+    mode itself requires no OTHER connection have a write transaction open
+    -- a stricter condition than busy_timeout's normal wait-and-retry
+    covers -- so the very first request after a restart could still race a
+    concurrent writer and hit exactly the "database is locked" error this
+    is supposed to prevent. Doing it once, deliberately, with nothing else
+    connected (schema setup time) sidesteps that race entirely instead of
+    trying to guard against it at request time.
     """
     conn = sqlite3.connect(SQLITE_DB_PATH)
     conn.execute("PRAGMA busy_timeout = 10000")
