@@ -1,9 +1,6 @@
 import math
-import random
-import threading
 import numpy as np
 from scipy import stats
-import statistics
 import os
 import sqlite3
 import sys
@@ -12,34 +9,16 @@ from statsmodels.stats.multitest import multipletests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from fastapi import APIRouter, HTTPException, Query
-from api.config import SQLITE_DB_PATH 
+from api.config import SQLITE_DB_PATH
 
-from .cache import (
-    AnnotationSource,
-    extract_annotation_name,
-    extract_parent,
-)
-from .config import CORRELATION_LAGS, LAG_HOURS_PER_SAMPLE, PERMUTATION_N, PERMUTATION_SEED
-from .index import (
-    _EGC_SAMPLES,
-    _EGC_MATRIX,
-    _EGC_NAME_MAP,
-    _EGC_PARENT_MAP,
-    get_egc_vectors_from_matrix,
-    timepoint_sort_key,
-)
-from .cache import get_all_sample_names, load_annotations_by_source, extract_egc
+from .cache import AnnotationSource
+from .config import CORRELATION_LAGS
 from scripts.migrate_correlations_to_sql import (
     load_vector,
     load_sample_order
 )
 
 router = APIRouter()
-
-# ── CLR matrix cache ──────────────────────────────────────────────────────────
-
-_CLR_MATRIX: dict[str, dict[str, list[float]]] = {}
-_CLR_LOCK   = threading.Lock()
 
 # ── Correlation result cache ──────────────────────────────────────────────────
 
@@ -88,74 +67,6 @@ def _spearman_at_lags(ref:  list[float], cand: list[float], lags: list[int], met
             best_n = n_test
 
     return (best_r, best_lag, best_p, best_n) if best_r is not None else (None, None, None, None)
-
-def _circular_shift_pvalue(
-    ref:           list[float],
-    cand:          list[float],
-    observed_r:    float,
-    n_perm:        int,
-    rng_seed:      int,
-):
-    if len(ref) < 10: return None
-    rng = random.Random(rng_seed)
-    count = 0
-    for i in range(n_perm): # ciruclar shift
-        shift = rng.randint(1, len(ref)-1)
-        shifted_ref = ref[shift:] + ref[:shift]
-        best_r, best_lag = _spearman_at_lags(shifted_ref, cand, CORRELATION_LAGS)
-        if abs(best_r) >= abs(observed_r):
-            count += 1
-    return count / n_perm
-
-def _clr_detrend(
-    vectors:   dict[str, list[float | None]],
-    n_samples: int,
-):
-    # log(value) - log(geometric mean of every annotation's value in a single sample)
-    G = []
-    for i in range(n_samples):
-        log_vals = ([math.log(v[i]) for v in vectors.values() if v[i] is not None and v[i] > 0])
-        G.append(statistics.mean(log_vals))
-
-    detrend = {}
-    for k, v in vectors.items():
-        detrend[k] = []
-        for idx, v2 in enumerate(v):
-            if v2 is None or v2 <= 0: 
-                detrend[k].append(0.0)
-                continue
-            detrend[k].append(math.log(v2) - G[idx])
-    return detrend
-
-def get_src_ids(conn: sqlite3.Connection, src: AnnotationSource):
-    cursor = conn.execute(f"""
-        SELECT annotation_id
-        FROM annotation_catalog
-        WHERE source = ? 
-    """, (src.value,))
-    rows = cursor.fetchall()
-    result = []
-    [result.append(id[0]) for id in rows]
-    return result
-
-def _get_clr_matrix(conn: sqlite3.Connection, src: AnnotationSource):
-    if src in _CLR_MATRIX:
-        return _CLR_MATRIX[src]
-
-    with _CLR_LOCK:
-        if src in _CLR_MATRIX:
-            return _CLR_MATRIX[src]
-
-        vectors = {}
-        sample_order = load_sample_order(conn)
-        ids = get_src_ids(conn, src)
-        for annotation_id in ids:
-            vectors[annotation_id] = load_vector(conn, src.value, annotation_id, sample_order, metric='egc')
-
-        n = len(_EGC_SAMPLES) if _EGC_SAMPLES else len(next(iter(vectors.values()), []))
-        clr = _clr_detrend(vectors, n)
-        _CLR_MATRIX[src] = clr
-        return clr
 
 def _bonferroni_correct(p: float, n_tests: int):
     return min(p * n_tests, 1.0)

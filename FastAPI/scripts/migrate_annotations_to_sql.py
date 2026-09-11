@@ -205,13 +205,36 @@ def populate_annotations(conn: sqlite3.Connection, source: str, source_dir: str,
     print(f"Done. {total_series} total annotation_series rows, {total_scaffolds} total scaffolds rows across {len(sample_files)} samples.")
 
 
+def invalidate_correlations_cache(conn: sqlite3.Connection) -> int:
+    """Wipe correlations_cache entirely.
+
+    Every row in it was computed against a specific sample alignment --
+    lag offsets and pairwise-complete filtering are both indexed by sample
+    *position*, so a single new (or corrected) sample shifts alignment for
+    every existing cached pair, not just ones touching that sample. Not
+    selective on purpose.
+
+    Returns:
+        Number of rows deleted, for the caller to log.
+    """
+    cursor = conn.execute("DELETE FROM correlations_cache")
+    conn.commit()
+    return cursor.rowcount
+
+
 def main():
-    """Run populate_annotations() for every source in SOURCES."""
+    """Run populate_annotations() for every source in SOURCES, then wipe
+    correlations_cache once at the end (not per-sample/per-source) since
+    any change made during this run invalidates the whole cache at once.
+    """
     conn = sqlite3.connect(SQLITE_DB_PATH)
     try:
         for source, (source_dir, suffix) in SOURCES.items():
             print(f"=== {source} ===")
             populate_annotations(conn, source, source_dir, suffix)
+
+        deleted = invalidate_correlations_cache(conn)
+        print(f"Invalidated correlations_cache: {deleted} rows deleted.")
     finally:
         conn.close()
 
