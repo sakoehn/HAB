@@ -239,13 +239,21 @@ def correlate_endpoint(catalog_id_a: int, catalog_id_b: int, metric: str, method
 
 # ── Endpoint: Tier 2, family + FDR ────────────────────────────────
 @router.get("/correlations/family")
-def correlation_family_endpoint(ref_catalog_id: int, target_source: str, metric: str, method: str):
+def correlation_family_endpoint(ref_source: str, ref_annotation_id: str, target_source: str, metric: str, method: str):
     valid_sources = {s.value for s in AnnotationSource}
     if target_source not in valid_sources:
         raise HTTPException(status_code=400, detail=f"target_source must be one of {valid_sources}")
 
     conn = sqlite3.connect(SQLITE_DB_PATH)
     try:
+        ref_row = conn.execute(
+            "SELECT id FROM annotation_catalog WHERE source = ? AND annotation_id = ?",
+            (ref_source, ref_annotation_id),
+        ).fetchone()
+        if ref_row is None:
+            raise HTTPException(status_code=404, detail="Unknown (source, annotation_id) pair")
+        ref_catalog_id = ref_row[0]
+
         candidates = get_family_candidates(conn, ref_catalog_id, target_source)
 
         scored = []

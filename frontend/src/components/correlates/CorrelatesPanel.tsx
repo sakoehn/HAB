@@ -1,17 +1,17 @@
 // ── CorrelatesPanel ───────────────────────────────────────────────────────────
 // "Find Correlates" panel rendered below each chart card in Analyze page.
-// Computes Spearman CLR correlations between the reference annotation and
-// all others in the selected source(s).
+// Hits /api/correlations/family (SQL backend Tier 2): enumerates every
+// eligible candidate in a chosen source, scores each against the reference
+// annotation, and applies Benjamini-Hochberg FDR across that family. The
+// backend already gates results to q < 0.05 -- everything this panel
+// receives is significant, there's no client-side threshold to apply.
 //
-// Two tabs:
-//   cross  — correlate against a different source (e.g. KEGG vs Taxonomy)
-//   within — same source, filtered to exclude same-parent annotations
+// Source selection is 4 always-visible buttons (kegg/cog/enzyme/taxonomy,
+// including the annotation's own source) rather than a cross/within tab --
+// same-source exclusions (siblings, ancestors/descendants) are handled
+// entirely server-side.
 //
-// Fetching strategy:
-//   1. Fast fetch (skip_pvalue=true)  → results appear immediately
-//   2. Full fetch (skip_pvalue=false) → p-values fill in silently in background
-//
-// Lag sign convention (from backend):
+// Lag sign convention (from backend, unchanged from the old panel):
 //   lag_hours > 0 → candidate peaks earlier than reference
 //   lag_hours < 0 → reference peaks earlier than candidate
 //   lag_hours = 0 → simultaneous
@@ -19,13 +19,24 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type {
-  ApiStatus, AnnotationSourceKey, CorrTab, CorrelateResult,
+  ApiStatus, AnnotationSourceKey, ChartMetric, CorrMethod, CorrelationFamilyResult,
 } from '../../types'
 import { SOURCE_TAG_CLS } from '../../constants'
 import { apiFetch } from '../../utils/api'
 import { ExternalLink } from '../ui/ExternalLinks'
 import { HelpTooltip } from '../ui/HelpTooltip'
 import { Skeleton } from '../ui/Skeleton'
+
+const METHOD_LABEL: Record<CorrMethod, string> = {
+  spearman:    'Spearman r',
+  log_pearson: 'log-Pearson r',
+  raw_pearson: 'Pearson r',
+}
+
+const METRIC_LABEL: Record<ChartMetric, string> = {
+  egc:      'EGC',
+  norm_egc: 'norm EGC',
+}
 
 export function CorrelatesPanel({
   annotationId,
@@ -36,55 +47,43 @@ export function CorrelatesPanel({
   source:          string
   onAddAnnotation: (annotationId: string, source: string, name: string | null) => void
 }) {
-  const [open,       setOpen]       = useState(false)
-  const [tab,        setTab]        = useState<CorrTab>('cross')
-  const [crossData,  setCrossData]  = useState<CorrelateResult[]>([])
-  const [withinData, setWithinData] = useState<CorrelateResult[]>([])
-  const [crossStatus,  setCrossStatus]  = useState<ApiStatus>('idle')
-  const [withinStatus, setWithinStatus] = useState<ApiStatus>('idle')
+  const [open,   setOpen]   = useState(false)
+  const [data,   setData]   = useState<CorrelationFamilyResult[]>([])
+  const [status, setStatus] = useState<ApiStatus>('idle')
 
   const defaultTarget = source === 'taxonomy' ? 'kegg' : 'taxonomy'
   const [targetSource, setTargetSource] = useState<string>(defaultTarget)
-  const requestSeqRef = useRef<Record<CorrTab, number>>({ cross: 0, within: 0 })
+  const [method, setMethod] = useState<CorrMethod>('spearman')
+  const [metric, setMetric] = useState<ChartMetric>('norm_egc')
+  const requestSeqRef = useRef(0)
 
   const allSources: AnnotationSourceKey[] = ['kegg', 'cog', 'enzyme', 'taxonomy']
 
-  // Re-fetch cross data when target source changes while panel is open.
+  // Re-fetch whenever any query param changes while the panel is open.
   useEffect(() => {
-    if (open && tab === 'cross' && (crossStatus === 'idle' || crossStatus === 'error')) {
-      void fetchCorr('cross')
-    }
+    if (open) void fetchCorr()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetSource])
+  }, [targetSource, method, metric])
 
-  async function fetchCorr(mode: CorrTab) {
-    const setStatus = mode === 'cross' ? setCrossStatus : setWithinStatus
-    const setData   = mode === 'cross' ? setCrossData   : setWithinData
-    const currentStatus = mode === 'cross' ? crossStatus : withinStatus
-    if (currentStatus === 'loading') return
-
-    const requestId = ++requestSeqRef.current[mode]
+  async function fetchCorr() {
+    const requestId = ++requestSeqRef.current
     setData([])
     setStatus('loading')
 
     try {
-      const base      = `/api/annotations/correlate?source=${source}&annotation_id=${encodeURIComponent(annotationId)}&mode=${mode}`
-      const modeParam = mode === 'cross' ? `&target_source=${encodeURIComponent(targetSource)}` : ''
-
-      // Fast path — no p-values, results appear immediately.
-      const fastUrl = `${base}${modeParam}&skip_pvalue=true&limit=15`
-      const fast    = await apiFetch<{ data: CorrelateResult[] }>(fastUrl)
-      if (requestId !== requestSeqRef.current[mode]) return
-      setData(fast.data ?? [])
+      const url =
+        `/api/correlations/family` +
+        `?ref_source=${encodeURIComponent(source)}` +
+        `&ref_annotation_id=${encodeURIComponent(annotationId)}` +
+        `&target_source=${encodeURIComponent(targetSource)}` +
+        `&metric=${metric}` +
+        `&method=${method}`
+      const result = await apiFetch<CorrelationFamilyResult[]>(url)
+      if (requestId !== requestSeqRef.current) return
+      setData(result ?? [])
       setStatus('ok')
-
-      // Background fetch — fills in p-values silently when ready.
-      const fullUrl = `${base}${modeParam}&skip_pvalue=false&limit=15`
-      const full    = await apiFetch<{ data: CorrelateResult[] }>(fullUrl)
-      if (requestId !== requestSeqRef.current[mode]) return
-      setData(full.data ?? [])
     } catch {
-      if (requestId === requestSeqRef.current[mode]) {
+      if (requestId === requestSeqRef.current) {
         setStatus('error')
       }
     }
@@ -93,24 +92,12 @@ export function CorrelatesPanel({
   function handleOpen() {
     setOpen(o => {
       const nextOpen = !o
-      if (nextOpen && (crossStatus === 'idle' || crossStatus === 'error')) {
-        void fetchCorr('cross')
+      if (nextOpen && (status === 'idle' || status === 'error')) {
+        void fetchCorr()
       }
       return nextOpen
     })
   }
-
-  function handleTabChange(t: CorrTab) {
-    setTab(t)
-    if (t === 'cross' && (crossStatus === 'idle' || crossStatus === 'error')) {
-      void fetchCorr('cross')
-    } else if (t === 'within' && (withinStatus === 'idle' || withinStatus === 'error')) {
-      void fetchCorr('within')
-    }
-  }
-
-  const data   = tab === 'cross' ? crossData   : withinData
-  const status = tab === 'cross' ? crossStatus : withinStatus
 
   const fmtLag = (hours: number) => {
     if (hours === 0) return 'no lag'
@@ -124,7 +111,7 @@ export function CorrelatesPanel({
       <button
         className={`corr-trigger ${open ? 'corr-trigger-active' : ''}`}
         onClick={handleOpen}
-        title="Find annotations that co-vary with this one using Spearman CLR correlation"
+        title="Find annotations that co-vary with this one"
       >
         <span className="corr-trigger-icon">∿</span>
         {open ? 'Hide Correlates' : 'Find Correlates'}
@@ -132,61 +119,65 @@ export function CorrelatesPanel({
 
       {open && (
         <div className="corr-panel">
-          {/* ── Pill tab bar ── */}
+          {/* ── Source selector ── */}
           <div className="corr-pill-bar">
-            <button
-              className={`corr-pill ${tab === 'cross' ? 'corr-pill-active' : ''}`}
-              onClick={() => handleTabChange('cross')}
-            >
-              Cross-source
-              <span className="corr-pill-sub">{source} × {targetSource}</span>
-            </button>
-            <button
-              className={`corr-pill ${tab === 'within' ? 'corr-pill-active' : ''}`}
-              onClick={() => handleTabChange('within')}
-            >
-              Within-source
-              <span className="corr-pill-sub">parent-filtered</span>
-            </button>
-            <div className="corr-pill-hint">
-              {tab === 'cross'
-                ? `Which ${targetSource} annotations co-vary with this ${source}?`
-                : `Which other ${source} functions co-occur unexpectedly?`}
-            </div>
-            <HelpTooltip text="Cross-source compares against a different annotation type. Within-source compares against the same type, excluding siblings under the same parent." />
+            <span style={{ font: '400 10px var(--mono)', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+              Compare against:
+            </span>
+            {allSources.map(s => (
+              <button
+                key={s}
+                className={`toggle-pill sm ${targetSource === s ? 'on' : ''}`}
+                onClick={() => setTargetSource(s)}
+                title={
+                  s === source
+                    ? `Correlate against other ${s} annotations (siblings/ancestors/descendants excluded)`
+                    : `Correlate against ${s}`
+                }
+              >
+                {s}
+              </button>
+            ))}
+            <HelpTooltip text="Includes this annotation's own source -- same-source candidates that are siblings, ancestors, or descendants of this one are excluded automatically to avoid compositional/containment artifacts." />
           </div>
 
-          {/* ── Cross-source target selector ── */}
-          {tab === 'cross' && (
-            <div style={{
-              display:      'flex',
-              alignItems:   'center',
-              gap:          6,
-              padding:      '6px 10px',
-              borderBottom: '1px solid var(--border)',
-              background:   'var(--surface2)',
-            }}>
-              <span style={{
-                font:       '400 10px var(--mono)',
-                color:      'var(--text-dim)',
-                whiteSpace: 'nowrap',
-              }}>
-                Compare against:
-              </span>
-              {allSources
-                .filter(s => s !== source)
-                .map(s => (
-                  <button
-                    key={s}
-                    className={`toggle-pill sm ${targetSource === s ? 'on' : ''}`}
-                    onClick={() => setTargetSource(s)}
-                    title={`Correlate ${source} against ${s}`}
-                  >
-                    {s}
-                  </button>
-                ))}
+          {/* ── Method + metric selectors ── */}
+          <div style={{
+            display:      'flex',
+            alignItems:   'center',
+            gap:          14,
+            padding:      '6px 10px',
+            borderBottom: '1px solid var(--border)',
+            background:   'var(--surface2)',
+            flexWrap:     'wrap',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ font: '400 10px var(--mono)', color: 'var(--text-dim)' }}>Method:</span>
+              {(['spearman', 'log_pearson', 'raw_pearson'] as CorrMethod[]).map(m => (
+                <button
+                  key={m}
+                  className={`toggle-pill sm ${method === m ? 'on' : ''}`}
+                  onClick={() => setMethod(m)}
+                  title={`Score correlations using ${METHOD_LABEL[m]}`}
+                >
+                  {m}
+                </button>
+              ))}
             </div>
-          )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ font: '400 10px var(--mono)', color: 'var(--text-dim)' }}>Metric:</span>
+              {(['egc', 'norm_egc'] as ChartMetric[]).map(m => (
+                <button
+                  key={m}
+                  className={`toggle-pill sm ${metric === m ? 'on' : ''}`}
+                  onClick={() => setMetric(m)}
+                  title={`Correlate on ${METRIC_LABEL[m]}`}
+                >
+                  {METRIC_LABEL[m]}
+                </button>
+              ))}
+            </div>
+          </div>
 
           {/* ── Results ── */}
           <div className="corr-results">
@@ -208,24 +199,33 @@ export function CorrelatesPanel({
             {status === 'error' && (
               <div className="corr-empty corr-empty-error">
                 <span className="corr-empty-icon">⚠</span>
-                Correlation failed — check server connection.
+                Correlation failed — check server connection.{' '}
+                <button
+                  onClick={() => void fetchCorr()}
+                  style={{
+                    background:    'none',
+                    border:        'none',
+                    color:         'inherit',
+                    textDecoration: 'underline',
+                    cursor:        'pointer',
+                    font:          'inherit',
+                  }}
+                >
+                  Retry
+                </button>
               </div>
             )}
             {status === 'ok' && data.length === 0 && (
               <div className="corr-empty">
                 <span className="corr-empty-icon">∅</span>
-                No correlates above threshold (|r|{' '}
-                &gt; {tab === 'cross' ? '0.2' : '0.3'}).
+                No significant correlates (q &lt; 0.05).
               </div>
             )}
 
             {status === 'ok' && data.length > 0 && (
               <>
                 <div className="corr-legend">
-                  Spearman r · CLR EGC · circular-shift permutation
-                  {data.some(d => d.p_value === null) && (
-                    <span className="corr-legend-loading"> · p loading…</span>
-                  )}
+                  {METHOD_LABEL[method]} · {METRIC_LABEL[metric]} · q&lt;0.05 (BH-corrected)
                   {data.some(d => d.n_pairs < 30) && (
                     <span className="corr-legend-warn"> · ⚠ some n&lt;30</span>
                   )}
@@ -233,31 +233,31 @@ export function CorrelatesPanel({
 
                 {data.map(row => {
                   const lowN = row.n_pairs < 30
-                  const posR = row.spearman_r >= 0
+                  const posR = row.r >= 0
                   return (
                     <div
-                      key={`${row.annotation_id}::${row.source}`}
+                      key={row.catalog_id}
                       className={`corr-row ${lowN ? 'corr-row-dim' : ''}`}
                     >
                       {/* Strength bar — visual anchor behind row content */}
                       <div
                         className={`corr-r-bar ${posR ? 'corr-r-bar-pos' : 'corr-r-bar-neg'}`}
-                        style={{ width: `${Math.round(row.abs_r * 100)}%` }}
+                        style={{ width: `${Math.round(Math.abs(row.r) * 100)}%` }}
                       />
 
                       <div className="corr-row-inner">
                         <div className="corr-row-identity">
-                          <span className={`tag ${SOURCE_TAG_CLS[row.source] ?? ''}`}>
-                            {row.source}
+                          <span className={`tag ${SOURCE_TAG_CLS[targetSource] ?? ''}`}>
+                            {targetSource}
                           </span>
                           <span className="corr-row-id">
                             <ExternalLink
                               annotationId={row.annotation_id}
-                              source={row.source}
+                              source={targetSource}
                               name={row.name}
                             />
                           </span>
-                          {row.name && row.source !== 'taxonomy' && (
+                          {row.name && targetSource !== 'taxonomy' && (
                             <span className="corr-row-name" title={row.name}>
                               {row.name}
                             </span>
@@ -267,9 +267,9 @@ export function CorrelatesPanel({
                         <div className="corr-row-stats">
                           <span
                             className={`corr-stat-r ${posR ? 'corr-stat-pos' : 'corr-stat-neg'}`}
-                            title="Spearman r on CLR-transformed EGC"
+                            title={`${METHOD_LABEL[method]} on ${METRIC_LABEL[metric]}`}
                           >
-                            {posR ? '+' : ''}{row.spearman_r.toFixed(3)}
+                            {posR ? '+' : ''}{row.r.toFixed(3)}
                           </span>
                           <span
                             className="corr-stat-meta"
@@ -278,16 +278,12 @@ export function CorrelatesPanel({
                             {fmtLag(row.lag_hours)}
                             <HelpTooltip text="Positive lag = the other annotation tends to peak earlier than this one. Negative = it peaks later." />
                           </span>
-                          {row.p_value !== null ? (
-                            <span
-                              className={`corr-stat-p ${row.p_value < 0.05 ? 'corr-stat-sig' : 'corr-stat-ns'}`}
-                              title="Circular-shift permutation p-value (n=1000, seed=42)"
-                            >
-                              p={row.p_value < 0.001 ? '<.001' : row.p_value.toFixed(3)}
-                            </span>
-                          ) : (
-                            <span className="corr-stat-meta">p…</span>
-                          )}
+                          <span
+                            className="corr-stat-p corr-stat-sig"
+                            title="Benjamini-Hochberg FDR-corrected q-value across this candidate family"
+                          >
+                            q={row.q < 0.001 ? '<.001' : row.q.toFixed(3)}
+                          </span>
                           <span
                             className={`corr-stat-n ${lowN ? 'corr-stat-n-warn' : ''}`}
                             title={
@@ -305,7 +301,7 @@ export function CorrelatesPanel({
                             className="corr-add-btn"
                             title={`Add ${row.annotation_id} as a new chart`}
                             onClick={() =>
-                              onAddAnnotation(row.annotation_id, row.source, row.name)
+                              onAddAnnotation(row.annotation_id, targetSource, row.name)
                             }
                           >
                             +

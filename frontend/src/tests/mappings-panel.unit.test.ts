@@ -546,61 +546,14 @@ describe('data date range from /api/status', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CorrelatesPanel — cross-source target selection
+// CorrelatesPanel target selection is covered against the real component in
+// analyze-page.component.test.tsx (all 4 sources shown, including the
+// annotation's own -- same-source exclusions are handled server-side, not by
+// filtering the source out of the UI). Removed the hand-duplicated version of
+// that logic that used to live here since it tested stale, now-incorrect
+// assumptions (own source excluded from the picker) rather than the real
+// component's actual behavior.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const ALL_SOURCES = ['kegg', 'cog', 'enzyme', 'taxonomy'] as const
-
-function defaultTarget(source: string): string {
-  return source === 'taxonomy' ? 'kegg' : 'taxonomy'
-}
-
-function availableTargets(source: string): string[] {
-  return ALL_SOURCES.filter(s => s !== source)
-}
-
-describe('correlates panel — cross-source target selection', () => {
-  it('kegg source defaults to taxonomy target', () => {
-    expect(defaultTarget('kegg')).toBe('taxonomy')
-  })
-
-  it('cog source defaults to taxonomy target', () => {
-    expect(defaultTarget('cog')).toBe('taxonomy')
-  })
-
-  it('enzyme source defaults to taxonomy target', () => {
-    expect(defaultTarget('enzyme')).toBe('taxonomy')
-  })
-
-  it('taxonomy source defaults to kegg target', () => {
-    expect(defaultTarget('taxonomy')).toBe('kegg')
-  })
-
-  it('kegg can target cog, enzyme, taxonomy (3 options)', () => {
-    const targets = availableTargets('kegg')
-    expect(targets).toContain('cog')
-    expect(targets).toContain('enzyme')
-    expect(targets).toContain('taxonomy')
-  })
-
-  it('available targets always exclude the current source', () => {
-    for (const src of ALL_SOURCES) {
-      expect(availableTargets(src)).not.toContain(src)
-    }
-  })
-
-  it('always exactly 3 available targets (4 sources minus self)', () => {
-    for (const src of ALL_SOURCES) {
-      expect(availableTargets(src)).toHaveLength(3)
-    }
-  })
-
-  it('all sources have non-empty target lists', () => {
-    for (const src of ALL_SOURCES) {
-      expect(availableTargets(src).length).toBeGreaterThan(0)
-    }
-  })
-})
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Analyze page — handleSendToAnalyze navigation

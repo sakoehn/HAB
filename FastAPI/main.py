@@ -35,7 +35,7 @@ from api.cache import (
 from api.config import FRONTEND_DIST, DATA_BACKEND
 from api.index import build_mapping_index, build_search_index
 from api import index as index_module
-from api import routes, correlation
+from api import routes, correlation, correlation_sql
 from api.db import connect_to_sql, close_sql_connection
 
 import os
@@ -101,6 +101,7 @@ app.add_middleware(
 
 app.include_router(routes.router)
 app.include_router(correlation.router)
+app.include_router(correlation_sql.router)
 
 # Also register both under /api — the frontend's apiFetch always calls
 # /api/*. In dev, Vite's proxy strips that prefix before forwarding here
@@ -110,6 +111,7 @@ app.include_router(correlation.router)
 # route too.
 app.include_router(routes.router, prefix="/api")
 app.include_router(correlation.router, prefix="/api")
+app.include_router(correlation_sql.router, prefix="/api")
 
 # Serve built frontend if present (production mode).
 if os.path.exists(FRONTEND_DIST):

@@ -75,8 +75,8 @@
  * CorrelatesPanel:
  *   "Find Correlates" button rendered below chart
  *   clicking button expands panel
- *   Cross-source and Within-source tabs present
- *   target source selector pills rendered
+ *   source selector pills (kegg/cog/enzyme/taxonomy) present
+ *   method and metric selectors present
  *
  * AnnotationInfoDrawer:
  *   ℹ button rendered in card header
@@ -165,22 +165,21 @@ const DEFAULT_MAPPINGS = {
   ],
   total: 1,
 }
-const DEFAULT_CORRELATES = {
-  data: [
-    {
-      annotation_id: 'COG0001',
-      source:        'taxonomy',
-      name:          'Bacteria',
-      parent:        null,
-      spearman_r:    0.72,
-      abs_r:         0.72,
-      lag_samples:   0,
-      lag_hours:     0,
-      p_value:       0.001,
-      n_pairs:       40,
-    },
-  ],
-}
+// /api/correlations/family returns a bare array (already q<0.05 filtered
+// server-side), not wrapped in { data: [...] } like the old endpoint.
+const DEFAULT_CORRELATES = [
+  {
+    catalog_id:    7,
+    annotation_id: 'Bacteria',
+    name:          'Bacteria',
+    r:             0.72,
+    p:             0.002,
+    q:             0.02,
+    lag_samples:   0,
+    lag_hours:     0,
+    n_pairs:       40,
+  },
+]
 
 function setupDefaultMocks() {
   mockFetch.mockImplementation((url: string) => {
@@ -194,7 +193,7 @@ function setupDefaultMocks() {
       return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
     if (url.includes('/api/mappings/search'))
       return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_MAPPINGS })
-    if (url.includes('/api/annotations/correlate'))
+    if (url.includes('/api/correlations/family'))
       return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_CORRELATES })
     return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
   })
@@ -1462,22 +1461,46 @@ describe('CorrelatesPanel', () => {
     })
   })
 
-  it('Cross-source and Within-source tabs present', async () => {
+  it('source selector pills for all 4 sources present', async () => {
     await renderWithChartAndWait()
     await userEvent.click(screen.getByText(/Find Correlates/i))
     await waitFor(() => {
       const bar = document.querySelector('.corr-pill-bar')!
       expect(bar).toBeTruthy()
-      expect(bar.textContent).toContain('Cross-source')
-      expect(bar.textContent).toContain('Within-source')
+      expect(bar.textContent).toContain('Compare against')
+      for (const s of ['kegg', 'cog', 'enzyme', 'taxonomy']) {
+        expect(within(bar as HTMLElement).getByText(s)).toBeInTheDocument()
+      }
     })
   })
 
-  it('target source selector pills rendered in cross-source tab', async () => {
+  it('method and metric selectors rendered', async () => {
     await renderWithChartAndWait()
     await userEvent.click(screen.getByText(/Find Correlates/i))
+    const panel = await waitFor(() => {
+      const el = document.querySelector('.corr-panel')
+      expect(el).toBeTruthy()
+      return el as HTMLElement
+    })
+    expect(within(panel).getByText(/Method:/i)).toBeInTheDocument()
+    expect(within(panel).getByText(/Metric:/i)).toBeInTheDocument()
+    expect(within(panel).getByText('spearman')).toBeInTheDocument()
+    expect(within(panel).getByText('log_pearson')).toBeInTheDocument()
+    expect(within(panel).getByText('raw_pearson')).toBeInTheDocument()
+    expect(within(panel).getByText('EGC')).toBeInTheDocument()
+    expect(within(panel).getByText('norm EGC')).toBeInTheDocument()
+  })
+
+  it('changing the method selector refetches with the new method param', async () => {
+    await renderWithChartAndWait()
+    await userEvent.click(screen.getByText(/Find Correlates/i))
+    await waitFor(() => screen.getByText('raw_pearson'))
+    await userEvent.click(screen.getByText('raw_pearson'))
     await waitFor(() => {
-      expect(screen.getByText(/Compare against/i)).toBeInTheDocument()
+      const calls = mockFetch.mock.calls
+        .map(([rawUrl]) => String(rawUrl))
+        .filter(u => u.includes('/api/correlations/family'))
+      expect(calls.some(u => u.includes('method=raw_pearson'))).toBe(true)
     })
   })
 
@@ -1492,7 +1515,7 @@ describe('CorrelatesPanel', () => {
     })
   })
 
-  it('Cross-source/Within-source pill bar has a help tooltip', async () => {
+  it('source selector pill bar has a help tooltip', async () => {
     await renderWithChartAndWait()
     await userEvent.click(screen.getByText(/Find Correlates/i))
     const bar = await waitFor(() => {
@@ -1502,7 +1525,7 @@ describe('CorrelatesPanel', () => {
     })
     await userEvent.click(within(bar).getByTitle('Help'))
     await waitFor(() => {
-      expect(screen.getByText(/excluding siblings under the same parent/i)).toBeInTheDocument()
+      expect(screen.getByText(/siblings, ancestors, or descendants/i)).toBeInTheDocument()
     })
   })
 
@@ -1518,16 +1541,13 @@ describe('CorrelatesPanel', () => {
 
   it('low-n "⚠ n<30" badge has a help tooltip', async () => {
     mockFetch.mockImplementation((url: string) => {
-      if (url.includes('/api/annotations/correlate'))
+      if (url.includes('/api/correlations/family'))
         return Promise.resolve({
           ok: true, status: 200,
-          json: async () => ({
-            data: [{
-              annotation_id: 'COG0001', source: 'taxonomy', name: 'Bacteria', parent: null,
-              spearman_r: 0.72, abs_r: 0.72, lag_samples: 0, lag_hours: 0,
-              p_value: 0.02, n_pairs: 12,
-            }],
-          }),
+          json: async () => ([{
+            catalog_id: 7, annotation_id: 'Bacteria', name: 'Bacteria',
+            r: 0.72, p: 0.02, q: 0.03, lag_samples: 0, lag_hours: 0, n_pairs: 12,
+          }]),
         })
       if (url.includes('/api/timepoints'))
         return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
@@ -1552,10 +1572,10 @@ describe('CorrelatesPanel', () => {
     })
   })
 
-  it('retries the cross-source tab when the first request fails', async () => {
+  it('Retry button refetches after the first request fails', async () => {
     let correlateCalls = 0
     mockFetch.mockImplementation((url: string) => {
-      if (url.includes('/api/annotations/correlate')) {
+      if (url.includes('/api/correlations/family')) {
         correlateCalls += 1
         if (correlateCalls === 1) {
           return Promise.reject(new Error('network'))
@@ -1589,12 +1609,14 @@ describe('CorrelatesPanel', () => {
       expect(screen.getByText(/Correlation failed/i)).toBeInTheDocument()
     })
 
-    await userEvent.click(screen.getByRole('button', { name: /Cross-source/i }))
+    await userEvent.click(screen.getByText('Retry'))
 
     await waitFor(() => {
       expect(
-        mockFetch.mock.calls.filter(([rawUrl]) => String(rawUrl).includes('/api/annotations/correlate')),
-      ).toHaveLength(3)
+        mockFetch.mock.calls.filter(([rawUrl]) => String(rawUrl).includes('/api/correlations/family')),
+      ).toHaveLength(2)
+      const panel = document.querySelector('.corr-panel') as HTMLElement
+      expect(within(panel).getByText(/Bacteria/)).toBeInTheDocument()
     })
   })
 })

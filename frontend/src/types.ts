@@ -128,6 +128,9 @@ export type ScaffoldDetailRow = {
 }
 
 // ── Correlation results ────────────────────────────────────────────────────
+// Legacy shape from /api/annotations/correlate (JSON backend, CLR +
+// permutation p-values). Superseded for the SQL backend by
+// CorrelationFamilyResult below (/api/correlations/family, Bonferroni+FDR).
 
 export type CorrelateResult = {
   annotation_id: string
@@ -139,6 +142,20 @@ export type CorrelateResult = {
   lag_samples:   number
   lag_hours:     number
   p_value:       number | null
+  n_pairs:       number
+}
+
+export type CorrMethod = 'spearman' | 'log_pearson' | 'raw_pearson'
+
+export type CorrelationFamilyResult = {
+  catalog_id:    number
+  annotation_id: string
+  name:          string | null
+  r:             number
+  p:             number
+  q:             number
+  lag_samples:   number
+  lag_hours:     number
   n_pairs:       number
 }
 

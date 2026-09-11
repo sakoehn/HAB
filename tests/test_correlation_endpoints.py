@@ -99,15 +99,32 @@ class TestCorrelationFamilyEndpoint:
     def test_invalid_target_source_returns_400(self, client):
         response = client.get(
             "/correlations/family",
-            params={"ref_catalog_id": 1, "target_source": "not_a_real_source", "metric": "egc", "method": "raw_pearson"},
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "not_a_real_source", "metric": "egc", "method": "raw_pearson",
+            },
         )
 
         assert response.status_code == 400
 
+    def test_unknown_ref_returns_404(self, client):
+        response = client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "NotReal",
+                "target_source": "kegg", "metric": "egc", "method": "raw_pearson",
+            },
+        )
+
+        assert response.status_code == 404
+
     def test_filters_to_significant_candidates_only(self, client):
         response = client.get(
             "/correlations/family",
-            params={"ref_catalog_id": 1, "target_source": "kegg", "metric": "egc", "method": "raw_pearson"},
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "raw_pearson",
+            },
         )
 
         assert response.status_code == 200
@@ -119,7 +136,10 @@ class TestCorrelationFamilyEndpoint:
     def test_significant_entry_carries_the_expected_shape(self, client):
         response = client.get(
             "/correlations/family",
-            params={"ref_catalog_id": 1, "target_source": "kegg", "metric": "egc", "method": "raw_pearson"},
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "raw_pearson",
+            },
         )
 
         entry = response.json()[0]
