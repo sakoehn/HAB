@@ -57,11 +57,13 @@ def insert(conn, id, source, annotation_id, parent=None, depth=None, name=None):
 class TestFamilyEnumeration:
     def test_cross_source_returns_all_candidates(self, conn):
         insert(conn, 1, "taxonomy", "Bacteria")
-        insert(conn, 2, "kegg", "K00001")
+        insert(conn, 2, "kegg", "K00001", name="Nitrogenase")
         insert(conn, 3, "kegg", "K00002")
         insert(conn, 4, "kegg", "K00003")
 
         family = get_family_candidates(conn, ref_catalog_id=1, target_source="kegg")
+
+        assert {c["id"]: c["name"] for c in family}[2] == "Nitrogenase"
 
         assert {c["id"] for c in family} == {2, 3, 4}
 

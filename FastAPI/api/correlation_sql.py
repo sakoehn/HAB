@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query
 from api.config import SQLITE_DB_PATH
 
 from .cache import AnnotationSource
-from .config import CORRELATION_LAGS
+from .config import CORRELATION_LAGS, LAG_HOURS_PER_SAMPLE
 from scripts.migrate_correlations_to_sql import (
     load_vector,
     load_sample_order
@@ -79,7 +79,7 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
     included -- except cog, which has no parent concept at all and is
     exempted below), and its ancestors/descendants at any depth.
 
-    Returns a list of dicts: {"id": ..., "annotation_id": ..., "parent": ...}
+    Returns a list of dicts: {"id": ..., "annotation_id": ..., "parent": ..., "name": ...}
     """
     cursor = conn.execute(
         "SELECT source, annotation_id, parent FROM annotation_catalog WHERE id = ?",
@@ -91,13 +91,13 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
     ref_source, ref_annotation_id, ref_parent = ref_row
 
     cursor = conn.execute(
-        "SELECT id, annotation_id, parent FROM annotation_catalog WHERE source = ?",
+        "SELECT id, annotation_id, parent, name FROM annotation_catalog WHERE source = ?",
         (target_source,),
     )
     target_rows = cursor.fetchall()
 
     def _shape(rows):
-        return [{"id": r[0], "annotation_id": r[1], "parent": r[2]} for r in rows]
+        return [{"id": r[0], "annotation_id": r[1], "parent": r[2], "name": r[3]} for r in rows]
 
     if ref_source != target_source:
         return _shape(target_rows)
@@ -107,7 +107,7 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
     if target_source != AnnotationSource.cog.value:
         by_id: dict = {}        # annotation_id -> parent
         children_of: dict = {}  # parent (NULL included) -> [annotation_id, ...]
-        for _cat_id, annotation_id, parent in target_rows:
+        for _cat_id, annotation_id, parent, _name in target_rows:
             by_id[annotation_id] = parent
             children_of.setdefault(parent, []).append(annotation_id)
 
@@ -256,9 +256,11 @@ def correlation_family_endpoint(ref_catalog_id: int, target_source: str, metric:
             scored.append({
                 "catalog_id":    cand["id"],
                 "annotation_id": cand["annotation_id"],
+                "name":          cand["name"],
                 "r":             result["r"],
                 "p":             result["p"],
                 "lag_samples":   result["lag_samples"],
+                "lag_hours":     result["lag_samples"] * LAG_HOURS_PER_SAMPLE,
                 "n_pairs":       result["n_pairs"],
             })
 

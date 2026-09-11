@@ -57,14 +57,14 @@ def client(tmp_path, monkeypatch):
     # ref (taxonomy) vs two kegg candidates -- cross-source, so no
     # exclusion-rule complexity, this file is only testing the HTTP layer.
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (1, 'taxonomy', 'Bacteria')")
-    conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (2, 'kegg', 'K00002')")
+    conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id, name) VALUES (2, 'kegg', 'K00002', 'Nitrogenase')")
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (3, 'kegg', 'K00003')")
 
-    # Pair (1,2): strong, clearly-significant correlation.
+    # Pair (1,2): strong, clearly-significant correlation, lag=3 samples.
     conn.execute(
         "INSERT INTO correlations_cache "
         "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
-        "VALUES (1, 2, 0.9, 'egc', 'raw_pearson', 0, 0.0001, 12)"
+        "VALUES (1, 2, 0.9, 'egc', 'raw_pearson', 3, 0.0001, 12)"
     )
     # Pair (1,3): weak, not significant.
     conn.execute(
@@ -125,3 +125,6 @@ class TestCorrelationFamilyEndpoint:
         entry = response.json()[0]
         assert entry["r"] == 0.9
         assert entry["q"] < 0.05
+        assert entry["name"] == "Nitrogenase"
+        assert entry["lag_samples"] == 3
+        assert entry["lag_hours"] == 12  # 3 samples * LAG_HOURS_PER_SAMPLE (4)
