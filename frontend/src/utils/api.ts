@@ -6,18 +6,19 @@
 const FETCH_TIMEOUT_MS = 60_000
 
 // ── apiFetch ───────────────────────────────────────────────────────────────
-// Generic typed fetch with a 60-second abort timeout. Raised from 30s
-// because a cold (never-yet-cached) annotation-series request can take
+// Generic typed fetch with an abort timeout, 60s by default. Raised from
+// 30s because a cold (never-yet-cached) annotation-series request can take
 // ~35-40s to read from disk — see JSON_CACHE_MAX_ENTRIES in the backend's
 // config.py for the caching side of this.
 // Throws on non-2xx responses so callers can catch uniformly.
 //
 // Usage:
 //   const data = await apiFetch<{ data: AnnotationItem[] }>('/api/series/annotations?...')
+//   const data = await apiFetch<Foo[]>('/api/slow/thing', 300_000)  // override for one call
 
-export async function apiFetch<T>(path: string): Promise<T> {
+export async function apiFetch<T>(path: string, timeoutMs: number = FETCH_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController()
-  const timer      = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  const timer      = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetch(path, { signal: controller.signal })
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)

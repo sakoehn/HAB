@@ -51,7 +51,12 @@ export function CorrelatesPanel({
   const [data,   setData]   = useState<CorrelationFamilyResult[]>([])
   const [status, setStatus] = useState<ApiStatus>('idle')
 
-  const defaultTarget = source === 'taxonomy' ? 'kegg' : 'taxonomy'
+  // Default to enzyme (the smallest real family, ~3.5k candidates) rather
+  // than taxonomy (~60k, by far the largest) -- on a cold cache this is
+  // the difference between a first click taking minutes vs. potentially
+  // over an hour. User can still pick any source; this only affects what's
+  // pre-selected when the panel first opens.
+  const defaultTarget = source === 'enzyme' ? 'cog' : 'enzyme'
   const [targetSource, setTargetSource] = useState<string>(defaultTarget)
   const [method, setMethod] = useState<CorrMethod>('spearman')
   const [metric, setMetric] = useState<ChartMetric>('norm_egc')
@@ -78,7 +83,12 @@ export function CorrelatesPanel({
         `&target_source=${encodeURIComponent(targetSource)}` +
         `&metric=${metric}` +
         `&method=${method}`
-      const result = await apiFetch<CorrelationFamilyResult[]>(url)
+      // Cold (never-yet-cached) families can take minutes to compute --
+      // well past apiFetch's normal 60s default -- so this gets a much
+      // longer timeout. Every result is permanently cached server-side
+      // (Tier 1), so this cost is one-time per (ref, source, metric,
+      // method) combination, not recurring.
+      const result = await apiFetch<CorrelationFamilyResult[]>(url, 300_000)
       if (requestId !== requestSeqRef.current) return
       setData(result ?? [])
       setStatus('ok')

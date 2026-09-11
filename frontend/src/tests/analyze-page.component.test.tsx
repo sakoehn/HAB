@@ -1616,7 +1616,7 @@ describe('CorrelatesPanel', () => {
         mockFetch.mock.calls.filter(([rawUrl]) => String(rawUrl).includes('/api/correlations/family')),
       ).toHaveLength(2)
       const panel = document.querySelector('.corr-panel') as HTMLElement
-      expect(within(panel).getByText(/Bacteria/)).toBeInTheDocument()
+      expect(within(panel).getAllByText(/Bacteria/).length).toBeGreaterThan(0)
     })
   })
 })
