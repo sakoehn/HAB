@@ -87,8 +87,11 @@ export function CorrelatesPanel({
       // well past apiFetch's normal 60s default -- so this gets a much
       // longer timeout. Every result is permanently cached server-side
       // (Tier 1), so this cost is one-time per (ref, source, metric,
-      // method) combination, not recurring.
-      const result = await apiFetch<CorrelationFamilyResult[]>(url, 300_000)
+      // method) combination, not recurring. 10 min covers taxonomy's
+      // worst case even after the genus-and-coarser depth cutoff
+      // (measured ~9 min cold against the real db); every other source
+      // finishes in well under a minute.
+      const result = await apiFetch<CorrelationFamilyResult[]>(url, 600_000)
       if (requestId !== requestSeqRef.current) return
       setData(result ?? [])
       setStatus('ok')

@@ -15,7 +15,8 @@ from .cache import AnnotationSource
 from .config import CORRELATION_LAGS, LAG_HOURS_PER_SAMPLE
 from scripts.migrate_correlations_to_sql import (
     load_vector,
-    load_sample_order
+    load_sample_order,
+    TAXONOMY_DEPTH_CUTOFF,
 )
 
 router = APIRouter()
@@ -80,6 +81,14 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
     exempted below), and its ancestors/descendants at any depth.
 
     Returns a list of dicts: {"id": ..., "annotation_id": ..., "parent": ..., "name": ...}
+
+    Taxonomy candidates are capped at genus-and-coarser (depth <=
+    TAXONOMY_DEPTH_CUTOFF) -- species+strain alone are ~89% of taxonomy's
+    ~60k annotations, and scoring against all of them made a cold family
+    request take up to ~83 minutes. Same cutoff the old (abandoned)
+    all-pairs batch job used for the same reason. Doesn't affect ref
+    itself -- you can still ask "what correlates with this species,"
+    just not get species/strain back as answers against a large family.
     """
     cursor = conn.execute(
         "SELECT source, annotation_id, parent FROM annotation_catalog WHERE id = ?",
@@ -90,10 +99,17 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
         return []
     ref_source, ref_annotation_id, ref_parent = ref_row
 
-    cursor = conn.execute(
-        "SELECT id, annotation_id, parent, name FROM annotation_catalog WHERE source = ?",
-        (target_source,),
-    )
+    if target_source == AnnotationSource.taxonomy.value:
+        cursor = conn.execute(
+            "SELECT id, annotation_id, parent, name FROM annotation_catalog "
+            "WHERE source = ? AND depth <= ?",
+            (target_source, TAXONOMY_DEPTH_CUTOFF),
+        )
+    else:
+        cursor = conn.execute(
+            "SELECT id, annotation_id, parent, name FROM annotation_catalog WHERE source = ?",
+            (target_source,),
+        )
     target_rows = cursor.fetchall()
 
     def _shape(rows):

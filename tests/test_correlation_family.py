@@ -171,3 +171,43 @@ class TestExclusionRules:
         family = get_family_candidates(conn, ref_catalog_id=11, target_source="kegg")
 
         assert {c["id"] for c in family} == {14, 15}
+
+
+class TestTaxonomyDepthCutoff:
+    # Found via live testing: taxonomy has ~60k annotations, ~89% of them
+    # species/strain (depth 7-8). Scoring a family against all of them took
+    # up to ~83 minutes cold. Capped candidates at genus-and-coarser
+    # (depth <= TAXONOMY_DEPTH_CUTOFF, currently 6) -- same cutoff the old
+    # abandoned all-pairs batch job used for the identical reason.
+
+    def test_species_and_strain_excluded_from_taxonomy_candidates(self, conn):
+        insert(conn, 1, "kegg", "K00001")  # ref, cross-source query
+        insert(conn, 2, "taxonomy", "Bacteria;Proteobacteria;Rhizobiaceae;Bosea", depth=6)          # genus
+        insert(conn, 3, "taxonomy", "Bacteria;Proteobacteria;Rhizobiaceae;Bosea;sp1", depth=7)       # species
+        insert(conn, 4, "taxonomy", "Bacteria;Proteobacteria;Rhizobiaceae;Bosea;sp1;strain1", depth=8)  # strain
+
+        family = get_family_candidates(conn, ref_catalog_id=1, target_source="taxonomy")
+
+        assert {c["id"] for c in family} == {2}  # only the genus-level entry survives
+
+    def test_genus_and_coarser_all_included(self, conn):
+        insert(conn, 1, "kegg", "K00001")  # ref, cross-source query
+        insert(conn, 2, "taxonomy", "Bacteria", depth=1)
+        insert(conn, 3, "taxonomy", "Bacteria;Proteobacteria", depth=2)
+        insert(conn, 4, "taxonomy", "Bacteria;Proteobacteria;C", depth=3)
+        insert(conn, 5, "taxonomy", "Bacteria;Proteobacteria;C;O", depth=4)
+        insert(conn, 6, "taxonomy", "Bacteria;Proteobacteria;C;O;F", depth=5)
+        insert(conn, 7, "taxonomy", "Bacteria;Proteobacteria;C;O;F;G", depth=6)  # genus, still included
+
+        family = get_family_candidates(conn, ref_catalog_id=1, target_source="taxonomy")
+
+        assert {c["id"] for c in family} == {2, 3, 4, 5, 6, 7}
+
+    def test_cutoff_does_not_affect_non_taxonomy_targets(self, conn):
+        insert(conn, 1, "taxonomy", "Bacteria", depth=1)
+        insert(conn, 2, "kegg", "K00001")
+        insert(conn, 3, "kegg", "K00002")
+
+        family = get_family_candidates(conn, ref_catalog_id=1, target_source="kegg")
+
+        assert {c["id"] for c in family} == {2, 3}
