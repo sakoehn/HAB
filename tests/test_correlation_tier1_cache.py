@@ -177,3 +177,68 @@ class TestCacheMiss:
         assert result is None
         rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
         assert rows == 0
+
+
+class TestGetSampleOrderMemoization:
+    # Discovered via live testing against the real ~6.3M-row annotation_series
+    # table: load_sample_order's full-table DISTINCT scan costs ~1s per call.
+    # A family of N cache-miss candidates calling it N times (instead of once)
+    # turned a several-minute request into several hours. These tests pin the
+    # fix: get_sample_order is only invoked on an actual cache MISS, and a
+    # caller's own memoization means repeated misses only pay for it once.
+
+    def test_cache_hit_never_calls_get_sample_order(self, conn):
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        insert_cache_row(conn, 1, 2, r=0.5)
+
+        def blow_up():
+            raise AssertionError("get_sample_order should not be called on a cache hit")
+
+        result = _get_or_compute_correlation(
+            conn, 1, 2, metric="egc", method="raw_pearson", get_sample_order=blow_up,
+        )
+
+        assert result is not None
+
+    def test_cache_miss_calls_get_sample_order_exactly_once_per_call(self, conn):
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        identical_values = {s: 10.0 + i for i, s in enumerate(SAMPLES)}
+        insert_series(conn, "kegg", "K00001", identical_values)
+        insert_series(conn, "kegg", "K00002", identical_values)
+
+        calls = []
+        def counting_get_sample_order():
+            calls.append(1)
+            return SAMPLES
+
+        _get_or_compute_correlation(
+            conn, 1, 2, metric="egc", method="raw_pearson", get_sample_order=counting_get_sample_order,
+        )
+
+        assert len(calls) == 1
+
+    def test_a_callers_memoized_factory_is_reused_across_multiple_misses(self, conn):
+        # Simulates the family endpoint's own pattern: one memoizing closure
+        # shared across every candidate in the loop.
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        insert_catalog(conn, 3, "kegg", "K00003")
+        identical_values = {s: 10.0 + i for i, s in enumerate(SAMPLES)}
+        insert_series(conn, "kegg", "K00001", identical_values)
+        insert_series(conn, "kegg", "K00002", identical_values)
+        insert_series(conn, "kegg", "K00003", identical_values)
+
+        compute_count = []
+        _box = []
+        def memoized_get_sample_order():
+            if not _box:
+                compute_count.append(1)
+                _box.append(SAMPLES)
+            return _box[0]
+
+        _get_or_compute_correlation(conn, 1, 2, metric="egc", method="raw_pearson", get_sample_order=memoized_get_sample_order)
+        _get_or_compute_correlation(conn, 1, 3, metric="egc", method="raw_pearson", get_sample_order=memoized_get_sample_order)
+
+        assert len(compute_count) == 1  # underlying work only happened once across 2 misses

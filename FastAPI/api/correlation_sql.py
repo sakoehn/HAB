@@ -184,7 +184,7 @@ def score_pair(ref: list[float], cand: list[float], method):
     return best_r, bonf_p, best_lag, best_n
 
 # ── Internal: Tier 1 read-through cache ─────────────────────────
-def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method):
+def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method, get_sample_order=None):
     # 1. canonicalize catalog_id_a/catalog_id_b -> low, high (numeric compare)
     low, high = None, None
     if catalog_id_a <= catalog_id_b:
@@ -209,7 +209,17 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
         row_low = cursor_low.fetchone()
         cursor_high = conn.execute(query_can, (high,))
         row_high = cursor_high.fetchone()
-        sample_order = load_sample_order(conn)
+        # sample_order is identical for every pair scored in the same
+        # request (it doesn't depend on which annotations are being
+        # compared), so a caller scoring many pairs at once (the family
+        # endpoint) can pass a memoized get_sample_order() instead of
+        # letting every single cache-miss candidate independently pay
+        # load_sample_order's full-table DISTINCT scan (~1s on the real
+        # db). Only called at all on a cache MISS, and even then only
+        # once per request via the caller's own memoization -- an
+        # all-cache-hit family (the steady-state case once Tier 1 is
+        # warm) never touches this at all.
+        sample_order = get_sample_order() if get_sample_order else load_sample_order(conn)
         vec_low = load_vector(conn, row_low[0], row_low[1], sample_order, metric)
         vec_high = load_vector(conn, row_high[0], row_high[1], sample_order, metric)
         result = score_pair(vec_low, vec_high, method)
@@ -256,9 +266,20 @@ def correlation_family_endpoint(ref_source: str, ref_annotation_id: str, target_
 
         candidates = get_family_candidates(conn, ref_catalog_id, target_source)
 
+        # Memoized so it only runs (at most once) if some candidate in this
+        # family is actually a cache miss -- an all-cache-hit family (the
+        # steady-state case once Tier 1 is warm) never pays for it.
+        _sample_order_box = []
+        def get_sample_order():
+            if not _sample_order_box:
+                _sample_order_box.append(load_sample_order(conn))
+            return _sample_order_box[0]
+
         scored = []
         for cand in candidates:
-            result = _get_or_compute_correlation(conn, ref_catalog_id, cand["id"], metric, method)
+            result = _get_or_compute_correlation(
+                conn, ref_catalog_id, cand["id"], metric, method, get_sample_order=get_sample_order,
+            )
             if result is None:
                 continue
             scored.append({
