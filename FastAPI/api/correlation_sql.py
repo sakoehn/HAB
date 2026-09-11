@@ -226,12 +226,28 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
 
         if result is None: return None # idk what is best to return here
         r, bonf_p, lag, n_pairs = result[0], result[1], result[2], result[3]
-        cursor = conn.execute(f"""
-            INSERT INTO correlations_cache (catalog_id_a, catalog_id_b, r, metric,
-            method, lag_samples, p_value, n_pairs)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (low, high, r, metric, method, lag, bonf_p, n_pairs))
-        conn.commit()
+        try:
+            conn.execute(f"""
+                INSERT INTO correlations_cache (catalog_id_a, catalog_id_b, r, metric,
+                method, lag_samples, p_value, n_pairs)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (low, high, r, metric, method, lag, bonf_p, n_pairs))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            # Lost a race against a concurrent request scoring the same pair
+            # (e.g. two overlapping family requests, or React StrictMode's
+            # double-fired effect in dev) -- the other request's INSERT won,
+            # its row is already there. Our own freshly-computed values are
+            # thrown away (not a correctness issue, both computations use
+            # the same data and are deterministic) and we read back
+            # whichever row is actually in the cache now.
+            conn.rollback()
+            cursor = conn.execute(f"""
+                SELECT * FROM correlations_cache
+                WHERE catalog_id_a = ? AND catalog_id_b = ? AND metric = ? AND method = ?
+            """, (low, high, metric, method))
+            row = cursor.fetchone()
+            return {'r': row[3], 'p': row[7], 'lag_samples': row[6], 'n_pairs': row[8]}
         return {'r': r, 'p': bonf_p, 'lag_samples': lag, 'n_pairs': n_pairs}
 
 

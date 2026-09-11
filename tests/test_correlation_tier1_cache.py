@@ -242,3 +242,58 @@ class TestGetSampleOrderMemoization:
         _get_or_compute_correlation(conn, 1, 3, metric="egc", method="raw_pearson", get_sample_order=memoized_get_sample_order)
 
         assert len(compute_count) == 1  # underlying work only happened once across 2 misses
+
+
+class TestConcurrentInsertRace:
+    # Found via live testing: React StrictMode double-fires the panel's
+    # fetch effect in dev, sending two near-simultaneous identical family
+    # requests -- each on its own sqlite3 connection. Both see a cache miss
+    # for the same pair, both compute, and the second one's INSERT hit the
+    # UNIQUE constraint and crashed the whole request with an uncaught
+    # sqlite3.IntegrityError (500). Same race is reachable in production
+    # any time two requests score an overlapping family concurrently (two
+    # users, two tabs), not just via StrictMode.
+
+    def test_concurrent_insert_is_recovered_not_raised(self, conn):
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        identical_values = {s: 10.0 + i for i, s in enumerate(SAMPLES)}
+        insert_series(conn, "kegg", "K00001", identical_values)
+        insert_series(conn, "kegg", "K00002", identical_values)
+
+        winner_row = {"r": 0.4242, "p": 0.01, "lag_samples": -1, "n_pairs": 20}
+
+        class RacingConnProxy:
+            """Wraps the real sqlite3.Connection (whose .execute attribute
+            can't be monkeypatched directly -- it's a read-only C-level
+            attribute). Forwards everything except .execute, where it
+            injects a "concurrent request" INSERT the first time our own
+            function tries to INSERT into correlations_cache -- simulating
+            another connection winning the race between our cache-miss
+            check and our own write."""
+            def __init__(self, real_conn):
+                self._real = real_conn
+                self._raced = False
+
+            def execute(self, sql, params=()):
+                if not self._raced and sql.strip().startswith("INSERT INTO correlations_cache"):
+                    self._raced = True
+                    self._real.execute(
+                        "INSERT INTO correlations_cache "
+                        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
+                        "VALUES (1, 2, ?, 'egc', 'raw_pearson', ?, ?, ?)",
+                        (winner_row["r"], winner_row["lag_samples"], winner_row["p"], winner_row["n_pairs"]),
+                    )
+                    self._real.commit()
+                return self._real.execute(sql, params)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        result = _get_or_compute_correlation(
+            RacingConnProxy(conn), 1, 2, metric="egc", method="raw_pearson",
+        )
+
+        assert result == winner_row  # returned the concurrent winner's row, not our own
+        rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
+        assert rows == 1  # exactly one row survives -- no duplicate, no crash
