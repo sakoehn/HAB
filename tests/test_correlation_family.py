@@ -32,13 +32,22 @@ CREATE TABLE annotation_catalog(
     depth INTEGER,
     UNIQUE (source, annotation_id)
 );
+
+CREATE TABLE kegg_paths(
+    id INTEGER PRIMARY KEY,
+    a_id TEXT, a_name TEXT,
+    b_id TEXT, b_name TEXT,
+    c_id TEXT, c_name TEXT,
+    d_id TEXT, d_name TEXT,
+    full_path TEXT NOT NULL UNIQUE
+);
 """
 
 
 @pytest.fixture
 def conn():
     connection = sqlite3.connect(":memory:")
-    connection.execute(SCHEMA)
+    connection.executescript(SCHEMA)
     yield connection
     connection.close()
 
@@ -48,6 +57,20 @@ def insert(conn, id, source, annotation_id, parent=None, depth=None, name=None):
         "INSERT INTO annotation_catalog (id, source, annotation_id, name, parent, depth) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (id, source, annotation_id, name or annotation_id, parent, depth),
+    )
+    conn.commit()
+
+
+def insert_kegg_path(conn, a_id=None, b_id=None, c_id=None, d_id=None):
+    """One real occurrence-path row for kegg_paths -- CR3's fix
+    (_kegg_family_exclusions in correlation_sql.py) reads this table
+    instead of annotation_catalog.parent for same-source kegg families,
+    since a KEGG node can have multiple real parents (annotation_catalog's
+    single `parent` column can't represent that -- see E14/CR3)."""
+    full_path = "|".join(v for v in (a_id, b_id, c_id, d_id) if v is not None)
+    conn.execute(
+        "INSERT INTO kegg_paths (a_id, b_id, c_id, d_id, full_path) VALUES (?, ?, ?, ?, ?)",
+        (a_id, b_id, c_id, d_id, full_path),
     )
     conn.commit()
 
@@ -68,9 +91,14 @@ class TestFamilyEnumeration:
         assert {c["id"] for c in family} == {2, 3, 4}
 
     def test_ref_excluded_from_its_own_same_source_family(self, conn):
-        insert(conn, 1, "cog", "C")
-        insert(conn, 2, "cog", "D")
-        insert(conn, 3, "cog", "E")
+        # Distinct parents -- post-CR3, cog participates in the same
+        # sibling-exclusion rule as every other source (see
+        # TestExclusionRules.test_cog_hierarchy_siblings_and_ancestors_excluded
+        # for that specific behavior); giving these three different
+        # parents keeps this test focused on plain self-exclusion only.
+        insert(conn, 1, "cog", "COG0001", parent="C")
+        insert(conn, 2, "cog", "COG0002", parent="D")
+        insert(conn, 3, "cog", "COG0003", parent="E")
 
         family = get_family_candidates(conn, ref_catalog_id=1, target_source="cog")
 
@@ -91,16 +119,40 @@ class TestFamilyEnumeration:
 #    is green) ────────────────────────────────────────────────────────────
 
 class TestExclusionRules:
-    def test_cog_has_no_exclusions_even_same_source(self, conn):
-        # cog is flat -- no parent field means nothing can be a sibling/
-        # ancestor/descendant of anything else.
-        insert(conn, 1, "cog", "C")
-        insert(conn, 2, "cog", "D")
-        insert(conn, 3, "cog", "E")
+    def test_cog_hierarchy_siblings_and_ancestors_excluded(self, conn):
+        # CR3 (docs/AUDIT.md): cog used to be exempted from exclusions
+        # entirely, back when it really was flat with no parent field at
+        # all. Post-E15, cog has a real 2-level hierarchy (category ->
+        # specific COG id) and now participates in the same exclusion
+        # walk as every other source -- no more special-cased pass-through.
+        insert(conn, 1, "cog", "C", parent=None, depth=1)       # category (ancestor of ref)
+        insert(conn, 2, "cog", "COG0055", parent="C", depth=2)  # ref
+        insert(conn, 3, "cog", "COG1028", parent="C", depth=2)  # sibling (same category)
+        insert(conn, 4, "cog", "D", parent=None, depth=1)       # unrelated category
+        insert(conn, 5, "cog", "COG9999", parent="D", depth=2)  # cousin (different category)
+
+        family = get_family_candidates(conn, ref_catalog_id=2, target_source="cog")
+
+        assert {c["id"] for c in family} == {4, 5}
+
+    def test_cog_category_ref_excludes_its_own_members_and_sibling_categories(self, conn):
+        # The more consequential direction for cog, not covered above: a
+        # category's EGC is literally the sum of its own members' EGC, so
+        # "category correlates with its own member" is exactly the
+        # containment artifact CR3 exists to prevent -- for EVERY cog
+        # category, with no exceptions, since cog is always exactly 2
+        # levels. Descendant exclusion has to reach down from a
+        # category-level ref, not just work in the leaf-as-ref direction
+        # the test above covers.
+        insert(conn, 1, "cog", "C", parent=None, depth=1)       # ref (category)
+        insert(conn, 2, "cog", "COG0055", parent="C", depth=2)  # member (descendant of ref)
+        insert(conn, 3, "cog", "COG1028", parent="C", depth=2)  # member (descendant of ref)
+        insert(conn, 4, "cog", "D", parent=None, depth=1)       # sibling category (shares NULL parent)
+        insert(conn, 5, "cog", "COG9999", parent="D", depth=2)  # unrelated leaf, different category
 
         family = get_family_candidates(conn, ref_catalog_id=1, target_source="cog")
 
-        assert {c["id"] for c in family} == {2, 3}
+        assert {c["id"] for c in family} == {5}
 
     def test_cross_source_never_excludes_even_if_names_overlap(self, conn):
         # Same annotation_id string can legitimately exist in two sources;
@@ -158,19 +210,78 @@ class TestExclusionRules:
         assert {c["id"] for c in family} == {2, 3}
 
     def test_kegg_hierarchy_siblings_and_ancestors_excluded(self, conn):
-        # kegg/enzyme don't store a full lineage string like taxonomy --
-        # just a single `parent` pointer to another row's annotation_id --
-        # so ancestor/descendant exclusion has to walk that chain.
-        insert(conn, 10, "kegg", "K00001", parent=None, depth=1)               # grandparent
-        insert(conn, 11, "kegg", "K00002", parent="K00001", depth=2)           # ref (parent)
-        insert(conn, 12, "kegg", "K00003", parent="K00002", depth=3)           # child of ref
-        insert(conn, 13, "kegg", "K00004", parent="K00001", depth=2)           # sibling of ref
-        insert(conn, 15, "kegg", "K00005", parent=None, depth=1)               # unrelated root
-        insert(conn, 14, "kegg", "K00006", parent="K00005", depth=2)           # cousin
+        # Single-real-parent case (the common one) -- CR3's kegg_paths-based
+        # walk (_kegg_family_exclusions) must still get this right, not
+        # just the new multi-parent case below. Reads kegg_paths, not
+        # annotation_catalog.parent, for kegg same-source families -- the
+        # `insert(...)` rows below deliberately don't even set `parent`.
+        insert(conn, 10, "kegg", "A1", depth=1)  # grandparent
+        insert(conn, 11, "kegg", "B1", depth=2)  # ref (parent)
+        insert(conn, 12, "kegg", "C1", depth=3)  # child of ref
+        insert(conn, 13, "kegg", "B2", depth=2)  # sibling of ref
+        insert(conn, 15, "kegg", "A2", depth=1)  # unrelated root
+        insert(conn, 14, "kegg", "B3", depth=2)  # cousin
+
+        insert_kegg_path(conn, a_id="A1", b_id="B1", c_id="C1")
+        insert_kegg_path(conn, a_id="A1", b_id="B2")
+        insert_kegg_path(conn, a_id="A2", b_id="B3")
 
         family = get_family_candidates(conn, ref_catalog_id=11, target_source="kegg")
 
         assert {c["id"] for c in family} == {14, 15}
+
+    def test_kegg_multi_parent_ko_excluded_from_every_real_parents_family(self, conn):
+        # CR3's actual fix target: annotation_catalog.parent can only ever
+        # hold ONE of a multi-parent KO's real parents (E14 confirmed KOs
+        # like hexokinase have up to 14), but kegg_paths records every
+        # real occurrence. A KO genuinely belonging to two different
+        # pathways must be excluded from BOTH pathways' families, not just
+        # whichever one its single recorded parent happened to be.
+        insert(conn, 20, "kegg", "P1", depth=3)          # pathway 1
+        insert(conn, 21, "kegg", "P2", depth=3)          # pathway 2 -- unrelated to P1
+        insert(conn, 22, "kegg", "KMulti", depth=4)      # real member of BOTH P1 and P2
+        insert(conn, 23, "kegg", "KOnlyP1", depth=4)     # real member of only P1
+        insert(conn, 24, "kegg", "KUnrelated", depth=4)  # real member of neither
+
+        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P1", d_id="KMulti")
+        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P2", d_id="KMulti")  # same KO, 2nd real parent
+        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P1", d_id="KOnlyP1")
+        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P3", d_id="KUnrelated")
+
+        family_p1_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=20, target_source="kegg")}
+        assert 22 not in family_p1_ids  # KMulti excluded from P1's family
+        assert 23 not in family_p1_ids  # KOnlyP1 excluded too (regular single-parent case)
+        assert 24 in family_p1_ids      # KUnrelated stays -- real member of neither
+
+        family_p2_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=21, target_source="kegg")}
+        assert 22 not in family_p2_ids  # KMulti excluded from P2's family too -- the actual bug this fixes
+
+    def test_kegg_multi_parent_ko_as_ref_excludes_all_its_real_parents(self, conn):
+        # The reverse direction: when the multi-parent KO itself is ref,
+        # ALL of its real ancestors must be excluded, not just one.
+        insert(conn, 20, "kegg", "P1", depth=3)
+        insert(conn, 21, "kegg", "P2", depth=3)
+        insert(conn, 22, "kegg", "KMulti", depth=4)  # ref -- real member of both P1 and P2
+
+        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P1", d_id="KMulti")
+        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P2", d_id="KMulti")
+
+        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=22, target_source="kegg")}
+        assert 20 not in family_ids  # P1 excluded (a real ancestor)
+        assert 21 not in family_ids  # P2 excluded too -- its OTHER real ancestor
+
+    def test_kegg_unknown_ref_id_returns_self_exclusion_only_not_a_crash(self, conn):
+        # ref exists in annotation_catalog but was never real enough to
+        # make it into kegg_paths (e.g. filtered out at migration time) --
+        # _kegg_node_depth returns None; must degrade to self-exclusion
+        # only, not raise.
+        insert(conn, 30, "kegg", "GhostId", depth=2)
+        insert(conn, 31, "kegg", "Real", depth=2)
+        insert_kegg_path(conn, a_id="A", b_id="Real")
+
+        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=30, target_source="kegg")}
+        assert 30 not in family_ids  # ref always excludes itself
+        assert 31 in family_ids      # no real relationship data -- nothing else excluded
 
 
 class TestTaxonomyDepthCutoff:

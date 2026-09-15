@@ -22,17 +22,41 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"
 from scripts.migrate_annotations_to_sql import build_annotation_series_row
 
 
-# Real COG entry, sample 3300060358, DataStructures/COG/3300060358.cog.json
+# Real COG leaf entry, sample 3300060358, DataStructures/COG/3300060358.cog.json.
+# Post-E15 shape (see project memory): registered at both its own COG id
+# (depth=2, this entry) and its category letter (depth=1, COG_CATEGORY_ENTRY
+# below). `category` holds the real descriptive text, never the bare
+# letter -- but `parent` (post-CR3, docs/AUDIT.md) DOES hold parent_id
+# ("C"), not parent_name, same as KEGG/Enzyme (see
+# test_kegg_and_enzyme_do_not_store_parent_name).
 COG_ENTRY = {
     "name": "FoF1-type ATP synthase, beta subunit",
-    "category": "C",
+    "category": "Energy production and conversion",
+    "depth": 2,
+    "parent_id": "C",
+    "parent_name": "Energy production and conversion",
     "egc": 7092.0,
-    "norm_egc": 0.0005778704463674381,
+    "norm_egc": 0.00043946025951950113,
     "scaffolds": {
         "Ga0590986_0000001": 1,
         "Ga0590986_0000003": 1,
         "Ga0590986_0000170": 1,
     },
+}
+
+# Real COG category (depth=1) entry, same sample, key "C" in the same file --
+# COG's hierarchy root, same role as taxonomy's domain root
+# (TAXONOMY_ROOT_ENTRY below): parent_id/parent_name are both None since
+# nothing is above a category letter.
+COG_CATEGORY_ENTRY = {
+    "name": "Energy production and conversion",
+    "category": "Energy production and conversion",
+    "depth": 1,
+    "parent_id": None,
+    "parent_name": None,
+    "egc": 670876.0,
+    "norm_egc": 0.041571255085364474,
+    "scaffolds": {"Ga0590986_0000001": 15},
 }
 
 # Real Taxonomy entry, sample 3300060358, DataStructures/Taxonomy/3300060358.tax.json,
@@ -91,10 +115,26 @@ ENZYME_ENTRY = {
 }
 
 
-def test_cog_row_has_no_parent_or_depth():
+def test_cog_leaf_row_carries_depth_and_parent_from_parent_id():
+    """Post-E15 + CR3: a COG leaf row (COG#### id) DOES carry depth and
+    parent now -- parent falls back to parent_id ("C") exactly like
+    KEGG/Enzyme, parent_name ("Energy production and conversion") is
+    dropped the same way theirs is."""
     row = build_annotation_series_row("cog", "3300060358", "COG0055", COG_ENTRY)
+    assert row["parent"] == "C"
+    assert row["depth"] == 2
+
+
+def test_cog_category_row_has_null_parent_but_real_depth():
+    """The category-letter row itself (depth=1) is COG's hierarchy root --
+    null parent (nothing above it), same shape as taxonomy's domain root
+    (test_taxonomy_root_node_parent_is_explicitly_none_not_missing) --
+    but depth IS populated (1, not NULL), unlike the old flat-COG
+    assumption where both were always null."""
+    row = build_annotation_series_row("cog", "3300060358", "C", COG_CATEGORY_ENTRY)
     assert row["parent"] is None
-    assert row["depth"] is None
+    assert row["depth"] == 1
+    assert row["name"] == "Energy production and conversion"
 
 
 def test_cog_row_carries_over_name_category_egc_norm_egc():
@@ -103,9 +143,9 @@ def test_cog_row_carries_over_name_category_egc_norm_egc():
     assert row["sample"] == "3300060358"
     assert row["annotation_id"] == "COG0055"
     assert row["name"] == "FoF1-type ATP synthase, beta subunit"
-    assert row["category"] == "C"
+    assert row["category"] == "Energy production and conversion"
     assert row["egc"] == 7092.0
-    assert row["norm_egc"] == 0.0005778704463674381
+    assert row["norm_egc"] == 0.00043946025951950113
 
 
 def test_cog_row_derives_scaffold_count_and_gene_count():
@@ -178,7 +218,7 @@ def test_taxonomy_row_name_falls_back_to_annotation_id_if_name_missing():
 def test_taxonomy_root_node_parent_is_explicitly_none_not_missing():
     """The root node's "parent" key IS present, just set to None -- must
     stay None, not be confused with a missing key that would otherwise
-    fall back to parent_name (which doesn't exist on taxonomy entries
+    fall back to parent_id (which doesn't exist on taxonomy entries
     anyway, but the fallback logic must get this right regardless)."""
     row = build_annotation_series_row("taxonomy", "3300060358", "Bacteria", TAXONOMY_ROOT_ENTRY)
     assert row["parent"] is None
@@ -190,9 +230,14 @@ def test_taxonomy_root_node_parent_is_explicitly_none_not_missing():
 # KEGG / Enzyme: parent_id + parent_name instead of Taxonomy's single "parent"
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_kegg_row_parent_falls_back_to_parent_name():
+def test_kegg_row_parent_falls_back_to_parent_id():
+    """CR3 (docs/AUDIT.md): parent must be parent_id ("99996"), not
+    parent_name ("General function prediction only") -- parent_id is what
+    matches another row's own annotation_id, which the correlation
+    family-exclusion tree-walk and the frontend's expandParentLabel() both
+    depend on. Storing the display name instead silently broke both."""
     row = build_annotation_series_row("kegg", "3300060358", "K09014", KEGG_ENTRY)
-    assert row["parent"] == "General function prediction only"
+    assert row["parent"] == "99996"
     assert row["name"] == "sufB; Fe-S cluster assembly protein SufB"
     assert row["category"] == "Not Included in Pathway or Brite"
 
@@ -205,19 +250,28 @@ def test_kegg_row_depth_is_kept_even_though_its_not_a_taxonomic_rank():
     assert row["depth"] == 4
 
 
-def test_enzyme_row_parent_falls_back_to_parent_name():
+def test_enzyme_row_parent_falls_back_to_parent_id():
+    """Same CR3 fix as KEGG: parent must be parent_id ("3.6.1"), not
+    parent_name ("In phosphorus-containing anhydrides")."""
     row = build_annotation_series_row("enzyme", "3300060358", "3.6.1.23", ENZYME_ENTRY)
-    assert row["parent"] == "In phosphorus-containing anhydrides"
+    assert row["parent"] == "3.6.1"
     assert row["name"] == "dUTP diphosphatase"
     assert row["category"] == "Hydrolases"
 
 
-def test_kegg_and_enzyme_do_not_store_parent_id():
-    """parent_id (e.g. KEGG's "99996", Enzyme's "3.6.1") has no column --
-    a deliberate, documented gap, not an oversight. Confirms the real
-    parent_id VALUE isn't silently leaking into some other field (like
-    `parent`, which should only ever hold parent_name)."""
+def test_kegg_and_enzyme_do_not_store_parent_name():
+    """parent_name (e.g. KEGG's "General function prediction only",
+    Enzyme's "In phosphorus-containing anhydrides") has no column of its
+    own -- a deliberate, documented gap (display code re-derives it from
+    parent_id per source instead), not an oversight. Confirms the real
+    parent_name VALUE isn't silently leaking into some other field (like
+    `parent`, which should only ever hold parent_id -- see CR3, this is
+    the inverse of the pre-CR3 contract, which stored parent_name and
+    dropped parent_id)."""
     kegg_row = build_annotation_series_row("kegg", "3300060358", "K09014", KEGG_ENTRY)
     enzyme_row = build_annotation_series_row("enzyme", "3300060358", "3.6.1.23", ENZYME_ENTRY)
-    assert KEGG_ENTRY["parent_id"] not in kegg_row.values()
-    assert ENZYME_ENTRY["parent_id"] not in enzyme_row.values()
+    assert KEGG_ENTRY["parent_name"] not in kegg_row.values()
+    assert ENZYME_ENTRY["parent_name"] not in enzyme_row.values()
+    # And parent_id DOES now show up, specifically as `parent`.
+    assert kegg_row["parent"] == KEGG_ENTRY["parent_id"]
+    assert enzyme_row["parent"] == ENZYME_ENTRY["parent_id"]

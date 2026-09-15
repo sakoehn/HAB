@@ -137,8 +137,8 @@ def test_scaffolds_required_columns_reject_null(conn, missing_column):
 
 def test_annotation_series_optional_columns_default_to_null(conn):
     """name/category/parent/depth/egc/norm_egc/scaffold_count/gene_count
-    are all legitimately absent for some rows (e.g. COG/KEGG/Enzyme never
-    populate parent/depth) -- must not require a value."""
+    are all legitimately absent for some rows (e.g. a row inserted with
+    only the 3 required fields set) -- must not require a value."""
     conn.execute("INSERT INTO annotation_series (source, sample, annotation_id) VALUES ('cog', 's1', 'COG0001')")
     row = conn.execute(
         "SELECT name, category, parent, depth, egc, norm_egc, scaffold_count, gene_count "
@@ -183,18 +183,44 @@ def test_unique_constraint_allows_same_annotation_id_different_source(conn):
 # Realistic round-trip inserts
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_round_trip_cog_row_has_no_parent_or_depth(conn):
+def test_round_trip_cog_leaf_row_has_parent_and_depth(conn):
+    """Post-E15 + CR3: COG leaf rows (COG#### ids) DO populate parent/depth
+    -- parent holds the category's own id/letter ("C"), matching KEGG/
+    Enzyme's parent-falls-back-to-parent_id convention (see CR3,
+    docs/AUDIT.md), NOT the category's display name. depth=2. Real values
+    from sample 3300060358's COG0055."""
     conn.execute(
         """INSERT INTO annotation_series
-           (source, sample, annotation_id, name, category, egc, norm_egc, scaffold_count, gene_count)
-           VALUES ('cog', '3300060358', 'COG0055', 'F-type ATPase', 'C', 12272647.0, 0.812, 55898, 60000)"""
+           (source, sample, annotation_id, name, category, parent, depth, egc, norm_egc)
+           VALUES ('cog', '3300060358', 'COG0055', 'FoF1-type ATP synthase, beta subunit',
+                   'Energy production and conversion', 'C', 2,
+                   7092.0, 0.00043946025951950113)"""
     )
     conn.commit()
     row = conn.execute(
-        "SELECT name, category, parent, depth, egc, norm_egc, scaffold_count, gene_count "
+        "SELECT name, category, parent, depth, egc, norm_egc "
         "FROM annotation_series WHERE source='cog' AND annotation_id='COG0055'"
     ).fetchone()
-    assert row == ("F-type ATPase", "C", None, None, 12272647.0, 0.812, 55898, 60000)
+    assert row == ("FoF1-type ATP synthase, beta subunit", "Energy production and conversion",
+                    "C", 2, 7092.0, 0.00043946025951950113)
+
+
+def test_round_trip_cog_category_row_has_null_parent_but_real_depth(conn):
+    """The category-letter row itself (depth=1) is COG's hierarchy root --
+    null parent (nothing above it), but depth IS populated (1, not NULL) --
+    unlike the old flat-COG assumption where both were always null. Real
+    values from sample 3300060358's category "C"."""
+    conn.execute(
+        """INSERT INTO annotation_series
+           (source, sample, annotation_id, name, category, parent, depth, egc, norm_egc)
+           VALUES ('cog', '3300060358', 'C', 'Energy production and conversion',
+                   'Energy production and conversion', NULL, 1, 670876.0, 0.041571255085364474)"""
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT parent, depth FROM annotation_series WHERE source='cog' AND annotation_id='C'"
+    ).fetchone()
+    assert row == (None, 1)
 
 
 def test_round_trip_taxonomy_row_with_parent_and_depth(conn):

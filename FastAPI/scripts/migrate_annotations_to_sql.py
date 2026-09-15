@@ -60,10 +60,17 @@ def build_annotation_series_row(source: str, sample: str, annotation_id: str, en
             {"name": ..., "category": ..., "egc": ..., "norm_egc": ...,
              "scaffolds": {"scaffold_a": 3, "scaffold_b": 1}}.
             Taxonomy entries have no "name" key (annotation_id is used as
-            the name instead) and a "parent" field; KEGG/Enzyme instead
-            have "parent_id"/"parent_name" (only parent_name is kept).
+            the name instead) and a "parent" field already holding another
+            row's own annotation_id (a lineage-prefix string); KEGG/Enzyme/
+            COG instead have "parent_id"/"parent_name" -- parent_id is what
+            gets kept here (see CR3, docs/AUDIT.md): it matches another
+            row's annotation_id the same way taxonomy's "parent" always
+            has, which both the correlation family-exclusion tree-walk
+            (get_family_candidates) and the frontend's expandParentLabel()
+            depend on. parent_name (the human-readable text) is NOT stored
+            here -- display code re-derives it from parent_id per source.
             "depth" means taxonomic rank for taxonomy but a source-specific
-            pathway/EC hierarchy depth for KEGG/Enzyme.
+            pathway/EC hierarchy depth for KEGG/Enzyme/COG.
 
     Returns:
         Dict with keys matching annotation_series' columns: source,
@@ -79,7 +86,7 @@ def build_annotation_series_row(source: str, sample: str, annotation_id: str, en
         "annotation_id": annotation_id,
         "name": entry.get("name", annotation_id),
         "category": entry.get("category"),
-        "parent": entry.get("parent", entry.get("parent_name")),
+        "parent": entry.get("parent", entry.get("parent_id")),
         "depth": entry.get("depth"),
         "egc": entry.get("egc"),
         "norm_egc": entry.get("norm_egc"),

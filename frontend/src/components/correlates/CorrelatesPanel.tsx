@@ -28,9 +28,10 @@ import { HelpTooltip } from '../ui/HelpTooltip'
 import { Skeleton } from '../ui/Skeleton'
 
 const METHOD_LABEL: Record<CorrMethod, string> = {
-  spearman:    'Spearman r',
-  log_pearson: 'log-Pearson r',
-  raw_pearson: 'Pearson r',
+  spearman:       'Spearman r',
+  log_pearson:    'log-Pearson r',
+  raw_pearson:    'Pearson r',
+  circular_shift: 'Spearman r (permutation p)',
 }
 
 const METRIC_LABEL: Record<ChartMetric, string> = {
@@ -169,14 +170,18 @@ export function CorrelatesPanel({
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ font: '400 10px var(--mono)', color: 'var(--text-dim)' }}>Method:</span>
-              {(['spearman', 'log_pearson', 'raw_pearson'] as CorrMethod[]).map(m => (
+              {(['spearman', 'log_pearson', 'raw_pearson', 'circular_shift'] as CorrMethod[]).map(m => (
                 <button
                   key={m}
                   className={`toggle-pill sm ${method === m ? 'on' : ''}`}
                   onClick={() => setMethod(m)}
-                  title={`Score correlations using ${METHOD_LABEL[m]}`}
+                  title={
+                    m === 'circular_shift'
+                      ? 'Same Spearman r as the "spearman" option, but the significance test accounts for autocorrelation in the time series (a circular-shift permutation) instead of assuming independent timepoints. More statistically defensible, and noticeably slower on a cold (uncached) query.'
+                      : `Score correlations using ${METHOD_LABEL[m]}`
+                  }
                 >
-                  {m}
+                  {m === 'circular_shift' ? 'circular_shift' : m}
                 </button>
               ))}
             </div>

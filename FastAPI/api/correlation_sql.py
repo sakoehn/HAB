@@ -1,5 +1,6 @@
 import math
 import numpy as np
+import random
 from scipy import stats
 import os
 import sqlite3
@@ -12,8 +13,9 @@ from fastapi import APIRouter, HTTPException, Query
 from api.config import SQLITE_DB_PATH
 
 from .cache import AnnotationSource
-from .config import CORRELATION_LAGS, LAG_HOURS_PER_SAMPLE
-from scripts.migrate_correlations_to_sql import (
+from .cache_sql import _kegg_node_depth, KEGG_LEVEL_COLUMNS
+from .config import CORRELATION_LAGS, LAG_HOURS_PER_SAMPLE, PERMUTATION_N, PERMUTATION_SEED
+from .correlation_loaders import (
     load_vector,
     load_sample_order,
     TAXONOMY_DEPTH_CUTOFF,
@@ -72,13 +74,84 @@ def _spearman_at_lags(ref:  list[float], cand: list[float], lags: list[int], met
 def _bonferroni_correct(p: float, n_tests: int):
     return min(p * n_tests, 1.0)
 
+def _kegg_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
+    """
+    CR3 (docs/AUDIT.md), the part left unresolved after switching `parent`
+    to parent_id: annotation_catalog's `parent` column can only ever hold
+    ONE of a KEGG node's real parents, but KEGG KOs are commonly
+    multi-parent (K00844/hexokinase has 14 real parents -- see E14). The
+    generic by_id/children_of walk below, which assumes one parent per
+    node, silently misses every real ancestor/descendant relationship
+    that isn't the one parent that happened to get recorded.
+
+    `kegg_paths` (built for the BRITE hierarchy popup, see
+    migrate_kegg_paths_to_sql.py) doesn't have this limitation -- it
+    stores every real occurrence-path a node appears in, not just one.
+    This walks that table instead, for KEGG only (verified: Enzyme and
+    COG are single-parent by construction -- 0 of 7,333 real EC nodes and
+    every COG id respectively have more than one real parent -- so the
+    generic walk is already exactly correct for them; taxonomy's `parent`
+    is a full lineage-prefix, never ambiguous either).
+
+    Args:
+        conn: Open SQLite connection.
+        ref_annotation_id: The KEGG node to build the exclusion set for.
+
+    Returns:
+        Set of annotation_ids to exclude: ref itself, every real ancestor
+        and descendant across every occurrence-path ref appears in, and
+        every real sibling (shares at least one of ref's real immediate
+        parents -- or, for a depth=1 ref, every other real depth=1 id,
+        matching the generic walk's NULL-shared-parent convention for
+        top-level nodes with nothing above them).
+    """
+    excluded = {ref_annotation_id}
+    depth = _kegg_node_depth(conn, ref_annotation_id)
+    if depth is None:
+        return excluded  # not a real kegg_paths node -- no relationships to exclude
+
+    level_col, _ = KEGG_LEVEL_COLUMNS[depth]
+    rows = conn.execute(
+        f"SELECT a_id, b_id, c_id, d_id FROM kegg_paths WHERE {level_col} = ?", (ref_annotation_id,)
+    ).fetchall()
+
+    # Ancestors + descendants: every real id in ANY column of ANY
+    # occurrence-path ref appears in -- correct regardless of how many
+    # real parents ref (or anything above/below it) has, since each row
+    # is already a full A->B->C->D path, not a single parent pointer.
+    for row in rows:
+        excluded.update(value for value in row if value is not None)
+
+    if depth == 1:
+        top_level_ids = conn.execute("SELECT DISTINCT a_id FROM kegg_paths WHERE a_id IS NOT NULL").fetchall()
+        excluded.update(r[0] for r in top_level_ids)
+    else:
+        parent_col_index = depth - 2  # (a_id, b_id, c_id, d_id) index of the column one level shallower
+        real_parents = {row[parent_col_index] for row in rows if row[parent_col_index] is not None}
+        if real_parents:
+            parent_col, _ = KEGG_LEVEL_COLUMNS[depth - 1]
+            placeholders = ",".join("?" * len(real_parents))
+            siblings = conn.execute(
+                f"SELECT DISTINCT {level_col} FROM kegg_paths WHERE {parent_col} IN ({placeholders})",
+                tuple(real_parents),
+            ).fetchall()
+            excluded.update(r[0] for r in siblings if r[0] is not None)
+
+    return excluded
+
+
 def get_family_candidates(conn, ref_catalog_id, target_source):
     """
     Return every row in `target_source` eligible to be correlated against
     `ref_catalog_id`. Cross-source: everything, no exclusions. Same-source:
     excludes ref itself, its siblings (share ref's exact parent, NULL
-    included -- except cog, which has no parent concept at all and is
-    exempted below), and its ancestors/descendants at any depth.
+    included), and its ancestors/descendants at any depth -- cog included
+    (CR3, docs/AUDIT.md): E15 gave cog a real 2-level hierarchy, and
+    migrate_annotations_to_sql.py now stores parent_id (not parent_name)
+    for cog same as kegg/enzyme, so the same by_id/children_of tree-walk
+    below works for it without a special case. kegg gets its own,
+    different exclusion path (_kegg_family_exclusions above) since it's
+    the one source where a node can have MULTIPLE real parents.
 
     Returns a list of dicts:
         {"id": ..., "annotation_id": ..., "parent": ..., "name": ..., "depth": ...}
@@ -125,33 +198,36 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
     if ref_source != target_source:
         return _shape(target_rows)
 
+    if target_source == AnnotationSource.kegg.value:
+        excluded = _kegg_family_exclusions(conn, ref_annotation_id)
+        return _shape(row for row in target_rows if row[1] not in excluded)
+
     excluded = {ref_annotation_id}
 
-    if target_source != AnnotationSource.cog.value:
-        by_id: dict = {}        # annotation_id -> parent
-        children_of: dict = {}  # parent (NULL included) -> [annotation_id, ...]
-        for _cat_id, annotation_id, parent, _name, _depth in target_rows:
-            by_id[annotation_id] = parent
-            children_of.setdefault(parent, []).append(annotation_id)
+    by_id: dict = {}        # annotation_id -> parent
+    children_of: dict = {}  # parent (NULL included) -> [annotation_id, ...]
+    for _cat_id, annotation_id, parent, _name, _depth in target_rows:
+        by_id[annotation_id] = parent
+        children_of.setdefault(parent, []).append(annotation_id)
 
-        # Ancestors: walk up from ref_parent.
-        cur = ref_parent
-        while cur is not None and cur not in excluded:
-            excluded.add(cur)
-            cur = by_id.get(cur)
+    # Ancestors: walk up from ref_parent.
+    cur = ref_parent
+    while cur is not None and cur not in excluded:
+        excluded.add(cur)
+        cur = by_id.get(cur)
 
-        # Descendants: BFS down from ref_annotation_id.
-        stack = [ref_annotation_id]
-        while stack:
-            node = stack.pop()
-            for child in children_of.get(node, []):
-                if child not in excluded:
-                    excluded.add(child)
-                    stack.append(child)
+    # Descendants: BFS down from ref_annotation_id.
+    stack = [ref_annotation_id]
+    while stack:
+        node = stack.pop()
+        for child in children_of.get(node, []):
+            if child not in excluded:
+                excluded.add(child)
+                stack.append(child)
 
-        # Siblings: everything else sharing ref's exact parent (NULL included).
-        for sibling in children_of.get(ref_parent, []):
-            excluded.add(sibling)
+    # Siblings: everything else sharing ref's exact parent (NULL included).
+    for sibling in children_of.get(ref_parent, []):
+        excluded.add(sibling)
 
     return _shape(row for row in target_rows if row[1] not in excluded)
 
@@ -198,9 +274,85 @@ def core_scoring(vec_a: list[float], vec_b: list[float], method: str):
             return None
     else:
         raise ValueError(f"{method} not found.")
+    if math.isnan(r) or math.isnan(pval):
+        # A candidate with the same value at every co-observed timepoint
+        # (zero variance) makes pearsonr return NaN for both r and p --
+        # treat that exactly like "not enough data", not a real score.
+        # Left unguarded, this NaN eventually hits correlations_cache's
+        # NOT NULL columns: sqlite3 silently binds a NaN float as SQL
+        # NULL, so the INSERT raises IntegrityError, the caller assumes a
+        # concurrent-write race, and crashes re-reading a row that was
+        # never written (see CR4).
+        return None
     return (r, pval, len(a))
 
+def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], observed_r: float, n_perm: int, seed: int) -> float:
+    """
+    Circular block-shift permutation p-value for CR2 (docs/AUDIT.md): the
+    parametric p-value from scipy.stats.pearsonr assumes every timepoint
+    is an independent observation, which real EGC series (sampled every
+    4 hours) are not -- the effective sample size is far below the raw
+    point count, so that p-value is systematically too optimistic
+    (measured: ~51% of unrelated but autocorrelated pairs pass q<0.05).
+    A circular shift preserves each series' own autocorrelation structure
+    while destroying any real cross-series relationship, which is exactly
+    the null this test needs.
+
+    Re-searches the FULL CORRELATION_LAGS window on every one of n_perm
+    shifts, instead of fixing the lag at the observed best -- comparing a
+    best-of-9-lags observed statistic against a not-best-of-9 null
+    understates the true p-value (the same lag-search bias the old,
+    since-removed migrate_correlations_to_sql.py's corrected_pvalue was
+    built to avoid). This also means the multi-lag multiplicity is
+    already accounted for in the null itself -- the caller must NOT
+    Bonferroni-correct this p-value afterward (see score_pair).
+
+    Args:
+        ref: Full aligned reference vector (raw values, None gaps
+            included) -- NOT pre-filtered. Shifting must move the whole
+            aligned series as a rigid block, gaps included, to keep its
+            real autocorrelation structure intact; core_scoring's usual
+            pairwise-complete filtering still runs per lag inside
+            _spearman_at_lags on every shift.
+        cand: Full aligned candidate vector, never shifted (only the
+            reference is circularly shifted, matching the historical
+            convention).
+        observed_r: The real (unshifted) best-lag Spearman r, already
+            computed by the caller.
+        n_perm: Number of random circular shifts to try.
+        seed: RNG seed, for reproducible p-values.
+
+    Returns:
+        Fraction of shifts whose best-of-9-lags |r| >= |observed_r|.
+    """
+    n = len(ref)
+    if n < 3:
+        return 1.0
+
+    rng = random.Random(seed)
+    count_as_extreme = 0
+    for _ in range(n_perm):
+        shift = rng.randint(1, n - 1)
+        shifted_ref = ref[shift:] + ref[:shift]
+        perm_r, _perm_lag, _perm_p, _perm_n = _spearman_at_lags(shifted_ref, cand, CORRELATION_LAGS, "spearman")
+        if perm_r is not None and abs(perm_r) >= abs(observed_r):
+            count_as_extreme += 1
+
+    return count_as_extreme / n_perm
+
+
 def score_pair(ref: list[float], cand: list[float], method):
+    if method == "circular_shift":
+        # Underlying r/lag statistic is always Spearman (rank-based,
+        # robust to monotonic-but-nonlinear EGC relationships, matches
+        # the historical convention this restores) -- CR2 is about fixing
+        # the P-VALUE's validity, not about offering a 4th r-statistic.
+        best_r, best_lag, _best_p, best_n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, "spearman")
+        if best_r is None or best_lag is None:
+            return None
+        perm_p = _circular_shift_pvalue(ref, cand, best_r, PERMUTATION_N, PERMUTATION_SEED)
+        return best_r, perm_p, best_lag, best_n
+
     best_r, best_lag, best_p, best_n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, method)
     if best_r is None or best_lag is None or best_p is None: return None
     bonf_p = _bonferroni_correct(best_p, len(CORRELATION_LAGS))
@@ -216,32 +368,25 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
     elif catalog_id_b < catalog_id_a:
         low = catalog_id_b
         high = catalog_id_a
+
+    reference_is_high = catalog_id_a > catalog_id_b
+
     cursor = conn.execute(f"""
             SELECT *
             FROM correlations_cache
             WHERE catalog_id_a = ? AND catalog_id_b = ? AND metric = ? AND method = ?
     """, (low, high, metric, method))
     row = cursor.fetchone()
-    if row: 
-    # 3. if a row came back: build the {r, lag_samples, p_value, n_pairs} dict
-    #    from the correct column indices, return it -- done, nothing below runs
-        return {'r': row[3], 'p': row[7], 'lag_samples': row[6], 'n_pairs': row[8] }
+    if row:
+
+        lag = row[6]
+        return {'r': row[3], 'p': row[7], 'lag_samples': -lag if reference_is_high else lag, 'n_pairs': row[8] }
     else:
         query_can = "SELECT source, annotation_id FROM annotation_catalog WHERE id = ?"
         cursor_low = conn.execute(query_can, (low,))
         row_low = cursor_low.fetchone()
         cursor_high = conn.execute(query_can, (high,))
         row_high = cursor_high.fetchone()
-        # sample_order is identical for every pair scored in the same
-        # request (it doesn't depend on which annotations are being
-        # compared), so a caller scoring many pairs at once (the family
-        # endpoint) can pass a memoized get_sample_order() instead of
-        # letting every single cache-miss candidate independently pay
-        # load_sample_order's full-table DISTINCT scan (~1s on the real
-        # db). Only called at all on a cache MISS, and even then only
-        # once per request via the caller's own memoization -- an
-        # all-cache-hit family (the steady-state case once Tier 1 is
-        # warm) never touches this at all.
         sample_order = get_sample_order() if get_sample_order else load_sample_order(conn)
         vec_low = load_vector(conn, row_low[0], row_low[1], sample_order, metric)
         vec_high = load_vector(conn, row_high[0], row_high[1], sample_order, metric)
@@ -257,21 +402,17 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
             """, (low, high, r, metric, method, lag, bonf_p, n_pairs))
             conn.commit()
         except sqlite3.IntegrityError:
-            # Lost a race against a concurrent request scoring the same pair
-            # (e.g. two overlapping family requests, or React StrictMode's
-            # double-fired effect in dev) -- the other request's INSERT won,
-            # its row is already there. Our own freshly-computed values are
-            # thrown away (not a correctness issue, both computations use
-            # the same data and are deterministic) and we read back
-            # whichever row is actually in the cache now.
             conn.rollback()
             cursor = conn.execute(f"""
                 SELECT * FROM correlations_cache
                 WHERE catalog_id_a = ? AND catalog_id_b = ? AND metric = ? AND method = ?
             """, (low, high, metric, method))
             row = cursor.fetchone()
-            return {'r': row[3], 'p': row[7], 'lag_samples': row[6], 'n_pairs': row[8]}
-        return {'r': r, 'p': bonf_p, 'lag_samples': lag, 'n_pairs': n_pairs}
+            if row is None:
+                return None
+            winner_lag = row[6]
+            return {'r': row[3], 'p': row[7], 'lag_samples': -winner_lag if reference_is_high else winner_lag, 'n_pairs': row[8]}
+        return {'r': r, 'p': bonf_p, 'lag_samples': -lag if reference_is_high else lag, 'n_pairs': n_pairs}
 
 
 
@@ -313,7 +454,10 @@ def correlate_endpoint(catalog_id_a: int, catalog_id_b: int, metric: str, method
 
 # ── Endpoint: Tier 2, family + FDR ────────────────────────────────
 @router.get("/correlations/family")
-def correlation_family_endpoint(ref_source: str, ref_annotation_id: str, target_source: str, metric: str, method: str):
+def correlation_family_endpoint(
+    ref_source: str, ref_annotation_id: str, target_source: str, metric: str, method: str,
+    limit: int = Query(50, ge=1, le=500),
+):
     valid_sources = {s.value for s in AnnotationSource}
     if target_source not in valid_sources:
         raise HTTPException(status_code=400, detail=f"target_source must be one of {valid_sources}")
@@ -359,7 +503,13 @@ def correlation_family_endpoint(ref_source: str, ref_annotation_id: str, target_
             })
 
         scored = _apply_fdr(scored)
-        return [entry for entry in scored if entry["q"] < 0.05]
+        significant = [entry for entry in scored if entry["q"] < 0.05]
+        # CR5: results otherwise come back in catalog-id order (roughly
+        # alphabetical by annotation id), not by match strength -- sort by
+        # |r| descending and cap the list so the first screen is the
+        # strongest correlates, not an arbitrary alphabetical slice.
+        significant.sort(key=lambda entry: abs(entry["r"]), reverse=True)
+        return significant[:limit]
     finally:
         conn.close()
 

@@ -107,7 +107,10 @@ def test_correct_values(conn):
     assert results
     expected_a = {
         "name":          "FoF1-type ATP synthase, beta subunit",
-        "parent":        None,
+        # Post-E15 + CR3: cog DOES populate parent now, as the category's
+        # own id/letter ("C"), not its display name -- reconfirmed live
+        # before fixing this.
+        "parent":        "C",
         "mean_egc":      8759.3203125,
         "max_egc":       25563.0,
         "mean_norm_egc": 0.00047519008991907946,

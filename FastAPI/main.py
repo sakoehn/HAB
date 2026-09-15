@@ -36,6 +36,7 @@ from api.config import FRONTEND_DIST, DATA_BACKEND
 from api.index import build_mapping_index, build_search_index
 from api import index as index_module
 from api import routes, correlation, correlation_sql
+from api.correlation_loaders import assert_sample_order_is_trustworthy, load_sample_order
 from api.db import connect_to_sql, close_sql_connection
 
 import os
@@ -70,7 +71,12 @@ async def lifespan(app: FastAPI):
     else: # DATA_BACKEND == "sql"
         app.state.sql_conn = connect_to_sql()
         index_module._INDEX_READY = True
-    
+        # CR6: fail loudly at boot if the real sample time axis is broken
+        # (a sample with no resolvable timepoint, or two samples colliding
+        # on the same one) rather than silently scrambling every
+        # correlation's lag_samples with no visible symptom.
+        assert_sample_order_is_trustworthy(load_sample_order(app.state.sql_conn))
+
     yield
 
     if DATA_BACKEND == "sql":

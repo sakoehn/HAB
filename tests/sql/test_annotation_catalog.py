@@ -92,12 +92,16 @@ def test_matches_annotation_series_exactly(conn):
 
 def test_correct_values(conn):
     """No NULLs in any column where a real value is always expected.
-    `parent` and `depth` are deliberately excluded -- create_sql_schema.py
-    documents both as legitimately NULL for cog (see its column comments
-    on annotation_series/annotation_catalog), so a blanket NULL check
-    there would fail on real, valid data, not a bug."""
+    `parent` is deliberately excluded -- every source legitimately has
+    NULL parent for its own hierarchy root (cog's 25 category letters,
+    kegg's 8 top-level branches, enzyme's 7 top-level classes, taxonomy's
+    4 domains -- reconfirmed live before writing this), so a blanket NULL
+    check there would fail on real, valid data, not a bug. `depth` is NOT
+    excluded -- post-E15 (COG category rollup), every source populates a
+    real depth for every row, cog included; reconfirmed live (0 NULL
+    depth rows across all 4 sources) before tightening this check."""
     never_null_columns = [
-        "source", "annotation_id", "name",
+        "source", "annotation_id", "name", "depth",
         "mean_egc", "max_egc", "mean_norm_egc", "max_norm_egc", "sample_count",
     ]
     for column in never_null_columns:
@@ -122,14 +126,17 @@ def test_correct_values(conn):
     assert isinstance(by_name["sample_count"], int)
 
 
-def test_depth_is_null_only_for_cog(conn):
+def test_depth_is_never_null_for_any_source(conn):
     """`depth` (added for the taxonomy_egc_homonym_bug fix, see
-    test_correct_shape) is NULL for every cog row and non-NULL for every
-    kegg/enzyme/taxonomy row -- matches create_sql_schema.py's column
-    comment exactly, not just "some are null somewhere"."""
-    for source, expect_null in [
-        ("cog", True), ("kegg", False), ("enzyme", False), ("taxonomy", False),
-    ]:
+    test_correct_shape) is non-NULL for every row in every source.
+
+    This used to be false for cog -- EGC_COG_TREE.ipynb only ever
+    registered a gene at its specific COG id, never at the COG's category
+    letter, so category nodes (and their depth/parent) didn't exist at
+    all (E15). Fixed by registering every gene at both levels; cog rows
+    now carry a real depth (1=category, 2=specific COG id) same as every
+    other source."""
+    for source in ("cog", "kegg", "enzyme", "taxonomy"):
         total = conn.execute(
             "SELECT COUNT(*) FROM annotation_catalog WHERE source = ?", (source,)
         ).fetchone()[0]
@@ -137,10 +144,7 @@ def test_depth_is_null_only_for_cog(conn):
             "SELECT COUNT(*) FROM annotation_catalog WHERE source = ? AND depth IS NULL", (source,)
         ).fetchone()[0]
         assert total > 0, f"no {source} rows found"
-        assert nulls == (total if expect_null else 0), (
-            f"{source}: {nulls}/{total} rows have NULL depth, expected "
-            f"{'all' if expect_null else 'none'}"
-        )
+        assert nulls == 0, f"{source}: {nulls}/{total} rows have NULL depth, expected none"
 
 
 def test_taxonomy_homonym_produces_two_distinct_catalog_rows(conn):

@@ -2,7 +2,7 @@
 Tests for _get_or_compute_correlation -- Tier 1's read-through cache.
 Uses an in-memory sqlite db with the real annotation_catalog/
 annotation_series/correlations_cache schema so load_vector/load_sample_order
-(imported from migrate_correlations_to_sql.py) run unmodified against it.
+(imported from correlation_loaders.py) run unmodified against it.
 """
 import os
 import sqlite3
@@ -164,6 +164,24 @@ class TestCacheMiss:
         rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
         assert rows == 1
 
+    def test_constant_candidate_returns_none_not_crash(self, conn):
+        # CR4: a candidate with the same value at every co-observed
+        # timepoint used to crash the whole request -- pearsonr's NaN
+        # silently binds as SQL NULL, trips correlations_cache's NOT NULL
+        # constraint, and the IntegrityError handler wrongly assumed a
+        # concurrent-write race and crashed re-reading a row that was
+        # never written. Must now fail gracefully for just this pair.
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        insert_series(conn, "kegg", "K00001", {s: 10.0 + i for i, s in enumerate(SAMPLES)})
+        insert_series(conn, "kegg", "K00002", {s: 7.0 for s in SAMPLES})  # constant
+
+        result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="raw_pearson")
+
+        assert result is None
+        rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
+        assert rows == 0  # nothing bad got written either
+
     def test_returns_none_and_inserts_nothing_when_too_few_valid_pairs(self, conn):
         insert_catalog(conn, 1, "kegg", "K00001")
         insert_catalog(conn, 2, "kegg", "K00002")
@@ -177,6 +195,52 @@ class TestCacheMiss:
         assert result is None
         rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
         assert rows == 0
+
+
+class TestLagSignDependsOnCallersReference:
+    # CR1: scoring/caching always treats the numerically LOWER catalog id
+    # as the reference series, regardless of which id the caller actually
+    # asked about as their reference. Before the fix, whichever id the
+    # caller passed as catalog_id_a was ignored for sign purposes -- the
+    # returned lag was silently backwards whenever the caller's reference
+    # had the higher id. ref/cand values below are squared sequences (not
+    # a straight line), so only the true offset produces r == 1.0 exactly
+    # -- same trick as test_correlation_math.py's test_picks_the_correct_lag,
+    # confirming lag=+2 (not some other value) is what's actually found.
+    SAMPLES20 = [f"s{i:02d}" for i in range(20)]
+
+    def _seed_offset_by_two_series(self, conn):
+        insert_catalog(conn, 1, "kegg", "K00001")  # will be the numeric "low"
+        insert_catalog(conn, 2, "kegg", "K00002")  # will be the numeric "high"
+        low_values = {self.SAMPLES20[j]: float((j + 1) ** 2) for j in range(20)}
+        high_values = {self.SAMPLES20[j]: float((j + 3) ** 2) for j in range(20)}
+        insert_series(conn, "kegg", "K00001", low_values)
+        insert_series(conn, "kegg", "K00002", high_values)
+
+    def test_freshly_computed_lag_is_negated_when_reference_is_the_higher_id(self, conn):
+        self._seed_offset_by_two_series(conn)
+
+        # Caller's reference (catalog_id_a) is 1, the numeric low -- lag is
+        # relative to id 1 as reference already, no negation needed.
+        result_low_as_ref = _get_or_compute_correlation(
+            conn, 1, 2, metric="egc", method="raw_pearson", get_sample_order=lambda: self.SAMPLES20,
+        )
+        assert result_low_as_ref["lag_samples"] == 2
+
+    def test_cache_hit_lag_is_negated_when_reference_is_the_higher_id(self, conn):
+        self._seed_offset_by_two_series(conn)
+
+        # First call (id 1 as reference) computes and caches lag=+2.
+        _get_or_compute_correlation(
+            conn, 1, 2, metric="egc", method="raw_pearson", get_sample_order=lambda: self.SAMPLES20,
+        )
+        # Second call asks the SAME pair but with id 2 (the numeric high)
+        # as the caller's reference -- a pure cache hit, must come back
+        # negated, not the raw stored value.
+        result_high_as_ref = _get_or_compute_correlation(
+            conn, 2, 1, metric="egc", method="raw_pearson", get_sample_order=lambda: self.SAMPLES20,
+        )
+        assert result_high_as_ref["lag_samples"] == -2
 
 
 class TestGetSampleOrderMemoization:
@@ -297,3 +361,114 @@ class TestConcurrentInsertRace:
         assert result == winner_row  # returned the concurrent winner's row, not our own
         rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
         assert rows == 1  # exactly one row survives -- no duplicate, no crash
+
+    def test_integrity_error_with_nothing_to_read_back_returns_none_not_crash(self, conn):
+        # CR4's actual failure mode: the IntegrityError handler assumed
+        # every IntegrityError means "a concurrent request already won,"
+        # but a NOT NULL violation (e.g. from a NaN score) means nothing
+        # was ever written by anyone -- the re-read finds no row, and
+        # indexing into None used to raise TypeError instead of failing
+        # this one pair gracefully.
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        identical_values = {s: 10.0 + i for i, s in enumerate(SAMPLES)}
+        insert_series(conn, "kegg", "K00001", identical_values)
+        insert_series(conn, "kegg", "K00002", identical_values)
+
+        class AlwaysIntegrityErrorOnInsertProxy:
+            """Same wrapping trick as RacingConnProxy, but simulates an
+            IntegrityError with no actual concurrent winner behind it --
+            nothing else ever inserts a row for this pair."""
+            def __init__(self, real_conn):
+                self._real = real_conn
+
+            def execute(self, sql, params=()):
+                if sql.strip().startswith("INSERT INTO correlations_cache"):
+                    raise sqlite3.IntegrityError("NOT NULL constraint failed: correlations_cache.r")
+                return self._real.execute(sql, params)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        result = _get_or_compute_correlation(
+            AlwaysIntegrityErrorOnInsertProxy(conn), 1, 2, metric="egc", method="raw_pearson",
+        )
+
+        assert result is None
+        rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
+        assert rows == 0
+
+
+class TestCircularShiftMethod:
+    # CR2 (docs/AUDIT.md): "circular_shift" through the real read-through
+    # cache -- confirms the stored p_value is the raw permutation
+    # fraction (never Bonferroni-scaled, unlike every other method -- see
+    # score_pair), and that it shares the cache table safely alongside
+    # the other 3 methods without ever colliding on the same row.
+
+    def test_computes_and_caches_a_real_result(self, conn):
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        # Non-monotonic -- avoids the shift/re-lag self-similarity pitfall
+        # a strictly increasing series has under Spearman (see
+        # test_correlation_math.py's test_perfect_correlation_gives_low_pvalue
+        # for the full explanation); a near-noiseless copy still gives a
+        # very strong real relationship to detect.
+        base = {s: 10.0 + i + 3.0 * ((i % 3) - 1) for i, s in enumerate(SAMPLES)}
+        copy = {s: v + 0.05 for s, v in base.items()}
+        insert_series(conn, "kegg", "K00001", base)
+        insert_series(conn, "kegg", "K00002", copy)
+
+        result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="circular_shift")
+
+        assert result is not None
+        assert result["r"] > 0.9
+        assert 0.0 <= result["p"] <= 1.0
+
+        row = conn.execute(
+            "SELECT r, p_value, method FROM correlations_cache WHERE catalog_id_a=1 AND catalog_id_b=2"
+        ).fetchone()
+        assert row is not None
+        assert row[2] == "circular_shift"
+        # The actual point of CR2: this p-value must be a clean multiple
+        # of 1/PERMUTATION_N (1000, see api/config.py) -- a Bonferroni-
+        # multiplied parametric p-value essentially never lands exactly
+        # on one of those 1000 possible fractions.
+        scaled = row[1] * 1000
+        assert abs(scaled - round(scaled)) < 1e-9, f"p_value={row[1]} isn't a clean multiple of 1/1000"
+
+    def test_constant_candidate_returns_none_not_crash(self, conn):
+        """CR4 x CR2 composition, at the cache layer: the same
+        NaN-guard/graceful-None behavior other methods get must hold for
+        circular_shift too."""
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        insert_series(conn, "kegg", "K00001", {s: 10.0 + i for i, s in enumerate(SAMPLES)})
+        insert_series(conn, "kegg", "K00002", {s: 7.0 for s in SAMPLES})  # constant
+
+        result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="circular_shift")
+
+        assert result is None
+        rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
+        assert rows == 0
+
+    def test_shares_the_cache_table_without_colliding_with_other_methods(self, conn):
+        """The same (catalog_id_a, catalog_id_b, metric) pair, scored
+        under 2 different methods, must land as 2 independent rows --
+        method is part of correlations_cache's UNIQUE constraint and this
+        confirms that's actually load-bearing here, not just declared."""
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        base = {s: 10.0 + i + 3.0 * ((i % 3) - 1) for i, s in enumerate(SAMPLES)}
+        copy = {s: v + 0.05 for s, v in base.items()}
+        insert_series(conn, "kegg", "K00001", base)
+        insert_series(conn, "kegg", "K00002", copy)
+
+        _get_or_compute_correlation(conn, 1, 2, metric="egc", method="raw_pearson")
+        _get_or_compute_correlation(conn, 1, 2, metric="egc", method="circular_shift")
+
+        rows = conn.execute(
+            "SELECT method FROM correlations_cache WHERE catalog_id_a=1 AND catalog_id_b=2"
+        ).fetchall()
+        assert {r[0] for r in rows} == {"raw_pearson", "circular_shift"}
+        assert len(rows) == 2

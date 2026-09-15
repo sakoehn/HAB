@@ -145,7 +145,7 @@ export type CorrelateResult = {
   n_pairs:       number
 }
 
-export type CorrMethod = 'spearman' | 'log_pearson' | 'raw_pearson'
+export type CorrMethod = 'spearman' | 'log_pearson' | 'raw_pearson' | 'circular_shift'
 
 export type CorrelationFamilyResult = {
   catalog_id:    number
