@@ -245,15 +245,7 @@ def warm_server():
         load_taxonomy(s)
         load_tsv(s)
 
-    # build_matrices=True: tests that request this "fully warm" fixture
-    # expect _EGC_MATRIX populated for all 4 sources. Production's startup
-    # warmup (main.py) calls build_search_index() with the default False —
-    # see that function's docstring for why. Do NOT instead call
-    # get_egc_vectors_from_matrix() separately here: that re-reads every
-    # sample's JSON from disk a SECOND time (a real MemoryError was hit
-    # this way in this exact environment — one full-dataset scan is
-    # already expensive enough).
-    build_search_index(build_matrices=True)
+    build_search_index()
     build_mapping_index()
 
 

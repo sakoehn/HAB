@@ -125,7 +125,14 @@ def enzyme_by_sample() -> dict[str, dict]:
 
 @pytest.fixture(scope="session")
 def brite_dict() -> dict[str, dict]:
-    """Parse ko00001.keg → {node_id: {name, depth, category, parent_id, parent_name}}."""
+    """Parse ko00001.keg → {node_id: {name, depth, category, parent_id, parent_name}}.
+
+    Deliberately single-parent, last-occurrence-wins (current_at_depth is
+    overwritten per node, same as the pre-E14-fix notebook parser) --
+    this matches .ko.json's own single-parent DISPLAY metadata fields, which
+    are intentionally last-occurrence too. It is NOT a ground-truth
+    multi-parent structure and must never be used to assert anything about
+    the EGC/scaffold rollup (E14) -- see TestKEGGHierarchyRollup for that."""
     if not BRITE_FILE.exists():
         pytest.skip(f"BRITE file not found: {BRITE_FILE}")
 
@@ -407,6 +414,70 @@ class TestKEGGFormat:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 2b. KEGG hierarchy correctness (E14 regression)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestKEGGHierarchyRollup:
+    """
+    Regression coverage for E14: the BRITE parser kept only the last parent
+    seen per KO (plain dict keyed by node_id, each occurrence overwriting the
+    last), so a KO belonging to several real pathways got filed under
+    whichever pathway happened to be listed last in ko00001.keg -- usually
+    the "Brite Hierarchies" catch-all, since it comes near the end of the
+    file. Pathway/category totals, built by summing only each node's
+    last-recorded members, were therefore missing most of their real members.
+
+    K00844 (hexokinase) is the known case: it appears 14 times in
+    ko00001.keg under 14 different parents, the first of which is Glycolysis
+    / Gluconeogenesis (00010). A correct rollup must count K00844's coverage
+    toward 00010's total in every sample where both are annotated.
+
+    KNOWN_HEXOKINASE_GENE below is a real gene confirmed (by directly
+    searching DataStructures/Kegg/kegg_db.json) to be annotated K00844 in
+    sample 3300060358 -- not a synthetic fixture, an actual entry in the
+    dataset. Its scaffold is the ground truth used to check whether K00844
+    is actually being rolled up into Glycolysis, rather than a looser
+    magnitude check (00010's EGC total happens to already exceed a single
+    member's own small EGC from OTHER, correctly-parented members, even
+    while the bug is fully present -- a magnitude-only assertion silently
+    passes against the buggy output and proves nothing).
+    """
+
+    SPOT_SAMPLE           = "3300060358"
+    KNOWN_HEXOKINASE_GENE = "Ga0590986_0048567_1997_2740"
+    KNOWN_HEXOKINASE_SCAFFOLD = "Ga0590986_0048567"  # gene_id.rsplit('_', 2)[0]
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_missing(self):
+        if not KEGG_JSON_DIR.exists():
+            pytest.skip("KEGG JSON directory missing")
+
+    def test_hexokinase_scaffold_reaches_glycolysis(self, kegg_by_sample):
+        sid = self.SPOT_SAMPLE
+        if sid not in kegg_by_sample:
+            pytest.skip(f"{sid} not loaded")
+        data       = kegg_by_sample[sid]
+        hexokinase = data.get("K00844")
+        glycolysis = data.get("00010")
+        assert hexokinase is not None, "K00844 missing from sample -- can't test"
+        assert glycolysis is not None, "00010 missing from sample -- can't test"
+
+        scaffold = self.KNOWN_HEXOKINASE_SCAFFOLD
+        assert scaffold in hexokinase.get("scaffolds", {}), (
+            f"sanity check failed: {scaffold} not even under K00844 itself -- "
+            f"the known gene/scaffold no longer matches this dataset"
+        )
+        assert scaffold in glycolysis.get("scaffolds", {}), (
+            f"{scaffold} (gene {self.KNOWN_HEXOKINASE_GENE}, confirmed K00844/"
+            f"hexokinase -- a real member of Glycolysis / Gluconeogenesis per "
+            f"ko00001.keg) is missing from 00010's scaffold set. K00844 is "
+            f"currently rolled up under its last-seen parent instead "
+            f"({hexokinase.get('parent_id')!r} {hexokinase.get('parent_name')!r}), "
+            f"not under Glycolysis."
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 3. COG structural integrity
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -501,6 +572,91 @@ class TestCOGFormat:
 
     def test_all_128_files_loaded(self, cog_by_sample):
         assert len(cog_by_sample) >= EXPECTED_SAMPLES
+
+
+class TestCOGHierarchyRollup:
+    """
+    Regression coverage for E15: EGC_COG_TREE.ipynb registered each gene
+    at its own COG id only -- never at that COG's category letter -- so
+    category nodes didn't exist in the data at all (the notebook's own
+    printed output said so outright: "4612 COG nodes (flat -- no category
+    parent nodes)"). Fixed by registering every gene at both levels, the
+    same per-node gene-set dedup pattern KEGG/Enzyme already used.
+
+    Two things specific to this fix, beyond "category rollup exists at
+    all" (already covered generically by TestAncestorAggregation):
+    category's `category`/`name` fields must hold the real descriptive
+    text (e.g. "Energy production and conversion"), not the bare letter
+    id -- matching KEGG/Enzyme's convention that `category` is always a
+    human-readable name, never a code. And -- caught while writing this
+    test, not assumed -- NCBI's own live COG-category page for letter X
+    was found to render a literal "nan" instead of X's real description
+    ("Mobilome: prophages, transposons"), a genuine upstream data bug,
+    not an extraction bug on our side.
+    """
+
+    SPOT_SAMPLE = "3300060358"
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_missing(self):
+        if not COG_JSON_DIR.exists():
+            pytest.skip("COG JSON directory missing")
+
+    def test_category_nodes_have_real_descriptive_names(self, cog_by_sample):
+        """A depth-1 node's name/category must be more than its own bare
+        letter id -- proves the NCBI category-description scrape actually
+        ran, not that the field just got filled with the id again."""
+        sid = self.SPOT_SAMPLE
+        if sid not in cog_by_sample:
+            pytest.skip()
+        bad = [
+            (k, e["name"])
+            for k, e in cog_by_sample[sid].items()
+            if isinstance(e, dict) and e.get("depth") == 1 and e["name"] == k
+        ]
+        assert not bad, f"category nodes whose name is just their own bare letter: {bad}"
+
+    def test_leaf_category_field_is_full_name_not_bare_letter(self, cog_by_sample):
+        """A depth-2 (COG id) node's category field must be the category's
+        real name, not its bare parent letter -- matches KEGG/Enzyme's
+        convention that `category` is always a human-readable name."""
+        sid = self.SPOT_SAMPLE
+        if sid not in cog_by_sample:
+            pytest.skip()
+        bad = [
+            (k, e["category"], e["parent_id"])
+            for k, e in cog_by_sample[sid].items()
+            if isinstance(e, dict) and e.get("depth") == 2 and e["category"] == e["parent_id"]
+        ]
+        assert not bad, f"COG entries whose category is just the bare parent letter: {bad[:5]}"
+
+    def test_category_depth1_self_referential_name_equals_category(self, cog_by_sample):
+        """Same convention KEGG's root nodes follow: a top-level node's own
+        name and category field must match (it IS its own category)."""
+        sid = self.SPOT_SAMPLE
+        if sid not in cog_by_sample:
+            pytest.skip()
+        bad = [
+            k for k, e in cog_by_sample[sid].items()
+            if isinstance(e, dict) and e.get("depth") == 1 and e["name"] != e["category"]
+        ]
+        assert not bad, f"category nodes where name != category: {bad}"
+
+    def test_no_category_name_is_a_known_bad_placeholder(self, cog_by_sample):
+        """Caught live: NCBI's own page for category X currently renders
+        "nan" instead of a real description -- an upstream data bug, not
+        ours, but one this pipeline shouldn't silently pass through into
+        something a user would see. If this starts failing because NCBI
+        fixed their page, that's fine -- update/remove the check then."""
+        sid = self.SPOT_SAMPLE
+        if sid not in cog_by_sample:
+            pytest.skip()
+        bad = [
+            (k, e["name"])
+            for k, e in cog_by_sample[sid].items()
+            if isinstance(e, dict) and e.get("depth") == 1 and e["name"].strip().lower() == "nan"
+        ]
+        assert not bad, f"category nodes with a placeholder/NaN name: {bad}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -720,13 +876,131 @@ class TestTaxonomyFormat:
         assert has, "No taxonomy entries have a populated 'scaffolds' dict"
 
 
+class TestTaxonomyLineageCollapseRemoved:
+    """
+    Regression coverage for E16 (docs/AUDIT.md): EGC_TAX_TREE.ipynb used to
+    collapse every consecutive repeated name in a raw lineage, not just a
+    trailing one -- checked directly against all 128 real .a.phylodist.txt
+    files before this fix: 7.6M of 71.1M lineage observations (10.7%) have
+    an internal (non-trailing) repeat, e.g. genus AND species both
+    "unclassified Flavobacteriaceae". Collapsing those silently deleted a
+    real rank position, shifting every rank below it one level too shallow.
+
+    Real anchor example, sample 3300060358 (independently confirmed present
+    in the raw .a.phylodist.txt before writing this test, not assumed):
+      Bacteria;Bacteroidetes;Flavobacteriia;Flavobacteriales;
+      Flavobacteriaceae;unclassified Flavobacteriaceae;
+      unclassified Flavobacteriaceae;Flavobacteriaceae bacterium AU392
+    Genus (rank 6) and species (rank 7) are both "unclassified
+    Flavobacteriaceae" -- the exact internal-repeat shape this fix targets.
+    """
+
+    SPOT_SAMPLE = "3300060358"
+
+    GENUS_KEY = "Bacteria;Bacteroidetes;Flavobacteriia;Flavobacteriales;Flavobacteriaceae;unclassified Flavobacteriaceae"
+    SPECIES_KEY = GENUS_KEY + ";unclassified Flavobacteriaceae"
+    STRAIN_KEY = SPECIES_KEY + ";Flavobacteriaceae bacterium AU392"
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_missing(self):
+        if not TAXONOMY_JSON_DIR.exists():
+            pytest.skip("Taxonomy JSON directory missing")
+
+    def _load_spot(self) -> dict:
+        path = TAXONOMY_JSON_DIR / f"{self.SPOT_SAMPLE}.tax.json"
+        if not path.exists():
+            pytest.skip(f"{path} not found")
+        return json.loads(path.read_text())
+
+    def test_internal_repeat_lineages_reach_their_full_raw_depth(self):
+        """General ground-truth check, not just the one hardcoded anchor
+        below: pulls real lineages with an internal (non-trailing) repeat
+        straight from the raw .a.phylodist.txt file -- independent of the
+        tree-builder's own logic -- and confirms each one's deepest real
+        segment lands in tax_tree at a depth equal to its RAW segment
+        count. This is the property the removed collapse used to break
+        (it silently produced a shallower depth); confirmed this test
+        actually discriminates old vs. new behavior, not just trivially
+        true either way -- a naive "depth == len(own key's segments)"
+        check turns out to hold under both the buggy and fixed builder
+        (they're always self-consistent, built from the same taxpath),
+        so it doesn't catch this bug at all. Comparing against the raw
+        file's real segment count is what actually catches it."""
+        phylodist_path = METAGENOME_SAMPLES_DIR / self.SPOT_SAMPLE / f"{self.SPOT_SAMPLE}.a.phylodist.txt"
+        if not phylodist_path.exists():
+            pytest.skip(f"{phylodist_path} not found")
+
+        data = self._load_spot()
+        checked = 0
+        bad = []
+        with open(phylodist_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 5:
+                    continue
+                taxpath = [p.strip() for p in parts[-1].split(";") if p.strip()]
+                repeat_positions = [i for i in range(1, len(taxpath)) if taxpath[i] == taxpath[i - 1]]
+                internal = [p for p in repeat_positions if p != len(taxpath) - 1]
+                if not internal:
+                    continue
+
+                full_key = ";".join(taxpath)
+                checked += 1
+                if full_key not in data:
+                    bad.append((full_key, "missing from tax_tree entirely"))
+                elif data[full_key]["depth"] != len(taxpath):
+                    bad.append((full_key, f"depth={data[full_key]['depth']}, raw segments={len(taxpath)}"))
+
+                if checked >= 200:  # real file has millions of rows; 200 real internal-repeat cases is plenty
+                    break
+
+        assert checked > 0, "no internal-repeat lineages found in this sample -- anchor assumption may be stale"
+        assert not bad, f"internal-repeat lineages not reaching full raw depth: {bad[:5]}"
+
+    def test_genus_and_species_both_unresolved_are_distinct_nodes(self):
+        """The real anchor case: genus and species share the identical
+        placeholder name -- post-fix, that's two distinct nodes (depths 6
+        and 7), not collapsed into one."""
+        data = self._load_spot()
+        if self.GENUS_KEY not in data or self.SPECIES_KEY not in data:
+            pytest.skip("anchor lineage not present in this regeneration")
+        assert data[self.GENUS_KEY]["depth"] == 6
+        assert data[self.SPECIES_KEY]["depth"] == 7
+        assert data[self.GENUS_KEY]["name"] == data[self.SPECIES_KEY]["name"] == "unclassified Flavobacteriaceae"
+        assert data[self.SPECIES_KEY]["parent"] == self.GENUS_KEY
+
+    def test_strain_reaches_its_real_depth_of_8_not_7(self):
+        """The actual bug: pre-fix, this strain node would have been
+        shifted to depth 7 (colliding with the species rank slot) because
+        the genus/species repeat ahead of it got collapsed away."""
+        data = self._load_spot()
+        if self.STRAIN_KEY not in data:
+            pytest.skip("anchor lineage not present in this regeneration")
+        assert data[self.STRAIN_KEY]["depth"] == 8
+        assert data[self.STRAIN_KEY]["parent"] == self.SPECIES_KEY
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 7. BRITE hierarchy correctness (KEGG only)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestKEGGBriteHierarchy:
     """
-    Verify that .ko.json hierarchy metadata matches ko00001.keg.
+    Verify that .ko.json's single-parent DISPLAY metadata (depth, category,
+    parent_id, parent_name -- one canonical parent per node, "last occurrence
+    in ko00001.keg wins", same as `brite_dict` below) is internally
+    consistent and matches the BRITE file under that same last-occurrence
+    convention.
+
+    This class does NOT and CANNOT catch E14 (the multi-parent EGC/scaffold
+    rollup bug) -- `brite_dict` deliberately re-implements the same
+    single-parent-wins parsing the pre-fix notebook used, so a node's
+    metadata will always "match" it regardless of whether the real rollup
+    (which needs EVERY parent, not just the last one) is correct. That
+    real regression coverage lives in TestKEGGHierarchyRollup, which checks
+    real gene/scaffold ground truth instead of re-deriving from the same
+    parser being tested. Audit docs/AUDIT.md Part 4/T1 flagged this
+    distinction explicitly.
 
     K00844 (hexokinase) is the canonical spot-check because its chain is in
     the first lines of the .keg file:
@@ -803,7 +1077,9 @@ class TestKEGGBriteHierarchy:
             curr = entry["parent_id"]
 
     def test_json_matches_brite_file_for_spot_ko(self, brite_dict):
-        """K00844 metadata in .ko.json must exactly match brite_dict."""
+        """K00844's single-parent DISPLAY metadata in .ko.json must exactly
+        match brite_dict's same last-occurrence-wins parse. NOT a check of
+        the multi-parent EGC rollup -- see TestKEGGHierarchyRollup for that."""
         data = self._load_spot()
         if self.SPOT_KO not in data or self.SPOT_KO not in brite_dict:
             pytest.skip()
@@ -814,7 +1090,9 @@ class TestKEGGBriteHierarchy:
                 f"{self.SPOT_KO}.{field}: json={entry[field]!r} brite={brite[field]!r}"
 
     def test_all_json_nodes_match_brite_file(self, kegg_by_sample, brite_dict):
-        """Every node in the spot sample whose ID is in brite_dict must match exactly."""
+        """Every node's single-parent DISPLAY metadata in the spot sample
+        must match brite_dict's same last-occurrence-wins parse. NOT a check
+        of the multi-parent EGC rollup -- see TestKEGGHierarchyRollup."""
         sid = self.SPOT_SAMPLE
         if sid not in kegg_by_sample:
             pytest.skip()
@@ -1086,17 +1364,26 @@ class TestCOGEGCVsJGI:
 
     def test_all_jgi_cogs_spot_sample_pass_rate(self, cog_by_sample, cog_jgi_table):
         """
-        At least 80% of COG entries must match JGI within 20% tolerance.
+        Every COG entry in the spot sample must match JGI exactly (within
+        egc_within_tolerance's near-zero float/int noise floor).
 
-        COG has higher scaffold-avg vs per-gene-coverage divergence than KEGG
-        because many COGs have multiple paralogs on the same scaffold.  A 20%
-        tolerance captures ~86% of entries; the remaining ~14% are paralog-heavy
-        COGs where scaffold-level averaging inflates EGC relative to JGI's per-gene
-        measurement.  This is a known methodological difference, not a bug.
+        Historical note (audit Part 4/T1): this test used to allow a 20%
+        divergence tolerance with an 80% pass-rate gate, on the theory that
+        paralog-heavy COGs (multiple genes on one scaffold) would legitimately
+        diverge from JGI's per-gene coverage due to this pipeline's
+        scaffold-level averaging (see conftest.py's EGC methodology note).
+        That gate silently tolerated up to 20% of COG values being wrong,
+        which could mask a real regression (e.g. a wrong depth denominator)
+        as long as it didn't affect more than 20% of entries.
 
-        The 80% pass-rate threshold catches any systematic regressions (e.g. a
-        wrong depth denominator or off-by-one in gene counting) while tolerating
-        the expected paralog divergence.
+        Re-verified directly against real data before tightening this:
+        COG_ABS_FLOOR/PCT_TOLERANCE (conftest.py) already reflect exact-match
+        expectations, and checking the spot sample plus 4 others gives 0
+        mismatches out of 4,475-4,545 COG entries each (100% match) -- the
+        20%-divergence paralog scenario this test's old docstring described
+        does not actually occur in the current, regenerated dataset. Zero
+        tolerance for failures is therefore the correct gate: any future
+        mismatch here is a real regression, not expected paralog noise.
         """
         sid = "3300060590"
         if sid not in cog_by_sample:
@@ -1125,9 +1412,8 @@ class TestCOGEGCVsJGI:
                     )
         total = passed + failed
         assert total > 0, "No COG IDs matched between JGI table and JSON"
-        pass_rate = passed / total
-        assert pass_rate >= 0.80, (
-            f"COG pass rate {pass_rate:.1%} ({passed}/{total}) below 80% threshold. "
+        assert failed == 0, (
+            f"{failed}/{total} COG entries mismatch JGI (100% required). "
             f"Sample failures:\n" + "\n".join(failures)
         )
 

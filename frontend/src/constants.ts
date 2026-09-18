@@ -175,10 +175,13 @@ export function expandParentLabel(parent: string, source: string): string {
   if (source === 'taxonomy') {
     // parent is the ancestor's own full lineage-prefix (e.g.
     // "Bacteria;Proteobacteria;Alphaproteobacteria") — show just its bare
-    // rank label, not the whole chain.
+    // rank label, not the whole chain. segments[0] is the domain root,
+    // which the lineage prefix always carries regardless of how deep it
+    // goes -- see taxonomyRankLabel's comment for why Eukaryota is excluded
+    // from the fixed-depth ladder (W7).
     const segments = parent.split(';')
     const bareName = segments[segments.length - 1]
-    const rank = TAXONOMY_RANK_NAMES[segments.length]
+    const rank = segments[0] !== 'Eukaryota' ? TAXONOMY_RANK_NAMES[segments.length] : undefined
     return rank ? `${bareName} (${rank})` : bareName
   }
 
@@ -202,9 +205,17 @@ export const TAXONOMY_RANK_NAMES: Record<number, string> = {
   8: 'Strain',
 }
 
-export function taxonomyRankLabel(depth: number | null): string {
+// domain: the taxon's domain root ("Bacteria" | "Archaea" | "Eukaryota" |
+// "Viruses"), when known -- e.g. via taxonomyDomainFromId(annotationId) or
+// a node/row's own `category` field. Optional and defaults to applying the
+// fixed-depth ladder: callers that only have a bare depth number with no
+// domain in scope (e.g. a rank-FILTER pill spanning many taxa of possibly
+// different, mixed domains at once) can't resolve this correctly either
+// way, so they're left on the old best-effort behavior rather than blocked
+// on passing something that isn't meaningfully available (W7).
+export function taxonomyRankLabel(depth: number | null, domain?: string | null): string {
   if (depth == null) return 'Unknown rank'
-  if (TAXONOMY_RANK_NAMES[depth]) {
+  if (domain !== 'Eukaryota' && TAXONOMY_RANK_NAMES[depth]) {
     return TAXONOMY_RANK_NAMES[depth]
   }
   return `Level ${depth}`

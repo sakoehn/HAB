@@ -16,6 +16,10 @@ Covers every function in that module:
   get_search_annotations()         -- backs /search/annotations.
   get_mappings_sql()               -- backs /mappings/search.
   get_taxa_at_rank_sql()           -- backs /taxonomy/export.
+  get_cog_children_sql()           -- backs /cog/children (BRITE-hierarchy popup).
+  get_kegg_path_sql() / get_enzyme_path_sql() / get_cog_path_sql() -- back
+                                       /{source}/path (auto-expand+highlight
+                                       in the hierarchy popup).
 
 Since the taxonomy_egc_homonym_bug fix (2026-09-02), taxonomy annotation_id
 is the full lineage-prefix (e.g. "Bacteria;Bacteroidetes"), not a bare taxon
@@ -40,13 +44,18 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"))
 
 from api.cache_sql import (
+    _cog_node_depth,
     _enzyme_node_exists,
     _kegg_node_depth,
     get_all_sample_names_sql,
     get_annotation_scaffolds_sql,
     get_annotation_series_sql,
+    get_cog_children_sql,
+    get_cog_path_sql,
     get_enzyme_children_sql,
+    get_enzyme_path_sql,
     get_kegg_children_sql,
+    get_kegg_path_sql,
     get_taxa_at_rank_sql,
     get_taxonomy_children_sql,
     get_top_annotations_from_catalog_sql,
@@ -702,6 +711,227 @@ def test_enzyme_paths_every_intermediate_node_has_real_children(conn):
         }
         childless = ids - ids_with_children
         assert not childless, f"{level_col} nodes with no real children at {next_col}: {childless}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# get_cog_children_sql / _cog_node_depth / cog_paths -- same BRITE-popup
+# feature as the KEGG/Enzyme sections above, but only 2 real levels
+# (category letter -> specific COG id) -- a category has no further real
+# subdivision the way KEGG pathways or EC numbers do, so there's no
+# "intermediate node" case to test the way kegg_paths/enzyme_paths have.
+#
+# `cog_paths` was found completely empty (0 rows) during the audit that
+# added this section -- migrate_cog_paths_to_sql.py existed but had never
+# actually been run. Re-ran it (4,612 rows, matching annotation_catalog's
+# real depth=2 COG count exactly) before writing these tests, so every
+# value below is confirmed against the now-correctly-populated table, not
+# assumed from the migration script's own docstring.
+# ═══════════════════════════════════════════════════════════════════════════
+
+EXPECTED_COG_ROOT_IDS = [
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Z",
+]
+
+
+def test_cog_root_case_returns_the_25_real_categories(conn):
+    """No 'Y' category -- COG's own lettering skips it; 25 real letters,
+    not the 26-letter alphabet."""
+    children = get_cog_children_sql(conn, None)
+    assert sorted(c["annotation_id"] for c in children) == EXPECTED_COG_ROOT_IDS
+    assert all(c["depth"] == 1 for c in children)
+    # a category is its own category name, same convention as KEGG's roots
+    assert all(c["name"] == c["category"] for c in children)
+
+
+def test_cog_category_h_children_include_known_real_cog_ids(conn):
+    """H (Coenzyme transport and metabolism) is COG0001's real category,
+    independently confirmed via annotation_catalog's own parent column
+    before this test was written -- 239 real children total, too many to
+    hardcode, so this is a subset check."""
+    children = get_cog_children_sql(conn, "H", depth=1)
+    ids = {c["annotation_id"] for c in children}
+    assert "COG0001" in ids
+    assert all(c["depth"] == 2 for c in children)
+    assert all(c["category"] == "Coenzyme transport and metabolism" for c in children)
+
+
+def test_cog_children_depth_auto_resolves_from_lookup(conn):
+    """No depth passed -- must derive it via _cog_node_depth's column-
+    membership check, since (unlike Enzyme) a COG category letter carries
+    no structural information in its own text either."""
+    children_no_depth = get_cog_children_sql(conn, "H")
+    children_depth = get_cog_children_sql(conn, "H", depth=1)
+    assert children_no_depth == children_depth
+    assert "COG0001" in {c["annotation_id"] for c in children_no_depth}
+
+
+def test_cog_leaf_id_has_no_children(conn):
+    """COG0001 (depth=2) is a real leaf -- must return [], not raise."""
+    assert get_cog_children_sql(conn, "COG0001") == []
+
+
+def test_cog_unknown_id_returns_empty_list_not_none(conn):
+    assert get_cog_children_sql(conn, "NOT_A_REAL_COG_ID") == []
+
+
+def test_cog_children_sql_returns_structure_only_no_egc_fields(conn):
+    """Same "structure only" promise as /kegg/children and /enzyme/children."""
+    for entry in (
+        get_cog_children_sql(conn, None)
+        + get_cog_children_sql(conn, "H", depth=1)
+    ):
+        assert "egc" not in entry
+        assert "norm_egc" not in entry
+
+
+def test_cog_node_depth_resolves_both_real_levels(conn):
+    assert _cog_node_depth(conn, "H") == 1
+    assert _cog_node_depth(conn, "COG0001") == 2
+
+
+def test_cog_node_depth_none_for_unknown_id(conn):
+    assert _cog_node_depth(conn, "NOT_A_REAL_COG_ID") is None
+
+
+def test_cog_paths_every_node_id_is_a_real_annotation(conn):
+    """Same guarantee as kegg_paths/enzyme_paths: every id cog_paths
+    contains must correspond to a real COG annotation in
+    annotation_catalog -- the join that builds cog_paths reads
+    annotation_catalog directly, so this also catches a migration script
+    regression that started reading from a different source."""
+    real_ids = {
+        row[0] for row in conn.execute("SELECT annotation_id FROM annotation_catalog WHERE source = 'cog'")
+    }
+    path_ids = set()
+    for col in ("a_id", "b_id"):
+        path_ids.update(
+            row[0] for row in conn.execute(f"SELECT DISTINCT {col} FROM cog_paths WHERE {col} IS NOT NULL")
+        )
+    assert path_ids.issubset(real_ids)
+
+
+def test_cog_paths_row_count_matches_annotation_catalog_depth2_count(conn):
+    """cog_paths is one row per real COG id (not per category) -- its total
+    row count must exactly match annotation_catalog's real depth=2 COG
+    count, confirming the join neither drops nor duplicates rows."""
+    catalog_count = conn.execute(
+        "SELECT COUNT(*) FROM annotation_catalog WHERE source = 'cog' AND depth = 2"
+    ).fetchone()[0]
+    paths_count = conn.execute("SELECT COUNT(*) FROM cog_paths").fetchone()[0]
+    assert paths_count == catalog_count
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# get_kegg_path_sql / get_enzyme_path_sql / get_cog_path_sql -- ancestor
+# path lookup for the hierarchy popup's auto-expand-and-highlight feature.
+#
+# K00844 is the deliberate choice for the KEGG case: it's the same known
+# multi-parent example (14 real occurrences in kegg_paths) used throughout
+# this audit's E14 work. annotation_catalog.parent alone would resolve it
+# to an arbitrary last-occurrence-wins parent ("Brite Hierarchies", id
+# 04131 -- confirmed by direct query while designing this function); these
+# tests confirm get_kegg_path_sql instead returns the file-order-first
+# real path (Metabolism > Carbohydrate metabolism > Glycolysis /
+# Gluconeogenesis), which is what a user opening this popup from a real
+# EGC chart would actually expect to see.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_kegg_path_resolves_multiparent_node_to_all_14_real_occurrences(conn):
+    result = get_kegg_path_sql(conn, "K00844")
+    assert result is not None
+    assert result["path_count"] == 14
+    assert len(result["paths"]) == 14
+
+    first = result["paths"][0]
+    ids = [node["annotation_id"] for node in first]
+    assert ids == ["09100", "09101", "00010", "K00844"]
+    depths = [node["depth"] for node in first]
+    assert depths == [1, 2, 3, 4]
+
+
+def test_kegg_path_includes_distinct_real_alternate_pathways(conn):
+    """K00844's other real parents must also be present, each as its own
+    distinct path -- not just the first/primary one. Confirmed against
+    real data that these 14 genuinely span different top-level branches,
+    not just different pathways within Metabolism (Signal transduction,
+    Human Diseases, and Brite Hierarchies -- the arbitrary last-occurrence
+    "display" parent annotation_catalog.parent would have picked -- are
+    all real, distinct entries here too)."""
+    result = get_kegg_path_sql(conn, "K00844")
+    pathway_names = {p[-2]["name"] for p in result["paths"]}  # second-to-last = the pathway itself
+    top_branches   = {p[0]["annotation_id"] for p in result["paths"]}
+
+    assert any("Fructose and mannose metabolism" in n for n in pathway_names)
+    assert any("Galactose metabolism" in n for n in pathway_names)
+    # Spans multiple real top-level branches, not just Metabolism.
+    assert "09100" in top_branches  # Metabolism
+    assert "09160" in top_branches  # Human Diseases
+    assert "09180" in top_branches  # Brite Hierarchies -- the last-occurrence "display" parent
+
+
+def test_kegg_path_root_to_leaf_names_are_real(conn):
+    result = get_kegg_path_sql(conn, "K00844")
+    names = {node["annotation_id"]: node["name"] for node in result["paths"][0]}
+    assert names["09100"] == "Metabolism"
+    assert names["09101"] == "Carbohydrate metabolism"
+    assert "Glycolysis" in names["00010"]
+
+
+def test_kegg_path_for_a_category_node_stops_at_its_own_depth(conn):
+    """Requesting the path for a mid-tree node (not a leaf KO) must return
+    only the ancestors up to and including that node, not descend further."""
+    result = get_kegg_path_sql(conn, "09101")
+    ids = [node["annotation_id"] for node in result["paths"][0]]
+    assert ids == ["09100", "09101"]
+
+
+def test_kegg_path_deduplicates_a_mid_depth_node_to_one_distinct_path(conn):
+    """Glycolysis (00010, depth 3) has 87 raw rows in kegg_paths (one per
+    real child KO occurrence), but exactly 1 distinct ancestor path up to
+    its own depth -- without GROUP BY dedup this would wildly overcount."""
+    result = get_kegg_path_sql(conn, "00010")
+    assert result["path_count"] == 1
+    assert len(result["paths"]) == 1
+
+
+def test_kegg_path_unknown_id_returns_none(conn):
+    assert get_kegg_path_sql(conn, "NOT_A_REAL_KEGG_ID") is None
+
+
+def test_enzyme_path_single_real_parent_has_path_count_one(conn):
+    result = get_enzyme_path_sql(conn, "1.1.1.1")
+    assert result is not None
+    assert result["path_count"] == 1
+    assert len(result["paths"]) == 1
+    ids = [node["annotation_id"] for node in result["paths"][0]]
+    assert ids == ["1", "1.1", "1.1.1", "1.1.1.1"]
+
+
+def test_enzyme_path_unknown_id_returns_none(conn):
+    assert get_enzyme_path_sql(conn, "NOT_A_REAL_EC_ID") is None
+
+
+def test_enzyme_path_malformed_dot_count_returns_none(conn):
+    assert get_enzyme_path_sql(conn, "1.1.1.1.1") is None
+
+
+def test_cog_path_single_real_category_has_path_count_one(conn):
+    result = get_cog_path_sql(conn, "COG0001")
+    assert result is not None
+    assert result["path_count"] == 1
+    assert len(result["paths"]) == 1
+    ids = [node["annotation_id"] for node in result["paths"][0]]
+    assert ids == ["H", "COG0001"]
+
+
+def test_cog_path_for_category_root_is_just_itself(conn):
+    result = get_cog_path_sql(conn, "H")
+    assert result["paths"] == [[{"annotation_id": "H", "name": "Coenzyme transport and metabolism", "depth": 1}]]
+
+
+def test_cog_path_unknown_id_returns_none(conn):
+    assert get_cog_path_sql(conn, "NOT_A_REAL_COG_ID") is None
 
 
 # ═══════════════════════════════════════════════════════════════════════════

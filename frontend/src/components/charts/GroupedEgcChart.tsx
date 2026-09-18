@@ -33,6 +33,31 @@ type SeriesEntry = {
   color:        string
 }
 
+// buildGroupedEgcCsvRows
+// Exported so tests can exercise the real CSV row shape directly (W18).
+// The value column is named from the active metric, with metric/
+// standardized/smoothed recorded on every row -- was hardcoded "egc" with
+// no record of which transform (metric swap, z-score, LOWESS smoothing)
+// was applied.
+export function buildGroupedEgcCsvRows(
+  points:      { datetime: string; egc: number | null; tide_wl?: number | null }[],
+  groupLabel:  string,
+  metric:      ChartMetric,
+  standardize: boolean,
+  smoothed:    boolean,
+  showTide:    boolean,
+): Record<string, unknown>[] {
+  return points.map(d => ({
+    group:        groupLabel,
+    date:         d.datetime,
+    [metric]:     d.egc,
+    metric,
+    standardized: standardize,
+    smoothed,
+    ...(showTide ? { tide_predicted_wl_m: d.tide_wl } : {}),
+  }))
+}
+
 export function GroupedEgcChart({
   allSeries,
   groupLabel,
@@ -254,12 +279,7 @@ export function GroupedEgcChart({
   }
 
   const handleExportCsv = () => downloadCsv(
-    processedPoints.map(d => ({
-      group:    groupLabel,
-      date:     d.datetime,
-      egc:      d.egc,
-      ...(showTide ? { tide_predicted_wl_m: d.tide_wl } : {}),
-    })),
+    buildGroupedEgcCsvRows(processedPoints, groupLabel, metric, standardize, smoothed, showTide),
     `${groupLabel}_grouped_egc.csv`,
   )
 

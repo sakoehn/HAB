@@ -68,13 +68,17 @@ describe('TaxonomyTree — rendering', () => {
     expect(screen.getByText('Phylum')).toBeInTheDocument()
   })
 
-  it('uses the same rank ladder for Eukaryota as every other domain', async () => {
+  it('W7: Eukaryota gets a generic "Level N" label, not the prokaryote ladder', async () => {
+    // Eukaryota lineages carry extra NCBI ranks that don't fit the fixed
+    // 8-level ladder (Domain..Strain) the other 3 domains use, so depth 2
+    // must NOT be labelled "Phylum" here the way it would be for Bacteria.
     mockFetch.mockResolvedValue(jsonResponse({
       data: [{ annotation_id: 'Chordata', name: 'Chordata', depth: 2, category: 'Eukaryota' }],
     }))
     render(<TaxonomyTree rootId="Eukaryota" excludedIds={new Set()} onToggleExclude={vi.fn()} />)
 
-    expect(await screen.findByText('Phylum')).toBeInTheDocument()
+    expect(await screen.findByText('Level 2')).toBeInTheDocument()
+    expect(screen.queryByText('Phylum')).not.toBeInTheDocument()
   })
 })
 
@@ -124,5 +128,46 @@ describe('TaxonomyTree — exclusion', () => {
     await screen.findByText('Proteobacteria')
 
     expect(screen.getByTitle('Cannot drill into an excluded taxon')).toBeDisabled()
+  })
+
+  it('W19: a descendant of an already-excluded ancestor has its checkbox disabled', async () => {
+    // Simulates the real gap the chevron-disable alone doesn't cover: this
+    // child was already visible/loaded from before its ancestor
+    // ("Bacteria;Proteobacteria") got excluded, so nothing else stops the
+    // user from also checking it -- which would double-subtract it.
+    mockFetch.mockResolvedValue(jsonResponse({
+      data: [{
+        annotation_id: 'Bacteria;Proteobacteria;Alphaproteobacteria',
+        name: 'Alphaproteobacteria', depth: 3, category: 'Bacteria',
+      }],
+    }))
+    render(
+      <TaxonomyTree
+        rootId="Bacteria;Proteobacteria"
+        excludedIds={new Set(['Bacteria;Proteobacteria'])}
+        onToggleExclude={vi.fn()}
+      />,
+    )
+    await screen.findByText('Alphaproteobacteria')
+
+    expect(screen.getByTitle(
+      'Already excluded via an ancestor taxon -- excluding it separately would subtract it twice',
+    )).toBeDisabled()
+  })
+
+  it('W19: a sibling of an excluded taxon (not a descendant) keeps its checkbox enabled', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({
+      data: [{ annotation_id: 'Bacteria;Firmicutes', name: 'Firmicutes', depth: 2, category: 'Bacteria' }],
+    }))
+    render(
+      <TaxonomyTree
+        rootId="Bacteria"
+        excludedIds={new Set(['Bacteria;Proteobacteria'])}
+        onToggleExclude={vi.fn()}
+      />,
+    )
+    await screen.findByText('Firmicutes')
+
+    expect(screen.getByTitle('Exclude this taxon (and everything under it) from the total')).not.toBeDisabled()
   })
 })

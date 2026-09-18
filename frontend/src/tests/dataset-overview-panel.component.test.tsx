@@ -1,0 +1,148 @@
+/**
+ * dataset-overview-panel.component.test.tsx
+ * ===========================================
+ * Component tests for DatasetOverviewPanel (pages/ExplorePage.tsx),
+ * covering two "Also noted" fixes from docs/AUDIT.md's Part 3 audit:
+ *
+ *   1. The "showing first N" truncation warning checked `rows.length === 500`
+ *      while the actual fetch used `limit=200` -- the check could never
+ *      fire, so a truncated "top annotations" list looked like a complete
+ *      one with no indication of truncation.
+ *
+ *   2. The top-5-groups temporal chart fetches at most 40 member
+ *      annotations' series combined across all 5 groups, silently dropping
+ *      any past that -- a later group whose members all got cut could show
+ *      a summed total of zero with no explanation. Now surfaced as an
+ *      explicit warning instead of being silent.
+ *
+ * Run: npx vitest run src/tests/dataset-overview-panel.component.test.tsx
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+
+import { DatasetOverviewPanel } from '../pages/ExplorePage'
+import type { TopAnnotation } from '../types'
+
+const mockFetch = vi.fn()
+vi.stubGlobal('fetch', mockFetch)
+
+function jsonResponse(data: unknown) {
+  return { ok: true, status: 200, json: async () => data }
+}
+
+beforeEach(() => {
+  mockFetch.mockReset()
+})
+
+function makeRow(id: string, parent: string, egc: number): TopAnnotation {
+  return {
+    annotation_id: id, name: id, parent, mean_egc: egc, max_egc: egc * 2, sample_count: 128,
+  }
+}
+
+async function loadOverview() {
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: /Load Overview/i }))
+  return user
+}
+
+describe('DatasetOverviewPanel — truncation warning threshold (200 vs 500)', () => {
+  it('shows the truncation note when exactly 200 rows come back (the real fetch limit)', async () => {
+    const rows = Array.from({ length: 200 }, (_, i) => makeRow(`K${i}`, `group${i % 5}`, 200 - i))
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) return Promise.resolve(jsonResponse({ data: rows, sample_count: 128 }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    await loadOverview()
+
+    await waitFor(() => {
+      expect(screen.getByText(/showing first 200/i)).toBeInTheDocument()
+    })
+  })
+
+  it('does not show the truncation note when fewer than 200 rows come back', async () => {
+    const rows = Array.from({ length: 50 }, (_, i) => makeRow(`K${i}`, `group${i % 5}`, 50 - i))
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) return Promise.resolve(jsonResponse({ data: rows, sample_count: 128 }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    await loadOverview()
+
+    await waitFor(() => {
+      expect(screen.queryByText(/loading/i)).not.toBeInTheDocument()
+    })
+    expect(screen.queryByText(/showing first/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('DatasetOverviewPanel — 40-annotation temporal-chart fetch cap', () => {
+  it('warns when the top 5 groups have more than 40 members combined', async () => {
+    // 5 groups x 10 members = 50 total, sorted so each group's sumEgc
+    // differs (top5Groups picks the top 5 by sumEgc, which here is all of them).
+    const rows: TopAnnotation[] = []
+    for (let g = 0; g < 5; g++) {
+      for (let m = 0; m < 10; m++) {
+        rows.push(makeRow(`K${g}_${m}`, `group${g}`, 100 - g * 10 - m))
+      }
+    }
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve(jsonResponse({ data: rows, sample_count: 128 }))
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve(jsonResponse({
+          data: [{
+            source: 'kegg', sample: 's1', annotation_id: 'K0_0', name: 'K0_0',
+            timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '5/27/21 8:00' },
+            value: { egc: 10 },
+          }],
+        }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    const user = await loadOverview()
+
+    await waitFor(() => screen.getByRole('button', { name: /Load time series/i }))
+    await user.click(screen.getByRole('button', { name: /Load time series/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('overview-series-truncated-warning')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('overview-series-truncated-warning').textContent).toContain('50')
+  })
+
+  it('does not warn when the top 5 groups have 40 or fewer members combined', async () => {
+    const rows: TopAnnotation[] = []
+    for (let g = 0; g < 5; g++) {
+      for (let m = 0; m < 5; m++) {
+        rows.push(makeRow(`K${g}_${m}`, `group${g}`, 100 - g * 10 - m))
+      }
+    }
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve(jsonResponse({ data: rows, sample_count: 128 }))
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve(jsonResponse({
+          data: [{
+            source: 'kegg', sample: 's1', annotation_id: 'K0_0', name: 'K0_0',
+            timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '5/27/21 8:00' },
+            value: { egc: 10 },
+          }],
+        }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    const user = await loadOverview()
+
+    await waitFor(() => screen.getByRole('button', { name: /Load time series/i }))
+    await user.click(screen.getByRole('button', { name: /Load time series/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/Summed EGC over time/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('overview-series-truncated-warning')).not.toBeInTheDocument()
+  })
+})

@@ -36,7 +36,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"))
 
 from api.config import SQLITE_DB_PATH
-from api.cache_sql import get_mappings_sql
+from api.cache_sql import get_mappings_sql, _sort_group_concat
 
 pytestmark = pytest.mark.skipif(
     not os.path.exists(SQLITE_DB_PATH),
@@ -367,3 +367,67 @@ def test_search_values_correct(conn):
     assert matching_dict['kegg_id'] == "KO:K02112"
     assert matching_dict['cog_id'] == "COG0055"
     assert set(matching_dict['enzyme'].split(",")) == {"EC:7.1.2.2", "EC:7.2.2.1"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# W11 -- GROUP_CONCAT(DISTINCT ...) order determinism
+#
+# SQLite doesn't guarantee element order inside GROUP_CONCAT(DISTINCT ...);
+# search_mappings' unique_pairs dedup (FastAPI/api/routes.py) builds its key
+# directly from get_mappings_sql's cog_id/enzyme fields, so an order
+# difference between two rows with the exact same set of values would make
+# real duplicates look distinct and leak through. get_mappings_sql now
+# sorts these fields via _sort_group_concat before returning them.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_sort_group_concat_orders_values_alphabetically():
+    assert _sort_group_concat("EC:5.1.99.8,EC:1.13.11.81,EC:4.1.2.25") == "EC:1.13.11.81,EC:4.1.2.25,EC:5.1.99.8"
+
+
+def test_sort_group_concat_is_idempotent_on_already_sorted_input():
+    assert _sort_group_concat("EC:1.1.1.1,EC:2.2.2.2") == "EC:1.1.1.1,EC:2.2.2.2"
+
+
+def test_sort_group_concat_single_value_unchanged():
+    assert _sort_group_concat("COG0055") == "COG0055"
+
+
+def test_sort_group_concat_none_passes_through():
+    assert _sort_group_concat(None) is None
+
+
+def test_sort_group_concat_empty_string_passes_through():
+    assert _sort_group_concat("") == ""
+
+
+@pytest.mark.slow
+def test_real_multi_enzyme_gene_returns_deterministically_sorted_order(conn):
+    """COG1539 (independently confirmed to have a real 3-value enzyme
+    field) must come back in the same, sorted order every call -- not
+    whatever order GROUP_CONCAT's internal row processing happened to use."""
+    first  = get_mappings_sql(conn, "cog", "COG1539")
+    second = get_mappings_sql(conn, "cog", "COG1539")
+    multi_first  = [r["enzyme"] for r in first if r["enzyme"] and "," in r["enzyme"]]
+    multi_second = [r["enzyme"] for r in second if r["enzyme"] and "," in r["enzyme"]]
+    assert multi_first, "expected at least one multi-value enzyme row for COG1539"
+    assert multi_first == multi_second
+    for value in multi_first:
+        parts = value.split(",")
+        assert parts == sorted(parts), f"enzyme field not sorted: {value}"
+
+
+@pytest.mark.slow
+def test_unique_pairs_dedup_key_is_stable_across_repeated_calls(conn):
+    """Simulates search_mappings' own dedup key construction directly
+    against real rows -- the same logical set of rows must produce the
+    exact same set of dedup keys on repeated calls, which only holds if
+    the GROUP_CONCAT fields feeding the key are themselves deterministic."""
+    def dedup_keys(rows):
+        return {
+            f"{r['taxonomy']}|{r['kegg_id']}|{r['enzyme']}|{r['cog_id']}"
+            for r in rows
+        }
+
+    first  = get_mappings_sql(conn, "cog", "COG1539")
+    second = get_mappings_sql(conn, "cog", "COG1539")
+    assert dedup_keys(first) == dedup_keys(second)

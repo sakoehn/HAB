@@ -14,16 +14,19 @@ Known real example used throughout: q="synthase" is a real cross-source
 substring, independently confirmed against the live database (cog=178,
 kegg=441, enzyme=296 distinct matches, taxonomy=0).
 
-Note: get_search_annotations()'s rows only have 10 keys (source,
-annotation_id, name, parent, depth, mean_egc, max_egc, mean_norm_egc,
-max_norm_egc, sample_count) -- unlike the JSON branch's per-row dict,
-which always adds "sample": "" and "timepoint": None (always-placeholder
-values, never real per-search-result data) plus a "value" field. Confirmed
-the frontend's LeftResultList.tsx never reads any of those three for
-search results, so this is a real but low-risk shape difference between
+Note: get_search_annotations()'s rows have 12 keys (source, annotation_id,
+name, parent, depth, mean_egc, max_egc, mean_norm_egc, max_norm_egc,
+sample_count, category, scaffold_count) -- unlike the JSON branch's per-row
+dict, which always adds "sample": "" and "timepoint": None (always-placeholder
+values, never real per-search-result data) plus a "value" field (which nests
+its own category/scaffolds/depth instead of exposing them top-level).
+Confirmed the frontend's LeftResultList.tsx never reads sample/timepoint/value
+for search results, so this is a real but low-risk shape difference between
 backends, not something this test pretends doesn't exist. `depth` was
 added alongside the taxonomy_egc_homonym_bug fix so search results can
-show taxonomic rank.
+show taxonomic rank. `category`/`scaffold_count` were added for W5 (the
+Annotation Lookup detail card read them from a nested `value` object the
+SQL branch never populated, so those two fields silently rendered blank).
 
 Run:
     # in FastAPI/.env or as an env var: DATA_BACKEND=sql
@@ -80,13 +83,14 @@ def client():
 EXPECTED_ROW_KEYS = {
     "source", "annotation_id", "name", "parent", "depth",
     "mean_egc", "max_egc", "mean_norm_egc", "max_norm_egc", "sample_count",
+    "category", "scaffold_count",
 }
 
 
 @sql_route_required
 def test_search_returns_correct_shape(client):
     """Response envelope has the expected top-level keys, and every row in
-    `data` has exactly get_search_annotations()'s 9 fields -- see the
+    `data` has exactly get_search_annotations()'s 12 fields -- see the
     module docstring for why this deliberately does NOT include
     sample/timepoint/value the way the JSON branch's rows do."""
     resp = client.get(

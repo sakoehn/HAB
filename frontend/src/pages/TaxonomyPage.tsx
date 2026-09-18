@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { AnnotationItem, ApiStatus, SeriesCache } from '../types'
 import { apiFetch, downloadCsv } from '../utils/api'
-import { computeExclusionSeries, computeChartTitle, bareTaxonName } from '../utils/taxonomy'
+import { computeExclusionSeries, computeChartTitle, bareTaxonName, taxonomyDomainFromId } from '../utils/taxonomy'
 import { TAXONOMY_RANK_NAMES, taxonomyRankLabel } from '../constants'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
 import { ChartErrorBoundary } from '../components/ui/ChartErrorBoundary'
@@ -177,8 +177,17 @@ export function TaxonomyPage({
   const rootStatus: ApiStatus = rootEntry?.status ?? 'idle'
   const rootData   = rootEntry?.data ?? []
 
-  const excludedList  = [...state.excludedIds]
-  const excludedReady = excludedList.every(id => cache[`${id}::taxonomy`]?.status === 'ok')
+  const excludedList     = [...state.excludedIds]
+  const excludedStatuses = excludedList.map(id => cache[`${id}::taxonomy`]?.status ?? 'idle')
+  // W19: 'loading' and 'error' were previously both just "not ready", so a
+  // failed exclusion fetch was visually indistinguishable from one still in
+  // flight -- the chart silently fell back to the unmodified full series
+  // while the title still claimed the exclusion was applied. These are now
+  // tracked separately so a failure can be surfaced explicitly instead.
+  const excludedLoaded = excludedList.filter((_, i) => excludedStatuses[i] === 'ok')
+  const excludedFailed = excludedList.filter((_, i) => excludedStatuses[i] === 'error')
+  const excludedPending = excludedList.filter((_, i) =>
+    excludedStatuses[i] !== 'ok' && excludedStatuses[i] !== 'error')
 
   const chartSeries = useMemo(() => {
     if (!state.rootId || rootStatus !== 'ok') return []
@@ -197,25 +206,30 @@ export function TaxonomyPage({
       source:       'taxonomy',
     }
 
-    if (excludedList.length === 0 || !excludedReady) return [full]
+    // Only wait on exclusions still genuinely in flight -- a failed one
+    // never becomes 'ok', so waiting on it too would hang the chart on
+    // [full] forever with no explanation (the actual W19 bug). Once every
+    // exclusion has settled (ok or error), show whatever succeeded.
+    if (excludedList.length === 0 || excludedPending.length > 0) return [full]
+    if (excludedLoaded.length === 0) return [full] // every exclusion failed
 
-    const excludedSeriesArrays = excludedList.map(id => cache[`${id}::taxonomy`]?.data ?? [])
+    const excludedSeriesArrays = excludedLoaded.map(id => cache[`${id}::taxonomy`]?.data ?? [])
     // annotationId just needs to be distinct from the root's own (see
     // computeExclusionSeries' doc comment) — MultiEgcChart's legend shows
     // .name, not annotationId, for taxonomy series, so this doesn't need to
     // be human-readable itself.
-    const minusLabel = `${rootName} (minus ${excludedList.length} exclusion${excludedList.length !== 1 ? 's' : ''})`
+    const minusLabel = `${rootName} (minus ${excludedLoaded.length} exclusion${excludedLoaded.length !== 1 ? 's' : ''})`
     const minus = {
       annotationId: `${state.rootId}__minus`,
       name:         minusLabel,
-      data:         computeExclusionSeries(rootData, excludedSeriesArrays, `${state.rootId}__excl`, null),
+      data:         computeExclusionSeries(rootData, excludedLoaded, excludedSeriesArrays, `${state.rootId}__excl`, null),
       color:        '#D55E00',
       source:       'taxonomy',
       scaffoldsDisabled: true
     }
     return [full, minus]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.rootId, rootStatus, rootData, excludedReady, excludedList.join(',')])
+  }, [state.rootId, rootStatus, rootData, excludedLoaded.join(','), excludedPending.length])
 
   return (
     <div className="page-fade">
@@ -290,7 +304,7 @@ export function TaxonomyPage({
                         letterSpacing: '.06em',
                         flexShrink:    0,
                       }}>
-                        {taxonomyRankLabel(r.depth ?? null)}
+                        {taxonomyRankLabel(r.depth ?? null, taxonomyDomainFromId(r.annotation_id))}
                       </span>
                       <span
                         title={r.annotation_id}
@@ -418,13 +432,34 @@ export function TaxonomyPage({
                     />
                   </div>
 
+                  {/* W19: explicit, visible error state -- without this, a
+                      failed exclusion fetch looked identical to "still
+                      loading" and the chart silently fell back to the
+                      unmodified total while the title kept claiming the
+                      exclusion. */}
+                  {excludedFailed.length > 0 && (
+                    <div className="state-box error" style={{ padding: '10px 14px', marginBottom: 12 }}>
+                      Failed to load {excludedFailed.length} exclusion{excludedFailed.length !== 1 ? 's' : ''}:
+                      {' '}{excludedFailed.map(bareTaxonName).join(', ')}.
+                      {' '}The chart below excludes only the {excludedLoaded.length} that loaded successfully.
+                      {' '}
+                      <button
+                        className="btn sm ghost"
+                        onClick={() => excludedFailed.forEach(toggleExclude)}
+                        style={{ marginLeft: 4 }}
+                      >
+                        Remove failed exclusion{excludedFailed.length !== 1 ? 's' : ''}
+                      </button>
+                    </div>
+                  )}
+
                   <ChartErrorBoundary label="Taxonomy explorer">
                     <MultiEgcChart
                       series={chartSeries}
                       dateFrom={state.dateFrom}
                       dateTo={state.dateTo}
                       dataDateRange={dataDateRange}
-                      title={computeChartTitle(state.rootId, excludedList)}
+                      title={computeChartTitle(state.rootId, excludedLoaded)}
                       onGoScaffoldExplore={onGoScaffoldExplore}
                     />
                   </ChartErrorBoundary>

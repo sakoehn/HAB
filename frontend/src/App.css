@@ -2237,5 +2237,12 @@ select.field { cursor: pointer; }
   padding-left: 6px;
 }
 
+/* Hierarchy popup: the leaf row an auto-expand-to-path landed on. */
+.hier-node-highlighted {
+  background: var(--surface2);
+  border-left: 2px solid var(--teal);
+  padding-left: 2px;
+}
+
 
 

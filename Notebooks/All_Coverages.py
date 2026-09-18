@@ -1,14 +1,16 @@
 import csv, json
 from pathlib import Path
 
-with open(r'C:\Users\sakoehn\Desktop\JGI\sample_names.txt') as f:
+BASE_DIR = Path(__file__).parent.parent  # repo root -- this file lives in Notebooks/
+
+with open(BASE_DIR / 'sample_names.txt') as f:
     samples = [sample.strip() for sample in f]
 
 
-allfold = {sample: {} for sample in samples} 
+allfold = {sample: {} for sample in samples}
 
 for tp in samples:
-    base = Path(r"C:\Users\sakoehn\Desktop\JGI\Metagenome_Samples")
+    base = BASE_DIR / "Metagenome_Samples"
     filename = base / tp / f"{tp}.a.depth.txt"
     total_cov = 0
 

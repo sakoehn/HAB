@@ -9,7 +9,7 @@ Responsibilities (only)
 - Register CORS middleware.
 - Mount the frontend static files (production mode).
 - Define the lifespan hook that warms caches and builds indexes.
-- Include routers from api/routes.py and api/correlation.py.
+- Include routers from api/routes.py and api/correlation_sql.py.
 
 All business logic lives in the api/ package.
 
@@ -35,7 +35,7 @@ from api.cache import (
 from api.config import FRONTEND_DIST, DATA_BACKEND
 from api.index import build_mapping_index, build_search_index
 from api import index as index_module
-from api import routes, correlation, correlation_sql
+from api import routes, correlation_sql
 from api.correlation_loaders import assert_sample_order_is_trustworthy, load_sample_order
 from api.db import connect_to_sql, close_sql_connection
 
@@ -106,7 +106,6 @@ app.add_middleware(
 # first — a "/" mount catches every path, including /status, /timepoints, etc.
 
 app.include_router(routes.router)
-app.include_router(correlation.router)
 app.include_router(correlation_sql.router)
 
 # Also register both under /api — the frontend's apiFetch always calls
@@ -116,7 +115,6 @@ app.include_router(correlation_sql.router)
 # in between), the browser hits /api/* unstripped, so it needs a matching
 # route too.
 app.include_router(routes.router, prefix="/api")
-app.include_router(correlation.router, prefix="/api")
 app.include_router(correlation_sql.router, prefix="/api")
 
 # Serve built frontend if present (production mode).

@@ -25,7 +25,7 @@ import type {
 import { SOURCE_COLORS, SOURCE_TAG_CLS, CHART_COLORS, taxonomyAwarePrimaryLabel } from '../constants'
 import { nextColorForSource } from '../constants'
 import { apiFetch } from '../utils/api'
-import { extractEgc, extractNormEgc } from '../utils/stats'
+import { extractEgc, sumMembersByTimestamp } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
 import { ChartErrorBoundary }  from '../components/ui/ChartErrorBoundary'
 import { DateRangePicker }     from '../components/ui/DateRangePicker'
@@ -463,43 +463,25 @@ function CompareDrawer({
       // depth-normalised abundance on the same scale as single annotations.
       //
       // All member data is already in seriesCache — no new fetches.
-      // O(points × members): one pass per member, two accumulators per datetime.
-      const dtMap: Record<string, {
-        datetime: string
-        egc:      number
-        norm_egc: number
-        sample:   string
-      }> = {}
-
+      //
+      // Delegates to the shared sumMembersByTimestamp (utils/stats.ts) --
+      // this used to be its own separate implementation with its own
+      // separate bug (W9: sorted with a plain string compare on the raw
+      // "M/D/YY H:MM" datetime, wrong against the real API format --
+      // "6/10/21" sorts before "6/2/21" as text). ComparePage.tsx had a
+      // near-identical copy with the exact same bug; both now go through
+      // the one, already-sorted-correctly implementation. annotation_id is
+      // overridden to c.key afterward since this card wants a different
+      // annotation_id (c.key) than display name (c.label), which
+      // sumMembersByTimestamp's single groupLabel param doesn't support.
+      const seriesData: Record<string, AnnotationItem[]> = {}
       for (let i = 0; i < c.annotationIds.length; i++) {
-        const memberKey = `${c.annotationIds[i]}::${c.sources[i]}`
-        const cached    = seriesCache[memberKey]
-        if (cached?.status !== 'ok') continue
-
-        for (const d of cached.data) {
-          const dt = d.timepoint?.datetime
-          if (!dt) continue
-          const egc      = extractEgc(d.value)
-          const normEgc  = extractNormEgc(d.value)
-          if (egc === null) continue
-          if (!dtMap[dt]) dtMap[dt] = { datetime: dt, egc: 0, norm_egc: 0, sample: d.sample ?? '' }
-          dtMap[dt].egc      += egc
-          dtMap[dt].norm_egc += normEgc ?? 0
-        }
+        const cached = seriesCache[`${c.annotationIds[i]}::${c.sources[i]}`]
+        if (cached?.status === 'ok') seriesData[c.annotationIds[i]] = cached.data
       }
-
-      // Store both egc and norm_egc in value so MultiEgcChart's __norm
-      // lookup (used for L1 mode) finds the correct depth-normalised sum.
-      const summedData: AnnotationItem[] = Object.values(dtMap)
-        .sort((a, b) => a.datetime.localeCompare(b.datetime))
-        .map(pt => ({
-          annotation_id: c.key,
-          source:        c.sources[0] ?? 'kegg',
-          sample:        pt.sample,
-          name:          c.label,
-          timepoint:     { datetime: pt.datetime },
-          value:         { egc: pt.egc, norm_egc: pt.norm_egc },
-        } as AnnotationItem))
+      const summedData: AnnotationItem[] = sumMembersByTimestamp(
+        c.annotationIds, seriesData, c.label, c.sources[0] ?? 'kegg',
+      ).map(item => ({ ...item, annotation_id: c.key }))
 
       if (!summedData.length) return []
 

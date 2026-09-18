@@ -2,7 +2,8 @@
 // Pure functions for descriptive statistics and EGC value extraction.
 // No React imports — all functions are fully testable in Node.
 
-import type { DescStats } from '../types'
+import type { DescStats, AnnotationItem, TopAnnotation } from '../types'
+import { parseDateTime } from './format'
 
 // ── EGC value extraction ───────────────────────────────────────────────────
 // Annotation JSON values vary in shape across sources — some are bare numbers,
@@ -36,6 +37,37 @@ export function extractNormEgc(value: unknown): number | null {
     if (typeof v.NORM_EGC === 'number') return v.NORM_EGC
   }
   return null
+}
+
+// ── Annotation Lookup detail-card field resolution (W5) ─────────────────────
+// /search/annotations' SQL branch exposes category/scaffold_count/depth as
+// top-level fields on the row; the JSON branch nests the first two inside a
+// `value` object instead (`value.category`, `value.scaffolds`) and never
+// returns them top-level. These three helpers read whichever shape is
+// present so the same UI code works on both backends without caring which
+// one answered the request.
+//
+// scaffold_count carries slightly different meaning per backend: the JSON
+// backend's value.scaffolds reflects one specific sample (whichever the
+// in-memory index happened to build first), while the SQL backend's
+// scaffold_count is a real count from *a* sample chosen by an unordered
+// SQL LIMIT 1 -- neither promises "the earliest sample," despite older UI
+// copy implying that (see W5 in docs/AUDIT.md for why "earliest" wasn't
+// pursued: it would require a per-row correlated subquery ordered by
+// sample date, which isn't stored in SQL at all -- sample chronology lives
+// only in the separate TIMEPOINTS lookup on the Python side).
+
+export function resolveLookupCategory(r: TopAnnotation): string | null {
+  return r.category ?? r.value?.category ?? null
+}
+
+export function resolveLookupScaffoldCount(r: TopAnnotation): number | null {
+  if (r.scaffold_count != null) return r.scaffold_count
+  return r.value?.scaffolds ? Object.keys(r.value.scaffolds).length : null
+}
+
+export function resolveLookupDepth(r: TopAnnotation): number | null {
+  return r.depth ?? r.value?.depth ?? null
 }
 
 // ── computeStats ───────────────────────────────────────────────────────────
@@ -124,6 +156,71 @@ export function minMeanMax(
     max:     maxRow.value,
     maxDate: maxRow.date,
   }
+}
+
+// ── sumMembersByTimestamp ───────────────────────────────────────────────────
+// Collapse several member annotations' per-sample series into ONE series,
+// summing egc/norm_egc per timestamp across members -- for charts (e.g. the
+// Explore overview's "Summed EGC over time") that plot a functional group's
+// total, not an individual member.
+//
+// Downstream chart code (MultiEgcChart's baseRows) builds one row per
+// (annotationId, datetime) and assigns each datapoint by simple overwrite —
+// it was never meant to receive more than one raw datapoint per group per
+// timestamp. Handing it every member's raw datapoint under the same group
+// label/annotationId makes each overwrite the last, silently dropping every
+// member but one (W14). This function does the actual summation up front so
+// callers pass one already-aggregated datapoint per timestamp.
+//
+// memberAnnotationIds: the annotation_ids belonging to this group.
+// seriesData: per-annotation-id raw series, as returned by /series/annotations.
+// groupLabel: used as both annotation_id and name on the returned points.
+// source: passed through onto each returned point.
+//
+// Output is sorted chronologically by real parsed timestamp, not by
+// insertion/Map order (W9: a naive `.datetime.localeCompare(...)` string
+// sort -- the bug two near-duplicate copies of this summing logic each had
+// before being unified into this one function -- sorts wrong against the
+// real unpadded "M/D/YY H:MM" API format, e.g. "6/10/21" sorts before
+// "6/2/21" as text). Downstream chart code happens to re-sort again
+// defensively, but a caller reading this function's return value directly
+// (e.g. a CSV export) must not depend on that -- the data is sorted here,
+// at the source, once.
+
+export function sumMembersByTimestamp(
+  memberAnnotationIds: string[],
+  seriesData: Record<string, AnnotationItem[]>,
+  groupLabel: string,
+  source: string,
+): AnnotationItem[] {
+  const byDt = new Map<string, { timepoint: AnnotationItem['timepoint']; egc: number; normEgc: number; sawNorm: boolean }>()
+
+  for (const annId of memberAnnotationIds) {
+    const annData = seriesData[annId] ?? []
+    for (const d of annData) {
+      const dt = d.timepoint?.datetime ?? ''
+      let entry = byDt.get(dt)
+      if (!entry) {
+        entry = { timepoint: d.timepoint, egc: 0, normEgc: 0, sawNorm: false }
+        byDt.set(dt, entry)
+      }
+      const egc = extractEgc(d.value)
+      if (egc !== null) entry.egc += egc
+      const normEgc = extractNormEgc(d.value)
+      if (normEgc !== null) { entry.normEgc += normEgc; entry.sawNorm = true }
+    }
+  }
+
+  return Array.from(byDt.entries())
+    .sort(([dtA], [dtB]) => parseDateTime(dtA) - parseDateTime(dtB))
+    .map(([, v]) => ({
+      source,
+      sample:        '',
+      timepoint:     v.timepoint,
+      annotation_id: groupLabel,
+      name:          groupLabel,
+      value:         { egc: v.egc, norm_egc: v.sawNorm ? v.normEgc : null },
+    }))
 }
 
 // ── computeTrend ───────────────────────────────────────────────────────────

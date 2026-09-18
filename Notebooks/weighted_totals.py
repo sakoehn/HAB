@@ -50,10 +50,10 @@ from pathlib import Path
 from collections import defaultdict
 import pandas as pd
 import sys
-sys.path.append(r"C:\Users\sakoehn\Desktop\JGI\Notebooks")
-from All_Coverages import allfold
 
 BASE_DIR = Path(__file__).parent
+sys.path.append(str(BASE_DIR))
+from All_Coverages import allfold
 
 def get_sample_names():
     """Reads the canonical sample list from sample_names.txt -- the same

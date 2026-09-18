@@ -10,11 +10,41 @@
 import type { AnnotationItem } from '../types'
 import { extractEgc, extractNormEgc } from './stats'
 
+// isCoveredByAnotherExclusion / filterRedundantExclusions
+// Taxonomy egc values are hierarchical rollups -- a taxon's own egc is the
+// sum of everything under it (confirmed live: a domain's egc exactly
+// equals the sum of its direct child phyla's egc, no rounding gap).
+// Excluding a taxon therefore already zeroes out every one of its
+// descendants' contributions; also excluding one of those descendants
+// separately would subtract that descendant's egc a second time (W19).
+// Both helpers use the same rule (a taxonomy annotation_id IS its full
+// lineage-prefix, so "is X a descendant of Y" is just a prefix check) --
+// isCoveredByAnotherExclusion answers it for one id (used to decide
+// whether to disable a single tree-row checkbox), filterRedundantExclusions
+// for a whole list at once (used before summing).
+
+export function isCoveredByAnotherExclusion(
+  id: string,
+  excludedIds: Iterable<string>,
+): boolean {
+  for (const other of excludedIds) {
+    if (other !== id && id.startsWith(other + ';')) return true
+  }
+  return false
+}
+
+export function filterRedundantExclusions(excludedIds: string[]): string[] {
+  return excludedIds.filter(id => !isCoveredByAnotherExclusion(id, excludedIds))
+}
+
 // computeExclusionSeries
-// Given the scope root's full time series and the time series for each
-// excluded node, compute a synthetic "root minus exclusions" series by
-// joining on sample name and subtracting each excluded node's egc/norm_egc
-// from the root's, per timepoint.
+// Given the scope root's full time series, the ids of each excluded node
+// and their matching time series (parallel arrays), compute a synthetic
+// "root minus exclusions" series by joining on sample name and subtracting
+// each NON-REDUNDANT excluded node's egc/norm_egc from the root's, per
+// timepoint. A descendant of another already-excluded id in the list is
+// skipped (see filterRedundantExclusions above) rather than subtracted a
+// second time.
 //
 // Join key: `sample` — the stable identifier present on every AnnotationItem.
 //
@@ -32,11 +62,17 @@ import { extractEgc, extractNormEgc } from './stats'
 
 export function computeExclusionSeries(
   rootSeries: AnnotationItem[],
+  excludedIds: string[],
   excludedSeries: AnnotationItem[][],
   outputAnnotationId: string,
   outputName: string | null,
 ): AnnotationItem[] {
-  const excludedEgcBySample = excludedSeries.map(series => {
+  const effectiveSeries = excludedIds
+    .map((id, i) => ({ id, series: excludedSeries[i] }))
+    .filter(({ id }) => !isCoveredByAnotherExclusion(id, excludedIds))
+    .map(({ series }) => series)
+
+  const excludedEgcBySample = effectiveSeries.map(series => {
     const m = new Map<string, number>()
     for (const item of series) {
       const egc = extractEgc(item.value)
@@ -44,7 +80,7 @@ export function computeExclusionSeries(
     }
     return m
   })
-  const excludedNormBySample = excludedSeries.map(series => {
+  const excludedNormBySample = effectiveSeries.map(series => {
     const m = new Map<string, number>()
     for (const item of series) {
       const norm = extractNormEgc(item.value)
@@ -62,7 +98,7 @@ export function computeExclusionSeries(
     let egc  = rootEgc
     let norm = rootNorm ?? 0
 
-    for (let i = 0; i < excludedSeries.length; i++) {
+    for (let i = 0; i < effectiveSeries.length; i++) {
       egc  -= excludedEgcBySample[i].get(rootItem.sample) ?? 0
       norm -= excludedNormBySample[i].get(rootItem.sample) ?? 0
     }
@@ -99,6 +135,17 @@ export function bareTaxonName(taxonId: string): string {
 
 export function taxonomyDepthFromId(taxonId: string): number {
   return taxonId.split(';').length
+}
+
+// taxonomyDomainFromId
+// The domain root ("Bacteria" | "Archaea" | "Eukaryota" | "Viruses") is
+// always the lineage-prefix's first segment. Used to pass the right domain
+// into taxonomyRankLabel() wherever a taxon id is available but a
+// dedicated `category` field isn't (W7) -- e.g. row.annotation_id itself
+// works, since it IS the full lineage prefix.
+
+export function taxonomyDomainFromId(taxonId: string): string {
+  return taxonId.split(';')[0]
 }
 
 // computeChartTitle

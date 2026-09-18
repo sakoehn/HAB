@@ -11,9 +11,21 @@
 // Excluding a node disables expanding its own children — nothing under an
 // already-excluded node can be separately excluded, so there's no reason to
 // let the user drill into it.
+//
+// That alone doesn't cover every path to a double-subtraction, though
+// (W19): a descendant can already be visible/expanded from BEFORE its
+// ancestor got excluded, and nothing stopped it from also being checked.
+// Excluding an ancestor already zeroes out everything under it (taxonomy
+// egc values are hierarchical rollups), so also excluding one of its own
+// descendants would subtract that descendant a second time. Every row's
+// checkbox is disabled when isCoveredByAnotherExclusion says its own id is
+// a descendant of a currently-excluded id -- computeExclusionSeries also
+// filters these out defensively when summing, so correctness doesn't
+// depend on this UI guard alone.
 
 import type { TaxonomyTreeNode } from '../../types'
 import { taxonomyRankLabel } from '../../constants'
+import { isCoveredByAnotherExclusion } from '../../utils/taxonomy'
 import { useTaxonomyTree } from '../../hooks/useTaxonomyTree'
 import { SkeletonTreeRows } from '../ui/Skeleton'
 
@@ -74,7 +86,8 @@ function TaxonomyNodeRow({
   onToggleExpand:  (node: TaxonomyTreeNode) => void
 }) {
   const isExcluded = excludedIds.has(node.annotationId)
-  const rank       = taxonomyRankLabel(node.depth)
+  const isCovered  = !isExcluded && isCoveredByAnotherExclusion(node.annotationId, excludedIds)
+  const rank       = taxonomyRankLabel(node.depth, node.category)
 
   return (
     <div className="tax-node">
@@ -95,10 +108,13 @@ function TaxonomyNodeRow({
         <button
           className={`tax-node-checkbox ${isExcluded ? 'tax-node-checkbox-checked' : ''}`}
           onClick={() => onToggleExclude(node.annotationId)}
+          disabled={isCovered}
           title={
-            isExcluded
-              ? 'Include this taxon again'
-              : 'Exclude this taxon (and everything under it) from the total'
+            isCovered
+              ? 'Already excluded via an ancestor taxon -- excluding it separately would subtract it twice'
+              : isExcluded
+                ? 'Include this taxon again'
+                : 'Exclude this taxon (and everything under it) from the total'
           }
           aria-pressed={isExcluded}
         >

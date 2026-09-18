@@ -8,13 +8,6 @@ Structures
 _SEARCH_INDEX        inverted text index: (source, token) → set of annotation_ids
 _SEARCH_INDEX_SORTED sorted key list per source (enables binary-search prefix matching)
 _ANN_META            one canonical record per (source, annotation_id)
-_EGC_MATRIX          source → annotation_id → [egc | None] per sample (chronological);
-                     NOT built by build_search_index() — built lazily, per source, on
-                     first /annotations/correlate call (see get_egc_vectors_from_matrix)
-_NORM_EGC_MATRIX     source → annotation_id → [norm_egc | None] per sample; same lazy build
-_EGC_NAME_MAP        source → annotation_id → name string
-_EGC_PARENT_MAP      source → annotation_id → parent string
-_EGC_SAMPLES         ordered sample list used when the matrices were built
 _MAPPING_INDEX       source → annotation_id → [(sample_name, row_dict)]
 _INDEX_READY         True once build_search_index() completes
 
@@ -22,7 +15,6 @@ All structures are module-level so they survive across requests.  Nothing
 here performs file I/O directly — that is delegated to cache.py.
 """
 
-import threading
 from typing import Any
 
 from .cache import (
@@ -38,8 +30,6 @@ from .cache import (
     _TSV_CACHE,
 )
 
-import math
-
 # ── Index data structures ─────────────────────────────────────────────────────
 
 _SOURCES = ("kegg", "cog", "enzyme", "taxonomy")
@@ -49,20 +39,9 @@ _SEARCH_INDEX_SORTED: dict[str, list[str]]    = {s: [] for s in _SOURCES}
 
 _ANN_META: dict[str, dict[str, dict]] = {s: {} for s in _SOURCES}
 
-_EGC_MATRIX:      dict[str, dict[str, list[float | None]]] = {s: {} for s in _SOURCES}
-_NORM_EGC_MATRIX: dict[str, dict[str, list[float | None]]] = {s: {} for s in _SOURCES}
-_EGC_NAME_MAP:    dict[str, dict[str, str | None]]          = {s: {} for s in _SOURCES}
-_EGC_PARENT_MAP:  dict[str, dict[str, str | None]]          = {s: {} for s in _SOURCES}
-
-_EGC_SAMPLES: list[str] = []
-
 _MAPPING_INDEX: dict[str, dict[str, list[tuple[str, dict]]]] = {s: {} for s in _SOURCES}
 
 _INDEX_READY = False
-
-# Prevents concurrent file-scan fallback during warmup from racing on the same
-# I/O and timing out.
-_EGC_BUILD_LOCK = threading.Lock()
 
 
 # ── Datetime sorting helpers ──────────────────────────────────────────────────
@@ -70,11 +49,13 @@ _EGC_BUILD_LOCK = threading.Lock()
 def _parse_any_datetime(dt_str: str):
     """
     Parse a datetime string that may be unpadded "M/D/YY H:MM" (as used in
-    JGI_ID_Timepoints_128.csv), padded "MM/DD/YY HH:MM", or ISO format.
+    JGI_ID_Timepoints_128.csv), padded "MM/DD/YY HH:MM", ISO format, or a
+    bare "YYYY-MM-DD" date (as sent by <input type="date"> pickers, e.g.
+    /annotations/top's date_from/date_to).
     Returns a datetime object, or None if no format matches.
     """
     from datetime import datetime
-    for fmt in ("%m/%d/%y %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+    for fmt in ("%m/%d/%y %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
         try:
             return datetime.strptime(dt_str, fmt)
         except ValueError:
@@ -110,6 +91,38 @@ def timepoint_dt_sort_key(datetime_str: str | None) -> float:
         return -1.0
     parsed = _parse_any_datetime(datetime_str)
     return parsed.timestamp() if parsed is not None else -1.0
+
+
+def is_within_date_range(dt_str: str | None, date_from: str | None, date_to: str | None) -> bool:
+    """
+    True if a sample's raw datetime string falls within [date_from, date_to]
+    (both bounds inclusive, either may be None/omitted).
+
+    date_from/date_to are bare "YYYY-MM-DD" strings from the frontend's
+    <input type="date"> pickers -- comparing them against dt_str as plain
+    text is wrong, since dt_str is unpadded "M/D/YY H:MM"
+    (e.g. "6/9/21 8:00" < "6/18/21 ..." lexically, even though June 9 is
+    earlier than June 18). Both sides are parsed to datetime objects first.
+
+    date_to is treated as covering the whole day (through 23:59:59), so a
+    sample timestamped e.g. "6/5/21 21:00" still matches date_to=2021-06-05.
+    A dt_str/date_from/date_to that fails to parse is treated as not
+    matching that bound (dt_str: excluded entirely; a bound: that bound is
+    ignored) rather than raising, since malformed input shouldn't 500 the
+    endpoint.
+    """
+    dt = _parse_any_datetime(dt_str) if dt_str else None
+    if dt is None:
+        return False
+    if date_from:
+        from_dt = _parse_any_datetime(date_from)
+        if from_dt is not None and dt < from_dt:
+            return False
+    if date_to:
+        to_dt = _parse_any_datetime(date_to)
+        if to_dt is not None and dt.date() > to_dt.date():
+            return False
+    return True
 
 
 def compute_date_range() -> tuple[str, str] | tuple[None, None]:
@@ -165,7 +178,7 @@ def _build_sorted_key_lists() -> None:
         _SEARCH_INDEX_SORTED[src] = sorted(_SEARCH_INDEX[src].keys())
 
 
-def build_search_index(build_matrices: bool = False) -> None:
+def build_search_index() -> None:
     """
     Populate all in-memory indexes from the JSON caches in a single
     O(samples × annotations) pass.
@@ -173,26 +186,11 @@ def build_search_index(build_matrices: bool = False) -> None:
     Builds simultaneously:
     - Inverted search index + sorted key lists (text search)
     - _ANN_META              (per-annotation aggregate stats)
-    - _EGC_MATRIX / _NORM_EGC_MATRIX, but ONLY if build_matrices=True
-
-    build_matrices defaults to False: the full per-sample time-series
-    arrays (_EGC_MATRIX/_NORM_EGC_MATRIX) are only ever read by
-    /annotations/correlate via get_egc_vectors_from_matrix(), which already
-    has its own on-demand, lock-protected, self-caching build path. Most
-    sessions never call correlate, so building those [None]*128 arrays for
-    every annotation across all 4 sources here was unconditional memory
-    cost most requests never used. Aggregate stats (mean/max egc/norm_egc)
-    only need accumulator lists regardless of build_matrices.
-
-    Pass build_matrices=True (e.g. from a test fixture that wants
-    _EGC_MATRIX pre-populated) to build everything in this SAME pass —
-    do not instead call get_egc_vectors_from_matrix() separately afterward,
-    since that re-reads every sample's JSON from disk a second time.
 
     Must be called after the JSON caches are warm (i.e. after load_kegg /
     load_cog / … have been called for every sample).
     """
-    global _INDEX_READY, _EGC_SAMPLES
+    global _INDEX_READY
 
     source_loaders = [
         (AnnotationSource.kegg,     "kegg"),
@@ -201,36 +199,27 @@ def build_search_index(build_matrices: bool = False) -> None:
         (AnnotationSource.taxonomy, "taxonomy"),
     ]
 
-    all_samples    = sorted(get_all_sample_names(), key=timepoint_sort_key)
-    _EGC_SAMPLES   = all_samples
-    sample_idx_map = {s: i for i, s in enumerate(all_samples)}
+    all_samples = sorted(get_all_sample_names(), key=timepoint_sort_key)
 
-    # Accumulates raw egc/norm_egc values per annotation for aggregate stats
-    # only — not the full per-sample-indexed matrix (see docstring above).
+    # Accumulates raw egc/norm_egc values per annotation for aggregate stats.
     egc_acc:      dict[str, dict[str, list[float]]] = {src: {} for _, src in source_loaders}
     norm_egc_acc: dict[str, dict[str, list[float]]] = {src: {} for _, src in source_loaders}
 
     for sample_name in all_samples:
         for source_enum, src in source_loaders:
-            data   = load_annotations_by_source_uncached(sample_name, source_enum)
-            meta   = _ANN_META[src]
-            acc    = egc_acc[src]
-            nacc   = norm_egc_acc[src]
-            nmap   = _EGC_NAME_MAP[src]
-            pmap   = _EGC_PARENT_MAP[src]
-            matrix   = _EGC_MATRIX[src]      if build_matrices else None
-            norm_mat = _NORM_EGC_MATRIX[src] if build_matrices else None
+            data = load_annotations_by_source_uncached(sample_name, source_enum)
+            meta = _ANN_META[src]
+            acc  = egc_acc[src]
+            nacc = norm_egc_acc[src]
 
             for annotation_id, value in data.items():
                 _index_annotation(src, annotation_id, value)
 
                 if annotation_id not in meta:
-                    name = extract_annotation_name(value)
-                    parent = extract_parent(value, src)
                     meta[annotation_id] = {
                         "annotation_id": annotation_id,
-                        "name":          name,
-                        "parent":        parent,
+                        "name":          extract_annotation_name(value),
+                        "parent":        extract_parent(value, src),
                         "value":         value,
                         "mean_egc":      None,
                         "max_egc":       None,
@@ -238,23 +227,14 @@ def build_search_index(build_matrices: bool = False) -> None:
                         "max_norm_egc":  None,
                         "sample_count":  0,
                     }
-                    nmap[annotation_id] = name
-                    pmap[annotation_id] = parent
-                    if build_matrices:
-                        matrix[annotation_id]   = [None] * len(all_samples)
-                        norm_mat[annotation_id] = [None] * len(all_samples)
 
                 egc      = extract_egc(value)
                 norm_egc = extract_norm_egc(value)
 
                 if egc is not None:
                     acc.setdefault(annotation_id, []).append(egc)
-                    if build_matrices:
-                        matrix[annotation_id][sample_idx_map[sample_name]] = egc
                 if norm_egc is not None:
                     nacc.setdefault(annotation_id, []).append(norm_egc)
-                    if build_matrices:
-                        norm_mat[annotation_id][sample_idx_map[sample_name]] = norm_egc
 
     # Compute aggregates — O(unique annotations).
     for _, src in source_loaders:
@@ -279,8 +259,10 @@ def build_mapping_index() -> None:
     """
     Build an inverted index from all cached TSV mapping files.
 
-    Maps (source, annotation_id) → [(sample_name, row_dict)] so
-    /mappings/search is O(1) instead of O(128 × tsv_rows).
+    Maps (source, annotation_id) → [(sample_name, row)], where row is the
+    same MappingRow NamedTuple stored in _TSV_CACHE (not a dict -- see
+    MappingRow's own docstring in api/cache.py), so /mappings/search is
+    O(1) instead of O(128 × tsv_rows).
 
     Must be called after TSVs are warm in _TSV_CACHE.
     """
@@ -301,16 +283,27 @@ def build_mapping_index() -> None:
                 _MAPPING_INDEX[source].setdefault(ann_id, []).append((sample_name, row))
 
 
-# ── Search query ──────────────────────────────────────────────────────────────
-
 def search_index(source: str, q: str) -> set[str]:
     """
     Return annotation_ids matching query q via token lookup.
 
-    Supports exact-token matches, prefix matches, and substring matches so
-    searches like "iro" and "cohol" work for annotation IDs and names.
+    Supports exact-token matches and substring matches, so a short query
+    like "iro" or "cohol" matches longer indexed words ("iron", "alcohol").
     Multiple tokens are AND-ed so a query like "photosystem II" only returns
     annotations that contain both tokens.
+
+    Deliberately one-directional (query is a substring of the indexed word,
+    never the reverse): matching whenever a SHORT indexed word is a
+    substring of the query flooded results with unrelated annotations (W3).
+    E.g. searching "ferredoxin" matched every taxonomy entry with "f" as one
+    of its tokens (a single-letter strain suffix, tokenized on whitespace),
+    since "f" in "ferredoxin" is trivially true -- 113 unrelated matches on
+    real data. Raising a length threshold on the indexed word doesn't fully
+    fix it either: "ferredoxin" happens to contain the real English
+    substrings "red" and "err" (fer-RED-oxin, f-ERR-edoxin), so even a
+    3+ char indexed word can coincidentally collide. The reverse direction
+    has no real use case here (nothing in this codebase's tests or callers
+    relies on it) and isn't worth that false-positive risk.
     """
     idx     = _SEARCH_INDEX.get(source, {})
     keys    = _SEARCH_INDEX_SORTED.get(source, [])
@@ -326,7 +319,7 @@ def search_index(source: str, q: str) -> set[str]:
             matched |= idx[token]
 
         for key in keys:
-            if token in key or key in token:
+            if token in key:
                 matched |= idx.get(key, set())
 
         result = matched if result is None else result & matched
@@ -334,54 +327,3 @@ def search_index(source: str, q: str) -> set[str]:
             break
 
     return result or set()
-
-
-# ── EGC vector access (used by correlation.py) ────────────────────────────────
-
-def get_egc_vectors_from_matrix(
-    source: AnnotationSource,
-) -> tuple[dict[str, list[float | None]], dict[str, str | None], dict[str, str | None]]:
-    """
-    Return (egc_matrix, name_map, parent_map) for a source, building and
-    caching it on first call (see build_search_index()'s docstring for why
-    this is lazy rather than built eagerly at startup) — O(1) on every call
-    after the first, same as if it had been pre-built. Serialised by a lock
-    so concurrent requests for the same source don't race on the same I/O
-    and each redo the scan.
-    """
-    src = source.value
-    if _EGC_MATRIX.get(src):
-        return _EGC_MATRIX[src], _EGC_NAME_MAP[src], _EGC_PARENT_MAP[src]
-
-    with _EGC_BUILD_LOCK:
-        if _EGC_MATRIX.get(src):
-            return _EGC_MATRIX[src], _EGC_NAME_MAP[src], _EGC_PARENT_MAP[src]
-        vecs, names, parents = _build_egc_vectors_from_files(
-            _EGC_SAMPLES or get_all_sample_names(), source
-        )
-        _EGC_MATRIX[src]     = vecs
-        _EGC_NAME_MAP[src]   = names
-        _EGC_PARENT_MAP[src] = parents
-        return vecs, names, parents
-
-
-def _build_egc_vectors_from_files(
-    samples_sorted: list[str],
-    source: AnnotationSource,
-) -> tuple[dict[str, list[float | None]], dict[str, str | None], dict[str, str | None]]:
-    """Fallback: build EGC time vectors by scanning annotation files."""
-    vectors:    dict[str, list[float | None]] = {}
-    name_map:   dict[str, str | None]         = {}
-    parent_map: dict[str, str | None]         = {}
-
-    for sample_name in samples_sorted:
-        data = load_annotations_by_source_uncached(sample_name, source)
-        for ann_id, value in data.items():
-            egc = extract_egc(value)
-            if ann_id not in vectors:
-                vectors[ann_id]    = []
-                name_map[ann_id]   = extract_annotation_name(value)
-                parent_map[ann_id] = extract_parent(value, source.value)
-            vectors[ann_id].append(egc)
-
-    return vectors, name_map, parent_map

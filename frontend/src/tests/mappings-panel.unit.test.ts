@@ -315,6 +315,68 @@ describe('mapping row sorting', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// W17 regression: date/time sort against the REAL raw datetime format.
+//
+// Every fixture above this point uses ISO datetimes ("2021-05-27T08:00:00"),
+// which happen to sort correctly as plain text -- that's exactly why the
+// original bug (a plain string compare on date/time) passed every existing
+// test while still being wrong against the real API, which returns
+// unpadded "M/D/YY H:MM" (e.g. "6/10/21 8:00"). These fixtures use the
+// real format so the sort logic is actually put to the test.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function rawFormatRow(sample: string, datetime: string): MappingSearchRow {
+  return {
+    gene_id: `g_${sample}`, contig_id: `c_${sample}`,
+    taxonomy: 'Bacteria', kegg_id: 'K00010', enzyme: '1.1.1.1', cog_id: 'COG0001',
+    sample,
+    timepoint: { taxon_oid: sample, timepoint: '1', datetime },
+  }
+}
+
+describe('mapping row sorting — real raw "M/D/YY H:MM" date format (W17)', () => {
+  // The audit's own example: unsorted, these should open in page order
+  // 5/27, 6/1, 6/10, 6/18, 6/2, 6/9 under the old text-comparison bug --
+  // "6/10/21" and "6/18/21" sort before "6/2/21" and "6/9/21" as plain text.
+  const AUDIT_EXAMPLE_ROWS: MappingSearchRow[] = [
+    rawFormatRow('may27', '5/27/21 8:00'),
+    rawFormatRow('jun1',  '6/1/21 8:00'),
+    rawFormatRow('jun10', '6/10/21 8:00'),
+    rawFormatRow('jun18', '6/18/21 8:00'),
+    rawFormatRow('jun2',  '6/2/21 8:00'),
+    rawFormatRow('jun9',  '6/9/21 8:00'),
+  ]
+
+  it('sorts into true chronological order, not the text-sort order the audit found', () => {
+    const result = sortMappingRows(AUDIT_EXAMPLE_ROWS, 'date', 'asc')
+    expect(result.map(r => r.sample)).toEqual(['may27', 'jun1', 'jun2', 'jun9', 'jun10', 'jun18'])
+  })
+
+  it('page one is genuinely the earliest rows after sorting (not 5/27, 6/1, 6/10... as the old bug produced)', () => {
+    const result = sortMappingRows(AUDIT_EXAMPLE_ROWS, 'date', 'asc')
+    expect(result[0].sample).toBe('may27')
+    expect(result[1].sample).toBe('jun1')
+    // The old bug's page-one order put jun10 third; the fix puts jun2 third.
+    expect(result[2].sample).toBe('jun2')
+  })
+
+  it('desc sort reverses the same true chronological order', () => {
+    const result = sortMappingRows(AUDIT_EXAMPLE_ROWS, 'date', 'desc')
+    expect(result.map(r => r.sample)).toEqual(['jun18', 'jun10', 'jun9', 'jun2', 'jun1', 'may27'])
+  })
+
+  it('the CSV export reuses this same corrected order (sortedRows -> buildMappingCsvRow)', () => {
+    // buildMappingCsvRow itself doesn't sort -- MappingsPanel maps over
+    // sortedRows (sortMappingRows' own output) when building the CSV, so
+    // fixing the sort fixes the CSV order for free. This test pins that
+    // sortMappingRows' output is what a correct CSV must be built from.
+    const result = sortMappingRows(AUDIT_EXAMPLE_ROWS, 'date', 'asc')
+    const csvRows = result.map(r => buildMappingCsvRow(r, 'K00010', 'kegg'))
+    expect(csvRows.map(r => r.date)).toEqual(['05/27/21', '06/01/21', '06/02/21', '06/09/21', '06/10/21', '06/18/21'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Pagination logic — imported directly from MappingsPanel (see import above)
 // ─────────────────────────────────────────────────────────────────────────────
 

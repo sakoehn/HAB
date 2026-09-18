@@ -18,6 +18,7 @@ import { useMemo, useRef, useState, useEffect } from 'react'
 
 import type { AnnotationItem, SeriesCache } from '../../types'
 import { SOURCE_COLORS, SOURCE_TAG_CLS, TAXONOMY_RANK_NAMES, taxonomyRankLabel } from '../../constants'
+import { taxonomyDomainFromId } from '../../utils/taxonomy'
 import { CopyBtn } from '../ui/controls'
 import { HelpTooltip } from '../ui/HelpTooltip'
 
@@ -305,7 +306,7 @@ export function LeftResultList({
                     onCopy={onCopy}
                   />
                   <span className="al-row-id">
-                    {ann.source === 'taxonomy' ? taxonomyRankLabel(ann.depth ?? null) : ann.annotation_id}
+                    {ann.source === 'taxonomy' ? taxonomyRankLabel(ann.depth ?? null, taxonomyDomainFromId(ann.annotation_id)) : ann.annotation_id}
                   </span>
                   <span className={`tag ${SOURCE_TAG_CLS[ann.source] ?? ''}`}>
                     {ann.source}

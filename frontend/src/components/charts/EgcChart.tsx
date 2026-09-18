@@ -14,10 +14,12 @@ import { useSolarTideData } from '../../utils/useSolarTideData'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL, getEgcYLabel, getEgcHoverYLabel } from '../../utils/chartTheme'
 import { taxonomyRankLabel, SOURCE_COLORS } from '../../constants'
+import { taxonomyDomainFromId } from '../../utils/taxonomy'
 import { StatsPanel }     from '../ui/StatsPanel'
 import { DateRangePicker } from '../ui/DateRangePicker'
 import { ChartControls }  from './ChartControls'
 import { ScaffoldBtn }    from '../scaffolds/ScaffoldBtn'
+import { HierarchyBtn }   from '../hierarchy/HierarchyBtn'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = createPlotlyComponent(PlotlyBase as any)
@@ -40,6 +42,33 @@ export type EgcChartHandle = {
   exportPng: () => void
   exportSvg: () => void
   exportCsv: () => void
+}
+
+// buildEgcTimeseriesCsvRows
+// Exported so tests can exercise the real CSV row shape directly (W18).
+// The value column is named from the active metric ("egc" or "norm_egc"),
+// with `metric`/`standardized`/`smoothed` recorded on every row -- d.egc
+// is whichever transform is currently displayed (metric swap, z-score,
+// LOWESS smoothing all already applied upstream), not necessarily raw EGC.
+
+export function buildEgcTimeseriesCsvRows(
+  points:       { sample: string; datetime: string; egc: number | null; tide_wl?: number | null }[],
+  annotationId: string,
+  metric:       ChartMetric,
+  standardize:  boolean,
+  smoothed:     boolean,
+  showTide:     boolean,
+): Record<string, unknown>[] {
+  return points.map(d => ({
+    annotation_id: annotationId,
+    sample:        d.sample,
+    date:          d.datetime,
+    [metric]:      d.egc,
+    metric,
+    standardized:  standardize,
+    smoothed,
+    ...(showTide ? { tide_predicted_wl_m: d.tide_wl } : {}),
+  }))
 }
 
 export const EgcChart = forwardRef<EgcChartHandle, {
@@ -335,13 +364,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   }
 
   const handleExportCsv = () => downloadCsv(
-    pointsWithTide.map(d => ({
-      annotation_id: annotationId,
-      sample:        d.sample,
-      date:          d.datetime,
-      egc:           d.egc,
-      ...(showTide ? { tide_predicted_wl_m: d.tide_wl } : {}),
-    })),
+    buildEgcTimeseriesCsvRows(pointsWithTide, annotationId, metric, standardize, smoothed, showTide),
     `${annotationId}_egc_timeseries.csv`,
   )
 
@@ -384,7 +407,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
                 onClick={() => setShowLineage(s => !s)}
                 title={showLineage ? 'Hide full lineage' : 'Show full lineage'}
               >
-                {taxonomyRankLabel(depth)} {showLineage ? '▴' : '▾'}
+                {taxonomyRankLabel(depth, taxonomyDomainFromId(annotationId))} {showLineage ? '▴' : '▾'}
               </button>
             </div>
           ) : (
@@ -413,6 +436,12 @@ export const EgcChart = forwardRef<EgcChartHandle, {
             source={source ?? ''}
             name={annotationName}
             onGoExplore={onGoExplore}
+            className="toggle-pill sm"
+          />
+          <HierarchyBtn
+            annotationId={annotationId}
+            source={source ?? ''}
+            name={annotationName}
             className="toggle-pill sm"
           />
           <button

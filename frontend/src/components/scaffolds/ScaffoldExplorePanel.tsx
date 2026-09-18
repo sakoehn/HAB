@@ -39,7 +39,7 @@ function buildScaffoldTrace(
   type:   'line' | 'bar',
 ): Record<string, unknown> {
   const resolvedColor = resolveCssVar(color, '#4f8ef7')
-  const xs    = data.map(d => new Date(parseDateTime(d.date)).toISOString())
+  const xs    = data.map(d => toPlotlyDate(parseDateTime(d.date)))
   const ys    = data.map(d => d[metric])
   const cdata = data.map(d => `${fmtDate(d.date)} ${fmtTime(d.date)}`)
   if (type === 'bar') {
@@ -61,25 +61,62 @@ function buildScaffoldTrace(
 }
 
 // Filters a term's scaffold summary rows to a date range and sorts
-// chronologically — used by the per-term "View chart" toggle.
-function filterSummaryForChart(
+// chronologically — used by the per-term "View chart" toggle, and by
+// chartSeries below for the split-by-term case.
+//
+// dateFrom/dateTo are bare "YYYY-MM-DD" from <input type="date">, while
+// r.date is the raw datetime the scaffold summary endpoint returns (unpadded
+// "M/D/YY H:MM", e.g. "5/27/21 13:00" — see FastAPI/api/index.py's
+// _parse_any_datetime docstring). Comparing them as plain text is wrong
+// (W15): different formats entirely, so a date_to emptied everything and a
+// date_from filtered nothing. isoDate() normalizes r.date to the same
+// "YYYY-MM-DD" shape first.
+export function filterSummaryForChart(
   rows:     ScaffoldSummaryRow[],
   dateFrom: string,
   dateTo:   string,
 ): ScaffoldSummaryRow[] {
   return rows
     .filter(r => {
-      if (dateFrom && r.date < dateFrom) return false
-      if (dateTo   && r.date > dateTo)   return false
+      const iso = isoDate(r.date)
+      if (dateFrom && iso < dateFrom) return false
+      if (dateTo   && iso > dateTo)   return false
       return true
     })
     .sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date))
 }
 
+export type AggregatedChartRow = { date: string; scaffold_count: number; gene_count: number }
+
+// Sums scaffold_count/gene_count across every term's rows, per date, within
+// a date range — the "aggregated" (non-split) chart mode. Same date-range
+// handling as filterSummaryForChart, see its docstring for why raw text
+// comparison is wrong here (W15).
+export function buildAggregatedChartRows(
+  terms:    { summary: ScaffoldSummaryRow[] }[],
+  dateFrom: string,
+  dateTo:   string,
+): AggregatedChartRow[] {
+  const dateMap: Record<string, AggregatedChartRow> = {}
+  for (const term of terms) {
+    for (const row of term.summary) {
+      const iso = isoDate(row.date)
+      if (dateFrom && iso < dateFrom) continue
+      if (dateTo   && iso > dateTo)   continue
+      if (!dateMap[row.date]) {
+        dateMap[row.date] = { scaffold_count: 0, gene_count: 0, date: row.date }
+      }
+      dateMap[row.date].scaffold_count += row.scaffold_count
+      dateMap[row.date].gene_count     += row.gene_count
+    }
+  }
+  return Object.values(dateMap).sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date))
+}
+
 import type { ApiStatus, ScaffoldExploreTerm, ScaffoldSummaryRow, ScaffoldDetailRow, TopAnnotation } from '../../types'
 import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel, taxonomyRankLabel } from '../../constants'
 import { apiFetch, downloadCsv } from '../../utils/api'
-import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
+import { fmtDate, fmtTime, parseDateTime, isoDate, toPlotlyDate } from '../../utils/format'
 import { minMeanMax } from '../../utils/stats'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { taxonomyDepthFromId } from '../../utils/taxonomy'
@@ -394,34 +431,15 @@ export function ScaffoldExplorePanel({
         id:    term.annotationId,
         label: term.annotationId,
         color: term.color,
-        data:  term.summary
-          .filter(r => {
-            if (dateFrom && r.date < dateFrom) return false
-            if (dateTo   && r.date > dateTo)   return false
-            return true
-          })
-          .sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date)),
+        data:  filterSummaryForChart(term.summary, dateFrom, dateTo),
       }))
     }
 
-    // Aggregated — sum all terms per date
-    const dateMap: Record<string, { scaffold_count: number; gene_count: number; date: string }> = {}
-    for (const term of readyTerms) {
-      for (const row of term.summary) {
-        if (dateFrom && row.date < dateFrom) continue
-        if (dateTo   && row.date > dateTo)   continue
-        if (!dateMap[row.date]) {
-          dateMap[row.date] = { scaffold_count: 0, gene_count: 0, date: row.date }
-        }
-        dateMap[row.date].scaffold_count += row.scaffold_count
-        dateMap[row.date].gene_count     += row.gene_count
-      }
-    }
     return [{
       id:    'aggregated',
       label: `All terms (${readyTerms.length})`,
       color: 'var(--chart-1)',
-      data:  Object.values(dateMap).sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date)),
+      data:  buildAggregatedChartRows(readyTerms, dateFrom, dateTo),
     }]
   }, [visibleTerms, dateFrom, dateTo, splitByTerm])
 
@@ -548,6 +566,8 @@ export function ScaffoldExplorePanel({
                 All
               </button>
               <HelpTooltip text="Narrows the results below to the selected taxonomic rank(s) — doesn't re-search, just filters what's already loaded." />
+              {/* W7: no domain passed -- a depth-only aggregate here can span
+                  multiple domains at once, so there's no single correct one. */}
               {availableRanks.map(depth => (
                 <button
                   key={depth}
@@ -649,6 +669,7 @@ export function ScaffoldExplorePanel({
                 All
               </button>
               <HelpTooltip text="Narrows this list (and the chart/table below) to the selected taxonomic rank(s) — non-taxonomy terms are unaffected." />
+              {/* W7: no domain passed -- see the matching comment above availableRanks. */}
               {availableTermRanks.map(depth => (
                 <button
                   key={depth}

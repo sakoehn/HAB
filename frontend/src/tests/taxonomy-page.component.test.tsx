@@ -139,3 +139,119 @@ describe('TaxonomyPage — exclusion series has no scaffold button', () => {
     expect(screen.getAllByTestId('scaffold-btn').length).toBe(1)
   })
 })
+
+describe('TaxonomyPage — W19 failed exclusion fetch', () => {
+  it('shows an explicit error banner instead of silently falling back to the unmodified total', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations') && url.includes('annotation_id=Bacteria&')) {
+        return Promise.resolve(jsonResponse({
+          data: [{
+            source: 'taxonomy', sample: 's1', annotation_id: 'Bacteria', name: 'Bacteria',
+            timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '2021-05-09T13:00:00' },
+            value: { egc: 1000 },
+          }],
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(
+      <Wrapper
+        onGoScaffoldExplore={vi.fn()}
+        initialState={{
+          excludedIds: new Set(['Bacteria;Actinobacteria']),
+          seriesCache: {
+            'Bacteria;Actinobacteria::taxonomy': { data: [], status: 'error' },
+          },
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to load 1 exclusion/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/Actinobacteria/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Remove failed exclusion/i })).toBeInTheDocument()
+  })
+
+  it('a successfully-loaded exclusion is still applied even when a different one failed', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations') && url.includes('annotation_id=Bacteria&')) {
+        return Promise.resolve(jsonResponse({
+          data: [{
+            source: 'taxonomy', sample: 's1', annotation_id: 'Bacteria', name: 'Bacteria',
+            timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '2021-05-09T13:00:00' },
+            value: { egc: 1000 },
+          }],
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(
+      <Wrapper
+        onGoScaffoldExplore={vi.fn()}
+        initialState={{
+          excludedIds: new Set(['Bacteria;Actinobacteria', 'Bacteria;Firmicutes']),
+          seriesCache: {
+            'Bacteria;Actinobacteria::taxonomy': { data: [], status: 'error' },
+            'Bacteria;Firmicutes::taxonomy': {
+              data: [{
+                source: 'taxonomy', sample: 's1', annotation_id: 'Bacteria;Firmicutes', name: 'Firmicutes',
+                timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '2021-05-09T13:00:00' },
+                value: { egc: 300 },
+              }],
+              status: 'ok',
+            },
+          },
+        }}
+      />,
+    )
+
+    // The minus series is still computed with the one exclusion that did
+    // load -- the title says "minus 1 exclusion" (Firmicutes), not 0.
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to load 1 exclusion/i)).toBeInTheDocument()
+    })
+    expect(document.querySelectorAll('.legend-item').length).toBe(2)
+  })
+
+  it('no error banner when every exclusion loads successfully', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations') && url.includes('annotation_id=Bacteria&')) {
+        return Promise.resolve(jsonResponse({
+          data: [{
+            source: 'taxonomy', sample: 's1', annotation_id: 'Bacteria', name: 'Bacteria',
+            timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '2021-05-09T13:00:00' },
+            value: { egc: 1000 },
+          }],
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(
+      <Wrapper
+        onGoScaffoldExplore={vi.fn()}
+        initialState={{
+          excludedIds: new Set(['Bacteria;Firmicutes']),
+          seriesCache: {
+            'Bacteria;Firmicutes::taxonomy': {
+              data: [{
+                source: 'taxonomy', sample: 's1', annotation_id: 'Bacteria;Firmicutes', name: 'Firmicutes',
+                timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '2021-05-09T13:00:00' },
+                value: { egc: 300 },
+              }],
+              status: 'ok',
+            },
+          },
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(document.querySelectorAll('.legend-item').length).toBe(2)
+    })
+    expect(screen.queryByText(/Failed to load/i)).not.toBeInTheDocument()
+  })
+})

@@ -71,3 +71,52 @@ def test_caching_consistency(client):
 def test_invalid_source(client):
     resp = client.get("/annotations/top", params={"source": "INVALID_SOURCE", "limit": 10})
     assert resp.status_code == 422
+
+
+# W2: date_from/date_to were compared as plain text against the stored
+# unpadded "M/D/YY H:MM" datetime, so a date_to always emptied the results
+# and a date_from never filtered anything (the whole-dataset ranking came
+# back mislabeled with the requested range, sample_count stuck at 128).
+# All dates below are inside the real dataset's range (2021-05-27..2021-06-18,
+# confirmed live via /status's date_min/date_max).
+
+@sql_route_required
+def test_date_to_no_longer_empties_the_results(client):
+    resp = client.get(
+        "/annotations/top",
+        params={"source": "cog", "limit": 10, "date_to": "2021-06-05"},
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    assert body["data"], "date_to must not empty the results (W2 regression)"
+    assert 0 < body["sample_count"] < 128
+
+
+@sql_route_required
+def test_date_from_actually_filters_and_is_not_identical_to_unfiltered(client):
+    unfiltered = client.get("/annotations/top", params={"source": "cog", "limit": 10})
+    unfiltered.raise_for_status()
+
+    filtered = client.get(
+        "/annotations/top",
+        params={"source": "cog", "limit": 10, "date_from": "2021-06-15"},
+    )
+    filtered.raise_for_status()
+    filtered_body = filtered.json()
+
+    assert filtered_body["sample_count"] < unfiltered.json()["sample_count"], \
+        "date_from must narrow sample_count below the unfiltered total (W2 regression)"
+    assert filtered_body["sample_count"] < 128
+
+
+@sql_route_required
+def test_sample_count_reflects_the_active_filter_not_the_whole_dataset(client):
+    resp = client.get(
+        "/annotations/top",
+        params={"source": "cog", "limit": 5, "date_from": "2021-05-27", "date_to": "2021-05-28"},
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    # Independently verified against raw TIMEPOINTS: exactly 9 of the 128
+    # samples fall within 2021-05-27..2021-05-28 inclusive.
+    assert body["sample_count"] == 9

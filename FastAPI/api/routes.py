@@ -12,16 +12,8 @@ GET /timepoints
 GET /samples
 GET /tides
 GET /sun-times
-GET /samples/{sample_name}/mappings/summary
-GET /samples/{sample_name}/mappings
 GET /mappings/search
-GET /samples/{sample_name}/cog
-GET /samples/{sample_name}/kegg
-GET /samples/{sample_name}/enzyme
-GET /samples/{sample_name}/taxonomy
-GET /samples/{sample_name}/full
 GET /search/annotations
-GET /samples/{sample_name}/search/annotations
 GET /series/annotations
 GET /taxonomy/children
 GET /annotations/top
@@ -38,9 +30,18 @@ import os
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from .cache_sql import (
-    get_annotation_scaffolds_sql, 
+    _cog_node_depth,
+    _enzyme_node_exists,
+    _kegg_node_depth,
+    get_annotation_scaffolds_sql,
     get_annotation_series_sql,
     get_all_sample_names_sql,
+    get_cog_children_sql,
+    get_cog_path_sql,
+    get_enzyme_children_sql,
+    get_enzyme_path_sql,
+    get_kegg_children_sql,
+    get_kegg_path_sql,
     get_taxonomy_children_sql,
     get_top_annotations_sql,
     taxon_exists_sql,
@@ -49,7 +50,7 @@ from .cache_sql import (
     get_top_annotations_from_catalog_sql,
     get_taxa_at_rank_sql,
     RANK_COLUMNS
-)    
+)
 
 from .astronomy import SUN_TIMES
 from .cache import (
@@ -84,6 +85,7 @@ from .index import (
     search_index,
     timepoint_sort_key,
     timepoint_dt_sort_key,
+    is_within_date_range,
 )
 
 router = APIRouter()
@@ -102,11 +104,6 @@ def paginate(data: list, page: int, page_size: int) -> dict:
         "total_pages": -(-total // page_size),
         "data":        data[start : start + page_size],
     }
-
-
-def paginate_dict(data: dict, page: int, page_size: int) -> dict:
-    """Paginate a dict by converting items to {key, value} pairs."""
-    return paginate([{"key": k, "value": v} for k, v in data.items()], page, page_size)
 
 
 # ── Annotation search / normalisation helpers ─────────────────────────────────
@@ -173,26 +170,6 @@ def _filter_mapping_rows(rows: list, source: str, annotation_id: str) -> list:
     return results
 
 
-def _annotation_endpoint(
-    sample_name:   str,
-    source:        str,
-    loader,
-    q:             str | None,
-    annotation_id: str | None,
-    name_exact:    str | None,
-    page:          int,
-    page_size:     int,
-) -> dict:
-    data = loader(sample_name)
-    if not data:
-        raise HTTPException(status_code=404, detail=f"{source} data for '{sample_name}' not found")
-    items = _search_dict_annotations(
-        data=data, source=source, sample_name=sample_name,
-        q=q, annotation_id=annotation_id, name_exact=name_exact,
-    )
-    return {"sample": sample_name, "timepoint": get_timepoint(sample_name), **paginate(items, page, page_size)}
-
-
 # ── Top-annotations cache ─────────────────────────────────────────────────────
 
 _TOP_ANN_CACHE: dict[tuple, list] = {}
@@ -235,12 +212,32 @@ def api_status():
         "date_max":    DATA_DATE_MAX,
     }
 
+def _filter_timepoints_to_real_samples(timepoints: dict, real_samples) -> list[dict]:
+    """Keep only TIMEPOINTS entries whose taxon_oid is an actual, processed
+    sample.
+
+    JGI_ID_Timepoints_128.csv (TIMEPOINTS' source) actually has 132 rows --
+    4 real-looking taxon_oids with plausible dates in the sampling window
+    that were never processed into mapping/annotation data (confirmed live:
+    they're absent from both the JSON backend's mapping TSVs and the SQL
+    backend's samples). Without this filter, /timepoints reports 132 while
+    /samples reports 128 for the same dataset.
+    """
+    real_samples = set(real_samples)
+    return [tp for taxon_oid, tp in timepoints.items() if taxon_oid in real_samples]
+
+
 @router.get("/timepoints")
-def list_timepoints(page: int = 1, page_size: int = 50):
+def list_timepoints(request: Request, page: int = 1, page_size: int = 50):
     """Return all samples with their readable dates, paginated."""
     if not TIMEPOINTS:
         raise HTTPException(status_code=404, detail="Timepoints data not found")
-    return paginate(list(TIMEPOINTS.values()), page, page_size)
+    if DATA_BACKEND == 'sql':
+        real_samples = get_all_sample_names_sql(request.app.state.sql_conn)
+    else:
+        real_samples = get_all_sample_names()
+    rows = _filter_timepoints_to_real_samples(TIMEPOINTS, real_samples)
+    return paginate(rows, page, page_size)
 
 
 @router.get("/samples")
@@ -291,24 +288,6 @@ def get_sun_times():
         "date_max":  DATA_DATE_MAX,
         "data":      SUN_TIMES,
     }
-
-
-@router.get("/samples/{sample_name}/mappings/summary")
-def get_mappings_summary(sample_name: str):
-    rows = load_tsv(sample_name)
-    if not rows:
-        raise HTTPException(status_code=404, detail=f"Sample '{sample_name}' not found")
-    return {"sample": sample_name, "timepoint": get_timepoint(sample_name), "count": len(rows)}
-
-
-@router.get("/samples/{sample_name}/mappings")
-def get_mappings(sample_name: str, page: int = 1, page_size: int = 100):
-    rows = load_tsv(sample_name)
-    if not rows:
-        raise HTTPException(status_code=404, detail=f"Sample '{sample_name}' not found")
-    paged = paginate(rows, page, page_size)
-    paged["data"] = [row._asdict() for row in paged["data"]]
-    return {"sample": sample_name, "timepoint": get_timepoint(sample_name), **paged}
 
 
 @router.get("/mappings/search")
@@ -401,73 +380,6 @@ def search_mappings(
         "sample_count":  min(sample_count, len(samples)),
         "total":         len(results),
         "data":          results,
-    }
-
-
-@router.get("/samples/{sample_name}/cog")
-def get_cog(
-    sample_name: str,
-    q: str | None = Query(None, min_length=1),
-    annotation_id: str | None = Query(None),
-    name_exact: str | None = Query(None),
-    page: int = 1, page_size: int = 100,
-):
-    from .cache import load_cog
-    return _annotation_endpoint(sample_name, "cog", load_cog, q, annotation_id, name_exact, page, page_size)
-
-
-@router.get("/samples/{sample_name}/kegg")
-def get_kegg(
-    sample_name: str,
-    q: str | None = Query(None, min_length=1),
-    annotation_id: str | None = Query(None),
-    name_exact: str | None = Query(None),
-    page: int = 1, page_size: int = 100,
-):
-    from .cache import load_kegg
-    return _annotation_endpoint(sample_name, "kegg", load_kegg, q, annotation_id, name_exact, page, page_size)
-
-
-@router.get("/samples/{sample_name}/enzyme")
-def get_enzyme(
-    sample_name: str,
-    q: str | None = Query(None, min_length=1),
-    annotation_id: str | None = Query(None),
-    name_exact: str | None = Query(None),
-    page: int = 1, page_size: int = 100,
-):
-    from .cache import load_enzyme
-    return _annotation_endpoint(sample_name, "enzyme", load_enzyme, q, annotation_id, name_exact, page, page_size)
-
-
-@router.get("/samples/{sample_name}/taxonomy")
-def get_taxonomy(
-    sample_name: str,
-    q: str | None = Query(None, min_length=1),
-    annotation_id: str | None = Query(None),
-    name_exact: str | None = Query(None),
-    page: int = 1, page_size: int = 100,
-):
-    from .cache import load_taxonomy
-    return _annotation_endpoint(sample_name, "taxonomy", load_taxonomy, q, annotation_id, name_exact, page, page_size)
-
-
-@router.get("/samples/{sample_name}/full")
-def get_full_sample(sample_name: str, page: int = 1, page_size: int = 100):
-    from .cache import load_cog, load_kegg, load_enzyme, load_taxonomy
-    rows = load_tsv(sample_name)
-    if not rows:
-        raise HTTPException(status_code=404, detail=f"Sample '{sample_name}' not found")
-    mappings = paginate(rows, page, page_size)
-    mappings["data"] = [row._asdict() for row in mappings["data"]]
-    return {
-        "sample":    sample_name,
-        "timepoint": get_timepoint(sample_name),
-        "mappings":  mappings,
-        "cog":       paginate_dict(load_cog(sample_name),      page, page_size),
-        "kegg":      paginate_dict(load_kegg(sample_name),     page, page_size),
-        "enzyme":    paginate_dict(load_enzyme(sample_name),   page, page_size),
-        "taxonomy":  paginate_dict(load_taxonomy(sample_name), page, page_size),
     }
 
 
@@ -629,55 +541,6 @@ def search_annotations(
     }
 
 
-@router.get("/samples/{sample_name}/search/annotations")
-def search_annotations_for_sample(
-    sample_name:   str,
-    q:             str | None = Query(None, min_length=1),
-    annotation_id: str | None = Query(None),
-    name_exact:    str | None = Query(None),
-    sources: list[str] = Query(...),
-    page: int = 1, page_size: int = 50,
-):
-    """Search within a single sample across one or more annotation sources."""
-    if not q and not annotation_id and not name_exact:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide at least one of: q, annotation_id, or name_exact",
-        )
-
-    results: list[dict] = []
-    for source_str in sources:
-        try:
-            source = AnnotationSource(source_str)
-        except ValueError:
-            continue
-        data = load_annotations_by_source(sample_name, source)
-        if not data:
-            continue
-        results.extend(
-            _search_dict_annotations(
-                data=data, source=source.value, sample_name=sample_name,
-                q=q, annotation_id=annotation_id, name_exact=name_exact,
-            )
-        )
-
-    if not results:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No matching annotations found for sample '{sample_name}'",
-        )
-
-    return {
-        "sample":        sample_name,
-        "timepoint":     get_timepoint(sample_name),
-        "query":         q,
-        "annotation_id": annotation_id,
-        "name_exact":    name_exact,
-        "sources":       sources,
-        **paginate(results, page, page_size),
-    }
-
-
 @router.get("/series/annotations")
 async def annotation_time_series(
     request: Request,
@@ -775,6 +638,12 @@ async def taxonomy_children(request: Request, parent: str | None = Query(None)):
         (
             {
                 "annotation_id": rec["annotation_id"],
+                # annotation_id is the full lineage-prefix (e.g.
+                # "Bacteria;Proteobacteria"); name is just its last segment,
+                # matching get_taxonomy_children_sql's bare-name convention
+                # -- the JSON branch used to omit this field entirely, so
+                # the tree would render blank labels under DATA_BACKEND=json.
+                "name":          rec["annotation_id"].split(";")[-1],
                 "depth":         (rec.get("value") or {}).get("depth"),
                 "category":      (rec.get("value") or {}).get("category"),
             }
@@ -783,6 +652,140 @@ async def taxonomy_children(request: Request, parent: str | None = Query(None)):
         key=lambda c: c["annotation_id"],
     )
     return {"parent": parent, "count": len(children), "data": children}
+
+
+@router.get("/kegg/children")
+async def kegg_children(request: Request, parent: str | None = Query(None)):
+    """
+    Direct children of a KEGG node (structure only — no egc values), for
+    the BRITE hierarchy popup.
+
+    parent omitted/empty -> the 8 top-level branches (Metabolism, Human
+    Diseases, Brite Hierarchies, etc.).
+
+    SQL backend only. `kegg_paths` (built from ko00001.keg, capturing every
+    real multi-parent occurrence — see migrate_kegg_paths_to_sql.py) has no
+    JSON-backend equivalent: the old per-sample .ko.json format only ever
+    stored a single parent_id per node, which is the E14 bug this table
+    exists to get past.
+    """
+    if DATA_BACKEND != 'sql':
+        raise HTTPException(status_code=501, detail="KEGG hierarchy browsing requires DATA_BACKEND=sql")
+
+    db = request.app.state.sql_conn
+    if parent is not None and _kegg_node_depth(db, parent) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown KEGG node '{parent}'")
+
+    children = get_kegg_children_sql(db, parent)
+    return {'parent': parent, 'count': len(children), 'data': children}
+
+
+@router.get("/kegg/path")
+async def kegg_path(request: Request, id: str = Query(...)):
+    """
+    Ancestor path (root to node) for a KEGG node, for auto-expanding and
+    highlighting a node in the hierarchy popup when opened from a chart
+    for one specific annotation.
+
+    SQL backend only, same reasoning as /kegg/children.
+    """
+    if DATA_BACKEND != 'sql':
+        raise HTTPException(status_code=501, detail="KEGG hierarchy browsing requires DATA_BACKEND=sql")
+
+    db = request.app.state.sql_conn
+    result = get_kegg_path_sql(db, id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Unknown KEGG node '{id}'")
+    return result
+
+
+@router.get("/enzyme/children")
+async def enzyme_children(request: Request, parent: str | None = Query(None)):
+    """
+    Direct children of an Enzyme (EC) node (structure only — no egc
+    values), for the same BRITE-hierarchy-popup feature as /kegg/children.
+
+    parent omitted/empty -> the 7 top-level EC classes (Oxidoreductases,
+    Transferases, etc.).
+
+    SQL backend only, same reasoning as /kegg/children -- enzyme_paths
+    (see migrate_enzyme_paths_to_sql.py) has no JSON-backend equivalent.
+    Unlike KEGG, every EC id has exactly one real parent (see
+    get_enzyme_children_sql's docstring), so this exists purely for
+    consistent tree-browsing UI, not to work around a multi-parent bug.
+    """
+    if DATA_BACKEND != 'sql':
+        raise HTTPException(status_code=501, detail="Enzyme hierarchy browsing requires DATA_BACKEND=sql")
+
+    db = request.app.state.sql_conn
+    if parent is not None and not _enzyme_node_exists(db, parent):
+        raise HTTPException(status_code=404, detail=f"Unknown Enzyme node '{parent}'")
+
+    children = get_enzyme_children_sql(db, parent)
+    return {'parent': parent, 'count': len(children), 'data': children}
+
+
+@router.get("/enzyme/path")
+async def enzyme_path(request: Request, id: str = Query(...)):
+    """
+    Ancestor path (root to node) for an Enzyme (EC) node, for auto-
+    expanding and highlighting a node in the hierarchy popup when opened
+    from a chart for one specific annotation.
+
+    SQL backend only, same reasoning as /kegg/children.
+    """
+    if DATA_BACKEND != 'sql':
+        raise HTTPException(status_code=501, detail="Enzyme hierarchy browsing requires DATA_BACKEND=sql")
+
+    db = request.app.state.sql_conn
+    result = get_enzyme_path_sql(db, id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Unknown Enzyme node '{id}'")
+    return result
+
+
+@router.get("/cog/children")
+async def cog_children(request: Request, parent: str | None = Query(None)):
+    """
+    Direct children of a COG node (structure only — no egc values), for
+    the same BRITE-hierarchy-popup feature as /kegg/children.
+
+    parent omitted/empty -> the 26 top-level category letters (Energy
+    production and conversion, etc.).
+
+    SQL backend only, same reasoning as /kegg/children -- cog_paths (see
+    migrate_cog_paths_to_sql.py) has no JSON-backend equivalent. Unlike
+    KEGG, every COG id has exactly one real category, and the hierarchy
+    is only 2 levels deep (category -> specific COG id), not 4.
+    """
+    if DATA_BACKEND != 'sql':
+        raise HTTPException(status_code=501, detail="COG hierarchy browsing requires DATA_BACKEND=sql")
+
+    db = request.app.state.sql_conn
+    if parent is not None and _cog_node_depth(db, parent) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown COG node '{parent}'")
+
+    children = get_cog_children_sql(db, parent)
+    return {'parent': parent, 'count': len(children), 'data': children}
+
+
+@router.get("/cog/path")
+async def cog_path(request: Request, id: str = Query(...)):
+    """
+    Ancestor path (root to node) for a COG node, for auto-expanding and
+    highlighting a node in the hierarchy popup when opened from a chart
+    for one specific annotation.
+
+    SQL backend only, same reasoning as /kegg/children.
+    """
+    if DATA_BACKEND != 'sql':
+        raise HTTPException(status_code=501, detail="COG hierarchy browsing requires DATA_BACKEND=sql")
+
+    db = request.app.state.sql_conn
+    result = get_cog_path_sql(db, id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Unknown COG node '{id}'")
+    return result
 
 
 @router.get("/annotations/top")
@@ -813,31 +816,23 @@ async def top_annotations_by_egc(
                 # precomputed annotation_catalog table instead of the per-sample
                 # timepoint scan below, which exists only to resolve date-range
                 # filters and would otherwise run needlessly on every request.
-                _TOP_ANN_CACHE_SQL[cache_key] = get_top_annotations_from_catalog_sql(db, source.value)
+                _TOP_ANN_CACHE_SQL[cache_key] = (
+                    get_top_annotations_from_catalog_sql(db, source.value), len(samples)
+                )
             else:
-                active_samples = []
-                for s in samples:
-                    tp = get_timepoint(s)
-                    if not tp:
-                        continue
-                    dt = tp.get("datetime", "")
-                    if date_from and dt < date_from:
-                        continue
-                    if date_to and dt > date_to + "z":
-                        continue
-                    active_samples.append(s)
-
-                if not active_samples:
-                    return {"source": source.value, "data": []}
-
-                _TOP_ANN_CACHE_SQL[cache_key] = get_top_annotations_sql(
-                    db, source.value, active_samples
+                active_samples = [
+                    s for s in samples
+                    if is_within_date_range((get_timepoint(s) or {}).get("datetime"), date_from, date_to)
+                ]
+                _TOP_ANN_CACHE_SQL[cache_key] = (
+                    (get_top_annotations_sql(db, source.value, active_samples), len(active_samples))
+                    if active_samples else ([], 0)
                 )
 
-        cached = _TOP_ANN_CACHE_SQL[cache_key]
+        cached, filtered_sample_count = _TOP_ANN_CACHE_SQL[cache_key]
         return {
             "source":       source.value,
-            "sample_count": len(samples),
+            "sample_count": filtered_sample_count,
             "date_from":    date_from,
             "date_to":      date_to,
             "data":         cached[:limit],
@@ -850,20 +845,21 @@ async def top_annotations_by_egc(
         cache_key = (source.value, date_from or "", date_to or "")
 
         if cache_key not in _TOP_ANN_CACHE:
-            active_samples = []
-            for s in samples:
-                tp = get_timepoint(s)
-                if not tp:
-                    continue
-                dt = tp.get("datetime", "")
-                if date_from and dt < date_from:
-                    continue
-                if date_to and dt > date_to + "z":
-                    continue
-                active_samples.append(s)
+            active_samples = [
+                s for s in samples
+                if is_within_date_range((get_timepoint(s) or {}).get("datetime"), date_from, date_to)
+            ]
 
             if not active_samples:
-                return {"source": source.value, "data": []}
+                _TOP_ANN_CACHE[cache_key] = ([], 0)
+                cached, filtered_sample_count = _TOP_ANN_CACHE[cache_key]
+                return {
+                    "source":       source.value,
+                    "sample_count": filtered_sample_count,
+                    "date_from":    date_from,
+                    "date_to":      date_to,
+                    "data":         cached,
+                }
 
             egc_map: dict[str, dict] = {}
 
@@ -903,12 +899,12 @@ async def top_annotations_by_egc(
                 })
 
             computed.sort(key=lambda x: x["mean_egc"], reverse=True)
-            _TOP_ANN_CACHE[cache_key] = computed
+            _TOP_ANN_CACHE[cache_key] = (computed, len(active_samples))
 
-        cached = _TOP_ANN_CACHE[cache_key]
+        cached, filtered_sample_count = _TOP_ANN_CACHE[cache_key]
         return {
             "source":       source.value,
-            "sample_count": len(samples),
+            "sample_count": filtered_sample_count,
             "date_from":    date_from,
             "date_to":      date_to,
             "data":         cached[:limit],

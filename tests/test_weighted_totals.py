@@ -45,11 +45,14 @@ Run:
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
 import pandas as pd
 import pytest
+
+from conftest import NORM_TOLERANCE
 
 DATA_ROOT: Path = Path(os.environ.get("HAB_DATA_ROOT", Path(__file__).resolve().parent.parent))
 NOTEBOOKS_DIR: Path = DATA_ROOT / "Notebooks"
@@ -72,6 +75,11 @@ pytestmark = pytest.mark.skipif(
 if _DATA_PRESENT:
     sys.path.insert(0, str(NOTEBOOKS_DIR))
     import weighted_totals
+
+sys.path.insert(0, str(DATA_ROOT / "FastAPI"))
+from api.config import SQLITE_DB_PATH
+
+_SQL_DB_PRESENT = os.path.exists(SQLITE_DB_PATH)
 
 
 def _write_mapping_tsv(path: Path, scaffold_ids: list[str]) -> None:
@@ -313,3 +321,84 @@ class TestRealData:
                 f"old unweighted total {old_total:,.0f} -- unexpected, since "
                 f"every gene count is >= 1"
             )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestNormEgcMatchesSqlDatabase — audit T1 fix: pin norm_egc to an absolute
+# expected value instead of only the range/ratio invariants
+# test_egc_api_vs_jgi.py already checks (in (0, 1], constant ratio within a
+# sample, same ratio across sources) -- those hold true for ANY consistent
+# denominator, including the old, wrong, per-source-scoped one, so they
+# can't catch a return to that bug or a SQL resync that drifted out of sync
+# with calculate_denominator_egc. This recomputes the real shared
+# denominator directly and checks it against the persisted `norm_egc`
+# column for one real annotation per source.
+# ═══════════════════════════════════════════════════════════════════════════
+
+pytestmark_sql_db = pytest.mark.skipif(
+    not _SQL_DB_PRESENT,
+    reason=f"{SQLITE_DB_PATH} not found -- run migrate_mappings_to_sql.py first",
+)
+
+
+@pytestmark_sql_db
+class TestNormEgcMatchesSqlDatabase:
+    """Real annotation IDs already independently verified elsewhere in this
+    codebase: COG0055/K02112/EC:7.1.2.2 are the same known example
+    tests/sql/test_mappings_sql.py uses; Archaea is the taxonomy
+    domain-level equivalent (no single "gene" example applies to a rollup
+    source the same way)."""
+
+    SAMPLE_LIMIT = 5
+
+    KNOWN_EXAMPLES = [
+        ("cog", "COG0055"),
+        ("kegg", "K02112"),
+        ("enzyme", "7.1.2.2"),
+        ("taxonomy", "Archaea"),
+    ]
+
+    @pytest.fixture(scope="class")
+    def sample_names(self):
+        with open(SAMPLE_NAMES_FILE) as f:
+            names = [s.strip() for s in f if s.strip()]
+        return names[: self.SAMPLE_LIMIT]
+
+    @pytest.fixture(scope="class")
+    def denominators(self, sample_names):
+        return weighted_totals.calculate_denominator_egc(sample_names)
+
+    @pytest.fixture(scope="class")
+    def conn(self):
+        connection = sqlite3.connect(f"file:{SQLITE_DB_PATH}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        yield connection
+        connection.close()
+
+    @pytest.mark.parametrize("source,annotation_id", KNOWN_EXAMPLES)
+    def test_norm_egc_matches_calculated_denominator(
+        self, sample_names, denominators, conn, source, annotation_id,
+    ):
+        placeholders = ",".join("?" * len(sample_names))
+        rows = conn.execute(
+            f"""
+            SELECT sample, egc, norm_egc FROM annotation_series
+            WHERE source = ? AND annotation_id = ? AND sample IN ({placeholders})
+            """,
+            [source, annotation_id, *sample_names],
+        ).fetchall()
+
+        assert rows, f"No {source}/{annotation_id} rows found for samples {sample_names}"
+
+        mismatches = []
+        for row in rows:
+            expected = row["egc"] / denominators[row["sample"]]
+            if abs(expected - row["norm_egc"]) > NORM_TOLERANCE:
+                mismatches.append(
+                    f"  {row['sample']}: stored={row['norm_egc']:.12f} "
+                    f"expected={expected:.12f}"
+                )
+        assert not mismatches, (
+            f"{source}/{annotation_id} norm_egc doesn't match "
+            f"egc / calculate_denominator_egc:\n" + "\n".join(mismatches)
+        )

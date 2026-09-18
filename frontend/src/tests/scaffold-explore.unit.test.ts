@@ -4,8 +4,10 @@
  * Unit tests for ScaffoldExplorePanel logic and scaffold data utilities.
  *
  * Tests import directly from production source files where possible.
- * Pure logic helpers are defined inline (they have no production import
- * because they live inside component functions).
+ * filterSummaryForChart and buildAggregatedChartRows are imported from the
+ * real component (exported for testing, W15 fix). Other pure logic helpers
+ * are still defined inline -- they have no production export because they
+ * live inside component functions and aren't otherwise reused.
  *
  * Coverage
  * --------
@@ -90,10 +92,20 @@
 import { describe, it, expect } from 'vitest'
 
 import { fmtDate, fmtTime, parseDateTime } from '../utils/format'
+import { filterSummaryForChart, buildAggregatedChartRows } from '../components/scaffolds/ScaffoldExplorePanel'
 import type { ScaffoldSummaryRow, ScaffoldDetailRow } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure helpers (mirror component-internal logic)
+//
+// filterSummaryForChart and buildAggregatedChartRows are imported directly
+// from the real component (W15 fix) rather than reimplemented here -- a
+// local duplicate using synthetic ISO-format ("YYYY-MM-DD HH:MM") fixtures
+// is exactly how W15 (date filter compares dates as text) went undetected:
+// ISO strings happen to compare correctly as plain text, so the duplicate
+// never exercised the real bug, which only shows up with the API's actual
+// unpadded "M/D/YY H:MM" format. See the "real raw date format" describe
+// blocks below for fixtures that use the real format.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type ScaffoldSortCol = 'date' | 'scaffold_count' | 'gene_count'
@@ -133,26 +145,6 @@ function computeStatStrip(rows: ScaffoldSummaryRow[]): {
   }
 }
 
-function buildAggregatedChartRows(
-  termSummaries: ScaffoldSummaryRow[][],
-  dateFrom:      string,
-  dateTo:        string,
-): { date: string; scaffold_count: number; gene_count: number }[] {
-  const dateMap: Record<string, { scaffold_count: number; gene_count: number; date: string }> = {}
-  for (const rows of termSummaries) {
-    for (const row of rows) {
-      if (dateFrom && row.date < dateFrom) continue
-      if (dateTo   && row.date > dateTo)   continue
-      if (!dateMap[row.date]) {
-        dateMap[row.date] = { scaffold_count: 0, gene_count: 0, date: row.date }
-      }
-      dateMap[row.date].scaffold_count += row.scaffold_count
-      dateMap[row.date].gene_count     += row.gene_count
-    }
-  }
-  return Object.values(dateMap).sort((a, b) => a.date.localeCompare(b.date))
-}
-
 function buildSplitChartRows(
   termSummaries: { id: string; rows: ScaffoldSummaryRow[] }[],
   metric:        'scaffold_count' | 'gene_count',
@@ -175,20 +167,6 @@ function buildSplitChartRows(
     }
     return row
   })
-}
-
-function filterSummaryForChart(
-  rows:     ScaffoldSummaryRow[],
-  dateFrom: string,
-  dateTo:   string,
-): ScaffoldSummaryRow[] {
-  return rows
-    .filter(r => {
-      if (dateFrom && r.date < dateFrom) return false
-      if (dateTo   && r.date > dateTo)   return false
-      return true
-    })
-    .sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date))
 }
 
 type Term = { annotationId: string; source: string }
@@ -381,33 +359,33 @@ describe('computeStatStrip', () => {
 
 describe('buildAggregatedChartRows', () => {
   it('sums scaffold_count across terms for same date', () => {
-    const rows = buildAggregatedChartRows([TERM_A, TERM_B], '', '')
+    const rows = buildAggregatedChartRows([{ summary: TERM_A }, { summary: TERM_B }], '', '')
     const may10_08 = rows.find(r => r.date === '2021-05-10 08:00')!
     // A:2 + B:4 = 6
     expect(may10_08.scaffold_count).toBe(6)
   })
 
   it('sums gene_count across terms for same date', () => {
-    const rows = buildAggregatedChartRows([TERM_A, TERM_B], '', '')
+    const rows = buildAggregatedChartRows([{ summary: TERM_A }, { summary: TERM_B }], '', '')
     const may10_08 = rows.find(r => r.date === '2021-05-10 08:00')!
     // A:5 + B:10 = 15
     expect(may10_08.gene_count).toBe(15)
   })
 
   it('includes dates unique to one term', () => {
-    const dates = buildAggregatedChartRows([TERM_A, TERM_B], '', '').map(r => r.date)
+    const dates = buildAggregatedChartRows([{ summary: TERM_A }, { summary: TERM_B }], '', '').map(r => r.date)
     expect(dates).toContain('2021-05-11 08:00') // only in TERM_B
     expect(dates).toContain('2021-05-10 12:00') // only in TERM_A
   })
 
   it('output is sorted chronologically', () => {
-    const rows  = buildAggregatedChartRows([TERM_A, TERM_B], '', '')
+    const rows  = buildAggregatedChartRows([{ summary: TERM_A }, { summary: TERM_B }], '', '')
     const dates = rows.map(r => r.date)
     expect(dates).toEqual([...dates].sort())
   })
 
   it('dateFrom filter excludes earlier dates', () => {
-    const rows  = buildAggregatedChartRows([TERM_A, TERM_B], '2021-05-11', '')
+    const rows  = buildAggregatedChartRows([{ summary: TERM_A }, { summary: TERM_B }], '2021-05-11', '')
     const dates = rows.map(r => r.date)
     expect(dates).not.toContain('2021-05-10 08:00')
     expect(dates).not.toContain('2021-05-10 12:00')
@@ -415,7 +393,7 @@ describe('buildAggregatedChartRows', () => {
   })
 
   it('dateTo filter excludes later dates', () => {
-    const rows  = buildAggregatedChartRows([TERM_A, TERM_B], '', '2021-05-10')
+    const rows  = buildAggregatedChartRows([{ summary: TERM_A }, { summary: TERM_B }], '', '2021-05-10')
     const dates = rows.map(r => r.date)
     expect(dates).not.toContain('2021-05-11 08:00')
   })
@@ -425,19 +403,19 @@ describe('buildAggregatedChartRows', () => {
   })
 
   it('single term with no filter: all rows present', () => {
-    const rows = buildAggregatedChartRows([TERM_A], '', '')
+    const rows = buildAggregatedChartRows([{ summary: TERM_A }], '', '')
     expect(rows).toHaveLength(TERM_A.length)
   })
 
   it('does not double-count: same date from two terms produces one row', () => {
-    const rows     = buildAggregatedChartRows([TERM_A, TERM_B], '', '')
+    const rows     = buildAggregatedChartRows([{ summary: TERM_A }, { summary: TERM_B }], '', '')
     const may10_08 = rows.filter(r => r.date === '2021-05-10 08:00')
     expect(may10_08).toHaveLength(1)          // one row
     expect(may10_08[0].scaffold_count).toBe(6) // summed, not replaced
   })
 
   it('completely out-of-range filter returns []', () => {
-    expect(buildAggregatedChartRows([TERM_A, TERM_B], '2022-01-01', '2022-12-31'))
+    expect(buildAggregatedChartRows([{ summary: TERM_A }, { summary: TERM_B }], '2022-01-01', '2022-12-31'))
       .toHaveLength(0)
   })
 })
@@ -560,6 +538,67 @@ describe('filterSummaryForChart', () => {
     ]
     const result = filterSummaryForChart(rows, '', '')
     expect(result.map(r => r.sample)).toEqual(['a', 'b', 'c'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W15 regression: date_from/date_to against the REAL raw date format
+//
+// Every fixture above this point uses padded ISO "YYYY-MM-DD HH:MM" dates,
+// which happen to compare correctly as plain text -- so they never actually
+// exercised the W15 bug. The scaffold summary endpoint really returns
+// unpadded "M/D/YY H:MM" (e.g. "5/27/21 13:00", see
+// FastAPI/api/index.py's _parse_any_datetime docstring), while date_from/
+// date_to are bare "YYYY-MM-DD" from <input type="date">. These fixtures
+// use that real format so the filter logic is actually put to the test.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RAW_FORMAT_SUMMARY: ScaffoldSummaryRow[] = [
+  { sample: 's1', date: '5/27/21 13:00', scaffold_count: 3, gene_count: 7  },
+  { sample: 's2', date: '6/5/21 21:00',  scaffold_count: 5, gene_count: 12 },
+  { sample: 's3', date: '6/9/21 8:00',   scaffold_count: 1, gene_count: 2  },
+  { sample: 's4', date: '6/18/21 5:00',  scaffold_count: 9, gene_count: 22 },
+]
+
+describe('filterSummaryForChart — real raw "M/D/YY H:MM" date format (W15)', () => {
+  it('date_to no longer empties every row', () => {
+    // Pre-fix: "5/27/21 13:00" > "2021-06-05" as plain text (raw string
+    // starts with a digit character greater than "2"), so EVERY row was
+    // excluded regardless of its actual date.
+    const rows = filterSummaryForChart(RAW_FORMAT_SUMMARY, '', '2021-06-05')
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.map(r => r.sample)).toEqual(['s1', 's2'])
+  })
+
+  it('date_from actually filters instead of matching everything', () => {
+    // Pre-fix: "5/27/21 13:00" < "2021-06-15" as plain text always, so
+    // date_from never excluded anything no matter how late it was set.
+    const rows = filterSummaryForChart(RAW_FORMAT_SUMMARY, '2021-06-09', '')
+    expect(rows.map(r => r.sample)).toEqual(['s3', 's4'])
+  })
+
+  it('date_to is inclusive of the whole day, not just 00:00', () => {
+    // 6/5/21 21:00 must still match date_to=2021-06-05.
+    const rows = filterSummaryForChart(RAW_FORMAT_SUMMARY, '', '2021-06-05')
+    expect(rows.map(r => r.sample)).toContain('s2')
+  })
+
+  it('both bounds narrow to the correct window', () => {
+    const rows = filterSummaryForChart(RAW_FORMAT_SUMMARY, '2021-06-01', '2021-06-10')
+    expect(rows.map(r => r.sample)).toEqual(['s2', 's3'])
+  })
+})
+
+describe('buildAggregatedChartRows — real raw "M/D/YY H:MM" date format (W15)', () => {
+  it('date_to no longer empties the aggregated series', () => {
+    const rows = buildAggregatedChartRows([{ summary: RAW_FORMAT_SUMMARY }], '', '2021-06-05')
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.map(r => r.date)).toEqual(['5/27/21 13:00', '6/5/21 21:00'])
+  })
+
+  it('date_from actually filters the aggregated series', () => {
+    const rows = buildAggregatedChartRows([{ summary: RAW_FORMAT_SUMMARY }], '2021-06-09', '')
+    expect(rows.map(r => r.date)).toEqual(['6/9/21 8:00', '6/18/21 5:00'])
   })
 })
 

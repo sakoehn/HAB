@@ -21,13 +21,12 @@ import React, { useState, useEffect } from 'react'
 
 import type {
   CompareEntry, CompareEntryMember,
-  AnnotationItem, TimepointMeta, ApiStatus, SharedAnnotation,
+  AnnotationItem, ApiStatus, SharedAnnotation,
 } from '../types'
 import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel } from '../constants'
 import { nextColorForSource, resetSourceCounters } from '../constants'
-import { apiFetch, downloadCsv } from '../utils/api'
-import { isoDate } from '../utils/format'
-import { extractEgc, extractNormEgc } from '../utils/stats'
+import { apiFetch } from '../utils/api'
+import { sumMembersByTimestamp } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
 import { CopyBtn, ResetBtn } from '../components/ui/controls'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
@@ -83,39 +82,22 @@ async function fetchMemberSeries(
 // MultiEgcChart can serve raw mode and L1 mode correctly for group series.
 // norm_egc = egc / total_sample_depth (pre-computed by pipeline); summing
 // across members gives true depth-normalised group abundance, on the same
-// scale as any single annotation's norm_egc. O(points × members).
+// scale as any single annotation's norm_egc.
+//
+// Thin adapter over the shared sumMembersByTimestamp (utils/stats.ts) --
+// this used to be its own separate implementation with its own separate
+// bug (W9: sorted the output with a plain string compare on the raw
+// "M/D/YY H:MM" datetime, which sorts wrong -- "6/10/21" before "6/2/21").
+// AnalyzePage.tsx had an near-identical copy with the exact same bug;
+// both now go through the one, already-sorted-correctly implementation.
 function sumMemberSeries(members: CompareEntryMember[], label: string): AnnotationItem[] {
-  const dtMap: Record<string, {
-    datetime: string
-    egc:      number
-    norm_egc: number
-    sample:   string
-  }> = {}
-
+  const seriesData: Record<string, AnnotationItem[]> = {}
   for (const m of members) {
-    if (m.status !== 'ok') continue
-    for (const d of m.data) {
-      const dt = d.timepoint?.datetime
-      if (!dt) continue
-      const egc     = extractEgc(d.value)
-      const normEgc = extractNormEgc(d.value)
-      if (egc === null) continue
-      if (!dtMap[dt]) dtMap[dt] = { datetime: dt, egc: 0, norm_egc: 0, sample: d.sample ?? '' }
-      dtMap[dt].egc      += egc
-      dtMap[dt].norm_egc += normEgc ?? 0
-    }
+    if (m.status === 'ok') seriesData[m.annotationId] = m.data
   }
-
-  return Object.values(dtMap)
-    .sort((a, b) => a.datetime.localeCompare(b.datetime))
-    .map(pt => ({
-      annotation_id: label,
-      source:        members[0]?.source ?? 'kegg',
-      sample:        pt.sample,
-      name:          label,
-      timepoint:     { datetime: pt.datetime } as TimepointMeta,
-      value:         { egc: pt.egc, norm_egc: pt.norm_egc },
-    }))
+  return sumMembersByTimestamp(
+    members.map(m => m.annotationId), seriesData, label, members[0]?.source ?? 'kegg',
+  )
 }
 
 // ── CompareFirstRunHint ──────────────────────────────────────────────────────
@@ -885,32 +867,17 @@ export function ComparePage({
                     minDate={dataDateRange?.min}
                     maxDate={dataDateRange?.max}
                   />
-                  <button
-                    className="btn sm"
-                    style={{ marginLeft: 'auto' }}
-                    onClick={() => {
-                      const rowsOut: Record<string, unknown>[] = []
-                      for (const e of readyEntries) {
-                        for (const d of e.data) {
-                          const iso = isoDate(d.timepoint?.datetime ?? '')
-                          if (state.dateFrom && iso < state.dateFrom) continue
-                          if (state.dateTo   && iso > state.dateTo)   continue
-                          rowsOut.push({
-                            annotation_id: e.annotationId,
-                            source:        e.source,
-                            sample:        d.sample,
-                            date:          d.timepoint?.datetime ?? '',
-                            egc:           extractEgc(d.value),
-                          })
-                        }
-                      }
-                      downloadCsv(rowsOut, 'compare_egc.csv')
-                    }}
-                  >
-                    ↓ CSV
-                  </button>
                 </div>
 
+                {/* W18: no page-level CSV export here -- MultiEgcChart
+                    below has its own "↓ CSV" button, which (unlike this
+                    page's former one) actually reflects the chart's
+                    current metric/standardize/smoothed state. This page
+                    has no access to that state (it lives inside
+                    MultiEgcChart, not lifted up), so a page-level export
+                    could only ever re-derive raw EGC regardless of what
+                    the chart was actually showing -- always wrong
+                    whenever the chart wasn't in plain raw-EGC mode. */}
                 <ChartErrorBoundary label="Compare overlay">
                   <MultiEgcChart
                     series={readyEntries.map(e => ({

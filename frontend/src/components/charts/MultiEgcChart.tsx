@@ -18,6 +18,7 @@ import { StatsPanel }   from '../ui/StatsPanel'
 import { HelpTooltip } from '../ui/HelpTooltip'
 import { ChartControls } from './ChartControls'
 import { ScaffoldBtn }   from '../scaffolds/ScaffoldBtn'
+import { HierarchyBtn }  from '../hierarchy/HierarchyBtn'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = createPlotlyComponent(PlotlyBase as any)
@@ -39,6 +40,40 @@ type SeriesEntry = {
   source:       string
   isGrouped?:   boolean
   scaffoldsDisabled?: boolean
+}
+
+// buildMultiEgcCsvRows
+// Exported so tests can exercise the real CSV row shape directly (W18).
+// The value column is named from the active metric (was hardcoded
+// "egc_normalized" even in raw egc mode), with metric/standardized/smoothed
+// recorded on every row.
+export function buildMultiEgcCsvRows(
+  chartData:   Record<string, unknown>[],
+  series:      { annotationId: string; source?: string }[],
+  metric:      ChartMetric,
+  standardize: boolean,
+  smoothed:    boolean,
+  showTide:    boolean,
+): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = []
+  for (const row of chartData) {
+    for (const s of series) {
+      const val = row[s.annotationId]
+      if (val !== null && val !== undefined) {
+        rows.push({
+          annotation_id: s.annotationId,
+          source:        s.source ?? '',
+          date:          row._dt ?? row.date,
+          [metric]:      val,
+          metric,
+          standardized:  standardize,
+          smoothed,
+          ...(showTide ? { tide_predicted_wl_m: row.tide_wl ?? null } : {}),
+        })
+      }
+    }
+  }
+  return rows
 }
 
 export function MultiEgcChart({
@@ -94,20 +129,22 @@ export function MultiEgcChart({
     if (metric === 'egc' && !standardize && !smoothed) return baseRows
     let rows = baseRows
     for (const s of series) {
-      let processed: { egc: number | null; datetime?: string }[]
+      let processed: { egc: number | null; datetime?: string; ts: number }[]
       if (metric === 'norm_egc') {
         processed = rows.map(row => ({
           egc:      (row[s.annotationId + '__norm'] as number | null) ?? null,
           datetime: row._dt,
+          ts:       row._ts,
         }))
       } else {
         processed = rows.map(row => ({
           egc:      (row[s.annotationId] as number | null) ?? null,
           datetime: row._dt,
+          ts:       row._ts,
         }))
       }
-      if (standardize) processed = applyZScore(processed)
-      if (smoothed) processed = applyLowess(processed, smoothBandwidth)
+      if (standardize) processed = applyZScore(processed) as typeof processed
+      if (smoothed) processed = applyLowess(processed, smoothBandwidth) as typeof processed
       rows = rows.map((row, i) => ({ ...row, [s.annotationId]: processed[i].egc }))
     }
     return rows
@@ -309,26 +346,10 @@ export function MultiEgcChart({
     a.href = url; a.download = 'compare_egc.svg'; a.click()
   }
 
-  const handleExportCsv = () => {
-    const rows: Record<string, unknown>[] = []
-    for (const row of chartData) {
-      for (const s of series) {
-        const val = row[s.annotationId]
-        if (val !== null && val !== undefined) {
-          rows.push({
-            annotation_id:  s.annotationId,
-            source:         s.source ?? '',
-            date:           row._dt ?? row.date,
-            egc_normalized: val,
-            metric,
-            standardized:   standardize,
-            ...(showTide ? { tide_predicted_wl_m: row.tide_wl ?? null } : {}),
-          })
-        }
-      }
-    }
-    downloadCsv(rows, `compare_egc_${metric}${standardize ? '_zscore' : ''}.csv`)
-  }
+  const handleExportCsv = () => downloadCsv(
+    buildMultiEgcCsvRows(chartData, series, metric, standardize, smoothed, showTide),
+    `compare_egc_${metric}${standardize ? '_zscore' : ''}.csv`,
+  )
 
   if (chartData.length === 0) {
     return (
@@ -366,12 +387,19 @@ export function MultiEgcChart({
                   {taxonomyAwarePrimaryLabel(s.source, s.annotationId, s.name)}
                 </span>
                 {!s.scaffoldsDisabled && (
-                  <ScaffoldBtn
-                    annotationId={s.annotationId}
-                    source={s.source}
-                    name={s.name}
-                    onGoExplore={onGoScaffoldExplore}
-                  />
+                  <>
+                    <ScaffoldBtn
+                      annotationId={s.annotationId}
+                      source={s.source}
+                      name={s.name}
+                      onGoExplore={onGoScaffoldExplore}
+                    />
+                    <HierarchyBtn
+                      annotationId={s.annotationId}
+                      source={s.source}
+                      name={s.name}
+                    />
+                  </>
                 )}
               </div>
             ))}

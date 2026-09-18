@@ -16,7 +16,7 @@ import React, { useState, useMemo } from 'react'
 
 import type { ApiStatus, MappingSortCol, SortDir, MappingSearchRow } from '../../types'
 import { apiFetch, downloadCsv } from '../../utils/api'
-import { fmtDate, fmtTime } from '../../utils/format'
+import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
 import { HelpTooltip } from '../ui/HelpTooltip'
 import { SkeletonTable } from '../ui/Skeleton'
 
@@ -61,14 +61,24 @@ export function sortMappingRows(
   sortCol: MappingSortCol,
   sortDir: SortDir,
 ): MappingSearchRow[] {
+  // 'date' and 'time' sort by full datetime, numerically via parseDateTime
+  // -- NOT a plain string compare (W17). The API returns unpadded
+  // "M/D/YY H:MM" (e.g. "6/10/21 8:00"), which does not sort correctly as
+  // text: "6/10/21" sorts before "6/2/21" lexically, even though June 10
+  // is AFTER June 2. A plain string sort opened the table with "page one"
+  // showing 5/27, 6/1, 6/10, 6/18, 6/2, 6/9 -- not the earliest rows -- and
+  // the CSV export (which reuses this same sorted list) was in the same
+  // wrong order.
+  if (sortCol === 'date' || sortCol === 'time') {
+    return [...rows].sort((a, b) => {
+      const av = parseDateTime(a.timepoint?.datetime ?? '')
+      const bv = parseDateTime(b.timepoint?.datetime ?? '')
+      return sortDir === 'asc' ? av - bv : bv - av
+    })
+  }
   return [...rows].sort((a, b) => {
-    // Both 'date' and 'time' sort by full datetime (ISO string sorts correctly)
-    const av = (sortCol === 'date' || sortCol === 'time')
-      ? (a.timepoint?.datetime ?? '')
-      : ((a[sortCol as keyof MappingSearchRow] ?? '') as string)
-    const bv = (sortCol === 'date' || sortCol === 'time')
-      ? (b.timepoint?.datetime ?? '')
-      : ((b[sortCol as keyof MappingSearchRow] ?? '') as string)
+    const av = (a[sortCol as keyof MappingSearchRow] ?? '') as string
+    const bv = (b[sortCol as keyof MappingSearchRow] ?? '') as string
     return sortDir === 'asc'
       ? av.localeCompare(bv)
       : bv.localeCompare(av)

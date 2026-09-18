@@ -31,11 +31,19 @@
  * norm_egc formatting
  *   toExponential(3) on the normalised EGC values matches expected output.
  *
+ * resolveLookupCategory / resolveLookupScaffoldCount / resolveLookupDepth
+ *   (utils/stats.ts, real imports, not mirrored) -- W5 fix: the SQL
+ *   backend exposes category/scaffold_count/depth as top-level fields on
+ *   the row, while the JSON backend nests category/scaffolds inside
+ *   `value` and never sets the top-level ones at all. These three read
+ *   whichever shape is present so the detail card works on both backends.
+ *
  * Run: npx vitest run src/tests/lookup-detail.unit.test.ts
  */
 
 import { describe, it, expect } from 'vitest'
 import { expandParentLabel } from '../constants'
+import { resolveLookupCategory, resolveLookupScaffoldCount, resolveLookupDepth } from '../utils/stats'
 import type { TopAnnotation, AnnotationValue } from '../types'
 
 
@@ -433,6 +441,121 @@ describe('norm_egc number formatting', () => {
   })
 })
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveLookupCategory / resolveLookupScaffoldCount / resolveLookupDepth (W5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SQL_SHAPED_ROW: TopAnnotation = {
+  // SQL backend: category/scaffold_count/depth are top-level, no `value`.
+  annotation_id:  'COG0055',
+  name:           'FoF1-type ATP synthase, beta subunit',
+  parent:         'C',
+  mean_egc:       8759.32,
+  max_egc:        25563.0,
+  sample_count:   128,
+  depth:          2,
+  category:       'Energy production and conversion',
+  scaffold_count: 169,
+}
+
+const JSON_SHAPED_ROW: TopAnnotation = {
+  // JSON backend: no top-level category/scaffold_count/depth -- nested
+  // inside `value` instead.
+  annotation_id: 'COG0055',
+  name:          'FoF1-type ATP synthase, beta subunit',
+  parent:        'C',
+  mean_egc:      8759.32,
+  max_egc:       25563.0,
+  sample_count:  128,
+  value: {
+    depth:     2,
+    category:  'Energy production and conversion',
+    scaffolds: { 'Ga0590984_0000001': 2, 'Ga0590984_0000003': 1 },
+  },
+}
+
+describe('resolveLookupCategory', () => {
+  it('SQL-shaped row: reads the top-level category field', () => {
+    expect(resolveLookupCategory(SQL_SHAPED_ROW)).toBe('Energy production and conversion')
+  })
+
+  it('JSON-shaped row: falls back to value.category', () => {
+    expect(resolveLookupCategory(JSON_SHAPED_ROW)).toBe('Energy production and conversion')
+  })
+
+  it('top-level category wins when both are present', () => {
+    const row: TopAnnotation = {
+      ...SQL_SHAPED_ROW,
+      category: 'Top-level wins',
+      value: { category: 'Nested loses' },
+    }
+    expect(resolveLookupCategory(row)).toBe('Top-level wins')
+  })
+
+  it('neither present: returns null', () => {
+    const row: TopAnnotation = {
+      annotation_id: 'X', name: null, parent: null,
+      mean_egc: 1, max_egc: 1, sample_count: 1,
+    }
+    expect(resolveLookupCategory(row)).toBeNull()
+  })
+})
+
+describe('resolveLookupScaffoldCount', () => {
+  it('SQL-shaped row: reads the top-level scaffold_count field directly (a real int, not a derived length)', () => {
+    expect(resolveLookupScaffoldCount(SQL_SHAPED_ROW)).toBe(169)
+  })
+
+  it('JSON-shaped row: falls back to counting value.scaffolds keys', () => {
+    expect(resolveLookupScaffoldCount(JSON_SHAPED_ROW)).toBe(2)
+  })
+
+  it('top-level scaffold_count wins when both are present', () => {
+    const row: TopAnnotation = {
+      ...SQL_SHAPED_ROW,
+      scaffold_count: 5,
+      value: { scaffolds: { a: 1, b: 1, c: 1 } },  // would be 3 if this were read instead
+    }
+    expect(resolveLookupScaffoldCount(row)).toBe(5)
+  })
+
+  it('scaffold_count: 0 is a real, displayable value, not treated as missing', () => {
+    const row: TopAnnotation = { ...SQL_SHAPED_ROW, scaffold_count: 0 }
+    expect(resolveLookupScaffoldCount(row)).toBe(0)
+  })
+
+  it('neither present: returns null', () => {
+    const row: TopAnnotation = {
+      annotation_id: 'X', name: null, parent: null,
+      mean_egc: 1, max_egc: 1, sample_count: 1,
+    }
+    expect(resolveLookupScaffoldCount(row)).toBeNull()
+  })
+})
+
+describe('resolveLookupDepth', () => {
+  it('SQL-shaped row: reads the top-level depth field', () => {
+    expect(resolveLookupDepth(SQL_SHAPED_ROW)).toBe(2)
+  })
+
+  it('JSON-shaped row: falls back to value.depth', () => {
+    expect(resolveLookupDepth(JSON_SHAPED_ROW)).toBe(2)
+  })
+
+  it('depth: 0 is a real, displayable value, not treated as missing', () => {
+    const row: TopAnnotation = { ...SQL_SHAPED_ROW, depth: 0 }
+    expect(resolveLookupDepth(row)).toBe(0)
+  })
+
+  it('neither present: returns null', () => {
+    const row: TopAnnotation = {
+      annotation_id: 'X', name: null, parent: null,
+      mean_egc: 1, max_egc: 1, sample_count: 1,
+    }
+    expect(resolveLookupDepth(row)).toBeNull()
+  })
+})
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cross-field consistency

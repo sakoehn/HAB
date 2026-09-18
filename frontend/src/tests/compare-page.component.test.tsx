@@ -678,22 +678,24 @@ describe('ComparePage — CSV export', () => {
     color:        '#38d9b4',
   }]
 
-  it('CSV button(s) present when entries are ready', async () => {
+  it('CSV button present when entries are ready', async () => {
+    // W18: ComparePage no longer has its own page-level CSV button (it
+    // always re-derived raw EGC regardless of the chart's actual
+    // metric/standardize/smoothed state, so it was always wrong whenever
+    // the chart wasn't in plain raw-EGC mode) -- only the one inside
+    // MultiEgcChart's own card header remains, which reflects the chart's
+    // real current state (see egc-csv-export.unit.test.ts).
     render(<ManagedComparePage initialState={{ entries: readyEntries }} />)
     await waitFor(() => {
-      // Two CSV buttons are expected: one for the all-series export (date range row)
-      // and one inside the MultiEgcChart card header.
-      expect(screen.getAllByText(/↓ CSV/i).length).toBeGreaterThanOrEqual(1)
+      expect(screen.getAllByText(/↓ CSV/i)).toHaveLength(1)
     })
   })
 
-  it('series CSV button (date-range row) triggers Blob download', async () => {
+  it('MultiEgcChart\'s CSV button triggers a Blob download', async () => {
     render(<ManagedComparePage initialState={{ entries: readyEntries }} />)
     await waitFor(() => screen.getAllByText(/↓ CSV/i).length > 0)
     mockCreateObjectURL.mockClear()
     mockClick.mockClear()
-    // The first ↓ CSV button is the all-series export next to the date range picker.
-    // It sits in a flex row with style="margin-left: auto;" as seen in the DOM snapshot.
     const csvBtns = screen.getAllByText(/↓ CSV/i)
     await userEvent.click(csvBtns[0])
     expect(mockCreateObjectURL).toHaveBeenCalled()

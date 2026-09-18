@@ -142,6 +142,84 @@ def test_correct_values(conn):
     assert actual['sample_count'] == cog0055['sample_count']
 
 
+# W5: category/scaffold_count were entirely missing from get_search_annotations
+# (annotation_catalog has no such columns -- they live per-sample on
+# annotation_series), so the frontend's Annotation Lookup card silently
+# rendered those fields blank on the SQL backend. Fixed with correlated
+# subqueries against annotation_series.
+
+def test_category_matches_the_known_cog_functional_category(conn):
+    """COG0055's category is the expanded functional-category name for its
+    single-letter parent "C" ("Energy production and conversion") --
+    independently confirmed via a direct query against annotation_series
+    during investigation, same value test_correct_values already pins
+    `parent` to."""
+    results = get_search_annotations(conn, sources=["cog"], q=None, annotation_id="COG0055", name_exact=None)
+    assert results[0]["category"] == "Energy production and conversion"
+
+
+def test_category_is_identical_for_every_row_of_the_same_annotation(conn):
+    """category is a property of the annotation, not the sample -- there
+    must be exactly one distinct category value across every
+    annotation_series row for a given (source, annotation_id), so an
+    arbitrary single-row pick (no aggregation) is exact, not approximate.
+    Spot-checks a handful of real, distinct annotation_ids across sources."""
+    for source, ann_id in [("cog", "COG0055"), ("kegg", "K00001"), ("enzyme", "1.1.1.1")]:
+        rows = conn.execute(
+            "SELECT DISTINCT category FROM annotation_series WHERE source = ? AND annotation_id = ?",
+            (source, ann_id),
+        ).fetchall()
+        assert len(rows) == 1, f"{source}/{ann_id} has {len(rows)} distinct categories, expected exactly 1"
+
+
+def test_scaffold_count_is_a_real_positive_int_not_none(conn):
+    """scaffold_count must come back as a real number for a widely-present
+    annotation -- not silently missing (the pre-fix bug) and not zero for
+    an annotation known to be on many scaffolds."""
+    results = get_search_annotations(conn, sources=["cog"], q=None, annotation_id="COG0055", name_exact=None)
+    assert isinstance(results[0]["scaffold_count"], int)
+    assert results[0]["scaffold_count"] > 0
+
+
+def test_scaffold_count_matches_a_real_per_sample_value(conn):
+    """The returned scaffold_count must be a genuine per-sample value for
+    this annotation, not an aggregate or a made-up number -- confirm it
+    matches at least one real row in annotation_series (the subquery is
+    unordered, so which sample it lands on isn't pinned down, only that
+    the value it returns is real)."""
+    results = get_search_annotations(conn, sources=["cog"], q=None, annotation_id="COG0055", name_exact=None)
+    real_counts = {
+        row[0] for row in conn.execute(
+            "SELECT scaffold_count FROM annotation_series WHERE source = 'cog' AND annotation_id = 'COG0055'"
+        ).fetchall()
+    }
+    assert results[0]["scaffold_count"] in real_counts
+
+
+def test_category_and_scaffold_count_present_across_all_four_sources(conn):
+    """Not just a cog-specific fix -- kegg/enzyme/taxonomy all get both
+    fields populated too."""
+    for source, ann_id in [
+        ("kegg", "K00001"), ("enzyme", "1.1.1.1"), ("taxonomy", "Bacteria"),
+    ]:
+        results = get_search_annotations(conn, sources=[source], q=None, annotation_id=ann_id, name_exact=None)
+        assert results, f"no results for {source}/{ann_id}"
+        assert results[0]["category"] is not None, f"{source}/{ann_id} has no category"
+        assert results[0]["scaffold_count"] is not None, f"{source}/{ann_id} has no scaffold_count"
+
+
+def test_broad_taxonomy_search_completes_quickly(conn):
+    """Regression guard for the slow ORDER BY variant considered and
+    rejected during W5 (minutes for the full taxonomy catalog vs ~8s
+    unordered) -- a realistic broad taxonomy search must stay fast."""
+    import time
+    t0 = time.time()
+    results = get_search_annotations(conn, sources=["taxonomy"], q="bacteria", annotation_id=None, name_exact=None)
+    elapsed = time.time() - t0
+    assert results
+    assert elapsed < 5.0, f"broad taxonomy search took {elapsed:.2f}s, expected < 5s"
+
+
 def test_results_deduplicated_across_samples(conn):
     """annotation_series has ~6M rows, one per (source, sample,
     annotation_id) -- a search hit that exists in many samples collapses

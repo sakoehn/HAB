@@ -33,7 +33,7 @@ import type {
 import type { Data as PlotlyData, Layout as PlotlyLayout } from 'plotly.js'
 import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel } from '../../constants'
 import { apiFetch, downloadCsv } from '../../utils/api'
-import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
+import { fmtDate, fmtTime, parseDateTime, toPlotlyDate } from '../../utils/format'
 import { minMeanMax } from '../../utils/stats'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { SkeletonStatTiles, SkeletonChart, SkeletonTable } from '../ui/Skeleton'
@@ -434,7 +434,7 @@ export function ScaffoldModal({
                   <Plot
                     data={[{
                       type: 'scatter', mode: 'lines+markers',
-                      x: chartData.map(r => new Date(parseDateTime(r.date)).toISOString()),
+                      x: chartData.map(r => toPlotlyDate(parseDateTime(r.date))),
                       y: chartData.map(r =>
                         chartMetric === 'scaffold_count' ? r.scaffold_count : r.gene_count
                       ),

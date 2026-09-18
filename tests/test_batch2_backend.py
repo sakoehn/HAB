@@ -4,8 +4,13 @@ Tests/test_batch2_backend.py
 Batch 2 backend tests covering:
 
 Item 5  — /mappings/search speed + date/time in response
-Item 6  — /annotations/correlate concurrency fix
 Item 8  — /api/status returns date_min / date_max
+
+(Item 6, /annotations/correlate concurrency fix, tested the now-deleted
+api/correlation.py -- an unregistered, orphaned module superseded by
+correlation_sql.py before this file was even written. Removed along with
+its tests as part of the JSON-backend-retirement scoping work; see
+project memory "json-backend-retirement-scope" for the full inventory.)
 
 REFACTORED FOR MODULE SPLIT
 ----------------------------
@@ -21,12 +26,8 @@ Public names that moved:
   _TSV_CACHE                  -> api.cache._TSV_CACHE
   _MAPPING_INDEX              -> api.index._MAPPING_INDEX
   _INDEX_READY                -> api.index._INDEX_READY
-  _EGC_BUILD_LOCK             -> api.index._EGC_BUILD_LOCK
-  _EGC_MATRIX                 -> api.index._EGC_MATRIX
-  _get_egc_vectors_from_matrix-> api.index.get_egc_vectors_from_matrix
   _compute_date_range         -> api.index.compute_date_range
   get_all_sample_names        -> api.cache.get_all_sample_names
-  correlate_annotations       -> api.correlation.correlate_annotations
 
 Run with:  pytest Tests/test_batch2_backend.py -v
 """
@@ -37,6 +38,40 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+
+# ── Stand-in Request for calling DATA_BACKEND=sql routes directly ───────────
+# search_mappings() (and other sql-backed routes) reads the SQLite connection
+# main.py's lifespan() normally stores at request.app.state.sql_conn. Calling
+# the route function directly -- not through a live server or the
+# patched_client fixture (which only patches JSON-backend internals, see
+# test_unit_backend.py's TestRoutesViaTestClient) -- needs a minimal stand-in
+# exposing that one attribute path instead of a full ASGI Request.
+
+class _FakeAppState:
+    def __init__(self, sql_conn):
+        self.sql_conn = sql_conn
+
+
+class _FakeApp:
+    def __init__(self, sql_conn):
+        self.state = _FakeAppState(sql_conn)
+
+
+class _FakeRequest:
+    def __init__(self, sql_conn):
+        self.app = _FakeApp(sql_conn)
+
+
+@pytest.fixture
+def sql_request():
+    from api.config import SQLITE_DB_PATH
+    if not os.path.exists(SQLITE_DB_PATH):
+        pytest.skip(f"{SQLITE_DB_PATH} not found -- run migrate_mappings_to_sql.py first")
+    from api.db import connect_to_sql, close_sql_connection
+    conn = connect_to_sql()
+    yield _FakeRequest(conn)
+    close_sql_connection(conn)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,7 +181,7 @@ class TestMappingSearch:
     - Be fast (< 500ms) for any annotation when index is warm
     """
 
-    def test_mapping_response_has_timepoint_field(self):
+    def test_mapping_response_has_timepoint_field(self, sql_request):
         """Every row in the mapping response must have a timepoint field."""
         from api.routes import search_mappings
         from api.cache import AnnotationSource, _TSV_CACHE, TIMEPOINTS
@@ -158,6 +193,7 @@ class TestMappingSearch:
 
         first_id = next(iter(_MAPPING_INDEX["kegg"]))
         result = search_mappings(
+            sql_request,
             annotation_id=first_id,
             source=AnnotationSource.kegg,
             sample_count=10,
@@ -167,7 +203,7 @@ class TestMappingSearch:
             row = result["data"][0]
             assert "timepoint" in row, "Each mapping row must include 'timepoint'"
 
-    def test_mapping_timepoint_has_datetime(self):
+    def test_mapping_timepoint_has_datetime(self, sql_request):
         """timepoint dict must contain 'datetime' key."""
         from api.routes import search_mappings
         from api.cache import AnnotationSource
@@ -177,6 +213,7 @@ class TestMappingSearch:
 
         first_id = next(iter(_MAPPING_INDEX["kegg"]))
         result = search_mappings(
+            sql_request,
             annotation_id=first_id,
             source=AnnotationSource.kegg,
             sample_count=5,
@@ -186,16 +223,30 @@ class TestMappingSearch:
                 assert "datetime" in row["timepoint"], \
                     "timepoint dict must have 'datetime' key"
 
-    def test_mapping_rows_sorted_chronologically(self):
-        """Results should be in chronological order."""
+    def test_mapping_rows_sorted_chronologically(self, sql_request):
+        """Results should be in chronological order.
+
+        Regression note: this used to assert `datetimes == sorted(datetimes)`
+        -- plain lexicographic string sort. The raw datetime strings are
+        unpadded ("M/D/YY H:MM", e.g. "5/28/21 1:00"), so a plain string
+        sort orders "5/28/21 13:00" before "5/28/21 1:00" (':' > '3'
+        byte-wise) -- backwards from real chronological order. This exact
+        unpadded-format footgun is already called out in api/index.py's
+        is_within_date_range() docstring. The route itself sorts correctly
+        via timepoint_dt_sort_key (real datetime parsing, not string
+        comparison) -- confirmed by comparing keys() below, the same
+        convention tests/sql/test_mappings_search_route.py's
+        test_results_sorted_chronologically already uses. Only the test's
+        own comparison was wrong, not the route."""
         from api.routes import search_mappings
         from api.cache import AnnotationSource
-        from api.index import _MAPPING_INDEX
+        from api.index import _MAPPING_INDEX, timepoint_dt_sort_key
         if not _MAPPING_INDEX.get("kegg"):
             pytest.skip("Mapping index not built yet")
 
         first_id = next(iter(_MAPPING_INDEX["kegg"]))
         result = search_mappings(
+            sql_request,
             annotation_id=first_id,
             source=AnnotationSource.kegg,
             sample_count=128,
@@ -205,10 +256,11 @@ class TestMappingSearch:
             for row in result.get("data", [])
             if row.get("timepoint") and row["timepoint"].get("datetime")
         ]
-        assert datetimes == sorted(datetimes), \
+        keys = [timepoint_dt_sort_key(dt) for dt in datetimes]
+        assert keys == sorted(keys), \
             "Mapping rows must be sorted chronologically"
 
-    def test_mapping_speed_with_index(self):
+    def test_mapping_speed_with_index(self, sql_request):
         """When the index is warm, /mappings/search must complete in < 500ms."""
         from api.routes import search_mappings
         from api.cache import AnnotationSource
@@ -219,6 +271,7 @@ class TestMappingSearch:
         first_id = next(iter(_MAPPING_INDEX["kegg"]))
         start = time.perf_counter()
         search_mappings(
+            sql_request,
             annotation_id=first_id,
             source=AnnotationSource.kegg,
             sample_count=128,
@@ -237,7 +290,15 @@ class TestMappingSearch:
                 f"_MAPPING_INDEX['{source}'] is empty after index build"
 
     def test_mapping_index_values_are_sample_row_tuples(self):
-        """Each value in _MAPPING_INDEX must be a list of (sample_name, row_dict) tuples."""
+        """Each value in _MAPPING_INDEX must be a list of (sample_name, row)
+        tuples, where row is a MappingRow NamedTuple (api/cache.py) -- NOT a
+        dict. NamedTuple was a deliberate memory-optimisation (see
+        MappingRow's own docstring); routes.py's search_mappings() already
+        calls row._asdict() at the API-response boundary to keep the JSON
+        shape unchanged. This assertion used to say `isinstance(row, dict)`,
+        which was already wrong even before the header-row bug below was
+        found (a plain assertion against the real, intended row type)."""
+        from api.cache import MappingRow
         from api.index import _MAPPING_INDEX
         for source, index in _MAPPING_INDEX.items():
             if not index:
@@ -249,174 +310,52 @@ class TestMappingSearch:
             if entries:
                 sample_name, row = entries[0]
                 assert isinstance(sample_name, str), "First element must be sample_name string"
-                assert isinstance(row, dict),        "Second element must be row dict"
+                assert isinstance(row, MappingRow),  "Second element must be a MappingRow"
             break
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ITEM 6 — Correlation concurrency lock
-# ─────────────────────────────────────────────────────────────────────────────
-
-@pytest.mark.api
-class TestCorrelationLock:
+class TestLoadTsvHeaderHandling:
     """
-    get_egc_vectors_from_matrix must serialise concurrent fallback calls.
-    The lock prevents race conditions during server startup warmup.
+    Regression test found incidentally while re-verifying W12's fix (running
+    TestMappingSearch against real data for the first time surfaced this):
+    load_tsv() (api/cache.py) used a plain csv.reader with no header skip,
+    so every sample mapping TSV's own header line
+    ("gene_id\\tscaffold_id\\ttaxonomy\\tkegg\\tenzyme\\tcog") was parsed as
+    if it were a real data row -- MappingRow(gene_id='gene_id',
+    contig_id='scaffold_id', taxonomy='taxonomy', kegg_id='kegg',
+    enzyme='enzyme', cog_id='cog') became _TSV_CACHE[sample][0] for every
+    one of the 128 samples. That polluted build_mapping_index() with 4 bogus
+    entries per source (_MAPPING_INDEX['kegg']['kegg'],
+    _MAPPING_INDEX['cog']['cog'], etc.), each falsely "matching" every
+    single sample under a literal column-name string instead of a real
+    annotation ID.
+
+    Confirmed the SQL analog does NOT have this bug: migrate_mappings_to_sql.py
+    reads the same TSVs with csv.DictReader, which treats the first row as
+    field names, not data. This bug is confined entirely to the JSON
+    backend's load_tsv(), with a trivial one-line fix (skip the header row)
+    -- in scope per this audit's standing JSON-retirement precedent for
+    trivial, confined fixes.
     """
 
-    def test_egc_build_lock_exists(self):
-        """_EGC_BUILD_LOCK must be a threading.Lock instance."""
-        import threading
-        from api.index import _EGC_BUILD_LOCK
-        assert isinstance(_EGC_BUILD_LOCK, type(threading.Lock())), \
-            "_EGC_BUILD_LOCK must be a threading.Lock"
+    def test_header_row_is_not_included_as_a_data_row(self, tmp_path, monkeypatch):
+        import api.cache as cache_mod
+        monkeypatch.setattr(cache_mod, "MAPPINGS_DIR", str(tmp_path))
+        monkeypatch.setattr(cache_mod, "_TSV_CACHE", {})
 
-    def test_egc_matrix_has_all_sources(self):
-        """_EGC_MATRIX must exist for all 4 sources."""
-        from api.index import _EGC_MATRIX
-        for source in ("kegg", "cog", "enzyme", "taxonomy"):
-            assert source in _EGC_MATRIX, f"_EGC_MATRIX missing source '{source}'"
+        (tmp_path / "synthetic_header_sample_mapping.tsv").write_text(
+            "gene_id\tscaffold_id\ttaxonomy\tkegg\tenzyme\tcog\n"
+            "gene1\tscaf1\tBacteria\tK00001\t1.1.1.1\tCOG0001\n"
+        )
 
-    def test_get_egc_vectors_returns_matrix_when_ready(self):
-        """When _EGC_MATRIX is populated, get_egc_vectors_from_matrix returns it directly."""
-        from api.index import _EGC_MATRIX, get_egc_vectors_from_matrix, _INDEX_READY
-        from api.cache import AnnotationSource
-        if not _INDEX_READY:
-            pytest.skip("Index not ready")
+        rows = cache_mod.load_tsv("synthetic_header_sample")
 
-        src = AnnotationSource.kegg
-        if not _EGC_MATRIX.get(src.value):
-            pytest.skip("KEGG EGC matrix not built yet")
-
-        vecs, names, parents = get_egc_vectors_from_matrix(src)
-        assert vecs is _EGC_MATRIX[src.value], \
-            "get_egc_vectors_from_matrix should return the pre-built matrix directly"
-
-    def test_concurrent_correlate_calls_do_not_raise(self):
-        """Two concurrent correlation calls must not raise RuntimeError or produce empty results."""
-        import threading
-        from api.index import _EGC_MATRIX, _INDEX_READY, get_egc_vectors_from_matrix
-        from api.cache import AnnotationSource
-        if not _INDEX_READY:
-            pytest.skip("Index not ready")
-        if not _EGC_MATRIX.get("kegg"):
-            pytest.skip("KEGG EGC matrix not built")
-
-        errors: list[Exception] = []
-        results: list[dict] = []
-
-        def call():
-            try:
-                vecs, names, parents = get_egc_vectors_from_matrix(AnnotationSource.kegg)
-                results.append({"vecs": len(vecs), "names": len(names)})
-            except Exception as e:
-                errors.append(e)
-
-        t1 = threading.Thread(target=call)
-        t2 = threading.Thread(target=call)
-        t1.start(); t2.start()
-        t1.join(timeout=10); t2.join(timeout=10)
-
-        assert not errors, f"Concurrent calls raised: {errors}"
-        assert len(results) == 2, "Both threads must complete successfully"
-        assert results[0]["vecs"] > 0, "First thread must get non-empty vectors"
-        assert results[1]["vecs"] > 0, "Second thread must get non-empty vectors"
-
-    def test_correlation_target_source_param_accepted(self):
-        """The /correlate endpoint must accept any target_source, not just taxonomy."""
-        from api.correlation import correlate_annotations
-        from api.index import _EGC_MATRIX, _INDEX_READY
-        from api.cache import AnnotationSource
-        if not _INDEX_READY:
-            pytest.skip("Index not ready")
-        if not _EGC_MATRIX.get("kegg") or not _EGC_MATRIX.get("cog"):
-            pytest.skip("EGC matrices not built")
-        if not _EGC_MATRIX["kegg"]:
-            pytest.skip("No KEGG annotations in matrix")
-
-        first_id = next(iter(_EGC_MATRIX["kegg"]))
-
-        try:
-            result = correlate_annotations(
-                source=AnnotationSource.kegg,
-                annotation_id=first_id,
-                mode="cross",
-                target_source=AnnotationSource.cog,
-                skip_pvalue=True,
-                limit=5,
-            )
-            assert "data" in result, "Correlation with target_source=cog must return data"
-            assert result["target_source"] == "cog", \
-                f"Expected target_source='cog' got '{result['target_source']}'"
-        except Exception as e:
-            pytest.fail(f"correlate_annotations with target_source=cog raised: {e}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# /annotations/correlate — validation errors
-#
-# Both checks happen in correlate_annotations() before any EGC matrix/data
-# access (see api/correlation.py lines ~401-414), so these run standalone —
-# no warm index, no @pytest.mark.api, no real dataset required.
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestCorrelationValidation:
-    """/annotations/correlate must reject invalid mode/target_source combos with 400."""
-
-    def test_invalid_mode_raises_400(self):
-        from fastapi import HTTPException
-        from api.correlation import correlate_annotations
-        from api.cache import AnnotationSource
-
-        with pytest.raises(HTTPException) as exc_info:
-            correlate_annotations(
-                source=AnnotationSource.kegg,
-                annotation_id="anything",
-                mode="bogus",
-            )
-        assert exc_info.value.status_code == 400
-        assert "mode must be" in exc_info.value.detail
-
-    def test_cross_mode_with_same_target_source_raises_400(self):
-        from fastapi import HTTPException
-        from api.correlation import correlate_annotations
-        from api.cache import AnnotationSource
-
-        with pytest.raises(HTTPException) as exc_info:
-            correlate_annotations(
-                source=AnnotationSource.kegg,
-                annotation_id="anything",
-                mode="cross",
-                target_source=AnnotationSource.kegg,
-            )
-        assert exc_info.value.status_code == 400
-        assert "target_source != source" in exc_info.value.detail
-
-    @pytest.mark.api
-    def test_within_mode_ignores_target_source_and_does_not_raise(self):
-        """mode='within' always sets target_source = source internally —
-        passing an explicit (different) target_source must not trigger the
-        cross-mode same-source check, since that check is cross-mode-only."""
-        from api.correlation import correlate_annotations
-        from api.cache import AnnotationSource
-        from api.index import _INDEX_READY, _EGC_MATRIX
-        if not _INDEX_READY or not _EGC_MATRIX.get("kegg"):
-            pytest.skip("Index not ready — only checking this doesn't 400 before that point")
-
-        try:
-            correlate_annotations(
-                source=AnnotationSource.kegg,
-                annotation_id="__nonexistent_annotation__",
-                mode="within",
-                target_source=AnnotationSource.cog,
-                skip_pvalue=True,
-            )
-        except Exception as e:
-            from fastapi import HTTPException
-            assert isinstance(e, HTTPException) and e.status_code == 404, (
-                f"Expected only a 404 (annotation not found) for a within-mode "
-                f"nonexistent annotation, got: {e!r}"
-            )
+        assert len(rows) == 1, (
+            f"expected exactly 1 real data row (header row must be excluded), "
+            f"got {len(rows)}: {rows}"
+        )
+        assert rows[0].gene_id == "gene1", f"unexpected first row: {rows[0]!r}"
+        assert rows[0].kegg_id == "K00001", f"unexpected first row: {rows[0]!r}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -511,7 +450,7 @@ class TestSmokePatched:
         result = api_status()
         assert isinstance(result["index_ready"], bool)
 
-    def test_search_mappings_returns_dict(self):
+    def test_search_mappings_returns_dict(self, sql_request):
         from api.routes import search_mappings
         from api.cache import AnnotationSource, get_all_sample_names
         samples = get_all_sample_names()
@@ -519,6 +458,7 @@ class TestSmokePatched:
             pytest.skip("No samples found")
 
         result = search_mappings(
+            sql_request,
             annotation_id="__nonexistent__",
             source=AnnotationSource.kegg,
             sample_count=1,
@@ -527,11 +467,12 @@ class TestSmokePatched:
         assert "data" in result
         assert "total" in result
 
-    def test_search_mappings_unique_pairs_flag(self):
+    def test_search_mappings_unique_pairs_flag(self, sql_request):
         """unique_pairs=True must still return valid structure."""
         from api.routes import search_mappings
         from api.cache import AnnotationSource
         result = search_mappings(
+            sql_request,
             annotation_id="__nonexistent__",
             source=AnnotationSource.kegg,
             sample_count=5,

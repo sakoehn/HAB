@@ -206,18 +206,18 @@ describe('ChartControls — LOWESS slider', () => {
   })
 
   it('applyLowess runs without error at minimum bandwidth 0.05', () => {
-    const data = Array.from({ length: 20 }, (_, i) => ({ egc: i * 2.0 }))
+    const data = Array.from({ length: 20 }, (_, i) => ({ egc: i * 2.0, ts: i }))
     expect(() => applyLowess(data, LOWESS_SLIDER.min)).not.toThrow()
   })
 
   it('applyLowess at min bandwidth preserves array length', () => {
-    const data   = Array.from({ length: 20 }, (_, i) => ({ egc: i }))
+    const data   = Array.from({ length: 20 }, (_, i) => ({ egc: i, ts: i }))
     const result = applyLowess(data, LOWESS_SLIDER.min)
     expect(result).toHaveLength(20)
   })
 
   it('applyLowess at max bandwidth produces smoother result than at min', () => {
-    const noisy = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6, 4, 8, 3, 9, 2].map(egc => ({ egc }))
+    const noisy = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6, 4, 8, 3, 9, 2].map((egc, ts) => ({ egc, ts }))
     const tight  = applyLowess(noisy, LOWESS_SLIDER.min)
     const smooth = applyLowess(noisy, LOWESS_SLIDER.max)
     const variance = (arr: number[]) => {
@@ -642,10 +642,10 @@ describe('About page — calculations section content', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('normalize then smooth — order of operations', () => {
-  const raw = [10, 50, 8, 60, 12, 55, 9, 48].map(egc => ({ egc }))
+  const raw = [10, 50, 8, 60, 12, 55, 9, 48].map((egc, ts) => ({ egc, ts }))
 
   it('zscore → lowess gives different result than lowess → zscore', () => {
-    const zFirst = applyLowess(applyZScore(raw), 0.4)
+    const zFirst = applyLowess(applyZScore(raw) as typeof raw, 0.4)
     const sFirst = applyZScore(applyLowess(raw, 0.4))
     const maxDiff = Math.max(
       ...zFirst.map((d, i) => Math.abs((d.egc ?? 0) - (sFirst[i].egc ?? 0))),
@@ -654,7 +654,7 @@ describe('normalize then smooth — order of operations', () => {
   })
 
   it('zscore → lowess: output has zero mean (approximately)', () => {
-    const result = applyLowess(applyZScore(raw), 0.4)
+    const result = applyLowess(applyZScore(raw) as typeof raw, 0.4)
     const vals   = result.map(d => d.egc as number).filter(v => v != null)
     const mean   = vals.reduce((a, b) => a + b, 0) / vals.length
     // Mean should be close to 0 since Z-score was applied first
@@ -662,7 +662,7 @@ describe('normalize then smooth — order of operations', () => {
   })
 
   it('neither order throws or produces NaN', () => {
-    const z = applyLowess(applyZScore(raw), 0.4)
+    const z = applyLowess(applyZScore(raw) as typeof raw, 0.4)
     const s = applyZScore(applyLowess(raw, 0.4))
     for (const d of [...z, ...s]) {
       if (d.egc !== null) expect(isNaN(d.egc)).toBe(false)

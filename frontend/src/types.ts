@@ -76,6 +76,48 @@ export type TaxonomyTreeNode = {
   children:       TaxonomyTreeNode[]
 }
 
+// ── Hierarchy popup (KEGG / COG / Enzyme browse tree) ──────────────────────
+// Source key for the hierarchy popup -- deliberately excludes 'taxonomy',
+// which already has its own dedicated tree (TaxonomyTree/TaxonomyPage).
+export type HierarchySource = 'kegg' | 'cog' | 'enzyme'
+
+// Response row shape from GET /{source}/children.
+export type HierarchyChildNode = {
+  annotation_id: string
+  name:          string
+  depth:         number | null
+  category:      string | null
+}
+
+// One real ancestor chain, root-to-node order.
+export type HierarchyPathNode = { annotation_id: string; name: string; depth: number }
+
+// Response shape from GET /{source}/path. `paths` holds every real
+// ancestor chain for annotation_id, sorted by first real occurrence --
+// only KEGG ever has more than one entry (a node with multiple real
+// BRITE parents, e.g. K00844/hexokinase has 14); COG/Enzyme always have
+// exactly 1.
+export type HierarchyPathResponse = {
+  annotation_id: string
+  paths:         HierarchyPathNode[][]
+  path_count:    number
+}
+
+// Client-side expandable-tree node -- same lazy-load shape as
+// TaxonomyTreeNode. There's no `highlighted` field here: the tree
+// component compares each node's id against the hook's `highlightId`
+// at render time instead of storing highlight state per-node.
+export type HierarchyTreeNode = {
+  annotationId:   string
+  depth:          number | null
+  name:           string
+  category:       string | null
+  expanded:       boolean
+  loadStatus:     ApiStatus
+  childrenLoaded: boolean
+  children:       HierarchyTreeNode[]
+}
+
 export type TopAnnotation = {
   annotation_id:  string
   name:           string | null
@@ -93,6 +135,15 @@ export type TopAnnotation = {
   // Also only on /api/search/annotations rows — a single-source
   // /annotations/top request has no need to repeat its own source per row.
   source?:        string
+  // SQL-backend-only, top-level (W5) — the JSON backend's equivalents live
+  // nested inside `value.category`/`value.scaffolds` instead; callers that
+  // need to work on both backends should read `category ?? value?.category`
+  // and `scaffold_count ?? (value?.scaffolds && Object.keys(value.scaffolds).length)`.
+  // category is exact (identical for every sample of a given annotation);
+  // scaffold_count is a real count from *a* sample, not necessarily the
+  // same one the JSON backend's `value.scaffolds` would reflect.
+  category?:       string | null
+  scaffold_count?: number | null
 }
 
 // ── Mapping row types ──────────────────────────────────────────────────────

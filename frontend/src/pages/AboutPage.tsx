@@ -151,7 +151,7 @@ export function AboutPage() {
             </p>
 
             <p style={{ marginBottom: 16 }}>
-              <strong style={{ color: 'var(--teal)' }}>Spearman CLR Correlation</strong>
+              <strong style={{ color: 'var(--teal)' }}>Correlation (Correlates panel)</strong>
               <br />
               <code style={{
                 fontFamily:  'var(--mono)',
@@ -160,14 +160,19 @@ export function AboutPage() {
                 padding:     '2px 6px',
                 borderRadius: 4,
               }}>
-                rₛ = Spearman rank correlation on CLR-transformed EGC · p-value via circular-shift permutation (n=1000, seed=42)
+                4 methods: raw Pearson · log-Pearson · Spearman · Spearman with a circular-shift permutation p-value (n=1000, seed=42) · Benjamini-Hochberg across the family, q &lt; 0.05
               </code>
               <br />
               <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
-                EGC values are first transformed using Centred Log Ratio (CLR) to handle
-                the compositional nature of metagenomic data. Lag is the time offset (in
-                4-hour steps) that maximises |r|. The p-value is the fraction of 1000
-                circular-shifted permutations that exceed the observed |r|.
+                Every candidate is scored against the reference at 9 lags (0, ±1, ±2, ±3, ±6
+                samples), keeping whichever lag maximises |r|. The first three methods
+                correct that lag's p-value with a Bonferroni factor for the 9-lag search;
+                the circular-shift method instead derives its p-value by re-searching all 9
+                lags on each of 1000 randomly shifted copies of the reference series, which
+                accounts for autocorrelation between nearby timepoints that the other three
+                methods don't. A Benjamini-Hochberg correction is then applied across every
+                candidate scored in the same family request, and only candidates with
+                q &lt; 0.05 are shown.
               </span>
             </p>
 
@@ -259,11 +264,6 @@ export function AboutPage() {
               = smoother trend.
             </p>
             <p style={{ marginTop: 12 }}>
-              <strong style={{ color: 'var(--text-dim)' }}>EGC</strong> (Estimated
-              Gene Copies per liter) — normalized for sequencing depth across all
-              128 samples collected at 4-hour intervals.
-            </p>
-            <p style={{ marginTop: 12 }}>
               <strong style={{ color: 'var(--text-dim)' }}>Reset:</strong> Clears
               all page state across Analyze, Compare, Explore, and Taxonomy
               Explorer simultaneously.
@@ -280,32 +280,38 @@ export function AboutPage() {
                'List all 128 sample timepoints with dates'],
               ['/api/samples',
                'List all samples with timepoint metadata'],
-              ['/api/samples/{id}/mappings',
-               'Gene mappings for one sample'],
-              ['/api/samples/{id}/kegg',
-               'KEGG annotations for one sample'],
-              ['/api/samples/{id}/cog',
-               'COG annotations for one sample'],
-              ['/api/samples/{id}/enzyme',
-               'Enzyme annotations for one sample'],
-              ['/api/samples/{id}/taxonomy',
-               'Taxonomy annotations for one sample'],
               ['/api/search/annotations?q=…&sources=kegg',
                'Cross-sample annotation search (inverted index)'],
               ['/api/series/annotations?source=…&annotation_id=…',
                'EGC time series for one annotation'],
               ['/api/taxonomy/children?parent=…',
                'Direct children of a taxon (name, rank depth, domain category) — parent omitted returns the 4 domains. Powers the Taxonomy Explorer’s browse tree and exclusion picker'],
+              ['/api/kegg/children?parent=…',
+               'Direct children of a KEGG BRITE node (structure only, no EGC) — parent omitted returns the 8 top-level branches. Backs the hierarchy popup (🌳 Hierarchy button on charts and Explore tables)'],
+              ['/api/enzyme/children?parent=…',
+               'Direct children of an EC node (structure only, no EGC) — parent omitted returns the 7 top-level enzyme classes'],
+              ['/api/cog/children?parent=…',
+               'Direct children of a COG node (structure only, no EGC) — parent omitted returns the 26 top-level categories'],
+              ['/api/kegg/path?id=…',
+               'Every real ancestor path (root to node) for a KEGG node — a node can have multiple real parents (e.g. K00844/hexokinase has 14). Powers the hierarchy popup\'s auto-expand-and-highlight on open (the first real occurrence), plus a picker to switch to any of the others'],
+              ['/api/enzyme/path?id=…',
+               'Ancestor path (root to node) for an Enzyme (EC) node — every EC id has exactly one real parent, so this is always unambiguous'],
+              ['/api/cog/path?id=…',
+               'Ancestor path (root to node) for a COG node — every COG id has exactly one real category, so this is always unambiguous'],
               ['/api/mappings/search?annotation_id=…&source=…',
                'Filtered cross-sample mapping rows'],
               ['/api/annotations/top?source=…&limit=25',
                'Top N annotations by mean EGC, optional date_from/date_to'],
-              ['/api/annotations/correlate?source=kegg&annotation_id=K02014&mode=cross',
-               'Spearman+lag correlation, cross-source or within-source parent-filtered. Returns spearman_r, lag_hours, p_value, n_pairs. Add &skip_pvalue=true for instant exploratory results.'],
+              ['/api/correlation?catalog_id_a=…&catalog_id_b=…&metric=egc&method=spearman',
+               'Score (or read the cached score for) one specific pair. method: raw_pearson, log_pearson, spearman, or circular_shift. Returns r, p, lag_samples, n_pairs'],
+              ['/api/correlations/family?ref_source=…&ref_annotation_id=…&target_source=…&metric=egc&method=spearman&limit=50',
+               'Every eligible candidate in target_source scored against the reference (same-source parents/children/siblings excluded), sorted by |r| descending, capped at limit, gated to q < 0.05'],
               ['/api/annotations/scaffolds/summary?source=…&annotation_id=…',
                'Per-sample scaffold and gene counts for one annotation'],
               ['/api/annotations/scaffolds?source=…&annotation_id=…&sample=…&page=1&page_size=500',
                'Individual scaffold names and gene counts, paginated — sample= strongly recommended'],
+              ['/api/taxonomy/export?rank=genus',
+               'All distinct taxa at a given rank (domain … strain) — powers the Taxonomy page\'s CSV download'],
               ['/api/status',
                'Index build status and dataset date range (date_min, date_max)'],
             ] as [string, string][]).map(([path, desc], i) => (

@@ -17,11 +17,9 @@
  *                           antisymmetry invariant
  *
  * utils/signal.ts:
- *   applyL1Normalize      — series total, per-timepoint, zeros, nulls, empty map
  *   applyZScore           — mean→0, std→1, flat series, nulls, single value
  *   applyLowess           — length preservation, noise reduction, null pass-through,
  *                           minimum bandwidth (0.05), immutability
- *   buildTimepointTotals  — summation, missing timepoints, null EGC, empty
  *
  * utils/format.ts:
  *   parseDateTime         — ISO, slash-date, empty, cross-format ordering
@@ -43,7 +41,7 @@
  *   resetSourceCounters   — resets all
  *
  * Mathematical invariants:
- *   Z-score idempotency, L1 proportions in [0,1], quartile ordering,
+ *   Z-score idempotency, quartile ordering,
  *   trend antisymmetry, stats consistency with manual calculation
  *
  * Run: npx vitest run src/tests/utils.pure.test.ts
@@ -59,13 +57,12 @@ import {
   extractNormEgc,
   computeStats,
   computeTrend,
+  sumMembersByTimestamp,
 } from '../utils/stats'
 
 import {
-  applyL1Normalize,
   applyZScore,
   applyLowess,
-  buildTimepointTotals,
 } from '../utils/signal'
 
 import {
@@ -74,6 +71,7 @@ import {
   fmtTime,
   isoDate,
   computeDayBands,
+  toPlotlyDate,
 } from '../utils/format'
 
 import {
@@ -376,78 +374,117 @@ describe('computeTrend', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// applyL1Normalize
+// sumMembersByTimestamp
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('applyL1Normalize — series total mode', () => {
-  it('divides each value by series total', () => {
-    const r = applyL1Normalize([{ egc: 100 }, { egc: 200 }, { egc: 300 }])
-    expect(r[0].egc).toBeCloseTo(100 / 600)
-    expect(r[1].egc).toBeCloseTo(200 / 600)
-    expect(r[2].egc).toBeCloseTo(300 / 600)
-  })
+function makeMemberItem(
+  annotationId: string, datetime: string, egc: number, normEgc: number | null = null,
+): AnnotationItem {
+  return {
+    source:        'kegg',
+    sample:        's1',
+    annotation_id: annotationId,
+    name:          null,
+    timepoint:     { taxon_oid: 's1', timepoint: '1', datetime } as TimepointMeta,
+    value:         { egc, norm_egc: normEgc },
+  }
+}
 
-  it('result values sum to 1.0', () => {
-    const r   = applyL1Normalize([{ egc: 10 }, { egc: 30 }, { egc: 60 }])
-    const sum = r.reduce((s, d) => s + (d.egc ?? 0), 0)
-    expect(sum).toBeCloseTo(1.0)
-  })
-
-  it('preserves null entries; non-null entries divide by non-null total', () => {
-    const r = applyL1Normalize([{ egc: 100 }, { egc: null }, { egc: 200 }])
-    expect(r[1].egc).toBeNull()
-    expect(r[0].egc).toBeCloseTo(100 / 300)
-    expect(r[2].egc).toBeCloseTo(200 / 300)
-  })
-
-  it('returns data unchanged when total is zero', () => {
-    const r = applyL1Normalize([{ egc: 0 }, { egc: 0 }])
-    expect(r[0].egc).toBe(0)
-    expect(r[1].egc).toBe(0)
-  })
-
-  it('single non-zero value normalises to 1.0', () => {
-    expect(applyL1Normalize([{ egc: 500 }])[0].egc).toBeCloseTo(1.0)
-  })
-
-  it('invariant: all non-null results are in [0, 1]', () => {
-    const r = applyL1Normalize([{ egc: 100 }, { egc: 250 }, { egc: 75 }, { egc: 575 }])
-    for (const d of r) {
-      if (d.egc !== null) {
-        expect(d.egc).toBeGreaterThanOrEqual(0)
-        expect(d.egc).toBeLessThanOrEqual(1)
-      }
+describe('sumMembersByTimestamp', () => {
+  it('sums three members at the same timestamp instead of overwriting (W14 regression)', () => {
+    // The audit's own real-data repro: kegg "Brite Hierarchies" group has
+    // three members whose values at the first timepoint sum to 4,854,154;
+    // the pre-fix chart plotted 823,158 -- exactly the last member's value.
+    const seriesData: Record<string, AnnotationItem[]> = {
+      m1: [makeMemberItem('m1', 't1', 2_000_000)],
+      m2: [makeMemberItem('m2', 't1', 2_030_996)],
+      m3: [makeMemberItem('m3', 't1', 823_158)],
     }
-  })
-})
-
-describe('applyL1Normalize — per-timepoint totals mode', () => {
-  it('divides by the correct per-timepoint total', () => {
-    const totals = new Map([['t1', 400], ['t2', 800]])
-    const r      = applyL1Normalize(
-      [{ egc: 100, datetime: 't1' }, { egc: 200, datetime: 't2' }],
-      totals,
-    )
-    expect(r[0].egc).toBeCloseTo(100 / 400)
-    expect(r[1].egc).toBeCloseTo(200 / 800)
+    const result = sumMembersByTimestamp(['m1', 'm2', 'm3'], seriesData, 'Brite Hierarchies', 'kegg')
+    expect(result).toHaveLength(1)
+    expect(result[0].value).toEqual({ egc: 4_854_154, norm_egc: null })
+    expect(result[0].annotation_id).toBe('Brite Hierarchies')
+    expect(result[0].name).toBe('Brite Hierarchies')
+    expect(result[0].source).toBe('kegg')
   })
 
-  it('returns null when datetime not in totals map', () => {
-    const totals = new Map([['t1', 400]])
-    const r      = applyL1Normalize([{ egc: 100, datetime: 'missing' }], totals)
-    expect(r[0].egc).toBeNull()
+  it('sums norm_egc independently of egc', () => {
+    const seriesData: Record<string, AnnotationItem[]> = {
+      m1: [makeMemberItem('m1', 't1', 100, 0.01)],
+      m2: [makeMemberItem('m2', 't1', 200, 0.02)],
+    }
+    const result = sumMembersByTimestamp(['m1', 'm2'], seriesData, 'group', 'kegg')
+    expect(result[0].value).toEqual({ egc: 300, norm_egc: 0.03 })
   })
 
-  it('skips null egc even in totals mode', () => {
-    const totals = new Map([['t1', 400]])
-    const r      = applyL1Normalize([{ egc: null, datetime: 't1' }], totals)
-    expect(r[0].egc).toBeNull()
+  it('keeps timestamps with only one member contributing distinct from shared ones', () => {
+    const seriesData: Record<string, AnnotationItem[]> = {
+      m1: [makeMemberItem('m1', 't1', 10), makeMemberItem('m1', 't2', 20)],
+      m2: [makeMemberItem('m2', 't1', 5)],
+    }
+    const result = sumMembersByTimestamp(['m1', 'm2'], seriesData, 'group', 'kegg')
+    const byDt = Object.fromEntries(result.map(r => [r.timepoint?.datetime, (r.value as { egc: number }).egc]))
+    expect(byDt.t1).toBe(15)
+    expect(byDt.t2).toBe(20)
   })
 
-  it('falls back to series mode when totals map is empty', () => {
-    const r = applyL1Normalize([{ egc: 100 }, { egc: 300 }], new Map())
-    expect(r[0].egc).toBeCloseTo(100 / 400)
-    expect(r[1].egc).toBeCloseTo(300 / 400)
+  it('a member missing from seriesData (failed fetch) does not crash, others still sum', () => {
+    const seriesData: Record<string, AnnotationItem[]> = {
+      m1: [makeMemberItem('m1', 't1', 10)],
+      // m2 absent entirely -- simulates a failed /series/annotations fetch
+    }
+    const result = sumMembersByTimestamp(['m1', 'm2'], seriesData, 'group', 'kegg')
+    expect(result).toHaveLength(1)
+    expect((result[0].value as { egc: number }).egc).toBe(10)
+  })
+
+  it('returns empty array when no member has any data', () => {
+    expect(sumMembersByTimestamp(['m1'], {}, 'group', 'kegg')).toEqual([])
+  })
+
+  it('norm_egc stays null when no member reports one, rather than becoming 0', () => {
+    const seriesData: Record<string, AnnotationItem[]> = {
+      m1: [makeMemberItem('m1', 't1', 10, null)],
+      m2: [makeMemberItem('m2', 't1', 20, null)],
+    }
+    const result = sumMembersByTimestamp(['m1', 'm2'], seriesData, 'group', 'kegg')
+    expect((result[0].value as { norm_egc: number | null }).norm_egc).toBeNull()
+  })
+
+  // ── W9: chronological sort against the real raw "M/D/YY H:MM" format ──────
+  // A plain string sort on this format is wrong: "6/10/21" sorts before
+  // "6/2/21" lexically, even though June 10 is after June 2. Two separate
+  // near-duplicate copies of this summing logic (ComparePage.tsx,
+  // AnalyzePage.tsx) each had exactly this bug before being unified to call
+  // this one function, which sorts by parseDateTime instead.
+
+  it('sorts output chronologically, not by insertion order or string comparison', () => {
+    const seriesData: Record<string, AnnotationItem[]> = {
+      m1: [
+        makeMemberItem('m1', '6/10/21 8:00', 10),
+        makeMemberItem('m1', '6/1/21 8:00', 1),
+        makeMemberItem('m1', '6/2/21 8:00', 2),
+        makeMemberItem('m1', '6/18/21 8:00', 18),
+        makeMemberItem('m1', '6/9/21 8:00', 9),
+        makeMemberItem('m1', '5/27/21 8:00', 27),
+      ],
+    }
+    const result = sumMembersByTimestamp(['m1'], seriesData, 'group', 'kegg')
+    expect(result.map(r => r.timepoint?.datetime)).toEqual([
+      '5/27/21 8:00', '6/1/21 8:00', '6/2/21 8:00', '6/9/21 8:00', '6/10/21 8:00', '6/18/21 8:00',
+    ])
+  })
+
+  it('order of contributing members does not affect the final chronological order', () => {
+    const seriesData: Record<string, AnnotationItem[]> = {
+      m1: [makeMemberItem('m1', '6/10/21 8:00', 10)],
+      m2: [makeMemberItem('m2', '6/2/21 8:00', 2)],
+    }
+    const forward = sumMembersByTimestamp(['m1', 'm2'], seriesData, 'group', 'kegg')
+    const reverse = sumMembersByTimestamp(['m2', 'm1'], seriesData, 'group', 'kegg')
+    const dates = (r: typeof forward) => r.map(x => x.timepoint?.datetime)
+    expect(dates(forward)).toEqual(['6/2/21 8:00', '6/10/21 8:00'])
+    expect(dates(reverse)).toEqual(['6/2/21 8:00', '6/10/21 8:00'])
   })
 })
 
@@ -514,29 +551,32 @@ describe('applyZScore', () => {
 
 describe('applyLowess', () => {
   it('preserves array length', () => {
-    const data = Array.from({ length: 20 }, (_, i) => ({ egc: i * 2.0 }))
+    const data = Array.from({ length: 20 }, (_, i) => ({ egc: i * 2.0, ts: i }))
     expect(applyLowess(data, 0.4)).toHaveLength(20)
   })
 
   it('returns data unchanged for < 3 non-null points', () => {
-    const r = applyLowess([{ egc: 1 }, { egc: 2 }], 0.5)
+    const r = applyLowess([{ egc: 1, ts: 0 }, { egc: 2, ts: 1 }], 0.5)
     expect(r[0].egc).toBe(1)
     expect(r[1].egc).toBe(2)
   })
 
   it('preserves null entries in output', () => {
-    const r = applyLowess([{ egc: 1 }, { egc: null }, { egc: 3 }, { egc: 4 }, { egc: 5 }], 0.4)
+    const r = applyLowess(
+      [{ egc: 1, ts: 0 }, { egc: null, ts: 1 }, { egc: 3, ts: 2 }, { egc: 4, ts: 3 }, { egc: 5, ts: 4 }],
+      0.4,
+    )
     expect(r[1].egc).toBeNull()
   })
 
   it('minimum bandwidth 0.05 runs without error', () => {
-    const data = Array.from({ length: 20 }, (_, i) => ({ egc: i }))
+    const data = Array.from({ length: 20 }, (_, i) => ({ egc: i, ts: i }))
     expect(() => applyLowess(data, 0.05)).not.toThrow()
     expect(applyLowess(data, 0.05)).toHaveLength(20)
   })
 
   it('reduces variance on noisy alternating series', () => {
-    const data     = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6, 4, 8, 3, 9, 2, 10, 1].map(egc => ({ egc }))
+    const data     = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6, 4, 8, 3, 9, 2, 10, 1].map((egc, ts) => ({ egc, ts }))
     const raw      = data.map(d => d.egc as number)
     const smoothed = applyLowess(data, 0.5).map(d => d.egc as number).filter(v => v != null)
     const variance = (arr: number[]) => {
@@ -547,74 +587,68 @@ describe('applyLowess', () => {
   })
 
   it('does not mutate input', () => {
-    const data = [{ egc: 1 }, { egc: 5 }, { egc: 3 }, { egc: 7 }, { egc: 2 }]
+    const data = [{ egc: 1, ts: 0 }, { egc: 5, ts: 1 }, { egc: 3, ts: 2 }, { egc: 7, ts: 3 }, { egc: 2, ts: 4 }]
     applyLowess(data, 0.5)
     expect(data[0].egc).toBe(1)
     expect(data[4].egc).toBe(2)
   })
 
   it('linear series stays approximately linear', () => {
-    const data   = Array.from({ length: 15 }, (_, i) => ({ egc: i * 10.0 }))
+    const data   = Array.from({ length: 15 }, (_, i) => ({ egc: i * 10.0, ts: i }))
     const result = applyLowess(data, 0.5)
     expect((result[0].egc as number)).toBeGreaterThanOrEqual(-5)
     expect((result[14].egc as number)).toBeGreaterThan(50)
   })
-})
 
-// ─────────────────────────────────────────────────────────────────────────────
-// buildTimepointTotals
-// ─────────────────────────────────────────────────────────────────────────────
+  // ── Regression: LOWESS must smooth by real elapsed time, not array index ──
+  // (docs/AUDIT.md "also noted" item). A date-range filter can leave a large
+  // real-world gap between two adjacent array entries; the smoother must not
+  // treat that gap as if it were a normal, uniform step.
+  it('produces different output for the same values at the same index positions when only the timestamps differ', () => {
+    const hour = 3_600_000
+    const values = [10, 12, 9, 40, 11, 13, 8, 12, 10, 14]
 
-function makeItem(datetime: string, egc: number): AnnotationItem {
-  return {
-    source:        'kegg',
-    sample:        's1',
-    annotation_id: 'K00001',
-    name:          null,
-    timepoint:     { taxon_oid: 's1', timepoint: '1', datetime } as TimepointMeta,
-    value:         { egc },
-  }
-}
+    const uniform = values.map((egc, i) => ({ egc, ts: i * 4 * hour }))
 
-describe('buildTimepointTotals', () => {
-  it('sums EGC across series at the same timepoint', () => {
-    const totals = buildTimepointTotals([
-      { data: [makeItem('t1', 100), makeItem('t2', 200)] },
-      { data: [makeItem('t1', 50),  makeItem('t2', 150)] },
-    ])
-    expect(totals.get('t1')).toBe(150)
-    expect(totals.get('t2')).toBe(350)
+    // Same values, same array positions, but a 5-day real gap inserted right
+    // before the spike at index 3 instead of the normal 4h step.
+    const irregular = values.map((egc, i) => ({
+      egc,
+      ts: i < 3 ? i * 4 * hour : 3 * 4 * hour + 5 * 24 * hour + (i - 3) * 4 * hour,
+    }))
+
+    const smoothedUniform   = applyLowess(uniform, 0.5).map(d => d.egc)
+    const smoothedIrregular = applyLowess(irregular, 0.5).map(d => d.egc)
+
+    // If the smoother still keyed off array index instead of `ts`, these two
+    // results would be identical -- the gap would be invisible to it.
+    expect(smoothedIrregular).not.toEqual(smoothedUniform)
   })
 
-  it('skips items with no timepoint', () => {
-    const item: AnnotationItem = {
-      source: 'kegg', sample: 's1', annotation_id: 'K00001',
-      name: null, timepoint: null, value: { egc: 999 },
-    }
-    expect(buildTimepointTotals([{ data: [item] }]).size).toBe(0)
-  })
+  it('a large real time gap keeps points on either side from smoothing into each other', () => {
+    const hour = 3_600_000
+    const day  = 24 * hour
 
-  it('skips items with null EGC value', () => {
-    const item: AnnotationItem = {
-      source: 'kegg', sample: 's1', annotation_id: 'K00001',
-      name: null,
-      timepoint: { taxon_oid: 's1', timepoint: '1', datetime: 't1' },
-      value: { egc: null },
-    }
-    expect(buildTimepointTotals([{ data: [item] }]).size).toBe(0)
-  })
+    // Two 4h-spaced clusters of 4 points each, 30 days apart in real time.
+    const clusterA = [10, 11, 9, 10]
+    const clusterB = [100, 101, 99, 100]
+    const values   = [...clusterA, ...clusterB]
+    const ts = [
+      0, 4 * hour, 8 * hour, 12 * hour,
+      12 * hour + 30 * day, 12 * hour + 30 * day + 4 * hour,
+      12 * hour + 30 * day + 8 * hour, 12 * hour + 30 * day + 12 * hour,
+    ]
+    const data = values.map((egc, i) => ({ egc, ts: ts[i] }))
 
-  it('returns empty map for empty input', () => {
-    expect(buildTimepointTotals([]).size).toBe(0)
-  })
+    // bandwidth 1.0 -> every point is a candidate "neighbor" for every other
+    // point, so this isolates weighting (by real distance) as the only thing
+    // that can keep cluster A and cluster B apart.
+    const result = applyLowess(data, 1.0)
 
-  it('handles overlapping datetimes across three series', () => {
-    const totals = buildTimepointTotals([
-      { data: [makeItem('t1', 100)] },
-      { data: [makeItem('t1', 200)] },
-      { data: [makeItem('t1', 300)] },
-    ])
-    expect(totals.get('t1')).toBe(600)
+    // The last point of cluster A (index 3, raw value 10) should stay close
+    // to cluster A's own values -- not pulled toward cluster B's ~100,
+    // because cluster B is 30 days away in real time.
+    expect(result[3].egc as number).toBeLessThan(30)
   })
 })
 
@@ -649,6 +683,61 @@ describe('parseDateTime', () => {
 
   it('4-digit year in slash format handled correctly', () => {
     expect(new Date(parseDateTime('5/27/2021 13:00')).getFullYear()).toBe(2021)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// toPlotlyDate (W16) -- must render local wall-clock time as a plain,
+// timezone-less string. new Date(ts).toISOString() renders in UTC with a
+// "Z" suffix instead; Plotly reads that "Z" and re-converts for display, so
+// on a browser west of UTC (e.g. US Pacific) every point shifts LATER by
+// the UTC offset, moving evening samples onto the following calendar day
+// on the chart while the hover tooltip/table (built from fmtDate/fmtTime,
+// both already local-based) still show the correct original day -- chart
+// and table disagree about the same point. These tests don't depend on the
+// test runner's own timezone: they check toPlotlyDate's output against
+// fmtDate/fmtTime (both already correct, string-parsed with no timezone
+// conversion for our raw format) component-by-component, which is true
+// regardless of what timezone the tests happen to run in.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('toPlotlyDate', () => {
+  function expectMatchesLocalDateTime(raw: string) {
+    const result = toPlotlyDate(parseDateTime(raw))
+    const [datePart, timePart] = result.split(' ')
+    const [mm, dd, yy] = fmtDate(raw).split('/')
+    expect(datePart).toBe(`20${yy}-${mm}-${dd}`)
+    expect(timePart.slice(0, 5)).toBe(fmtTime(raw))
+  }
+
+  it('morning time: date and time match fmtDate/fmtTime exactly', () => {
+    expectMatchesLocalDateTime('6/9/21 8:00')
+  })
+
+  it('evening time: date and time match fmtDate/fmtTime exactly (the actual W16 case)', () => {
+    // The audit's own example: an evening sample is the one that crosses
+    // a calendar-day boundary under the buggy UTC-shifting version on a
+    // Pacific-time browser (UTC-7/8).
+    expectMatchesLocalDateTime('6/9/21 21:00')
+  })
+
+  it('a time right at a calendar-day boundary (23:00) stays on the same day', () => {
+    expectMatchesLocalDateTime('6/17/21 23:00')
+  })
+
+  it('a time right after midnight (0:00) stays on the same day', () => {
+    expectMatchesLocalDateTime('6/18/21 0:00')
+  })
+
+  it('output has no "Z" or timezone suffix (Plotly must read it as naive local time)', () => {
+    const result = toPlotlyDate(parseDateTime('6/9/21 21:00'))
+    expect(result).not.toContain('Z')
+    expect(result).not.toMatch(/[+-]\d{2}:\d{2}$/)
+  })
+
+  it('output format is "YYYY-MM-DD HH:MM:SS"', () => {
+    const result = toPlotlyDate(parseDateTime('6/9/21 8:00'))
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
   })
 })
 
@@ -1134,8 +1223,8 @@ describe('nextColorForSource', () => {
 
 describe('Cross-feature invariants', () => {
   it('Z-score → LOWESS gives different result than LOWESS → Z-score', () => {
-    const raw    = [10, 50, 8, 60, 12, 55, 9, 48].map(egc => ({ egc }))
-    const zFirst = applyLowess(applyZScore(raw), 0.4)
+    const raw    = [10, 50, 8, 60, 12, 55, 9, 48].map((egc, ts) => ({ egc, ts }))
+    const zFirst = applyLowess(applyZScore(raw) as typeof raw, 0.4)
     const sFirst = applyZScore(applyLowess(raw, 0.4))
     const maxDiff = Math.max(...zFirst.map((d, i) =>
       Math.abs((d.egc ?? 0) - (sFirst[i].egc ?? 0)),

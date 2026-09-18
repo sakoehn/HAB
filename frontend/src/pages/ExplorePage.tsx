@@ -18,12 +18,15 @@
 import React, { useState, useEffect, useMemo } from 'react'
 
 import type {
-  ApiStatus, TopAnnotation, AnnotationValue, AnnotationItem,
+  ApiStatus, TopAnnotation, AnnotationItem,
   ExploreSection, ExploreSortCol, SortDir,
 } from '../types'
 import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel, taxonomyRankLabel, taxonomyAwarePrimaryLabel } from '../constants'
 import { apiFetch, downloadCsv } from '../utils/api'
-import { extractEgc, computeTrend } from '../utils/stats'
+import {
+  extractEgc, computeTrend, sumMembersByTimestamp,
+  resolveLookupCategory, resolveLookupScaffoldCount, resolveLookupDepth,
+} from '../utils/stats'
 import { taxonomyDepthFromId } from '../utils/taxonomy'
 import { useCopyId } from '../hooks/useCopyId'
 import { CopyBtn, ResetBtn } from '../components/ui/controls'
@@ -36,6 +39,7 @@ import { Skeleton, SkeletonTable, SkeletonStatTiles, SkeletonChart } from '../co
 import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { GroupedEgcChart } from '../components/charts/GroupedEgcChart'
 import { ScaffoldBtn } from '../components/scaffolds/ScaffoldBtn'
+import { HierarchyBtn } from '../components/hierarchy/HierarchyBtn'
 import { ScaffoldExplorePanel } from '../components/scaffolds/ScaffoldExplorePanel'
 
 // ── ExploreState + default ─────────────────────────────────────────────────
@@ -126,8 +130,10 @@ function ExploreSortTh({
 }
 
 // ── DatasetOverviewPanel ───────────────────────────────────────────────────
+// Exported for direct component testing (also-noted item, docs/AUDIT.md:
+// the 40-annotation fetch cap and the mismatched 200/500 truncation check).
 
-function DatasetOverviewPanel({
+export function DatasetOverviewPanel({
   resetKey,
   dataDateRange,
 }: {
@@ -143,16 +149,19 @@ function DatasetOverviewPanel({
   const [seriesData, setSeriesData]     = useState<Record<string, AnnotationItem[]>>({})
   const [seriesStatus, setSeriesStatus] = useState<ApiStatus>('idle')
   const [seriesFailed, setSeriesFailed] = useState<string[]>([])
+  const [seriesTruncatedFrom, setSeriesTruncatedFrom] = useState<number | null>(null)
 
   useEffect(() => {
     setSource('taxonomy'); setDateFrom(''); setDateTo('')
     setRows([]); setSampleCount(null); setStatus('idle')
     setSeriesData({}); setSeriesStatus('idle'); setSeriesFailed([])
+    setSeriesTruncatedFrom(null)
   }, [resetKey])
 
   async function load() {
     setStatus('loading')
     setSeriesData({}); setSeriesStatus('idle'); setSeriesFailed([])
+    setSeriesTruncatedFrom(null)
     try {
       let url = `/api/annotations/top?source=${source}&limit=200`
       if (dateFrom) url += `&date_from=${dateFrom}`
@@ -190,8 +199,14 @@ function DatasetOverviewPanel({
   ]
 
   async function loadTemporalChart() {
-    const allAnns = top5Groups.flatMap(g => g.items).slice(0, 40)
+    const allMembers = top5Groups.flatMap(g => g.items)
+    const allAnns = allMembers.slice(0, 40)
     if (!allAnns.length) return
+    // Silently dropping members past the 40-annotation fetch budget could
+    // zero out an entire later group's summed total with no indication
+    // anything was cut -- surfaced explicitly instead (also-noted item,
+    // docs/AUDIT.md).
+    setSeriesTruncatedFrom(allMembers.length > allAnns.length ? allMembers.length : null)
     setSeriesStatus('loading')
     const results = await Promise.all(
       allAnns.map(ann =>
@@ -220,10 +235,14 @@ function DatasetOverviewPanel({
       name:         group.label,
       color:        CHART_GROUP_COLORS[gi],
       source,
-      data:         group.items.flatMap(ann => {
-        const annData = seriesData[ann.annotation_id] ?? []
-        return annData.map(d => ({ ...d, annotation_id: group.label }))
-      }),
+      // Summed per timestamp across members, not raw per-member points --
+      // see sumMembersByTimestamp's docstring for why (W14).
+      data: sumMembersByTimestamp(
+        group.items.map(ann => ann.annotation_id),
+        seriesData,
+        group.label,
+        source,
+      ),
     }))
   }, [seriesData, top5Groups, source])
 
@@ -326,9 +345,9 @@ function DatasetOverviewPanel({
             {dateFrom || dateTo
               ? ` · ${dateFrom || '…'} → ${dateTo || '…'}`
               : ' · all dates'}
-            {rows.length === 500 && (
+            {rows.length === 200 && (
               <span style={{ color: 'var(--amber)', marginLeft: 6 }}>
-                · showing first 500 — use date filter to narrow
+                · showing first 200 — use date filter to narrow
               </span>
             )}
           </div>
@@ -446,6 +465,20 @@ function DatasetOverviewPanel({
                   {seriesFailed.length} annotation{seriesFailed.length !== 1 ? 's' : ''} failed
                   to load their time series ({seriesFailed.join(', ')}) — excluded from the
                   chart below.
+                </span>
+              </div>
+            )}
+
+            {seriesStatus === 'ok' && seriesTruncatedFrom != null && (
+              <div
+                className="state-box error"
+                style={{ padding: '10px 16px', flexDirection: 'row', gap: 10, textAlign: 'left', marginBottom: 12 }}
+                data-testid="overview-series-truncated-warning"
+              >
+                <span style={{ flex: 1 }}>
+                  The top 5 groups have {seriesTruncatedFrom} member annotations combined, but
+                  only the first 40 were fetched — one or more groups' summed totals below may
+                  be undercounted. Narrow the date range to reduce the group sizes.
                 </span>
               </div>
             )}
@@ -752,6 +785,7 @@ function AnnotationsByParentPanel({
                             Trend Δ EGC
                           </th>
                           <th>Scaffolds</th>
+                          <th>Hierarchy</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -804,6 +838,13 @@ function AnnotationsByParentPanel({
                                   source={source}
                                   name={row.name}
                                   onGoExplore={onGoScaffoldExplore}
+                                />
+                              </td>
+                              <td>
+                                <HierarchyBtn
+                                  annotationId={row.annotation_id}
+                                  source={source}
+                                  name={row.name}
                                 />
                               </td>
                             </tr>
@@ -1147,6 +1188,11 @@ export function ExplorePage({
                     All
                   </button>
                   <HelpTooltip text="Narrows the table below to the selected taxonomic rank(s) — doesn't re-fetch, just filters what's already loaded." />
+                  {/* W7: intentionally no domain passed here -- this pill represents
+                      every taxon at this depth across the whole result set, which can
+                      span multiple domains (e.g. a Bacteria leaf and a Eukaryota leaf
+                      both at depth 6) at once. There's no single correct domain for a
+                      depth-only aggregate like this one. */}
                   {availableTopRanks.map(depth => (
                     <button
                       key={depth}
@@ -1239,6 +1285,7 @@ export function ExplorePage({
                       <SortTh col="mean_egc"     label="Mean EGC"  />
                       <SortTh col="sample_count" label="Samples"   />
                       <th>Scaffolds</th>
+                      <th>Hierarchy</th>
                       <th>Relative</th>
                     </tr>
                   </thead>
@@ -1294,6 +1341,13 @@ export function ExplorePage({
                             source={state.source}
                             name={row.name}
                             onGoExplore={onGoScaffoldExplore}
+                          />
+                        </td>
+                        <td>
+                          <HierarchyBtn
+                            annotationId={row.annotation_id}
+                            source={state.source}
+                            name={row.name}
                           />
                         </td>
                         <td style={{ minWidth: 80 }}>
@@ -1461,6 +1515,8 @@ export function ExplorePage({
                         All
                       </button>
                       <HelpTooltip text="Narrows the result list below to the selected taxonomic rank(s) — doesn't re-search, just filters what's already loaded." />
+                      {/* W7: see the matching comment on availableTopRanks above --
+                          a depth-only aggregate can span multiple domains at once. */}
                       {availableLookupRanks.map(depth => (
                         <button
                           key={depth}
@@ -1569,22 +1625,21 @@ export function ExplorePage({
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {state.lookupSelected ? (() => {
                       const r      = state.lookupSelected
-                      const v      = r.value as AnnotationValue | null | undefined
                       const parent = r.parent
                         ? expandParentLabel(r.parent, state.lookupSource)
                         : null
-                      const category = v?.category
-                        ? expandParentLabel(v.category, state.lookupSource)
+                      const rawCategory = resolveLookupCategory(r)
+                      const category    = rawCategory
+                        ? expandParentLabel(rawCategory, state.lookupSource)
                         : null
-                      const scaffoldCount = v?.scaffolds
-                        ? Object.keys(v.scaffolds).length
-                        : null
+                      const scaffoldCount = resolveLookupScaffoldCount(r)
+                      const depth         = resolveLookupDepth(r)
 
                       const depthLabel = (depth: number) => {
                         if (state.lookupSource === 'kegg')     return { 1: 'pathway class', 2: 'subcategory', 3: 'pathway', 4: 'leaf (KO)' }[depth] ?? String(depth)
                         if (state.lookupSource === 'cog')      return { 1: 'category', 2: 'leaf (COG)' }[depth] ?? String(depth)
                         if (state.lookupSource === 'enzyme')   return { 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' }[depth] ?? String(depth)
-                        if (state.lookupSource === 'taxonomy') return taxonomyRankLabel(depth)
+                        if (state.lookupSource === 'taxonomy') return taxonomyRankLabel(depth, rawCategory)
                         return String(depth)
                       }
 
@@ -1618,14 +1673,14 @@ export function ExplorePage({
                                 <span className="lookup-meta-value">{parent}</span>
                               </div>
                             )}
-                            {v?.depth != null && (
+                            {depth != null && (
                               <div className="lookup-meta-row">
                                 <span className="lookup-meta-label">
                                   Depth
                                   <HelpTooltip text="Depth = how deep this term sits in its hierarchy (e.g. KEGG depth 3 = pathway level). Meaning depends on the annotation source." />
                                 </span>
                                 <span className="lookup-meta-value mono">
-                                  {v.depth}
+                                  {depth}
                                   <span style={{
                                     marginLeft:  6,
                                     fontFamily:  'var(--sans)',
@@ -1633,7 +1688,7 @@ export function ExplorePage({
                                     color:       'var(--text-dim)',
                                     fontWeight:  400,
                                   }}>
-                                    ({depthLabel(v.depth)})
+                                    ({depthLabel(depth)})
                                   </span>
                                 </span>
                               </div>
@@ -1681,7 +1736,7 @@ export function ExplorePage({
                               <div className="lookup-meta-row">
                                 <span
                                   className="lookup-meta-label"
-                                  title="Unique scaffold IDs in the earliest sample this annotation appears in"
+                                  title="Unique scaffold IDs in one sample this annotation appears in (not an aggregate across samples)"
                                 >
                                   Scaffolds (sample)
                                 </span>

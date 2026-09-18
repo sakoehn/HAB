@@ -278,6 +278,7 @@ def load_tsv(sample_name: str) -> list[MappingRow]:
     rows: list[MappingRow] = []
     with open(path, "r") as f:
         reader = csv.reader(f, delimiter="\t")
+        next(reader, None)  # skip header row (gene_id, scaffold_id, taxonomy, kegg, enzyme, cog)
         for row in reader:
             if len(row) < 2:
                 continue

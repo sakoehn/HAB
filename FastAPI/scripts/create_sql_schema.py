@@ -70,6 +70,31 @@ CREATE TABLE IF NOT EXISTS taxon_paths (
     full_path TEXT NOT NULL UNIQUE
 );
 
+CREATE TABLE IF NOT EXISTS kegg_paths (
+    id      INTEGER PRIMARY KEY,
+    a_id    TEXT, a_name TEXT, -- e.g. 09100, Metabolism
+    b_id    TEXT, b_name TEXT, -- e.g. 09101, Carbohydrate metabolism
+    c_id    TEXT, c_name TEXT, -- e.g. 00010, Glycolysis / Cluconeogenesis
+    d_id    TEXT, d_name TEXT, -- e.g. K00844, HK; hexokinase (leaf, may be NULL)
+    full_path TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS enzyme_paths (
+    id      INTEGER PRIMARY KEY,
+    a_id    TEXT, a_name TEXT, -- e.g. 1, Oxidoreductases
+    b_id    TEXT, b_name TEXT, -- e.g. 1.1, Acting on the CH-OH group of donors
+    c_id    TEXT, c_name TEXT, -- e.g. 1.1.1, With NAD+ or NADP+ as acceptor
+    d_id    TEXT, d_name TEXT, -- e.g. 1.1.1.1, alcohol dehydrogenase (leaf, may be NULL)
+    full_path TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS cog_paths (
+    id      INTEGER PRIMARY KEY,
+    a_id    TEXT, a_name TEXT, -- category letter + name, e.g. C, Energy production and conversion
+    b_id    TEXT, b_name TEXT, -- e.g. COG0055, FoF1-type ATP synthase, beta subunit (leaf)
+    full_path TEXT NOT NULL UNIQUE
+);
+
 CREATE TABLE IF NOT EXISTS mappings (
     id            INTEGER PRIMARY KEY,
     sample        TEXT NOT NULL,
