@@ -212,50 +212,6 @@ def egc_within_tolerance(backend: float, jgi: float) -> bool:
 NORM_TOLERANCE: float = 1e-9
 
 
-# ── Warmup fixture ────────────────────────────────────────────────────────────
-
-@pytest.fixture(scope="session")
-def warm_server():
-    """
-    Explicit warmup fixture — only runs for tests that request it.
-
-    Loads all 128 samples into the in-memory caches and builds the search
-    and mapping indexes.  Tag tests with @pytest.mark.api to pull this in
-    automatically via pytest_collection_modifyitems below, or request it
-    directly as a fixture parameter.
-
-    UPDATED FOR MODULE SPLIT: imports now come from api.cache and api.index
-    rather than the old flat main.py.
-    """
-    from api.cache import (
-        get_all_sample_names,
-        load_kegg,
-        load_cog,
-        load_enzyme,
-        load_taxonomy,
-        load_tsv,
-    )
-    from api.index import build_search_index, build_mapping_index
-
-    samples = get_all_sample_names()
-    for s in samples:
-        load_kegg(s)
-        load_cog(s)
-        load_enzyme(s)
-        load_taxonomy(s)
-        load_tsv(s)
-
-    build_search_index()
-    build_mapping_index()
-
-
-def pytest_collection_modifyitems(items):
-    """Auto-attach warm_server fixture to any test marked @pytest.mark.api."""
-    for item in items:
-        if item.get_closest_marker("api"):
-            item.fixturenames.append("warm_server")
-
-
 # ── EGC file parsing ──────────────────────────────────────────────────────────
 
 # Regex that extracts the bare numeric JGI sample ID from a header cell.

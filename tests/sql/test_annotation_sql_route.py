@@ -11,10 +11,12 @@ specifically -- the other sql routes (taxonomy children, top annotations,
 scaffolds, scaffolds summary) each have their own dedicated *_route.py
 test file in this folder.
 
-Requires: a FastAPI server already running with DATA_BACKEND=sql (see
-FastAPI/.env) -- e.g. `uvicorn main:app --reload` after setting that in
-.env. Skips automatically if the server isn't reachable, or isn't
-actually running in sql mode.
+Self-contained: uses FastAPI's TestClient AS A CONTEXT MANAGER (`with
+TestClient(app) as client:`) rather than requiring a separately running
+uvicorn server -- see tests/sql/test_samples_and_timepoints_route.py's
+module docstring for why the old httpx.Client-against-a-live-server
+pattern silently contributed zero coverage in every normal `pytest
+tests/` run.
 
 Run:
     pytest tests/sql/test_annotation_sql_route.py -v
@@ -25,40 +27,16 @@ import os
 import sys
 import gc
 
-import httpx
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"))
 
-from api.config import COG_DIR  # pylint: disable=wrong-import-position,import-error
+from api.config import COG_DIR, SQLITE_DB_PATH  # pylint: disable=wrong-import-position,import-error
 from api.index import timepoint_dt_sort_key  # pylint: disable=wrong-import-position,import-error
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
-
-
-def _server_is_up() -> bool:
-    try:
-        r = httpx.get(f"{API_BASE_URL}/status", timeout=5.0)
-        return r.status_code < 500
-    except (httpx.ConnectError, httpx.TimeoutException):
-        return False
-
-
-def _sql_backend_active() -> bool:
-    try:
-        r = httpx.get(f"{API_BASE_URL}/sql-test", timeout=5.0)
-        return r.status_code < 500
-    except (httpx.ConnectError, httpx.TimeoutException):
-        return False
-
-
-sql_route_required = pytest.mark.skipif(
-    not (_server_is_up() and _sql_backend_active()),
-    reason=(
-        f"Server not reachable at {API_BASE_URL}, or not running with "
-        "DATA_BACKEND=sql. Set DATA_BACKEND=sql in FastAPI/.env, "
-        "start `uvicorn main:app --reload`, then re-run."
-    ),
+pytestmark = pytest.mark.skipif(
+    not os.path.exists(SQLITE_DB_PATH),
+    reason=f"{SQLITE_DB_PATH} not found -- run migrate_mappings_to_sql.py first",
 )
 
 # Every test below takes a `client` parameter to receive this fixture's
@@ -68,11 +46,13 @@ sql_route_required = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def client():
-    with httpx.Client(base_url=API_BASE_URL, timeout=30.0) as c:
+    from fastapi.testclient import TestClient
+    from main import app
+
+    with TestClient(app) as c:
         yield c
 
 
-@sql_route_required
 def test_cog0055_vs_ground_truth(client):
     """
     Cross-check the real /series/annotations route (sql backend) against
@@ -120,7 +100,6 @@ def test_cog0055_vs_ground_truth(client):
     assert sort_keys == sorted(sort_keys)
 
 
-@sql_route_required
 def test_series_annotations_nonexistent_annotation_returns_404(client):
     resp = client.get(
         "/series/annotations",

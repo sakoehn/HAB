@@ -21,6 +21,11 @@ load_dotenv(os.path.join(_HERE,"..",".env"))
 _HERE     = os.path.dirname(__file__)
 BASE_DIR  = os.path.normpath(os.path.join(_HERE, "../../DataStructures"))
 
+# These raw source directories are no longer read by the live app (which is
+# sql-only, see DATA_BACKEND below) -- they're kept for the one-time
+# migration scripts (FastAPI/scripts/migrate_*_to_sql.py) that populate the
+# SQLite DB from them, and for tests that verify sql results against these
+# files as independent ground truth (e.g. tests/sql/test_annotation_scaffolds_route.py).
 COG_DIR      = os.path.join(BASE_DIR, "COG")
 KEGG_DIR     = os.path.join(BASE_DIR, "Kegg")
 ENZYME_DIR   = os.path.join(BASE_DIR, "Enzyme")
@@ -69,22 +74,12 @@ LAG_HOURS_PER_SAMPLE = 4
 PERMUTATION_N    = 1000
 PERMUTATION_SEED = 42
 
-# ── Annotation JSON cache ─────────────────────────────────────────────────────
-#
-# cache.load_json() caches parsed per-sample annotation files (KEGG/COG/
-# Enzyme/Taxonomy) so repeat requests for the same sample are fast. Bounded
-# with least-recently-used eviction because the full dataset is tens of GB
-# once parsed. Set to 140 — comfortably above the 128-sample dataset so a
-# single full-dataset pull (one annotation across every sample) fits without
-# evicting itself mid-request. Tested: cold request ~36s, warm (repeat)
-# ~0.26s, no thrashing.
-JSON_CACHE_MAX_ENTRIES = 140
-
 # ── Data backend selection ────────────────────────────────────────────────────
 #
-# "json" reads directly from the DataStructures files above; "sql" reads from
-# the SQLite database below (see api/db.py, api/cache_sql.py).
-DATA_BACKEND = os.getenv("DATA_BACKEND", "json")
+# The app reads from the SQLite database below (see api/db.py,
+# api/cache_sql.py). The old direct-from-JSON-files backend was retired;
+# "sql" is the only supported value now.
+DATA_BACKEND = os.getenv("DATA_BACKEND", "sql")
 
 # ── SQLite connection ─────────────────────────────────────────────────────────
 #

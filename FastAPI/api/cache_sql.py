@@ -796,7 +796,10 @@ def _sort_group_concat(value: str | None) -> str | None:
     return ",".join(sorted(value.split(","))) if value else value
 
 
-def get_mappings_sql(conn: sqlite3.Connection, source: str, annotation_id: str) -> list[dict]:
+def get_mappings_sql(
+    conn: sqlite3.Connection, source: str, annotation_id: str,
+    samples: list[str] | None = None,
+) -> list[dict]:
     """Return every mapping row (gene/sample/scaffold, plus its
     annotations across all four sources) whose `source` annotation
     exactly matches `annotation_id`.
@@ -806,6 +809,16 @@ def get_mappings_sql(conn: sqlite3.Connection, source: str, annotation_id: str) 
         source: Annotation source to match on ("cog", "kegg", "enzyme",
             "taxonomy").
         annotation_id: Exact ID to match (not a substring search).
+        samples: If given, restrict to these sample names at the SQL level
+            instead of fetching every matching row for every sample and
+            filtering in Python afterward. Found via direct measurement
+            while investigating /mappings/search's ~0.85-2.3s latency: a
+            common annotation like COG0055 has 29,663 raw matching gene
+            rows across all 128 samples, and the route only ever wants a
+            caller-chosen subset (its sample_count param) -- fetching and
+            GROUP_CONCAT-ing all of them regardless, every call, was pure
+            wasted work. An empty list returns [] immediately (no matching
+            samples requested, not "no filter").
 
     Returns:
         List of dicts keyed sample, gene_id, contig_id, kegg_id, cog_id,
@@ -814,41 +827,56 @@ def get_mappings_sql(conn: sqlite3.Connection, source: str, annotation_id: str) 
     Raises:
         ValueError: If source is not one of the four known sources.
     """
+    if samples is not None and not samples:
+        return []
+
+    # Pushed into the subquery itself (not just the outer WHERE) so it
+    # actually narrows what the subquery's JOIN has to scan, rather than
+    # being a residual per-row check applied after the full unfiltered
+    # subquery already ran -- confirmed via EXPLAIN QUERY PLAN that the
+    # outer-WHERE-only version left the subquery's cost completely
+    # unaffected (no SEARCH step referencing mappings.sample at all).
+    sample_filter_sql = ""
+    sample_filter_params: tuple = ()
+    if samples is not None:
+        sample_filter_sql = f" AND mappings.sample IN ({', '.join('?' * len(samples))})"
+        sample_filter_params = tuple(samples)
+
     if source == "kegg":
         kegg_id = annotation_id if annotation_id.startswith("KO:") else f"KO:{annotation_id}"
-        where_sql = """
+        where_sql = f"""
             SELECT id
             FROM mappings
-            WHERE kegg_id = ?
+            WHERE kegg_id = ?{sample_filter_sql}
         """
-        where_params = (kegg_id,)
+        where_params = (kegg_id,) + sample_filter_params
     elif source == "cog":
-        where_sql = """
+        where_sql = f"""
             SELECT gene_cog.mapping_id AS id
             FROM mappings
             JOIN gene_cog ON gene_cog.mapping_id = mappings.id
-            WHERE gene_cog.cog_id = ?
+            WHERE gene_cog.cog_id = ?{sample_filter_sql}
         """
-        where_params = (annotation_id,)
+        where_params = (annotation_id,) + sample_filter_params
     elif source == "enzyme":
         ec_id = annotation_id if annotation_id.startswith("EC:") else f"EC:{annotation_id}"
-        where_sql = """
+        where_sql = f"""
                 SELECT gene_enzyme.mapping_id AS id
                 FROM mappings
                 JOIN gene_enzyme ON gene_enzyme.mapping_id = mappings.id
-                WHERE gene_enzyme.ec_id = ?
+                WHERE gene_enzyme.ec_id = ?{sample_filter_sql}
         """
-        where_params = (ec_id,)
+        where_params = (ec_id,) + sample_filter_params
     elif source == "taxonomy":
-        where_sql = """
+        where_sql = f"""
             SELECT id
             FROM mappings
             WHERE taxon_path_id IN (
                 SELECT id FROM taxon_paths
                 WHERE full_path = ? OR substr(full_path, 1, ?) = ?
-            )
+            ){sample_filter_sql}
         """
-        where_params = (annotation_id, len(annotation_id) + 1, annotation_id + ';')
+        where_params = (annotation_id, len(annotation_id) + 1, annotation_id + ';') + sample_filter_params
 
     else:
         raise ValueError(f"Unknown source: {source}")

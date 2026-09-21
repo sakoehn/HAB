@@ -1,36 +1,30 @@
+"""
+test_top_annotations_route.py
+================================
+Self-contained: uses FastAPI's TestClient AS A CONTEXT MANAGER (`with
+TestClient(app) as client:`) rather than requiring a separately running
+uvicorn server -- this correctly runs main.py's lifespan() so
+app.state.sql_conn is set up, and needs nothing external to actually run.
+The previous version of this file (httpx.Client against a live server,
+skipped whenever no server happened to be running) silently contributed
+zero coverage in every normal `pytest tests/` run.
+
+Run:
+    pytest tests/sql/test_top_annotations_route.py -v
+"""
+
 import os
 import sys
 
-import httpx
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"))
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+from api.config import SQLITE_DB_PATH
 
-
-def _server_is_up() -> bool:
-    try:
-        r = httpx.get(f"{API_BASE_URL}/status", timeout=5.0)
-        return r.status_code < 500
-    except (httpx.ConnectError, httpx.TimeoutException):
-        return False
-
-
-def _sql_backend_active() -> bool:
-    try:
-        r = httpx.get(f"{API_BASE_URL}/sql-test", timeout=5.0)
-        return r.status_code < 500
-    except (httpx.ConnectError, httpx.TimeoutException) :
-        return False
-
-sql_route_required = pytest.mark.skipif(
-    not (_server_is_up() and _sql_backend_active()),
-    reason=(
-        f"Server not reachable at {API_BASE_URL}, or not running with "
-        "DATA_BACKEND=sql. Set DATA_BACKEND=sql in FastAPI/.env, "
-        "start `uvicorn main:app --reload`, then re-run."
-    ),
+pytestmark = pytest.mark.skipif(
+    not os.path.exists(SQLITE_DB_PATH),
+    reason=f"{SQLITE_DB_PATH} not found -- run migrate_mappings_to_sql.py first",
 )
 
 # Every test below takes a `client` parameter to receive this fixture's
@@ -40,11 +34,23 @@ sql_route_required = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def client():
-    with httpx.Client(base_url=API_BASE_URL, timeout=30.0) as c:
+    from fastapi.testclient import TestClient
+    from main import app
+
+    with TestClient(app) as c:
         yield c
 
 
-@sql_route_required
+def test_missing_source_returns_422(client):
+    """`source` has no default -- FastAPI's own request validation must
+    reject a call without it, before the route body (and its DATA_BACKEND
+    branch) ever runs. Ported from test_unit_backend.py's
+    TestRoutesViaTestClient (deleted alongside the rest of that class once
+    this route's real coverage lived here instead)."""
+    resp = client.get("/annotations/top")
+    assert resp.status_code == 422
+
+
 def test_sorted_results(client):
     resp = client.get("/annotations/top", params={"source": "cog", "limit": 10})
     resp.raise_for_status()
@@ -54,7 +60,6 @@ def test_sorted_results(client):
     assert means == sorted(means, reverse=True)
 
 
-@sql_route_required
 def test_caching_consistency(client):
     resp_5 = client.get("/annotations/top", params={"source": "cog", "limit": 5})
     resp_5.raise_for_status()
@@ -67,7 +72,6 @@ def test_caching_consistency(client):
     assert top_20[:5] == top_5
 
 
-@sql_route_required
 def test_invalid_source(client):
     resp = client.get("/annotations/top", params={"source": "INVALID_SOURCE", "limit": 10})
     assert resp.status_code == 422
@@ -80,7 +84,6 @@ def test_invalid_source(client):
 # All dates below are inside the real dataset's range (2021-05-27..2021-06-18,
 # confirmed live via /status's date_min/date_max).
 
-@sql_route_required
 def test_date_to_no_longer_empties_the_results(client):
     resp = client.get(
         "/annotations/top",
@@ -92,7 +95,6 @@ def test_date_to_no_longer_empties_the_results(client):
     assert 0 < body["sample_count"] < 128
 
 
-@sql_route_required
 def test_date_from_actually_filters_and_is_not_identical_to_unfiltered(client):
     unfiltered = client.get("/annotations/top", params={"source": "cog", "limit": 10})
     unfiltered.raise_for_status()
@@ -109,7 +111,6 @@ def test_date_from_actually_filters_and_is_not_identical_to_unfiltered(client):
     assert filtered_body["sample_count"] < 128
 
 
-@sql_route_required
 def test_sample_count_reflects_the_active_filter_not_the_whole_dataset(client):
     resp = client.get(
         "/annotations/top",

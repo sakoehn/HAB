@@ -7,8 +7,12 @@ covers route-layer logic (min-length rejection, pagination, sort order,
 response envelope) that tests/sql/test_search_annotations_sql.py's direct
 get_search_annotations() tests don't touch at all.
 
-Skips automatically unless a server is reachable and running with
-DATA_BACKEND=sql.
+Self-contained: uses FastAPI's TestClient AS A CONTEXT MANAGER (`with
+TestClient(app) as client:`) rather than requiring a separately running
+uvicorn server -- see tests/sql/test_samples_and_timepoints_route.py's
+module docstring for why the old httpx.Client-against-a-live-server
+pattern silently contributed zero coverage in every normal `pytest
+tests/` run.
 
 Known real example used throughout: q="synthase" is a real cross-source
 substring, independently confirmed against the live database (cog=178,
@@ -37,46 +41,26 @@ Run:
 import os
 import sys
 
-import httpx
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"))
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+from api.config import SQLITE_DB_PATH
 
-
-def _server_is_up() -> bool:
-    try:
-        r = httpx.get(f"{API_BASE_URL}/status", timeout=5.0)
-        return r.status_code < 500
-    except (httpx.ConnectError, httpx.TimeoutException):
-        return False
-
-
-def _sql_backend_active() -> bool:
-    try:
-        r = httpx.get(f"{API_BASE_URL}/sql-test", timeout=5.0)
-        return r.status_code < 500
-    except (httpx.ConnectError, httpx.TimeoutException):
-        return False
-
-
-sql_route_required = pytest.mark.skipif(
-    not (_server_is_up() and _sql_backend_active()),
-    reason=(
-        f"Server not reachable at {API_BASE_URL}, or not running with "
-        "DATA_BACKEND=sql. Set DATA_BACKEND=sql in FastAPI/.env, "
-        "start `uvicorn main:app --reload`, then re-run."
-    ),
+pytestmark = pytest.mark.skipif(
+    not os.path.exists(SQLITE_DB_PATH),
+    reason=f"{SQLITE_DB_PATH} not found -- run migrate_mappings_to_sql.py first",
 )
-
 
 # Every test below takes a `client` parameter to receive this fixture's value
 # pylint: disable=redefined-outer-name
 
 @pytest.fixture(scope="module")
 def client():
-    with httpx.Client(base_url=API_BASE_URL, timeout=30.0) as c:
+    from fastapi.testclient import TestClient
+    from main import app
+
+    with TestClient(app) as c:
         yield c
 
 
@@ -87,7 +71,6 @@ EXPECTED_ROW_KEYS = {
 }
 
 
-@sql_route_required
 def test_search_returns_correct_shape(client):
     """Response envelope has the expected top-level keys, and every row in
     `data` has exactly get_search_annotations()'s 12 fields -- see the
@@ -110,7 +93,17 @@ def test_search_returns_correct_shape(client):
         assert set(row.keys()) == EXPECTED_ROW_KEYS
 
 
-@sql_route_required
+def test_missing_all_of_q_annotation_id_name_exact_returns_400(client):
+    """The route requires at least one of q/annotation_id/name_exact --
+    checked before the DATA_BACKEND branch, so it's backend-agnostic.
+    Distinct from test_query_too_short_rejected below (q present but too
+    short); this is q absent entirely. Ported from test_unit_backend.py's
+    TestRoutesViaTestClient (deleted alongside the rest of that class once
+    this route's real coverage lived here instead)."""
+    resp = client.get("/search/annotations", params={"sources": ["cog"]})
+    assert resp.status_code == 400
+
+
 def test_query_too_short_rejected(client):
     """q with fewer than 3 characters should be rejected with a 400, not
     silently truncated or treated as a valid (dangerously broad) search --
@@ -123,7 +116,6 @@ def test_query_too_short_rejected(client):
     assert resp.status_code == 400
 
 
-@sql_route_required
 def test_pagination_slices_correctly(client):
     """page=1 and page=2 (page_size=5) return different, non-overlapping
     rows, and `total` reflects the full unpaginated match count, not just
@@ -141,7 +133,6 @@ def test_pagination_slices_correctly(client):
     assert body1["total"] > 5
 
 
-@sql_route_required
 def test_results_sorted_by_mean_egc_descending(client):
     """body["data"]'s mean_egc values are non-increasing -- same idea as
     test_mappings_search_route.py's chronological-sort test, just a

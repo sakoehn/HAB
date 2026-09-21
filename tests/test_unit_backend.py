@@ -3,25 +3,25 @@ Tests/test_unit_backend.py
 ===========================
 Unit tests for the split api.* modules — no server, no real data required.
 
-Covers the 28 functions that had zero pytest coverage after the module split:
-
-  cache.py        extract_annotation_name, extract_parent, extract_egc,
-                  extract_norm_egc, load_enzyme (loader shape), load_taxonomy
+Covers shared (backend-agnostic) logic:
 
   index.py        _parse_any_datetime, timepoint_sort_key,
-                  timepoint_dt_sort_key, search_index (via in-memory fixture),
-                  compute_date_range (edge cases)
+                  timepoint_dt_sort_key, compute_date_range (edge cases)
 
   astronomy.py    sunrise_sunset_utc (pytest-ified version of the script checks),
                   SUN_TIMES structure
 
   correlation.py  _get_clr_matrix (cache hit / miss / thread-safety)
 
-  routes.py       paginate, _normalize_annotation_dict,
-                  _search_dict_annotations, _filter_mapping_rows,
-                  list_samples, get_tides, get_sun_times,
-                  search_annotations (index path + scan path),
-                  top_annotations_by_egc, annotation_time_series, debug
+  routes.py       paginate, get_tides, get_sun_times, debug, status
+
+  Everything that only ever exercised the JSON backend (extract_* field
+  helpers, the inverted search_index, _normalize_annotation_dict /
+  _search_dict_annotations / _filter_mapping_rows, and the routes that
+  branched on DATA_BACKEND) was removed here once that code was deleted
+  from api/cache.py, api/index.py, and api/routes.py -- their real,
+  always-on coverage now lives in tests/sql/*_route.py instead (each using
+  `with TestClient(app) as client:` so main.py's lifespan() actually runs).
 
   Note: the seven /samples/{sample_name}/... routes (cog, kegg, enzyme,
   taxonomy, mappings, mappings/summary, full) and
@@ -47,212 +47,12 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# cache.py — extraction helpers
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestExtractAnnotationName:
-    """cache.extract_annotation_name — all branch paths."""
-
-    def test_string_value_returns_itself(self):
-        from api.cache import extract_annotation_name
-        assert extract_annotation_name("Alcohol dehydrogenase") == "Alcohol dehydrogenase"
-
-    def test_dict_with_name_field(self):
-        from api.cache import extract_annotation_name
-        assert extract_annotation_name({"name": "ADH", "egc": 100}) == "ADH"
-
-    def test_dict_prefers_name_over_category(self):
-        from api.cache import extract_annotation_name
-        assert extract_annotation_name({"name": "ADH", "category": "C"}) == "ADH"
-
-    def test_dict_falls_back_to_category(self):
-        from api.cache import extract_annotation_name
-        assert extract_annotation_name({"category": "Metabolism"}) == "Metabolism"
-
-    def test_dict_falls_back_to_label(self):
-        from api.cache import extract_annotation_name
-        assert extract_annotation_name({"label": "my label"}) == "my label"
-
-    def test_dict_with_only_unrelated_fields_returns_none(self):
-        """parent_ec/parent_id are not name fields — must not leak into 'name'."""
-        from api.cache import extract_annotation_name
-        assert extract_annotation_name({"parent_ec": "1.1.-.-", "parent_id": "X"}) is None
-
-    def test_dict_with_no_name_fields_returns_none(self):
-        from api.cache import extract_annotation_name
-        assert extract_annotation_name({"egc": 42}) is None
-
-    def test_none_value_returns_none(self):
-        from api.cache import extract_annotation_name
-        assert extract_annotation_name(None) is None
-
-    def test_int_value_returns_none(self):
-        from api.cache import extract_annotation_name
-        assert extract_annotation_name(42) is None
-
-    def test_empty_dict_returns_none(self):
-        from api.cache import extract_annotation_name
-        assert extract_annotation_name({}) is None
-
-
-class TestExtractParent:
-    """cache.extract_parent — per-source branching."""
-
-    def test_kegg_uses_parent_name_list_first_element(self):
-        from api.cache import extract_parent
-        v = {"parent_name": ["Carbohydrate metabolism", "Other"]}
-        assert extract_parent(v, "kegg") == "Carbohydrate metabolism"
-
-    def test_kegg_falls_back_to_parent_id_then_category(self):
-        from api.cache import extract_parent
-        assert extract_parent({"parent_id": "09101"}, "kegg") == "09101"
-        assert extract_parent({"category": "Metabolism"}, "kegg") == "Metabolism"
-
-    def test_kegg_empty_parent_name_list_falls_back(self):
-        from api.cache import extract_parent
-        v = {"parent_name": [], "category": "Fallback"}
-        assert extract_parent(v, "kegg") == "Fallback"
-
-    def test_cog_uses_category(self):
-        from api.cache import extract_parent
-        assert extract_parent({"category": "J"}, "cog") == "J"
-
-    def test_cog_missing_category_returns_none(self):
-        from api.cache import extract_parent
-        assert extract_parent({"name": "COG0001"}, "cog") is None
-
-    def test_enzyme_uses_parent_name(self):
-        from api.cache import extract_parent
-        assert extract_parent({"parent_name": "1.1.-.-"}, "enzyme") == "1.1.-.-"
-
-    def test_enzyme_falls_back_to_parent_id(self):
-        from api.cache import extract_parent
-        assert extract_parent({"parent_id": "1.1.-.-"}, "enzyme") == "1.1.-.-"
-
-    def test_enzyme_missing_parent_fields_returns_none(self):
-        from api.cache import extract_parent
-        assert extract_parent({"name": "ADH"}, "enzyme") is None
-
-    def test_taxonomy_uses_parent_list(self):
-        from api.cache import extract_parent
-        v = {"parent": ["Bacteria", "Proteobacteria"]}
-        assert extract_parent(v, "taxonomy") == "Bacteria"
-
-    def test_taxonomy_string_parent(self):
-        from api.cache import extract_parent
-        assert extract_parent({"parent": "Bacteria"}, "taxonomy") == "Bacteria"
-
-    def test_non_dict_value_returns_none(self):
-        from api.cache import extract_parent
-        assert extract_parent("just a string", "kegg") is None
-
-    def test_unknown_source_returns_none(self):
-        from api.cache import extract_parent
-        assert extract_parent({"category": "X"}, "unknown_source") is None
-
-
-class TestExtractEgc:
-    """cache.extract_egc — numeric extraction from various value shapes."""
-
-    def test_int_scalar(self):
-        from api.cache import extract_egc
-        assert extract_egc(5771) == 5771.0
-
-    def test_float_scalar(self):
-        from api.cache import extract_egc
-        assert extract_egc(219.5) == 219.5
-
-    def test_dict_with_egc_key(self):
-        from api.cache import extract_egc
-        assert extract_egc({"egc": 100.0, "name": "X"}) == 100.0
-
-    def test_dict_with_EGC_uppercase(self):
-        from api.cache import extract_egc
-        assert extract_egc({"EGC": 77.0}) == 77.0
-
-    def test_dict_with_no_egc_returns_none(self):
-        from api.cache import extract_egc
-        assert extract_egc({"name": "X"}) is None
-
-    def test_string_returns_none(self):
-        from api.cache import extract_egc
-        assert extract_egc("5771") is None
-
-    def test_none_returns_none(self):
-        from api.cache import extract_egc
-        assert extract_egc(None) is None
-
-    def test_zero_egc_is_returned_as_float(self):
-        from api.cache import extract_egc
-        assert extract_egc({"egc": 0}) == 0.0
-
-    def test_result_is_always_float(self):
-        from api.cache import extract_egc
-        result = extract_egc(42)
-        assert isinstance(result, float)
-
-
-class TestExtractNormEgc:
-    """cache.extract_norm_egc — depth-normalised value extraction."""
-
-    def test_dict_with_norm_egc_key(self):
-        from api.cache import extract_norm_egc
-        assert extract_norm_egc({"norm_egc": 0.000423}) == pytest.approx(0.000423)
-
-    def test_dict_with_NORM_EGC_uppercase(self):
-        from api.cache import extract_norm_egc
-        assert extract_norm_egc({"NORM_EGC": 0.001}) == pytest.approx(0.001)
-
-    def test_missing_norm_egc_returns_none(self):
-        from api.cache import extract_norm_egc
-        assert extract_norm_egc({"egc": 100}) is None
-
-    def test_scalar_returns_none(self):
-        from api.cache import extract_norm_egc
-        assert extract_norm_egc(5771) is None
-
-    def test_none_returns_none(self):
-        from api.cache import extract_norm_egc
-        assert extract_norm_egc(None) is None
-
-    def test_result_is_float(self):
-        from api.cache import extract_norm_egc
-        result = extract_norm_egc({"norm_egc": 1})
-        assert isinstance(result, float)
-
-    def test_zero_norm_egc_returns_zero_float(self):
-        """norm_egc=0 must return 0.0, not None.
-        The explicit None check matches how extract_egc already works."""
-        from api.cache import extract_norm_egc
-        result = extract_norm_egc({"norm_egc": 0})
-        assert result == 0.0
-        assert isinstance(result, float)
-
-    def test_zero_not_shadowed_by_uppercase_key(self):
-        """With both keys present and lowercase=0, lowercase must win (not NORM_EGC)."""
-        from api.cache import extract_norm_egc
-        result = extract_norm_egc({"norm_egc": 0, "NORM_EGC": 0.5})
-        assert result == 0.0
-
-    def test_lowercase_key_takes_precedence_over_uppercase(self):
-        """When both keys present with non-zero values, lowercase wins."""
-        from api.cache import extract_norm_egc
-        result = extract_norm_egc({"norm_egc": 0.001, "NORM_EGC": 0.999})
-        assert result == pytest.approx(0.001)
-
-    def test_result_in_unit_interval(self):
-        """A real norm_egc value must satisfy 0 <= norm_egc <= 1."""
-        from api.cache import extract_norm_egc
-        v = extract_norm_egc({"norm_egc": 6.965e-5})
-        assert v is not None
-        assert 0.0 <= v <= 1.0
-
-    def test_norm_egc_near_one_accepted(self):
-        """norm_egc = 1.0 is valid — annotation covers the entire sample depth."""
-        from api.cache import extract_norm_egc
-        result = extract_norm_egc({"norm_egc": 1.0})
-        assert result == pytest.approx(1.0)
+# cache.extract_annotation_name/extract_parent/extract_egc/extract_norm_egc
+# (TestExtractAnnotationName/TestExtractParent/TestExtractEgc/TestExtractNormEgc)
+# extracted fields from the old per-sample annotation JSON dicts -- removed
+# along with the rest of the JSON backend, since the sql branch reads these
+# same fields as native SQL columns instead (get_search_annotations,
+# get_annotation_series_sql, etc. -- see tests/sql/test_cache_sql.py).
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -630,116 +430,12 @@ class TestIsWithinDateRange:
         assert is_within_date_range("6/9/21 8:00", "not-a-date", None) is True
 
 
-class TestSearchIndex:
-    """index.search_index — binary-search prefix lookup on a synthetic index."""
-
-    @pytest.fixture(autouse=True)
-    def _patch_index(self):
-        """Install a minimal synthetic search index for the duration of each test."""
-        import api.index as idx
-        orig_idx    = {src: dict(idx._SEARCH_INDEX[src]) for src in idx._SOURCES}
-        orig_sorted = {src: list(idx._SEARCH_INDEX_SORTED[src]) for src in idx._SOURCES}
-
-        idx._SEARCH_INDEX["kegg"] = {
-            "k00010":    {"KO:K00010"},
-            "k00001":    {"KO:K00001"},
-            "alcohol":   {"KO:K00010"},
-            "dehydrogenase": {"KO:K00010", "KO:K00001"},
-            "ko:k00010": {"KO:K00010"},
-            "ko:k00001": {"KO:K00001"},
-            # W3 regression fixture: a real taxonomy strain name like
-            # "Rhizobium sp. ERR 922" tokenizes (on whitespace) into a
-            # standalone single-letter/short word -- here "f" -- unrelated
-            # to "ferredoxin" except that "f" happens to be one of its
-            # letters. Also includes "red" and "err", which are genuinely
-            # embedded substrings of "ferredoxin" (fer-RED-oxin,
-            # f-ERR-edoxin) and would still collide even under a
-            # minimum-length threshold on the indexed word.
-            "f":            {"KO:UNRELATED_F"},
-            "red":          {"KO:UNRELATED_RED"},
-            "err":          {"KO:UNRELATED_ERR"},
-            "ferredoxin":   {"KO:GENUINE_FERREDOXIN"},
-        }
-        import bisect
-        idx._SEARCH_INDEX_SORTED["kegg"] = sorted(idx._SEARCH_INDEX["kegg"].keys())
-
-        yield
-
-        idx._SEARCH_INDEX["kegg"]        = orig_idx["kegg"]
-        idx._SEARCH_INDEX_SORTED["kegg"] = orig_sorted["kegg"]
-
-    def test_exact_token_match(self):
-        from api.index import search_index
-        result = search_index("kegg", "k00010")
-        assert "KO:K00010" in result
-
-    def test_prefix_match(self):
-        from api.index import search_index
-        result = search_index("kegg", "k000")
-        assert "KO:K00010" in result
-        assert "KO:K00001" in result
-
-    def test_substring_match(self):
-        from api.index import search_index
-        result = search_index("kegg", "cohol")
-        assert "KO:K00010" in result
-
-    def test_multi_token_and_logic(self):
-        from api.index import search_index
-        # "dehydrogenase" matches both KO:K00010 and KO:K00001
-        # "k00010" matches only KO:K00010
-        # AND result must be {KO:K00010}
-        result = search_index("kegg", "dehydrogenase k00010")
-        assert result == {"KO:K00010"}
-
-    def test_no_match_returns_empty_set(self):
-        from api.index import search_index
-        result = search_index("kegg", "zzznomatch")
-        assert result == set()
-
-    def test_empty_query_returns_empty_set(self):
-        from api.index import search_index
-        result = search_index("kegg", "")
-        assert result == set()
-
-    def test_unknown_source_returns_empty_set(self):
-        from api.index import search_index
-        result = search_index("nonexistent_source", "k00010")
-        assert result == set()
-
-    def test_case_insensitive(self):
-        from api.index import search_index
-        result = search_index("kegg", "ALCOHOL")
-        assert "KO:K00010" in result
-
-    def test_short_indexed_word_does_not_flood_unrelated_query_matches(self):
-        """W3: a short indexed word like "f" (a taxonomy strain-name
-        single-letter token) must not match every longer query that happens
-        to contain that letter -- searching "ferredoxin" must not also
-        surface everything tagged "f"."""
-        from api.index import search_index
-        result = search_index("kegg", "ferredoxin")
-        assert result == {"KO:GENUINE_FERREDOXIN"}
-        assert "KO:UNRELATED_F" not in result
-
-    def test_coincidental_embedded_substring_does_not_match(self):
-        """W3: "ferredoxin" genuinely contains "red" and "err" as
-        substrings (fer-RED-oxin, f-ERR-edoxin) -- a length threshold on
-        the indexed word alone wouldn't stop these, since both are 3
-        letters. Confirms the fix (one-directional matching) rules them
-        out regardless of length."""
-        from api.index import search_index
-        result = search_index("kegg", "ferredoxin")
-        assert "KO:UNRELATED_RED" not in result
-        assert "KO:UNRELATED_ERR" not in result
-
-    def test_short_query_still_matches_longer_indexed_word(self):
-        """The query -> indexed-word direction (short query, longer
-        indexed word) is the legitimate "type ahead" case and must still
-        work after removing the reverse direction."""
-        from api.index import search_index
-        result = search_index("kegg", "ferr")
-        assert "KO:GENUINE_FERREDOXIN" in result
+# index.search_index (the JSON backend's inverted-index lookup, including
+# its W3 short-indexed-word-flooding fix) was removed along with the rest
+# of the JSON search index -- the sql branch's /search/annotations uses
+# SQL LIKE against annotation_series instead (a different mechanism, see
+# tests/sql/test_search_annotations_sql_route.py), which doesn't have an
+# indexed-word-tokenization step for W3's flooding failure mode to apply to.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -917,155 +613,12 @@ class TestPaginate:
         assert result["page_size"] == 2
 
 
-class TestNormalizeAnnotationDict:
-    """routes._normalize_annotation_dict — standardises raw annotation dicts."""
-
-    def test_output_has_required_keys(self):
-        from api.routes import _normalize_annotation_dict
-        data   = {"COG0001": {"egc": 100, "name": "Test"}}
-        result = _normalize_annotation_dict(data, "cog", "sample_01")
-        assert len(result) == 1
-        row = result[0]
-        for key in ("source", "sample", "timepoint", "annotation_id", "name", "value"):
-            assert key in row, f"Missing key '{key}' in normalised record"
-
-    def test_annotation_id_matches_dict_key(self):
-        from api.routes import _normalize_annotation_dict
-        data = {"K00010": {"egc": 50}}
-        row  = _normalize_annotation_dict(data, "kegg", "s1")[0]
-        assert row["annotation_id"] == "K00010"
-
-    def test_name_extracted_from_value(self):
-        from api.routes import _normalize_annotation_dict
-        data = {"K00010": {"name": "ADH"}}
-        row  = _normalize_annotation_dict(data, "kegg", "s1")[0]
-        assert row["name"] == "ADH"
-
-    def test_source_and_sample_set_correctly(self):
-        from api.routes import _normalize_annotation_dict
-        data = {"COG0001": {}}
-        row  = _normalize_annotation_dict(data, "cog", "my_sample")[0]
-        assert row["source"] == "cog"
-        assert row["sample"] == "my_sample"
-
-    def test_empty_dict_returns_empty_list(self):
-        from api.routes import _normalize_annotation_dict
-        assert _normalize_annotation_dict({}, "kegg", "s1") == []
-
-
-class TestSearchDictAnnotations:
-    """routes._search_dict_annotations — filtering logic."""
-
-    SAMPLE_DATA = {
-        "COG0001": {"name": "Chaperonin GroEL", "egc": 5000},
-        "COG0002": {"name": "DNA polymerase",   "egc": 2000},
-        "COG9999": {"name": "Hypothetical",      "egc": 100},
-    }
-
-    def test_q_partial_match_on_annotation_id(self):
-        from api.routes import _search_dict_annotations
-        result = _search_dict_annotations(self.SAMPLE_DATA, "cog", "s1", q="COG000")
-        ids = {r["annotation_id"] for r in result}
-        assert "COG0001" in ids
-        assert "COG0002" in ids
-        assert "COG9999" not in ids
-
-    def test_q_partial_match_on_name(self):
-        from api.routes import _search_dict_annotations
-        result = _search_dict_annotations(self.SAMPLE_DATA, "cog", "s1", q="polymerase")
-        assert len(result) == 1
-        assert result[0]["annotation_id"] == "COG0002"
-
-    def test_exact_annotation_id_filter(self):
-        from api.routes import _search_dict_annotations
-        result = _search_dict_annotations(self.SAMPLE_DATA, "cog", "s1",
-                                          annotation_id="COG0001")
-        assert len(result) == 1
-        assert result[0]["annotation_id"] == "COG0001"
-
-    def test_name_exact_filter(self):
-        from api.routes import _search_dict_annotations
-        result = _search_dict_annotations(self.SAMPLE_DATA, "cog", "s1",
-                                          name_exact="Hypothetical")
-        assert len(result) == 1
-        assert result[0]["annotation_id"] == "COG9999"
-
-    def test_name_exact_case_insensitive(self):
-        from api.routes import _search_dict_annotations
-        result = _search_dict_annotations(self.SAMPLE_DATA, "cog", "s1",
-                                          name_exact="hypothetical")
-        assert len(result) == 1
-
-    def test_no_filters_returns_all(self):
-        from api.routes import _search_dict_annotations
-        result = _search_dict_annotations(self.SAMPLE_DATA, "cog", "s1")
-        assert len(result) == 3
-
-    def test_annotation_id_not_found_returns_empty(self):
-        from api.routes import _search_dict_annotations
-        result = _search_dict_annotations(self.SAMPLE_DATA, "cog", "s1",
-                                          annotation_id="COGXXX")
-        assert result == []
-
-
-class TestFilterMappingRows:
-    """routes._filter_mapping_rows — TSV row filtering by source column."""
-
-    from api.cache import MappingRow as _MappingRow
-
-    ROWS = [
-        _MappingRow(gene_id="g1", contig_id="c1", taxonomy="Bacteria",
-                    kegg_id="K00010", enzyme="1.1.1.1", cog_id="COG0001"),
-        _MappingRow(gene_id="g2", contig_id="c2", taxonomy="Archaea",
-                    kegg_id="K00020", enzyme=None,     cog_id="COG0002"),
-        _MappingRow(gene_id="g3", contig_id="c3", taxonomy=None,
-                    kegg_id=None,    enzyme="2.2.2.2", cog_id="COG0001"),
-    ]
-
-    def test_kegg_source_filters_by_kegg_id(self):
-        from api.routes import _filter_mapping_rows
-        result = _filter_mapping_rows(self.ROWS, "kegg", "K000")
-        gene_ids = {r.gene_id for r in result}
-        assert "g1" in gene_ids
-        assert "g2" in gene_ids
-        assert "g3" not in gene_ids
-
-    def test_cog_source_filters_by_cog_id(self):
-        from api.routes import _filter_mapping_rows
-        result = _filter_mapping_rows(self.ROWS, "cog", "COG0001")
-        gene_ids = {r.gene_id for r in result}
-        assert "g1" in gene_ids
-        assert "g3" in gene_ids
-        assert "g2" not in gene_ids
-
-    def test_enzyme_source_filters_by_enzyme(self):
-        from api.routes import _filter_mapping_rows
-        result = _filter_mapping_rows(self.ROWS, "enzyme", "1.1.1")
-        assert len(result) == 1
-        assert result[0].gene_id == "g1"
-
-    def test_taxonomy_source_filters_by_taxonomy(self):
-        from api.routes import _filter_mapping_rows
-        result = _filter_mapping_rows(self.ROWS, "taxonomy", "Bacteria")
-        assert len(result) == 1
-        assert result[0].gene_id == "g1"
-
-    def test_partial_match_case_insensitive(self):
-        from api.routes import _filter_mapping_rows
-        result = _filter_mapping_rows(self.ROWS, "taxonomy", "bacteria")
-        assert len(result) == 1
-
-    def test_no_match_returns_empty_list(self):
-        from api.routes import _filter_mapping_rows
-        result = _filter_mapping_rows(self.ROWS, "kegg", "KZZZ")
-        assert result == []
-
-    def test_none_column_value_not_matched(self):
-        from api.routes import _filter_mapping_rows
-        # g2 has enzyme=None; querying "2" must not crash or match g2
-        result = _filter_mapping_rows(self.ROWS, "enzyme", "2")
-        gene_ids = {r.gene_id for r in result}
-        assert "g2" not in gene_ids
+# TestNormalizeAnnotationDict, TestSearchDictAnnotations, and
+# TestFilterMappingRows tested routes._normalize_annotation_dict,
+# _search_dict_annotations, and _filter_mapping_rows -- all JSON-only
+# search/mapping-fallback helpers removed from routes.py along with the
+# JSON backend. /mappings/search's real, always-on coverage now lives in
+# tests/sql/test_mappings_search_route.py.
 
 
 class TestFilterTimepointsToRealSamples:
@@ -1127,192 +680,33 @@ class TestFilterTimepointsToRealSamples:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# routes.py — HTTP endpoints via FastAPI TestClient with synthetic data
+# routes.py — HTTP endpoints, backend-agnostic ones only
 # ═══════════════════════════════════════════════════════════════════════════════
-
-# Shared synthetic data used by the TestClient fixture below.
-_FAKE_TIMEPOINTS = {
-    "s001": {"taxon_oid": "s001", "timepoint": "T1", "datetime": "5/27/21 8:00"},
-    "s002": {"taxon_oid": "s002", "timepoint": "T2", "datetime": "6/1/21 12:00"},
-}
-_FAKE_TIDES = [
-    {"time": "2021-05-27 08:00", "predicted_wl": 1.5, "tide_event": None},
-    {"time": "2021-05-27 12:36", "predicted_wl": 3.2, "tide_event": "High"},
-]
-_FAKE_SUN_TIMES = {
-    "2021-05-27": {"sunrise": "05:00", "sunset": "21:00"},
-    "2021-06-01": {"sunrise": "04:55", "sunset": "21:10"},
-}
-_FAKE_COG_DATA = {
-    "s001": {"COG0001": {"name": "GroEL", "egc": 100.0, "norm_egc": 0.001, "scaffolds": {"sc1": 1}}},
-    "s002": {"COG0001": {"name": "GroEL", "egc": 200.0, "norm_egc": 0.002, "scaffolds": {"sc2": 2}}},
-}
-_FAKE_KEGG_DATA = {
-    "s001": {"K00010": {"name": "ADH", "egc": 50.0, "norm_egc": 0.0005}},
-    "s002": {"K00010": {"name": "ADH", "egc": 75.0, "norm_egc": 0.00075}},
-}
-_FAKE_ENZYME_DATA = {
-    "s001": {"1.1.1.1": {"name": "Alcohol dehydrogenase", "egc": 30.0, "norm_egc": 0.0003}},
-    "s002": {"1.1.1.1": {"name": "Alcohol dehydrogenase", "egc": 45.0, "norm_egc": 0.00045}},
-}
-_FAKE_TAXONOMY_DATA = {
-    "s001": {"Bacteria": {"egc": 1000.0, "norm_egc": 0.01, "parent": None}},
-    "s002": {"Bacteria": {"egc": 1200.0, "norm_egc": 0.012, "parent": None}},
-}
-from api.cache import MappingRow as _MappingRow
-
-_FAKE_TSV = {
-    "s001": [_MappingRow(gene_id="g1", contig_id="c1", taxonomy="Bacteria",
-                          kegg_id="K00010", enzyme="1.1.1.1", cog_id="COG0001")],
-    "s002": [_MappingRow(gene_id="g2", contig_id="c2", taxonomy="Archaea",
-                          kegg_id="K00020", enzyme=None, cog_id="COG0001")],
-}
-
 
 @pytest.fixture(scope="module")
 def patched_client():
     """
-    TestClient with all I/O patched to synthetic data.
-    Covers the untested HTTP endpoints without needing real files on disk.
+    Self-contained TestClient -- context-manager form so main.py's
+    lifespan() actually runs (see tests/sql/test_samples_and_timepoints_route.py's
+    module docstring for why the plain-constructor form doesn't).
+
+    No monkeypatching needed any more: this fixture used to fake an entire
+    JSON-backend dataset (COG/KEGG/Enzyme/Taxonomy/TSV data, the search and
+    mapping indexes) to test routes that branched on DATA_BACKEND. All of
+    those were removed once that JSON code was deleted -- what's left
+    (`/status`, `/tides`, `/sun-times`, `/debug`) are backend-agnostic and
+    just work against the real data already on disk.
     """
-    import api.cache  as cache_mod
-    import api.index  as index_mod
-    import api.routes as routes_mod
-    import api.astronomy as astro_mod
-
-    # Patch cache module
-    cache_mod.TIMEPOINTS = _FAKE_TIMEPOINTS
-    cache_mod.TIDES      = _FAKE_TIDES
-    cache_mod._TSV_CACHE = _FAKE_TSV
-
-    # routes.py does `from .cache import TIMEPOINTS` — an import-by-value that
-    # binds its own copy of the name, not a live reference to cache_mod's
-    # attribute. Patching cache_mod.TIMEPOINTS alone does NOT affect what
-    # list_timepoints() sees; routes_mod.TIMEPOINTS must be patched directly.
-    orig_routes_timepoints = routes_mod.TIMEPOINTS
-    routes_mod.TIMEPOINTS  = _FAKE_TIMEPOINTS
-    cache_mod._JSON_CACHE = {
-        f"cog_dir::s001.cog": _FAKE_COG_DATA["s001"],
-        f"cog_dir::s002.cog": _FAKE_COG_DATA["s002"],
-    }
-
-    # Patch index module
-    index_mod.DATA_DATE_MIN = "2021-05-27"
-    index_mod.DATA_DATE_MAX = "2021-06-01"
-    index_mod._INDEX_READY  = True
-    index_mod._ANN_META["cog"] = {
-        "COG0001": {
-            "annotation_id": "COG0001", "name": "GroEL", "parent": "J",
-            "value": {"name": "GroEL", "egc": 150.0, "norm_egc": 0.0015},
-            "mean_egc": 150.0, "max_egc": 200.0,
-            "mean_norm_egc": 0.0015, "max_norm_egc": 0.002,
-            "sample_count": 2,
-        }
-    }
-    index_mod._ANN_META["taxonomy"] = {
-        "Bacteria": {
-            "annotation_id": "Bacteria", "name": "Bacteria", "parent": None,
-            "value": {"depth": 1, "category": "Bacteria", "parent": None,
-                      "egc": 1000.0, "norm_egc": 0.01},
-            "mean_egc": 1000.0, "max_egc": 1200.0,
-            "mean_norm_egc": 0.01, "max_norm_egc": 0.012,
-            "sample_count": 2,
-        },
-        "Bacteroidetes": {
-            "annotation_id": "Bacteroidetes", "name": "Bacteroidetes", "parent": "Bacteria",
-            "value": {"depth": 2, "category": "Bacteria", "parent": "Bacteria",
-                      "egc": 300.0, "norm_egc": 0.003},
-            "mean_egc": 300.0, "max_egc": 350.0,
-            "mean_norm_egc": 0.003, "max_norm_egc": 0.0035,
-            "sample_count": 2,
-        },
-        "Proteobacteria": {
-            "annotation_id": "Proteobacteria", "name": "Proteobacteria", "parent": "Bacteria",
-            "value": {"depth": 2, "category": "Bacteria", "parent": "Bacteria",
-                      "egc": 250.0, "norm_egc": 0.0025},
-            "mean_egc": 250.0, "max_egc": 300.0,
-            "mean_norm_egc": 0.0025, "max_norm_egc": 0.003,
-            "sample_count": 2,
-        },
-    }
-    index_mod._MAPPING_INDEX["kegg"] = {
-        "K00010": [("s001", _FAKE_TSV["s001"][0])],
-    }
-
-    # Patch astronomy
-    astro_mod.SUN_TIMES = _FAKE_SUN_TIMES
-
-    # Override loaders to use patched data
-    def _fake_get_all_samples():
-        return sorted(_FAKE_TIMEPOINTS.keys())
-
-    def _fake_load_cog(sample_name):
-        return _FAKE_COG_DATA.get(sample_name, {})
-
-    def _fake_load_kegg(sample_name):
-        return _FAKE_KEGG_DATA.get(sample_name, {})
-
-    def _fake_load_enzyme(sample_name):
-        return _FAKE_ENZYME_DATA.get(sample_name, {})
-
-    def _fake_load_taxonomy(sample_name):
-        return _FAKE_TAXONOMY_DATA.get(sample_name, {})
-
-    def _fake_load_tsv(sample_name):
-        return _FAKE_TSV.get(sample_name, [])
-
-    def _fake_load_by_source(sample_name, source):
-        from api.cache import AnnotationSource
-        return {
-            AnnotationSource.cog:      _FAKE_COG_DATA,
-            AnnotationSource.kegg:     _FAKE_KEGG_DATA,
-            AnnotationSource.enzyme:   _FAKE_ENZYME_DATA,
-            AnnotationSource.taxonomy: _FAKE_TAXONOMY_DATA,
-        }.get(source, {}).get(sample_name, {})
-
-    orig_get_all      = cache_mod.get_all_sample_names
-    orig_load_cog      = cache_mod.load_cog
-    orig_load_kegg     = cache_mod.load_kegg
-    orig_load_enzyme   = cache_mod.load_enzyme
-    orig_load_taxonomy = cache_mod.load_taxonomy
-    orig_load_tsv      = cache_mod.load_tsv
-    orig_load_by_source = cache_mod.load_annotations_by_source
-
-    cache_mod.get_all_sample_names     = _fake_get_all_samples
-    cache_mod.load_cog                 = _fake_load_cog
-    cache_mod.load_kegg                = _fake_load_kegg
-    cache_mod.load_enzyme              = _fake_load_enzyme
-    cache_mod.load_taxonomy            = _fake_load_taxonomy
-    cache_mod.load_tsv                 = _fake_load_tsv
-    cache_mod.load_annotations_by_source = _fake_load_by_source
-
-    # Also patch the references that routes.py imported directly
-    routes_mod.get_all_sample_names     = _fake_get_all_samples
-    routes_mod.load_tsv                 = _fake_load_tsv
-    routes_mod.load_annotations_by_source = _fake_load_by_source
-
     from fastapi.testclient import TestClient
     from main import app
-    client = TestClient(app, raise_server_exceptions=False)
 
-    yield client
-
-    # Restore originals
-    cache_mod.get_all_sample_names     = orig_get_all
-    cache_mod.load_cog                 = orig_load_cog
-    cache_mod.load_kegg                = orig_load_kegg
-    cache_mod.load_enzyme              = orig_load_enzyme
-    cache_mod.load_taxonomy            = orig_load_taxonomy
-    cache_mod.load_tsv                 = orig_load_tsv
-    cache_mod.load_annotations_by_source = orig_load_by_source
-    routes_mod.TIMEPOINTS              = orig_routes_timepoints
+    with TestClient(app) as client:
+        yield client
 
 
 class TestRoutesViaTestClient:
-    """
-    HTTP-level tests for previously-untested endpoints.
-    Uses the patched_client fixture — no real data or server needed.
-    """
+    """HTTP-level tests for the backend-agnostic endpoints (no DATA_BACKEND
+    branch): /status, /tides, /sun-times, /debug."""
 
     def test_status_returns_200(self, patched_client):
         r = patched_client.get("/status")
@@ -1331,14 +725,9 @@ class TestRoutesViaTestClient:
         assert body.get("date_min") is None or isinstance(body["date_min"], str)
         assert body.get("date_max") is None or isinstance(body["date_max"], str)
 
-    def test_list_samples_returns_200(self, patched_client):
-        r = patched_client.get("/samples")
-        assert r.status_code == 200
-
-    def test_list_samples_has_data(self, patched_client):
-        body = patched_client.get("/samples").json()
-        assert "data" in body
-        assert body["total"] >= 1
+    # /samples branches on DATA_BACKEND -- see the note above
+    # test_debug_has_base_dir for why its tests now live in
+    # tests/sql/test_samples_and_timepoints_route.py instead.
 
     def test_tides_returns_200(self, patched_client):
         r = patched_client.get("/tides")
@@ -1369,154 +758,135 @@ class TestRoutesViaTestClient:
         body = patched_client.get("/debug").json()
         assert "base_dir" in body
 
-    def test_search_annotations_cog(self, patched_client):
-        r = patched_client.get("/search/annotations?q=GroEL&sources=cog")
-        # May be 200 (index) or 200 (scan fallback) — just not 500
-        assert r.status_code in (200, 404)
+    # /search/annotations, /series/annotations, /annotations/top,
+    # /mappings/search, /timepoints, and /samples (above) all branch on
+    # DATA_BACKEND, so under the real DATA_BACKEND=sql config they hit the
+    # pre-existing patched_client/sql_conn gap (patched_client only patches
+    # JSON-backend internals; app.state.sql_conn from main.py's lifespan()
+    # is never set up here). Their tests were removed from here and now
+    # live as real, always-on coverage in tests/sql/*_route.py instead --
+    # see test_search_annotations_sql_route.py, test_annotation_sql_route.py
+    # (series), test_top_annotations_route.py, test_mappings_search_route.py,
+    # and test_samples_and_timepoints_route.py, each using
+    # `with TestClient(app) as client:` so main.py's lifespan() actually
+    # runs. _filter_timepoints_to_real_samples's own logic is still covered
+    # directly, bypassing all of this, in TestFilterTimepointsToRealSamples
+    # below.
 
-    def test_search_annotations_missing_query_is_400(self, patched_client):
-        r = patched_client.get("/search/annotations?sources=cog")
-        assert r.status_code == 400
 
-    def test_annotation_time_series_200(self, patched_client):
-        r = patched_client.get("/series/annotations?source=cog&annotation_id=COG0001")
-        # Will be 200 if fake data has the annotation, 404 otherwise
-        assert r.status_code in (200, 404)
-
-    def test_top_annotations_400_missing_source(self, patched_client):
-        r = patched_client.get("/annotations/top")
-        assert r.status_code == 422  # FastAPI validation error (missing required param)
-
-    def test_top_annotations_200_with_source(self, patched_client):
-        r = patched_client.get("/annotations/top?source=cog")
-        assert r.status_code == 200
-
-    def test_top_annotations_has_data_field(self, patched_client):
-        body = patched_client.get("/annotations/top?source=cog").json()
-        assert "data" in body
-
-    def test_mappings_search_returns_dict(self, patched_client):
-        r = patched_client.get("/mappings/search?annotation_id=K00010&source=kegg")
-        assert r.status_code == 200
-        assert "data" in r.json()
-
-    # ── /timepoints ──────────────────────────────────────────────────────
-    # Now backend-aware (filters to real samples -- see docs/AUDIT.md's
-    # "132 vs 128" item), so these 3 join the pre-existing
-    # DATA_BACKEND=sql/patched_client gap under the real .env config
-    # (patched_client only patches JSON-backend internals; real DB access
-    # via app.state.sql_conn isn't set up). See the module-level Note above
-    # TestRoutesViaTestClient for the same root cause on other routes.
-    # _filter_timepoints_to_real_samples's actual logic is covered directly,
-    # bypassing this gap, in TestFilterTimepointsToRealSamples below.
-
-    def test_timepoints_returns_200(self, patched_client):
-        r = patched_client.get("/timepoints")
-        assert r.status_code == 200
-
-    def test_timepoints_has_paginated_data(self, patched_client):
-        body = patched_client.get("/timepoints").json()
-        assert "data"  in body
-        assert "total" in body
-        assert body["total"] == len(_FAKE_TIMEPOINTS)
-
-    def test_timepoints_rows_match_fake_data(self, patched_client):
-        body = patched_client.get("/timepoints").json()
-        taxon_oids = {row["taxon_oid"] for row in body["data"]}
-        assert taxon_oids == set(_FAKE_TIMEPOINTS.keys())
+# GET /taxonomy/children's only real, always-on coverage now lives in
+# tests/sql/test_taxonomy_children_sql_route.py -- both the old
+# TestTaxonomyChildrenEndpoint (HTTP via patched_client, hit the
+# patched_client/sql_conn gap documented above test_debug_has_base_dir) and
+# TestTaxonomyChildrenJsonBranchDirect (tested the DATA_BACKEND=='json'
+# branch directly) were removed here once that branch itself was deleted
+# from routes.py as part of the JSON backend retirement.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# GET /taxonomy/children
+# cache.py -- CSV loaders' edge-case branches (missing file, malformed rows)
 # ═══════════════════════════════════════════════════════════════════════════════
+# Found uncovered by a post-JSON-removal coverage pass: TIMEPOINTS/TIDES are
+# loaded once at import time from real, well-formed files, so nothing had
+# ever exercised what happens when the file is missing or a row is
+# malformed -- real robustness paths for a scientific-data app, not
+# hypothetical. Call load_timepoints()/load_tides() directly (not the
+# already-loaded TIMEPOINTS/TIDES module constants) against synthetic
+# tmp_path files instead.
 
-class TestTaxonomyChildrenJsonBranchDirect:
-    """Direct calls to routes.taxonomy_children's DATA_BACKEND=='json' branch
-    -- the "/taxonomy/children differs between backends: JSON returns bare
-    names and no name field" item (docs/AUDIT.md's Also-noted list).
+class TestLoadTimepointsEdgeCases:
 
-    Called directly with DATA_BACKEND monkeypatched to 'json' (routes.py
-    imports it by value, so routes.DATA_BACKEND is what must be patched --
-    patching api.config.DATA_BACKEND has no effect, same gotcha
-    patched_client's own comments call out for TIMEPOINTS) rather than via
-    patched_client/HTTP, since TestTaxonomyChildrenEndpoint's HTTP tests
-    already run against the real DATA_BACKEND=sql config and hit the
-    pre-existing sql_conn gap before ever reaching the JSON branch this is
-    actually about.
-    """
+    def test_missing_csv_returns_empty_dict_not_raise(self, tmp_path, monkeypatch):
+        import api.cache as cache_mod
+        monkeypatch.setattr(cache_mod, "TIMEPOINTS_CSV", str(tmp_path / "does_not_exist.csv"))
+        assert cache_mod.load_timepoints() == {}
 
-    @pytest.fixture(autouse=True)
-    def _patch_json_backend(self):
-        import api.routes as routes_mod
-        orig_backend = routes_mod.DATA_BACKEND
-        orig_meta    = dict(routes_mod._ANN_META["taxonomy"])
-        routes_mod.DATA_BACKEND = 'json'
-        routes_mod._ANN_META["taxonomy"] = {
-            "Bacteria": {
-                "annotation_id": "Bacteria", "parent": None,
-                "value": {"depth": 1, "category": "Bacteria"},
-            },
-            "Bacteria;Proteobacteria": {
-                "annotation_id": "Bacteria;Proteobacteria", "parent": "Bacteria",
-                "value": {"depth": 2, "category": "Bacteria"},
-            },
+    def test_real_shaped_csv_parses_correctly(self, tmp_path, monkeypatch):
+        import api.cache as cache_mod
+        csv_path = tmp_path / "timepoints.csv"
+        csv_path.write_text("taxon_oid,Timepoint,DateTime\n3300060410,T1,5/27/21 8:00\n")
+        monkeypatch.setattr(cache_mod, "TIMEPOINTS_CSV", str(csv_path))
+        result = cache_mod.load_timepoints()
+        assert result == {
+            "3300060410": {"taxon_oid": "3300060410", "timepoint": "T1", "datetime": "5/27/21 8:00"}
         }
-        yield
-        routes_mod.DATA_BACKEND = orig_backend
-        routes_mod._ANN_META["taxonomy"] = orig_meta
-
-    async def _call(self, parent=None):
-        from api.routes import taxonomy_children
-        return await taxonomy_children(request=None, parent=parent)
-
-    async def test_domain_root_has_a_bare_name_field(self):
-        body = await self._call(None)
-        row = body["data"][0]
-        assert row["annotation_id"] == "Bacteria"
-        assert row["name"] == "Bacteria"
-
-    async def test_deeper_child_gets_its_bare_last_segment_as_name_not_the_full_lineage(self):
-        body = await self._call("Bacteria")
-        row = body["data"][0]
-        assert row["annotation_id"] == "Bacteria;Proteobacteria"
-        assert row["name"] == "Proteobacteria"
-        assert row["name"] != row["annotation_id"]
-
-    async def test_name_matches_the_sql_backends_bare_name_convention(self):
-        # get_taxonomy_children_sql uses child_name (the last lineage
-        # segment) as `name` -- this pins the JSON branch to the same
-        # convention so the tree renders identically on both backends.
-        body = await self._call("Bacteria")
-        row = body["data"][0]
-        assert row["name"] == row["annotation_id"].split(";")[-1]
 
 
-class TestTaxonomyChildrenEndpoint:
-    """HTTP-level tests for GET /taxonomy/children."""
+class TestLoadTidesEdgeCases:
 
-    def test_no_parent_returns_roots(self, patched_client):
-        r = patched_client.get("/taxonomy/children")
-        assert r.status_code == 200
-        ids = {c["annotation_id"] for c in r.json()["data"]}
-        assert ids == {"Bacteria"}
+    def test_missing_csv_returns_empty_list_not_raise(self, tmp_path, monkeypatch):
+        import api.cache as cache_mod
+        monkeypatch.setattr(cache_mod, "TIDES_CSV", str(tmp_path / "does_not_exist.csv"))
+        assert cache_mod.load_tides() == []
 
-    def test_root_children_returns_phyla(self, patched_client):
-        r = patched_client.get("/taxonomy/children?parent=Bacteria")
-        assert r.status_code == 200
-        ids = {c["annotation_id"] for c in r.json()["data"]}
-        assert ids == {"Bacteroidetes", "Proteobacteria"}
+    def test_blank_predicted_wl_row_is_skipped_not_crashed(self, tmp_path, monkeypatch):
+        import api.cache as cache_mod
+        csv_path = tmp_path / "tides.csv"
+        csv_path.write_text(
+            "# comment\n" * 7
+            + "time,predicted_wl,tide_event\n"
+            + "2021-05-27 08:00,,\n"
+            + "2021-05-27 12:36,3.2,High\n"
+        )
+        monkeypatch.setattr(cache_mod, "TIDES_CSV", str(csv_path))
+        rows = cache_mod.load_tides()
+        assert len(rows) == 1
+        assert rows[0]["predicted_wl"] == 3.2
 
-    def test_children_include_depth_and_category(self, patched_client):
-        body = patched_client.get("/taxonomy/children?parent=Bacteria").json()
-        row = body["data"][0]
-        assert row["depth"] == 2
-        assert row["category"] == "Bacteria"
+    def test_non_numeric_predicted_wl_row_is_skipped_not_crashed(self, tmp_path, monkeypatch):
+        import api.cache as cache_mod
+        csv_path = tmp_path / "tides.csv"
+        csv_path.write_text(
+            "# comment\n" * 7
+            + "time,predicted_wl,tide_event\n"
+            + "2021-05-27 08:00,not_a_number,\n"
+            + "2021-05-27 12:36,3.2,High\n"
+        )
+        monkeypatch.setattr(cache_mod, "TIDES_CSV", str(csv_path))
+        rows = cache_mod.load_tides()
+        assert len(rows) == 1
+        assert rows[0]["predicted_wl"] == 3.2
 
-    def test_leaf_node_returns_empty_list_not_404(self, patched_client):
-        r = patched_client.get("/taxonomy/children?parent=Bacteroidetes")
-        assert r.status_code == 200
-        assert r.json()["data"] == []
+    def test_unparseable_time_falls_back_to_raw_string_not_crashed(self, tmp_path, monkeypatch):
+        import api.cache as cache_mod
+        csv_path = tmp_path / "tides.csv"
+        csv_path.write_text(
+            "# comment\n" * 7
+            + "time,predicted_wl,tide_event\n"
+            + "not-a-real-timestamp,3.2,High\n"
+        )
+        monkeypatch.setattr(cache_mod, "TIDES_CSV", str(csv_path))
+        rows = cache_mod.load_tides()
+        assert len(rows) == 1
+        assert rows[0]["time"] == "not-a-real-timestamp"
 
-    def test_unknown_parent_is_404(self, patched_client):
-        r = patched_client.get("/taxonomy/children?parent=NotARealTaxon")
-        assert r.status_code == 404
+    def test_real_shaped_csv_applies_the_documented_hour_shift(self, tmp_path, monkeypatch):
+        import api.cache as cache_mod
+        csv_path = tmp_path / "tides.csv"
+        csv_path.write_text(
+            "# comment\n" * 7
+            + "time,predicted_wl,tide_event\n"
+            + "2021-06-03 11:36,3.2,High\n"
+        )
+        monkeypatch.setattr(cache_mod, "TIDES_CSV", str(csv_path))
+        monkeypatch.setattr(cache_mod, "TIDE_SHIFT_HOURS", 1)
+        rows = cache_mod.load_tides()
+        assert rows[0]["time"] == "2021-06-03 12:36"
+
+
+class TestGetAllSampleNamesEdgeCases:
+    """Migration-script-only helper (see cache.py's own comment) -- the
+    live app enumerates samples from the sql database instead."""
+
+    def test_missing_mappings_dir_returns_empty_list_not_raise(self, tmp_path, monkeypatch):
+        import api.cache as cache_mod
+        monkeypatch.setattr(cache_mod, "MAPPINGS_DIR", str(tmp_path / "does_not_exist"))
+        assert cache_mod.get_all_sample_names() == []
+
+    def test_lists_and_strips_mapping_tsv_filenames_sorted(self, tmp_path, monkeypatch):
+        import api.cache as cache_mod
+        (tmp_path / "3300060410_mapping.tsv").write_text("")
+        (tmp_path / "3300060358_mapping.tsv").write_text("")
+        (tmp_path / "unrelated_file.txt").write_text("")
+        monkeypatch.setattr(cache_mod, "MAPPINGS_DIR", str(tmp_path))
+        assert cache_mod.get_all_sample_names() == ["3300060358", "3300060410"]

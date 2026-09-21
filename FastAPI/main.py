@@ -20,7 +20,6 @@ Usage
 """
 
 import logging
-import threading
 
 from contextlib import asynccontextmanager
 
@@ -28,12 +27,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from api.cache import (
-    get_all_sample_names,
-    load_tsv,
-)
-from api.config import FRONTEND_DIST, DATA_BACKEND
-from api.index import build_mapping_index, build_search_index
+from api.config import FRONTEND_DIST
 from api import index as index_module
 from api import routes, correlation_sql
 from api.correlation_loaders import assert_sample_order_is_trustworthy, load_sample_order
@@ -48,39 +42,18 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Warm the JSON / TSV caches and build all in-memory indexes on startup.
-
-    Runs in a background daemon thread so the application becomes available
-    immediately and /status can be polled to check index readiness.
-    """
-    if DATA_BACKEND == 'json':
-        def _warm() -> None:
-            try:
-                samples = get_all_sample_names()
-                for sample in samples:
-                    load_tsv(sample)
-                build_search_index()
-                build_mapping_index()
-                logger.info("Startup warmup complete (%d samples).", len(samples))
-            except Exception:
-                logger.exception("Startup warmup FAILED — index_ready will remain False.")
-
-        thread = threading.Thread(target=_warm, daemon=True, name="cache-warmup")
-        thread.start()
-    else: # DATA_BACKEND == "sql"
-        app.state.sql_conn = connect_to_sql()
-        index_module._INDEX_READY = True
-        # CR6: fail loudly at boot if the real sample time axis is broken
-        # (a sample with no resolvable timepoint, or two samples colliding
-        # on the same one) rather than silently scrambling every
-        # correlation's lag_samples with no visible symptom.
-        assert_sample_order_is_trustworthy(load_sample_order(app.state.sql_conn))
+    """Open the SQLite connection and validate the sample time axis on startup."""
+    app.state.sql_conn = connect_to_sql()
+    index_module._INDEX_READY = True
+    # CR6: fail loudly at boot if the real sample time axis is broken
+    # (a sample with no resolvable timepoint, or two samples colliding
+    # on the same one) rather than silently scrambling every
+    # correlation's lag_samples with no visible symptom.
+    assert_sample_order_is_trustworthy(load_sample_order(app.state.sql_conn))
 
     yield
 
-    if DATA_BACKEND == "sql":
-        close_sql_connection(app.state.sql_conn)
+    close_sql_connection(app.state.sql_conn)
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
