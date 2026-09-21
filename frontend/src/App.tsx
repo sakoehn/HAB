@@ -193,10 +193,16 @@ export default function App() {
           >
             {sidebarOpen ? '◀' : '▶'}
           </button>
-          <div className="logo-mark">⬡</div>
+          <div className="logo-mark">
+            <svg viewBox="0 0 30 30" fill="none" stroke="currentColor" strokeLinecap="round" aria-hidden="true">
+              <path d="M9 4c4 4 4 6 0 10s-4 6 0 10" strokeWidth="1.6" />
+              <path d="M21 4c-4 4-4 6 0 10s4 6 0 10" strokeWidth="1.6" />
+              <path d="M10.3 7.5h9.4M9.3 15h11.4M10.3 22.5h9.4" strokeWidth="1.2" opacity=".8" />
+            </svg>
+          </div>
           <div className="brand-text">
-            <span className="brand-name">HAB</span>
-            <span className="brand-sub">Harmful Algal Bloom Portal</span>
+            <span className="brand-name">Metatrace</span>
+            <span className="brand-sub">Harmful Algal Bloom Metagenome Tracker</span>
           </div>
         </div>
 

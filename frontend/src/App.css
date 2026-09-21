@@ -195,15 +195,17 @@ select.field { cursor: pointer; }
   width: 30px; height: 30px; border-radius: 7px;
   background: linear-gradient(135deg, var(--teal), #1ab8a0);
   display: flex; align-items: center; justify-content: center;
-  font: 700 13px var(--mono); color: #071a14;
+  color: #eafff9;
   flex-shrink: 0; box-shadow: 0 0 18px var(--teal-glow);
 }
+.topbar-brand .logo-mark svg { width: 24px; height: 24px; }
 .topbar-brand .brand-text { display: flex; flex-direction: column; gap: 1px; }
 .topbar-brand .brand-name {
-  font: 600 13px var(--sans); color: var(--text-h); line-height: 1.2; letter-spacing: .02em;
+  font: italic 700 18px var(--serif); color: var(--text-h); line-height: 1.2; letter-spacing: -.01em;
 }
 .topbar-brand .brand-sub {
-  font: 400 10px var(--mono); color: var(--text-dim); line-height: 1; letter-spacing: .06em;
+  font: 400 10px var(--mono); color: var(--text-dim); line-height: 1.3; letter-spacing: .06em;
+  white-space: nowrap;
 }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
 

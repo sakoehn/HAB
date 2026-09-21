@@ -101,8 +101,8 @@ async function openAnalyzeWithChart(page: Page) {
 test.describe('HAB Portal E2E', () => {
   test('loads app shell and API is online', async ({ page }) => {
     await goto(page)
-    await expect(page.locator('.brand-name')).toHaveText('HAB')
-    await expect(page.getByText('Harmful Algal Bloom Portal')).toBeVisible()
+    await expect(page.locator('.brand-name')).toHaveText('Metatrace')
+    await expect(page.getByText('Harmful Algal Bloom Metagenome Tracker')).toBeVisible()
     await expect(page.locator('.api-status.ok')).toBeVisible()
   })
 
