@@ -1,0 +1,394 @@
+/**
+ * left-result-list.component.test.tsx
+ * ======================================
+ * Component tests for LeftResultList (components/annotations/LeftResultList.tsx)
+ * -- the Analyze page's left-column result list. Purely presentational
+ * (checked state and action callbacks are all owned by AnalyzePage), except
+ * for its own local source/rank filter state and per-term filter memory,
+ * which is exactly what this file targets: before these tests, only static
+ * rendering was exercised (incidentally, via analyze-page.component.test.tsx),
+ * not the filter pills, select-all, term-switch inheritance, or row clicks.
+ *
+ * Coverage
+ * --------
+ *   empty state / basic rendering / result count strip
+ *   source filter pills: shown only with >1 source, toggle on/off, "All" clears
+ *   taxonomy rank filter pills: shown only when taxonomy included + >1 rank,
+ *     toggle narrows only taxonomy rows, "All" clears
+ *   per-term filter memory: a never-visited term inherits the previous term's
+ *     filter; an already-visited term keeps its own
+ *   select-all: checks/unchecks every visible row, respects the active filter
+ *   row interactions: body click adds (unless already in right panel),
+ *     checkbox click toggles
+ *
+ * Run: npx vitest run src/tests/left-result-list.component.test.tsx
+ */
+
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+
+import { LeftResultList } from '../components/annotations/LeftResultList'
+import type { AnnotationItem, SeriesCache } from '../types'
+
+function makeRow(overrides: Partial<AnnotationItem> = {}): AnnotationItem {
+  return {
+    source:        'cog',
+    sample:        '',
+    timepoint:     null,
+    annotation_id: 'COG0001',
+    name:          'Chaperonin GroEL',
+    value:         {},
+    mean_egc:      100,
+    ...overrides,
+  }
+}
+
+function renderList(overrides: Partial<Parameters<typeof LeftResultList>[0]> = {}) {
+  const props = {
+    rows:            [] as AnnotationItem[],
+    termLabel:       'iron',
+    checkedKeys:     new Set<string>(),
+    seriesCache:     {} as SeriesCache,
+    rightCardKeys:   new Set<string>(),
+    copiedId:        null,
+    onCopy:          vi.fn(),
+    onToggleCheck:   vi.fn(),
+    onAddSingle:     vi.fn(),
+    onAddSelected:   vi.fn(),
+    onGroupSelected: vi.fn(),
+    total:           overrides.rows?.length ?? 0,
+    ...overrides,
+  }
+  const view = render(<LeftResultList {...props} />)
+  return { ...view, props }
+}
+
+describe('LeftResultList — empty state and basics', () => {
+  it('shows a message when there are no rows', () => {
+    renderList({ rows: [], total: 0 })
+    expect(screen.getByText('No results for this term.')).toBeInTheDocument()
+  })
+
+  it('renders each row\'s annotation id and source tag', () => {
+    renderList({
+      rows: [makeRow({ annotation_id: 'COG0001', source: 'cog' })],
+      total: 1,
+    })
+    expect(screen.getByText('COG0001')).toBeInTheDocument()
+    expect(screen.getByText('cog')).toBeInTheDocument()
+  })
+
+  it('shows the total result count when no filter is active', () => {
+    renderList({ rows: [makeRow()], total: 1 })
+    expect(screen.getByText(/1 result/)).toBeInTheDocument()
+  })
+})
+
+describe('LeftResultList — source filter pills', () => {
+  it('does not show filter pills when only one source is present', () => {
+    renderList({ rows: [makeRow({ source: 'cog' })], total: 1 })
+    expect(screen.queryByText('All')).not.toBeInTheDocument()
+  })
+
+  it('shows a pill per source when multiple sources are present', () => {
+    renderList({
+      rows: [makeRow({ source: 'cog' }), makeRow({ source: 'kegg', annotation_id: 'K00001' })],
+      total: 2,
+    })
+    expect(screen.getByRole('button', { name: 'cog' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'kegg' })).toBeInTheDocument()
+  })
+
+  it('clicking a source pill narrows the visible rows to that source', async () => {
+    const user = userEvent.setup()
+    renderList({
+      rows: [
+        makeRow({ source: 'cog', annotation_id: 'COG0001' }),
+        makeRow({ source: 'kegg', annotation_id: 'K00001' }),
+      ],
+      total: 2,
+    })
+
+    await user.click(screen.getByRole('button', { name: 'cog' }))
+
+    expect(screen.getByText('COG0001')).toBeInTheDocument()
+    expect(screen.queryByText('K00001')).not.toBeInTheDocument()
+    // Narrowed-count strip reads "N of Total" once a filter is active.
+    expect(screen.getByText('1')).toBeInTheDocument()
+  })
+
+  it('clicking an already-active source pill deselects it (shows all again)', async () => {
+    const user = userEvent.setup()
+    renderList({
+      rows: [
+        makeRow({ source: 'cog', annotation_id: 'COG0001' }),
+        makeRow({ source: 'kegg', annotation_id: 'K00001' }),
+      ],
+      total: 2,
+    })
+
+    await user.click(screen.getByRole('button', { name: 'cog' }))
+    expect(screen.queryByText('K00001')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'cog' }))
+    expect(screen.getByText('K00001')).toBeInTheDocument()
+  })
+
+  it('clicking "All" clears an active source filter', async () => {
+    const user = userEvent.setup()
+    renderList({
+      rows: [
+        makeRow({ source: 'cog', annotation_id: 'COG0001' }),
+        makeRow({ source: 'kegg', annotation_id: 'K00001' }),
+      ],
+      total: 2,
+    })
+
+    await user.click(screen.getByRole('button', { name: 'cog' }))
+    expect(screen.queryByText('K00001')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'All' }))
+    expect(screen.getByText('K00001')).toBeInTheDocument()
+  })
+})
+
+describe('LeftResultList — taxonomy rank filter pills', () => {
+  it('is hidden when there is only one taxonomy rank present', () => {
+    renderList({
+      rows: [
+        makeRow({ source: 'taxonomy', annotation_id: 'Bacteria', depth: 1 }),
+        makeRow({ source: 'cog', annotation_id: 'COG0001' }),
+      ],
+      total: 2,
+    })
+    expect(screen.queryByText('Rank')).not.toBeInTheDocument()
+  })
+
+  it('is shown when 2+ taxonomy ranks are present', () => {
+    renderList({
+      rows: [
+        makeRow({ source: 'taxonomy', annotation_id: 'Bacteria', depth: 1 }),
+        makeRow({ source: 'taxonomy', annotation_id: 'Bacteria;Proteobacteria', depth: 2 }),
+      ],
+      total: 2,
+    })
+    expect(screen.getByText('Rank')).toBeInTheDocument()
+  })
+
+  it('is hidden once a non-taxonomy source filter is active', async () => {
+    const user = userEvent.setup()
+    renderList({
+      rows: [
+        makeRow({ source: 'taxonomy', annotation_id: 'Bacteria', depth: 1 }),
+        makeRow({ source: 'taxonomy', annotation_id: 'Bacteria;Proteobacteria', depth: 2 }),
+        makeRow({ source: 'cog', annotation_id: 'COG0001' }),
+      ],
+      total: 3,
+    })
+    expect(screen.getByText('Rank')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'cog' }))
+    expect(screen.queryByText('Rank')).not.toBeInTheDocument()
+  })
+
+  it('narrows only the taxonomy rows to the selected rank, leaving other sources untouched', async () => {
+    const user = userEvent.setup()
+    renderList({
+      rows: [
+        makeRow({ source: 'taxonomy', annotation_id: 'Bacteria', depth: 1, name: 'Bacteria' }),
+        makeRow({ source: 'taxonomy', annotation_id: 'Bacteria;Proteobacteria', depth: 2, name: 'Proteobacteria' }),
+        makeRow({ source: 'cog', annotation_id: 'COG0001' }),
+      ],
+      total: 3,
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Domain' }))
+
+    expect(screen.getByText('Bacteria')).toBeInTheDocument()
+    expect(screen.queryByText('Proteobacteria')).not.toBeInTheDocument()
+    // cog row (no rank concept) passes through untouched.
+    expect(screen.getByText('COG0001')).toBeInTheDocument()
+  })
+
+  it('clicking "All" under the rank pills clears the rank filter', async () => {
+    const user = userEvent.setup()
+    renderList({
+      rows: [
+        makeRow({ source: 'taxonomy', annotation_id: 'Bacteria', depth: 1, name: 'Bacteria' }),
+        makeRow({ source: 'taxonomy', annotation_id: 'Bacteria;Proteobacteria', depth: 2, name: 'Proteobacteria' }),
+      ],
+      total: 2,
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Domain' }))
+    expect(screen.queryByText('Proteobacteria')).not.toBeInTheDocument()
+
+    const rankFilterBar = screen.getByText('Rank').closest('div') as HTMLElement
+    await user.click(within(rankFilterBar).getByRole('button', { name: 'All' }))
+    expect(screen.getByText('Proteobacteria')).toBeInTheDocument()
+  })
+})
+
+describe('LeftResultList — per-term filter memory', () => {
+  it('a never-visited term inherits the previous term\'s source filter', async () => {
+    const user = userEvent.setup()
+    const rows = [
+      makeRow({ source: 'cog', annotation_id: 'COG0001' }),
+      makeRow({ source: 'kegg', annotation_id: 'K00001' }),
+    ]
+    const { rerender, props } = renderList({ rows, total: 2, termLabel: 'iron' })
+
+    await user.click(screen.getByRole('button', { name: 'cog' }))
+    expect(screen.queryByText('K00001')).not.toBeInTheDocument()
+
+    // Switch to a term never seen before -- must inherit the 'iron' tab's filter.
+    rerender(<LeftResultList {...props} termLabel="transport" />)
+    expect(screen.queryByText('K00001')).not.toBeInTheDocument()
+    expect(screen.getByText('COG0001')).toBeInTheDocument()
+  })
+
+  it('switching back to an already-visited term keeps its own filter, unaffected by changes made on another tab since', async () => {
+    const user = userEvent.setup()
+    const rows = [
+      makeRow({ source: 'cog', annotation_id: 'COG0001' }),
+      makeRow({ source: 'kegg', annotation_id: 'K00001' }),
+    ]
+    const { rerender, props } = renderList({ rows, total: 2, termLabel: 'iron' })
+
+    // 'iron' tab: filter down to cog.
+    await user.click(screen.getByRole('button', { name: 'cog' }))
+    expect(screen.queryByText('K00001')).not.toBeInTheDocument()
+
+    // 'transport' tab: never visited, inherits 'iron's cog-only filter --
+    // then explicitly cleared back to "All" on this tab specifically.
+    rerender(<LeftResultList {...props} termLabel="transport" />)
+    expect(screen.queryByText('K00001')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'All' }))
+    expect(screen.getByText('K00001')).toBeInTheDocument()
+
+    // Back to 'iron' -- its own cog-only filter must still be in effect,
+    // not overwritten by 'transport' having since been cleared to "All".
+    rerender(<LeftResultList {...props} termLabel="iron" />)
+    expect(screen.queryByText('K00001')).not.toBeInTheDocument()
+    expect(screen.getByText('COG0001')).toBeInTheDocument()
+  })
+})
+
+describe('LeftResultList — select all', () => {
+  it('checks every visible row when none are checked', async () => {
+    const user = userEvent.setup()
+    const onToggleCheck = vi.fn()
+    renderList({
+      rows: [
+        makeRow({ source: 'cog', annotation_id: 'COG0001' }),
+        makeRow({ source: 'cog', annotation_id: 'COG0002' }),
+      ],
+      total: 2,
+      onToggleCheck,
+    })
+
+    await user.click(screen.getByRole('checkbox'))
+
+    expect(onToggleCheck).toHaveBeenCalledWith('COG0001::cog')
+    expect(onToggleCheck).toHaveBeenCalledWith('COG0002::cog')
+    expect(onToggleCheck).toHaveBeenCalledTimes(2)
+  })
+
+  it('unchecks every visible row when all are already checked', async () => {
+    const user = userEvent.setup()
+    const onToggleCheck = vi.fn()
+    renderList({
+      rows: [
+        makeRow({ source: 'cog', annotation_id: 'COG0001' }),
+        makeRow({ source: 'cog', annotation_id: 'COG0002' }),
+      ],
+      total: 2,
+      checkedKeys: new Set(['COG0001::cog', 'COG0002::cog']),
+      onToggleCheck,
+    })
+
+    await user.click(screen.getByRole('checkbox'))
+
+    expect(onToggleCheck).toHaveBeenCalledWith('COG0001::cog')
+    expect(onToggleCheck).toHaveBeenCalledWith('COG0002::cog')
+    expect(onToggleCheck).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows the selected count once some rows are checked', () => {
+    renderList({
+      rows: [makeRow({ annotation_id: 'COG0001' })],
+      total: 1,
+      checkedKeys: new Set(['COG0001::cog']),
+    })
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+  })
+
+  it('only toggles the currently visible (filtered) rows, not hidden ones', async () => {
+    const user = userEvent.setup()
+    const onToggleCheck = vi.fn()
+    renderList({
+      rows: [
+        makeRow({ source: 'cog', annotation_id: 'COG0001' }),
+        makeRow({ source: 'kegg', annotation_id: 'K00001' }),
+      ],
+      total: 2,
+      onToggleCheck,
+    })
+
+    await user.click(screen.getByRole('button', { name: 'cog' }))
+    await user.click(screen.getByRole('checkbox'))
+
+    expect(onToggleCheck).toHaveBeenCalledWith('COG0001::cog')
+    expect(onToggleCheck).not.toHaveBeenCalledWith('K00001::kegg')
+  })
+})
+
+describe('LeftResultList — row interactions', () => {
+  it('clicking a row body adds it via onAddSingle', async () => {
+    const user = userEvent.setup()
+    const onAddSingle = vi.fn()
+    const row = makeRow({ annotation_id: 'COG0001' })
+    renderList({ rows: [row], total: 1, onAddSingle })
+
+    await user.click(screen.getByText('COG0001'))
+    expect(onAddSingle).toHaveBeenCalledWith(row)
+  })
+
+  it('does not call onAddSingle when the row is already in the right panel', async () => {
+    const user = userEvent.setup()
+    const onAddSingle = vi.fn()
+    renderList({
+      rows: [makeRow({ annotation_id: 'COG0001' })],
+      total: 1,
+      rightCardKeys: new Set(['COG0001::cog']),
+      onAddSingle,
+    })
+
+    await user.click(screen.getByText('COG0001'))
+    expect(onAddSingle).not.toHaveBeenCalled()
+  })
+
+  it('clicking the dedicated + button adds via onAddSingle (distinct from the row-body click)', async () => {
+    const user = userEvent.setup()
+    const onAddSingle = vi.fn()
+    const row = makeRow({ annotation_id: 'COG0001' })
+    renderList({ rows: [row], total: 1, onAddSingle })
+
+    await user.click(screen.getByTitle('Add chart to right panel'))
+    expect(onAddSingle).toHaveBeenCalledWith(row)
+  })
+
+  it('clicking the row checkbox calls onToggleCheck with that row\'s key', async () => {
+    const user = userEvent.setup()
+    const onToggleCheck = vi.fn()
+    renderList({
+      rows: [makeRow({ annotation_id: 'COG0001' })],
+      total: 1,
+      onToggleCheck,
+    })
+
+    await user.click(screen.getByTitle('Select for bulk add or group'))
+    expect(onToggleCheck).toHaveBeenCalledWith('COG0001::cog')
+  })
+})

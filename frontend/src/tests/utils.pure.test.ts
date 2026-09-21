@@ -82,8 +82,8 @@ import {
   CHART_COLORS,
 } from '../constants'
 
-import { computeNightBands } from '../utils/solar'
-import type { SunTimes } from '../utils/solar'
+import { computeNightBands, resolveSunTimes, alignTideToChartPoints } from '../utils/solar'
+import type { SunTimes, TidePoint } from '../utils/solar'
 
 import type { AnnotationItem, TimepointMeta } from '../types'
 
@@ -761,6 +761,10 @@ describe('fmtDate', () => {
   it('formats December 31 correctly', () => {
     expect(fmtDate('2021-12-31T23:59:00')).toBe('12/31/21')
   })
+
+  it('falls back to the text before the first space for a wholly unparseable string, rather than "Invalid Date"', () => {
+    expect(fmtDate('not a real date')).toBe('not')
+  })
 })
 describe('fmtDate — MM/DD/YY HH:MM format (regression for engine-dependent parsing)', () => {
   it('06/02/21 stays 06/02/21 (not reinterpreted as Feb 6)', () => {
@@ -825,6 +829,14 @@ describe('fmtTime', () => {
 
   it('23:59 renders correctly', () => {
     expect(fmtTime('2021-05-27T23:59:00')).toBe('23:59')
+  })
+
+  it('falls back to the text after the first space for a wholly unparseable string, rather than "Invalid Date"', () => {
+    expect(fmtTime('not a real date')).toBe('a')
+  })
+
+  it('falls back to empty string when there is no second word to fall back to', () => {
+    expect(fmtTime('garbage')).toBe('')
   })
 })
 
@@ -1055,13 +1067,118 @@ describe('computeNightBands', () => {
   })
 })
 
-// Note: this file previously had a `makeTickFormatter` block here. That
-// function (utils/format.ts) is dead code — its only caller was the
-// deprecated App_old.tsx, which main.tsx never imports. The live chart
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveSunTimes — exact lookup + nearest-available-date fallback
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('resolveSunTimes', () => {
+  it('returns null when sunTimes is empty', () => {
+    expect(resolveSunTimes('2021-05-27', {})).toBeNull()
+  })
+
+  it('returns the exact entry when the date key is present', () => {
+    expect(resolveSunTimes('2021-05-27', NIGHT_SUN_TIMES)).toEqual(NIGHT_SUN_TIMES['2021-05-27'])
+  })
+
+  it('falls back to the nearest available date when the exact key is missing', () => {
+    const sunTimes: SunTimes = {
+      '2021-05-25': { sunrise: '05:15', sunset: '21:05' },
+      '2021-06-10': { sunrise: '05:00', sunset: '21:20' },
+    }
+    // 05-27 is 2 days from 05-25 and 14 days from 06-10 -- must pick 05-25.
+    expect(resolveSunTimes('2021-05-27', sunTimes)).toEqual(sunTimes['2021-05-25'])
+  })
+
+  it('picks whichever available date is genuinely closer, not just the first in the object', () => {
+    const sunTimes: SunTimes = {
+      '2021-06-10': { sunrise: '05:00', sunset: '21:20' },
+      '2021-05-26': { sunrise: '05:14', sunset: '21:08' },
+    }
+    // 05-27 is 1 day from 05-26 and 14 days from 06-10.
+    expect(resolveSunTimes('2021-05-27', sunTimes)).toEqual(sunTimes['2021-05-26'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// alignTideToChartPoints — nearest-neighbor tide alignment with a max-gap cutoff
+// ─────────────────────────────────────────────────────────────────────────────
+
+function tidePoint(time: string, wl: number): TidePoint {
+  return { time, predicted_wl: wl, tide_event: null }
+}
+
+describe('alignTideToChartPoints', () => {
+  it('maps every chart point to null when there is no tide data at all', () => {
+    const result = alignTideToChartPoints(['2021-05-27 08:00', '2021-05-27 12:00'], [])
+    expect(result.get('2021-05-27 08:00')).toBeNull()
+    expect(result.get('2021-05-27 12:00')).toBeNull()
+    expect(result.size).toBe(2)
+  })
+
+  it('returns the exact reading for a chart point that matches a tide timestamp exactly', () => {
+    const tides = [tidePoint('2021-05-27 08:00', 1.5)]
+    const result = alignTideToChartPoints(['2021-05-27 08:00'], tides)
+    expect(result.get('2021-05-27 08:00')).toBe(1.5)
+  })
+
+  it('picks the nearer of two tide readings when the chart point falls between them (nearer-after case)', () => {
+    const tides = [tidePoint('2021-05-27 07:00', 1.0), tidePoint('2021-05-27 08:10', 2.0)]
+    // 08:00 is 60min from 07:00 but only 10min from 08:10 -- must pick 08:10's reading.
+    const result = alignTideToChartPoints(['2021-05-27 08:00'], tides)
+    expect(result.get('2021-05-27 08:00')).toBe(2.0)
+  })
+
+  it('picks the nearer of two tide readings when the chart point falls between them (nearer-before case)', () => {
+    const tides = [tidePoint('2021-05-27 07:55', 1.0), tidePoint('2021-05-27 09:00', 2.0)]
+    // 08:00 is only 5min from 07:55 but 60min from 09:00 -- must pick 07:55's reading.
+    const result = alignTideToChartPoints(['2021-05-27 08:00'], tides)
+    expect(result.get('2021-05-27 08:00')).toBe(1.0)
+  })
+
+  it('returns null (not the nearest reading anyway) when the gap exceeds maxGapMinutes', () => {
+    const tides = [tidePoint('2021-05-27 04:00', 1.0)] // 4 hours away
+    const result = alignTideToChartPoints(['2021-05-27 08:00'], tides, 30)
+    expect(result.get('2021-05-27 08:00')).toBeNull()
+  })
+
+  it('returns the reading exactly at the maxGapMinutes boundary (inclusive)', () => {
+    const tides = [tidePoint('2021-05-27 07:30', 1.0)] // exactly 30 minutes away
+    const result = alignTideToChartPoints(['2021-05-27 08:00'], tides, 30)
+    expect(result.get('2021-05-27 08:00')).toBe(1.0)
+  })
+
+  it('returns null for a chart datetime that fails to parse, without throwing', () => {
+    const tides = [tidePoint('2021-05-27 08:00', 1.0)]
+    expect(() => alignTideToChartPoints(['not-a-real-datetime'], tides)).not.toThrow()
+    const result = alignTideToChartPoints(['not-a-real-datetime'], tides)
+    expect(result.get('not-a-real-datetime')).toBeNull()
+  })
+
+  it('handles multiple chart points independently against the same tide series', () => {
+    const tides = [
+      tidePoint('2021-05-27 06:00', 1.0),
+      tidePoint('2021-05-27 12:00', 2.0),
+      tidePoint('2021-05-27 18:00', 3.0),
+    ]
+    const result = alignTideToChartPoints(
+      ['2021-05-27 06:05', '2021-05-27 11:55', '2021-05-27 18:10'],
+      tides,
+    )
+    expect(result.get('2021-05-27 06:05')).toBe(1.0)
+    expect(result.get('2021-05-27 11:55')).toBe(2.0)
+    expect(result.get('2021-05-27 18:10')).toBe(3.0)
+  })
+})
+
+// Note: this file previously had a `makeTickFormatter` block here, for a
+// utils/format.ts export that turned out to have zero real callers anywhere
+// (App_old.tsx has its own unrelated, independently-defined local function
+// of the same name -- it never imported this one). The live chart
 // components (EgcChart/MultiEgcChart/GroupedEgcChart) render with Plotly,
-// which formats its own date-axis ticks natively. The block was removed as
-// a dead-code test rather than fixed, since there is no live behavior left
-// to assert against. See App.e2e.spec.ts for real-browser zoom coverage.
+// which formats its own date-axis ticks natively. `makeTickFormatter` and
+// its sibling `buildAxisTicks` have since been deleted from format.ts
+// entirely, rather than kept around untested -- see App.e2e.spec.ts for
+// real-browser zoom coverage of the chart axis behavior that replaced them.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CSV string builder (pure logic, no DOM)

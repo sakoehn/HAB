@@ -107,7 +107,8 @@ export function makeDefaultExploreState(): ExploreState {
 
 // ── ExploreSortTh ──────────────────────────────────────────────────────────
 
-function ExploreSortTh({
+// Exported for direct component testing (same rationale as DatasetOverviewPanel below).
+export function ExploreSortTh({
   col, label, sortCol, sortDir, onSort,
 }: {
   col:     ExploreSortCol
@@ -513,7 +514,8 @@ export function DatasetOverviewPanel({
 
 // ── AnnotationsByParentPanel ───────────────────────────────────────────────
 
-function AnnotationsByParentPanel({
+// Exported for direct component testing (same rationale as DatasetOverviewPanel above).
+export function AnnotationsByParentPanel({
   source,
   dataDateRange,
   onGoScaffoldExplore,
