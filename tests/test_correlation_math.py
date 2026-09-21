@@ -156,7 +156,7 @@ class TestSpearmanAtLags:
 # no `lag` argument, since re-searching the full lag window on every shift
 # (instead of fixing it at the observed best) IS the bias fix CR2 asks for.
 
-from api.config import CORRELATION_LAGS  # noqa: E402  (grouped with the math tests, not the top-level imports)
+from api.config import CORRELATION_LAGS, PERMUTATION_N  # noqa: E402  (grouped with the math tests, not the top-level imports)
 
 
 def _best_spearman(ref, cand):
@@ -317,7 +317,7 @@ class TestScorePairCircularShift:
         """The whole point of CR2: circular_shift's returned p must be the
         raw permutation fraction, not run through _bonferroni_correct like
         every other method -- a permutation p-value is always a multiple
-        of 1/PERMUTATION_N (1000, see api/config.py), which a
+        of 1/PERMUTATION_N (see api/config.py), which a
         Bonferroni-multiplied parametric p-value essentially never is."""
         rng = random.Random(7)
         ref = [rng.uniform(1, 100) for _ in range(20)]
@@ -327,8 +327,8 @@ class TestScorePairCircularShift:
         assert result is not None
         _r, p, _lag, _n = result
 
-        scaled = p * 1000
-        assert abs(scaled - round(scaled)) < 1e-9, f"p={p} isn't a clean multiple of 1/1000"
+        scaled = p * PERMUTATION_N
+        assert abs(scaled - round(scaled)) < 1e-9, f"p={p} isn't a clean multiple of 1/{PERMUTATION_N}"
 
     def test_returns_valid_shape(self):
         ref = list(range(1, 21))

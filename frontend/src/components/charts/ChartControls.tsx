@@ -9,8 +9,10 @@
 //                 cross-scale trend comparison), applied to whichever metric is active
 //
 // Smooth:
-//   LOWESS locally weighted regression with adjustable bandwidth (0.05–0.75).
-//   The slider is debounced 150ms to prevent O(n²) recompute on every drag pixel.
+//   LOWESS locally weighted regression with adjustable bandwidth
+//   (LOWESS_BANDWIDTH_MIN–LOWESS_BANDWIDTH_MAX below).
+//   The slider is debounced LOWESS_DEBOUNCE_MS to prevent O(n²) recompute on
+//   every drag pixel.
 //
 // Day/Night + Tide + Day bands (all off by default, independent toggles):
 //   Day/Night — shades night-hour regions using real sunrise/sunset for the

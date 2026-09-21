@@ -257,14 +257,14 @@ test.describe('HAB Portal E2E', () => {
 // ── Chart zoom behavior ──────────────────────────────────────────────────────
 // EgcChart/MultiEgcChart/GroupedEgcChart all render with Plotly and rely
 // entirely on Plotly's native date-axis drag-zoom + rangeslider — there is
-// no app-level zoom/brush state to unit-test (see utils/format.ts's
-// makeTickFormatter docstring for the history of the prior Recharts <Brush>
-// mechanism this replaced). A real browser + real Plotly render is the only
-// way to verify zoom actually narrows the visible range and the chart
-// doesn't break (blank trace, thrown error, NaN shape positions) when
-// zoomed to a very narrow window. jsdom (used by the vitest unit/component
-// suite) cannot render Plotly's canvas/SVG output at all, so this coverage
-// has no unit-test equivalent.
+// no app-level zoom/brush state to unit-test (see
+// multi-grouped-chart.unit.test.ts's header note for the history of the
+// prior Recharts <Brush>/tickFormatter mechanism this replaced). A real
+// browser + real Plotly render is the only way to verify zoom actually
+// narrows the visible range and the chart doesn't break (blank trace,
+// thrown error, NaN shape positions) when zoomed to a very narrow window.
+// jsdom (used by the vitest unit/component suite) cannot render Plotly's
+// canvas/SVG output at all, so this coverage has no unit-test equivalent.
 
 declare global {
   interface Window {

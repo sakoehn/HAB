@@ -173,10 +173,9 @@ def test_summary_sorted_chronologically(client):
 def test_summary_and_detail_agree_on_which_samples_have_data(client):
     """COG0055 has 29,307 total scaffold rows across all 128 samples
     (confirmed via direct DB query) -- far past any single page, so the
-    unfiltered /annotations/scaffolds call the summary-derived sample list
-    must be cross-checked against is built by requesting each sample from
-    summary individually via the route's own `sample` filter, not by
-    paginating the combined call."""
+    summary-derived sample list is cross-checked by requesting each sample
+    from detail individually via the route's own `sample` filter, not by
+    paginating the unfiltered combined call."""
     summary = client.get(
         "/annotations/scaffolds/summary",
         params={"source": "cog", "annotation_id": "COG0055"},

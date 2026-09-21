@@ -92,7 +92,7 @@
 import { describe, it, expect } from 'vitest'
 
 import { fmtDate, fmtTime, parseDateTime } from '../utils/format'
-import { filterSummaryForChart, buildAggregatedChartRows } from '../components/scaffolds/ScaffoldExplorePanel'
+import { filterSummaryForChart, buildAggregatedChartRows, DETAIL_PAGE } from '../components/scaffolds/ScaffoldExplorePanel'
 import type { ScaffoldSummaryRow, ScaffoldDetailRow } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -190,8 +190,6 @@ function filterDetailBySample(
 ): ScaffoldDetailRow[] {
   return rows.filter(r => r.sample === sample)
 }
-
-const DETAIL_PAGE = 10
 
 function visibleDetailRows(rows: ScaffoldDetailRow[], showAll: boolean): ScaffoldDetailRow[] {
   return showAll ? rows : rows.slice(0, DETAIL_PAGE)

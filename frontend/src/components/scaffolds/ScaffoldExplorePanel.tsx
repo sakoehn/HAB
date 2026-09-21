@@ -133,6 +133,11 @@ const TERM_COLORS = [
 
 const ALL_SOURCES = ['kegg', 'cog', 'enzyme', 'taxonomy'] as const
 
+// Number of per-term detail rows shown before the user clicks "Show all".
+// Exported so tests can assert against the real value instead of hand-typing
+// their own copy of it.
+export const DETAIL_PAGE = 10
+
 export function ScaffoldExplorePanel({
   initialTerms,
   dataDateRange,
@@ -346,7 +351,6 @@ export function ScaffoldExplorePanel({
     }
   }
 
-  const DETAIL_PAGE = 10
   // ── Search ─────────────────────────────────────────────────────────────
 
   async function runSearch() {

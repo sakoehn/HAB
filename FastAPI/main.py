@@ -8,7 +8,8 @@ Responsibilities (only)
 - Create the FastAPI app instance.
 - Register CORS middleware.
 - Mount the frontend static files (production mode).
-- Define the lifespan hook that warms caches and builds indexes.
+- Define the lifespan hook that opens the SQLite connection and validates
+  the sample time axis on startup.
 - Include routers from api/routes.py and api/correlation_sql.py.
 
 All business logic lives in the api/ package.

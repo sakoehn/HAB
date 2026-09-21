@@ -51,7 +51,7 @@ function MappingsSortTh({
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const MAPPINGS_PAGE_SIZE = 25
+export const MAPPINGS_PAGE_SIZE = 25
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
 // Exported so tests can exercise the real sort/paginate/URL logic directly.
