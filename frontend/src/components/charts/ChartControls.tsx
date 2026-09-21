@@ -25,6 +25,13 @@ import React, { useState, useEffect, useRef } from 'react'
 import type { ChartMetric } from '../../types'
 import { HelpTooltip } from '../ui/HelpTooltip'
 
+// Exported so tests assert against the real bounds instead of a
+// hand-maintained copy that can silently drift from them.
+export const LOWESS_BANDWIDTH_MIN  = 0.01
+export const LOWESS_BANDWIDTH_MAX  = 0.05
+export const LOWESS_BANDWIDTH_STEP = 0.01
+export const LOWESS_DEBOUNCE_MS    = 150
+
 export function ChartControls({
   metric,
   onMetric,
@@ -71,7 +78,7 @@ export function ChartControls({
     const v = Number(e.target.value)
     setSliderVal(v)
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => onSmoothBandwidth(v), 150)
+    debounceRef.current = setTimeout(() => onSmoothBandwidth(v), LOWESS_DEBOUNCE_MS)
   }
 
   // Overlay controls are opt-in props — only rendered when the parent
@@ -149,9 +156,9 @@ export function ChartControls({
             <input
               type="range"
               className="smooth-slider"
-              min={0.01}
-              max={0.05}
-              step={0.01}
+              min={LOWESS_BANDWIDTH_MIN}
+              max={LOWESS_BANDWIDTH_MAX}
+              step={LOWESS_BANDWIDTH_STEP}
               value={sliderVal}
               onChange={handleSliderChange}
               title={`LOWESS bandwidth: ${sliderVal.toFixed(2)} — fraction of data used as neighbors. Lower = tighter fit, higher = smoother.`}

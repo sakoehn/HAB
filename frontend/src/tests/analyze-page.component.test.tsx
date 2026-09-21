@@ -264,9 +264,9 @@ afterEach(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('App shell', () => {
-  it('renders the HAB brand name', async () => {
+  it('renders the Metatrace brand name', async () => {
     render(<App />)
-    expect(await screen.findByText('HAB')).toBeInTheDocument()
+    expect(await screen.findByText('Metatrace')).toBeInTheDocument()
   })
 
   it('renders all four navigation items', async () => {

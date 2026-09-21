@@ -162,64 +162,60 @@ describe('metric + standardize pipeline — all 4 combinations', () => {
 // ChartControls — LOWESS slider parameters
 // ─────────────────────────────────────────────────────────────────────────────
 
-const LOWESS_SLIDER = {
-  min:     0.05,
-  max:     0.75,
-  step:    0.05,
-  default: 0.4,
-  debounceMs: 150,
-} as const
+// Previously this block asserted against a LOWESS_SLIDER object hand-copied
+// into this test file (min 0.05/max 0.75/step 0.05/default 0.4) instead of
+// importing the real bounds -- so when the component's actual slider
+// (min 0.01/max 0.05/step 0.01, see ChartControls.tsx) changed, this block
+// kept passing regardless, asserting nothing about the real component.
+// Fixed by importing the real exported constants directly, so a future
+// change to the actual slider bounds will break these tests rather than
+// silently leaving them checking a stale copy.
+import { LOWESS_BANDWIDTH_MIN, LOWESS_BANDWIDTH_MAX, LOWESS_BANDWIDTH_STEP, LOWESS_DEBOUNCE_MS } from '../components/charts/ChartControls'
 
 describe('ChartControls — LOWESS slider', () => {
-  it('minimum bandwidth is 0.05', () => {
-    expect(LOWESS_SLIDER.min).toBe(0.05)
-  })
-
-  it('minimum allows tight local fit (0.05 is selectable)', () => {
-    expect(0.05 >= LOWESS_SLIDER.min).toBe(true)
-  })
-
-  it('old minimum 0.10 would not allow 0.05 (regression guard)', () => {
-    const OLD_MIN = 0.10
-    expect(0.05 >= OLD_MIN).toBe(false)
-  })
-
-  it('maximum bandwidth is 0.75 (above this approaches global linear fit)', () => {
-    expect(LOWESS_SLIDER.max).toBe(0.75)
-  })
-
-  it('step is 0.05', () => {
-    expect(LOWESS_SLIDER.step).toBe(0.05)
-  })
-
-  it('default bandwidth is 0.4', () => {
-    expect(LOWESS_SLIDER.default).toBe(0.4)
-  })
-
-  it('default is within [min, max]', () => {
-    expect(LOWESS_SLIDER.default).toBeGreaterThanOrEqual(LOWESS_SLIDER.min)
-    expect(LOWESS_SLIDER.default).toBeLessThanOrEqual(LOWESS_SLIDER.max)
+  it('minimum allows a tight local fit', () => {
+    expect(LOWESS_BANDWIDTH_MIN).toBeGreaterThan(0)
+    expect(LOWESS_BANDWIDTH_MIN).toBeLessThan(LOWESS_BANDWIDTH_MAX)
   })
 
   it('debounce delay is 150ms to prevent O(n²) LOWESS recompute on drag', () => {
-    expect(LOWESS_SLIDER.debounceMs).toBe(150)
+    expect(LOWESS_DEBOUNCE_MS).toBe(150)
   })
 
-  it('applyLowess runs without error at minimum bandwidth 0.05', () => {
+  it('step evenly divides the [min, max] range (no unreachable slider positions)', () => {
+    const span = LOWESS_BANDWIDTH_MAX - LOWESS_BANDWIDTH_MIN
+    const steps = span / LOWESS_BANDWIDTH_STEP
+    expect(Math.round(steps)).toBeCloseTo(steps, 9)
+  })
+
+  it('applyLowess runs without error at the real minimum bandwidth', () => {
     const data = Array.from({ length: 20 }, (_, i) => ({ egc: i * 2.0, ts: i }))
-    expect(() => applyLowess(data, LOWESS_SLIDER.min)).not.toThrow()
+    expect(() => applyLowess(data, LOWESS_BANDWIDTH_MIN)).not.toThrow()
   })
 
-  it('applyLowess at min bandwidth preserves array length', () => {
+  it('applyLowess at the real minimum bandwidth preserves array length', () => {
     const data   = Array.from({ length: 20 }, (_, i) => ({ egc: i, ts: i }))
-    const result = applyLowess(data, LOWESS_SLIDER.min)
+    const result = applyLowess(data, LOWESS_BANDWIDTH_MIN)
     expect(result).toHaveLength(20)
   })
 
-  it('applyLowess at max bandwidth produces smoother result than at min', () => {
-    const noisy = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6, 4, 8, 3, 9, 2].map((egc, ts) => ({ egc, ts }))
-    const tight  = applyLowess(noisy, LOWESS_SLIDER.min)
-    const smooth = applyLowess(noisy, LOWESS_SLIDER.max)
+  it('applyLowess at the real maximum bandwidth produces a smoother result than at the minimum, at a realistic sample count', () => {
+    // applyLowess's neighbor window is Math.max(2, Math.ceil(bandwidth * n))
+    // (see utils/signal.ts) -- at the real dataset's actual scale (up to 128
+    // real samples per annotation), min (0.01) and max (0.05) bandwidth
+    // resolve to meaningfully different window sizes (2 vs 7). At a small n
+    // like 15, BOTH ceil(0.01*15) and ceil(0.05*15) floor to the same
+    // minimum window of 2, so the two ends of the real slider range would
+    // produce byte-identical output -- not a LOWESS bug, just this test's
+    // original dataset being far smaller than any real chart, which is what
+    // this test is specifically guarding against reintroducing.
+    const n = 128
+    const noisy = Array.from({ length: n }, (_, ts) => ({
+      egc: 5 + 4 * Math.sin(ts / 3) + (ts % 2 === 0 ? 3 : -3), // oscillating + noise
+      ts,
+    }))
+    const tight  = applyLowess(noisy, LOWESS_BANDWIDTH_MIN)
+    const smooth = applyLowess(noisy, LOWESS_BANDWIDTH_MAX)
     const variance = (arr: number[]) => {
       const m = arr.reduce((a, b) => a + b, 0) / arr.length
       return arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length
