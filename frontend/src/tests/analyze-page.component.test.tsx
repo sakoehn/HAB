@@ -903,6 +903,8 @@ describe('MultiEgcChart — scale-mismatch help tooltip', () => {
         dateTo=""
       />,
     )
+    // MultiEgcChart opens on Relative Abundance, which suppresses the warning.
+    await userEvent.click(screen.getByRole('button', { name: 'EGC' }))
     await waitFor(() => {
       expect(document.querySelector('.scale-mismatch-warning')).toBeTruthy()
     })

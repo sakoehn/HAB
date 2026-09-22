@@ -49,6 +49,36 @@ function statValue(label: string): number {
   return Number(cell.querySelector('.stat-cell-value')!.textContent!)
 }
 
+// The chart opens on Relative Abundance; tests that assert raw-EGC behaviour
+// switch to the EGC pill first.
+async function selectRawEgc(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'EGC' }))
+}
+
+function pressed(name: string | RegExp): boolean {
+  return screen.getByRole('button', { name }).classList.contains('on')
+}
+
+describe('MultiEgcChart — defaults', () => {
+  const series = [{ annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]
+
+  it('opens on Relative Abundance with Z-score off', () => {
+    render(<MultiEgcChart series={series} dateFrom="" dateTo="" />)
+    expect(pressed('Relative Abundance')).toBe(true)
+    expect(pressed('EGC')).toBe(false)
+    expect(pressed('Z-score')).toBe(false)
+  })
+
+  it('opens with Z-score on when defaultStandardize is set, and it stays toggleable', async () => {
+    const user = userEvent.setup()
+    render(<MultiEgcChart series={series} dateFrom="" dateTo="" defaultStandardize />)
+    expect(pressed('Relative Abundance')).toBe(true)
+    expect(pressed('Z-score')).toBe(true)
+    await user.click(screen.getByTitle('No standardization'))
+    expect(pressed('Z-score')).toBe(false)
+  })
+})
+
 describe('MultiEgcChart — empty state', () => {
   it('shows a message when the date range excludes every point', () => {
     render(
@@ -63,7 +93,8 @@ describe('MultiEgcChart — empty state', () => {
 })
 
 describe('MultiEgcChart — scale-mismatch warning', () => {
-  it('fires when two series\' mean EGC differ by more than 10x', () => {
+  it('fires when two series\' mean EGC differ by more than 10x', async () => {
+    const user = userEvent.setup()
     render(
       <MultiEgcChart
         series={[
@@ -73,10 +104,12 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
         dateFrom="" dateTo=""
       />,
     )
+    await selectRawEgc(user)
     expect(screen.getByText(/very different EGC scales/i)).toBeInTheDocument()
   })
 
-  it('does not fire when series are within 10x of each other', () => {
+  it('does not fire when series are within 10x of each other', async () => {
+    const user = userEvent.setup()
     render(
       <MultiEgcChart
         series={[
@@ -86,6 +119,7 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
         dateFrom="" dateTo=""
       />,
     )
+    await selectRawEgc(user)
     expect(screen.queryByText(/very different EGC scales/i)).not.toBeInTheDocument()
   })
 
@@ -100,6 +134,7 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
         dateFrom="" dateTo=""
       />,
     )
+    await selectRawEgc(user)
     expect(screen.getByText(/very different EGC scales/i)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Z-score/i }))
     expect(screen.queryByText(/very different EGC scales/i)).not.toBeInTheDocument()
@@ -184,6 +219,7 @@ describe('MultiEgcChart — stats pool every series\' values, unsummed', () => {
         dateFrom="" dateTo=""
       />,
     )
+    await selectRawEgc(user)
     await user.click(screen.getByRole('button', { name: /Σ Stats/i }))
     // Pooled mean of [10, 30] is 20 -- if this component accidentally summed
     // per timepoint the way GroupedEgcChart does, n would be 1 and Mean 40.
@@ -204,6 +240,7 @@ describe('MultiEgcChart — date range props', () => {
         dateFrom="2021-05-29" dateTo=""
       />,
     )
+    await selectRawEgc(user)
     await user.click(screen.getByRole('button', { name: /Σ Stats/i }))
     expect(statValue('n')).toBe(1)
     expect(statValue('Mean')).toBeCloseTo(300)

@@ -82,6 +82,7 @@ export function MultiEgcChart({
   dateTo,
   onGoScaffoldExplore,
   title,
+  defaultStandardize = false,
 }: {
   series:               SeriesEntry[]
   dateFrom:             string
@@ -89,9 +90,12 @@ export function MultiEgcChart({
   dataDateRange?:       { min: string; max: string } | null
   onGoScaffoldExplore?: (annotationId: string, source: string) => void
   title?:               string
+  // Initial Z-score state only; the user can still toggle it. Compare turns it
+  // on because its whole purpose is cross-series trend comparison.
+  defaultStandardize?:  boolean
 }) {
-  const [metric, setMetric]                   = useState<ChartMetric>('egc')
-  const [standardize, setStandardize]         = useState(false)
+  const [metric, setMetric]                   = useState<ChartMetric>('norm_egc')
+  const [standardize, setStandardize]         = useState(defaultStandardize)
   const [smoothed, setSmoothed]               = useState(false)
   const [smoothBandwidth, setSmoothBandwidth] = useState(0.05)
   const [showStats, setShowStats]             = useState(false)

@@ -67,7 +67,7 @@ export function GroupedEgcChart({
   groupLabel:     string
   dataDateRange?: { min: string; max: string } | null
 }) {
-  const [metric, setMetric]                   = useState<ChartMetric>('egc')
+  const [metric, setMetric]                   = useState<ChartMetric>('norm_egc')
   const [standardize, setStandardize]         = useState(false)
   const [smoothed, setSmoothed]               = useState(false)
   const [smoothBandwidth, setSmoothBandwidth] = useState(0.05)

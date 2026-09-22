@@ -172,7 +172,7 @@ test.describe('HAB Portal E2E', () => {
   test('Metric and Standardize controls update chart labels independently', async ({ page }) => {
     await openAnalyzeWithChart(page)
 
-    // Metric: EGC → Relative Abundance
+    // Metric: Relative Abundance is already the default; clicking it is a no-op check
     await page.locator('.chart-card button').filter({ hasText: 'Relative Abundance' }).first().click()
     await expect(page.locator('.chart-card').getByText(/^Relative Abundance$/i).first()).toBeVisible()
 

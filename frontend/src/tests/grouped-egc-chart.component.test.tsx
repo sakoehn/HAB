@@ -54,8 +54,15 @@ function statValue(label: string): number {
   return Number(cell.querySelector('.stat-cell-value')!.textContent!)
 }
 
+// The chart opens on Relative Abundance; tests that assert raw-EGC sums
+// switch to the EGC pill first.
+async function selectRawEgc(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'EGC' }))
+}
+
 describe('GroupedEgcChart — summing correctness', () => {
-  it('sums EGC across multiple annotations at the same timepoint', () => {
+  it('sums EGC across multiple annotations at the same timepoint', async () => {
+    const user = userEvent.setup()
     render(
       <GroupedEgcChart
         groupLabel="Test Group"
@@ -66,12 +73,14 @@ describe('GroupedEgcChart — summing correctness', () => {
         ]}
       />,
     )
+    await selectRawEgc(user)
     // Single shared timepoint -> Mean of the one summed point equals the sum itself.
     expect(statValue('Mean')).toBeCloseTo(60)
     expect(statValue('n')).toBe(1)
   })
 
-  it('keeps distinct timepoints separate rather than merging them', () => {
+  it('keeps distinct timepoints separate rather than merging them', async () => {
+    const user = userEvent.setup()
     render(
       <GroupedEgcChart
         groupLabel="Test Group"
@@ -86,11 +95,13 @@ describe('GroupedEgcChart — summing correctness', () => {
         ]}
       />,
     )
+    await selectRawEgc(user)
     expect(screen.getByText(/2 timepoints/)).toBeInTheDocument()
     expect(statValue('n')).toBe(2)
   })
 
-  it('excludes a null egc value from the sum rather than crashing or counting it as zero-but-present', () => {
+  it('excludes a null egc value from the sum rather than crashing or counting it as zero-but-present', async () => {
+    const user = userEvent.setup()
     render(
       <GroupedEgcChart
         groupLabel="Test Group"
@@ -100,6 +111,7 @@ describe('GroupedEgcChart — summing correctness', () => {
         ]}
       />,
     )
+    await selectRawEgc(user)
     // Only A's real 50 contributes -- B's null must not become a silent 0
     // that would still be correct here by coincidence, so this also checks
     // there's exactly the one summed point, not a phantom second one.
@@ -114,19 +126,7 @@ describe('GroupedEgcChart — summing correctness', () => {
 })
 
 describe('GroupedEgcChart — metric swap sums the correct field', () => {
-  it('sums raw egc by default', () => {
-    render(
-      <GroupedEgcChart
-        groupLabel="Test Group"
-        allSeries={[
-          { annotationId: 'A', name: 'A', color: '#000', data: [makePoint('A', '5/27/21 8:00', 100, 0.001)] },
-        ]}
-      />,
-    )
-    expect(statValue('Mean')).toBeCloseTo(100)
-  })
-
-  it('sums norm_egc, not egc, after switching the metric', async () => {
+  it('sums raw egc once EGC is selected', async () => {
     const user = userEvent.setup()
     render(
       <GroupedEgcChart
@@ -136,10 +136,26 @@ describe('GroupedEgcChart — metric swap sums the correct field', () => {
         ]}
       />,
     )
-    await user.click(screen.getByRole('button', { name: /Relative/i }))
-    // 0.001 norm_egc, not 100 raw egc -- confirms the swap actually
+    await selectRawEgc(user)
+    expect(statValue('Mean')).toBeCloseTo(100)
+  })
+
+  it('sums norm_egc, not egc, by default, and switches to egc on request', async () => {
+    const user = userEvent.setup()
+    render(
+      <GroupedEgcChart
+        groupLabel="Test Group"
+        allSeries={[
+          { annotationId: 'A', name: 'A', color: '#000', data: [makePoint('A', '5/27/21 8:00', 100, 0.001)] },
+        ]}
+      />,
+    )
+    // 0.001 norm_egc, not 100 raw egc -- confirms the metric actually
     // changes which field is summed, not just the y-axis label text.
+    expect(screen.getByRole('button', { name: /Relative Abundance/i })).toHaveClass('on')
     expect(statValue('Mean')).toBeCloseTo(0.001)
+    await selectRawEgc(user)
+    expect(statValue('Mean')).toBeCloseTo(100)
   })
 })
 
@@ -160,6 +176,7 @@ describe('GroupedEgcChart — date range filtering', () => {
         ]}
       />,
     )
+    await selectRawEgc(user)
     expect(screen.getByText(/2 timepoints/)).toBeInTheDocument()
 
     const [fromInput] = screen.getAllByDisplayValue('')

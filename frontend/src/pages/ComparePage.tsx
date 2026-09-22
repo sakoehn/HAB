@@ -900,6 +900,7 @@ export function ComparePage({
                     dateTo={state.dateTo}
                     dataDateRange={dataDateRange}
                     onGoScaffoldExplore={onGoScaffoldExplore}
+                    defaultStandardize
                   />
                 </ChartErrorBoundary>
               </>
