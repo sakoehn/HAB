@@ -453,6 +453,23 @@ def correlate_endpoint(catalog_id_a: int, catalog_id_b: int, metric: str, method
 
 
 # ── Endpoint: Tier 2, family + FDR ────────────────────────────────
+
+# circular_shift is ~900x slower per candidate than a parametric method
+# (measured: spearman 4ms/pair, circular_shift 3.6s/pair against the real
+# db) -- a real family (measured against this database, COG0055 as
+# reference) is 3,500-13,000 candidates, so running the full permutation
+# test on every one of them is 3.5-13 hours even fully cold, longer than
+# is practical to wait for even with retries. Pre-filtering to the
+# strongest candidates by the fast method first, then running the
+# expensive permutation test only on those, cuts that to minutes while
+# only formally (permutation-)testing the candidates most likely to be
+# real. This does change what the resulting q-values mean: they control
+# the false discovery rate among the pre-filtered shortlist, not among
+# the whole family -- disclosed via prescreened/prescreen_pool_size in
+# the response so the frontend can show this, not hide it.
+CIRCULAR_SHIFT_SCREEN_TOP_N = 200
+
+
 @router.get("/correlations/family")
 def correlation_family_endpoint(
     ref_source: str, ref_annotation_id: str, target_source: str, metric: str, method: str,
@@ -483,6 +500,22 @@ def correlation_family_endpoint(
                 _sample_order_box.append(load_sample_order(conn))
             return _sample_order_box[0]
 
+        prescreened = False
+        prescreen_pool_size = None
+        if method == "circular_shift" and len(candidates) > CIRCULAR_SHIFT_SCREEN_TOP_N:
+            prescreened = True
+            prescreen_pool_size = len(candidates)
+            fast_scored = []
+            for cand in candidates:
+                result = _get_or_compute_correlation(
+                    conn, ref_catalog_id, cand["id"], metric, "spearman", get_sample_order=get_sample_order,
+                )
+                if result is None:
+                    continue
+                fast_scored.append((abs(result["r"]), cand))
+            fast_scored.sort(key=lambda pair: pair[0], reverse=True)
+            candidates = [cand for _abs_r, cand in fast_scored[:CIRCULAR_SHIFT_SCREEN_TOP_N]]
+
         scored = []
         for cand in candidates:
             result = _get_or_compute_correlation(
@@ -509,7 +542,12 @@ def correlation_family_endpoint(
         # |r| descending and cap the list so the first screen is the
         # strongest correlates, not an arbitrary alphabetical slice.
         significant.sort(key=lambda entry: abs(entry["r"]), reverse=True)
-        return significant[:limit]
+        return {
+            "results":             significant[:limit],
+            "prescreened":         prescreened,
+            "prescreen_pool_size": prescreen_pool_size,
+            "prescreen_top_n":     CIRCULAR_SHIFT_SCREEN_TOP_N if prescreened else None,
+        }
     finally:
         conn.close()
 

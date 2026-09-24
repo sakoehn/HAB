@@ -292,7 +292,8 @@ class TestCorrelationFamilyEndpoint:
 
         assert response.status_code == 200
         body = response.json()
-        catalog_ids = {entry["catalog_id"] for entry in body}
+        assert body["prescreened"] is False  # only 4 candidates, well under the screen threshold
+        catalog_ids = {entry["catalog_id"] for entry in body["results"]}
 
         assert catalog_ids == {2, 5}  # candidate 3's q lands well above 0.05
 
@@ -305,7 +306,7 @@ class TestCorrelationFamilyEndpoint:
             },
         )
 
-        entry = response.json()[0]
+        entry = response.json()["results"][0]
         assert entry["r"] == 0.9
         assert entry["q"] < 0.05
         assert entry["name"] == "Nitrogenase"
@@ -327,7 +328,7 @@ class TestCorrelationFamilyEndpoint:
             },
         )
 
-        catalog_ids_in_order = [entry["catalog_id"] for entry in response.json()]
+        catalog_ids_in_order = [entry["catalog_id"] for entry in response.json()["results"]]
         assert catalog_ids_in_order == [2, 5]
 
     def test_limit_caps_the_returned_list_to_the_strongest_matches(self, client):
@@ -340,9 +341,9 @@ class TestCorrelationFamilyEndpoint:
             },
         )
 
-        body = response.json()
-        assert len(body) == 1
-        assert body[0]["catalog_id"] == 2  # the stronger of the two significant matches
+        results = response.json()["results"]
+        assert len(results) == 1
+        assert results[0]["catalog_id"] == 2  # the stronger of the two significant matches
 
     def test_constant_candidate_is_omitted_not_a_crash(self, client):
         # CR4: candidate 4 (K00004) is constant across every sample -- must
@@ -358,5 +359,117 @@ class TestCorrelationFamilyEndpoint:
         )
 
         assert response.status_code == 200
-        catalog_ids = {entry["catalog_id"] for entry in response.json()}
+        catalog_ids = {entry["catalog_id"] for entry in response.json()["results"]}
         assert 4 not in catalog_ids
+
+
+@pytest.fixture
+def prescreen_client(tmp_path, monkeypatch):
+    # Own isolated db, same reasoning as circular_shift_client above: real
+    # series data for candidates of genuinely different correlation
+    # strength, needed to prove the fast pre-screen actually ranks by |r|
+    # rather than just passing everything through.
+    db_path = str(tmp_path / "test_prescreen.db")
+    conn = sqlite3.connect(db_path)
+    conn.executescript(SCHEMA)
+
+    conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (1, 'taxonomy', 'Bacteria')")
+    conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (2, 'kegg', 'K00002')")  # strong
+    conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (3, 'kegg', 'K00003')")  # weak/none
+
+    samples = [f"s{i:02d}" for i in range(1, 13)]
+    for i, sample in enumerate(samples):
+        wobble = 3.0 * ((i % 3) - 1)
+        conn.execute(
+            "INSERT INTO annotation_series (source, sample, annotation_id, egc) VALUES ('taxonomy', ?, 'Bacteria', ?)",
+            (sample, 10.0 + i + wobble),
+        )
+        conn.execute(
+            "INSERT INTO annotation_series (source, sample, annotation_id, egc) VALUES ('kegg', ?, 'K00002', ?)",
+            (sample, 10.0 + i + wobble + 0.05),  # near-noiseless copy -- strong |r|
+        )
+        # Deliberately unrelated to the reference's wobble pattern -- weak |r|.
+        conn.execute(
+            "INSERT INTO annotation_series (source, sample, annotation_id, egc) VALUES ('kegg', ?, 'K00003', ?)",
+            (sample, 5.0 + ((i * 7) % 5)),
+        )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(correlation_sql, "SQLITE_DB_PATH", db_path)
+
+    app = FastAPI()
+    app.include_router(correlation_sql.router)
+    return TestClient(app)
+
+
+class TestCorrelationFamilyPrescreen:
+    # circular_shift is ~900x slower per candidate than a parametric
+    # method (measured directly against the real db), so a real family
+    # (thousands of candidates) is hours of work if scored in full.
+    # correlation_family_endpoint pre-filters to the strongest
+    # CIRCULAR_SHIFT_SCREEN_TOP_N candidates by a fast method first, then
+    # only runs the expensive permutation test on those -- monkeypatched
+    # down to 1 here so a 2-real-candidate fixture can exercise the real
+    # ranking logic without needing hundreds of rows.
+
+    def test_small_family_is_not_prescreened(self, prescreen_client, monkeypatch):
+        monkeypatch.setattr(correlation_sql, "CIRCULAR_SHIFT_SCREEN_TOP_N", 200)
+        response = prescreen_client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "circular_shift",
+            },
+        )
+        body = response.json()
+        assert body["prescreened"] is False
+        assert body["prescreen_pool_size"] is None
+        assert body["prescreen_top_n"] is None
+
+    def test_non_circular_shift_methods_are_never_prescreened(self, prescreen_client, monkeypatch):
+        # Prescreening exists specifically because circular_shift is slow --
+        # a fast parametric method never needs it, regardless of family size.
+        monkeypatch.setattr(correlation_sql, "CIRCULAR_SHIFT_SCREEN_TOP_N", 1)
+        response = prescreen_client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "raw_pearson",
+            },
+        )
+        body = response.json()
+        assert body["prescreened"] is False
+
+    def test_large_family_is_prescreened_and_discloses_pool_size(self, prescreen_client, monkeypatch):
+        monkeypatch.setattr(correlation_sql, "CIRCULAR_SHIFT_SCREEN_TOP_N", 1)
+        response = prescreen_client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "circular_shift",
+            },
+        )
+        body = response.json()
+        assert body["prescreened"] is True
+        assert body["prescreen_pool_size"] == 2  # candidates 2 and 3
+        assert body["prescreen_top_n"] == 1
+
+    def test_prescreen_keeps_the_stronger_candidate_and_drops_the_weaker_one(self, prescreen_client, monkeypatch):
+        # The actual point of prescreening: candidate 2 (near-noiseless
+        # copy of the reference, strong |r|) must survive into the
+        # expensive circular_shift pass; candidate 3 (unrelated pattern,
+        # weak |r|) must be screened out before ever reaching it -- not
+        # just "fewer results", specifically the RIGHT one kept.
+        monkeypatch.setattr(correlation_sql, "CIRCULAR_SHIFT_SCREEN_TOP_N", 1)
+        response = prescreen_client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "circular_shift",
+            },
+        )
+        body = response.json()
+        catalog_ids = {entry["catalog_id"] for entry in body["results"]}
+        assert catalog_ids == {2}
+        assert 3 not in catalog_ids

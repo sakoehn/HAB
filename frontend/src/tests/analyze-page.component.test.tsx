@@ -165,21 +165,28 @@ const DEFAULT_MAPPINGS = {
   ],
   total: 1,
 }
-// /api/correlations/family returns a bare array (already q<0.05 filtered
-// server-side), not wrapped in { data: [...] } like the old endpoint.
-const DEFAULT_CORRELATES = [
-  {
-    catalog_id:    7,
-    annotation_id: 'Bacteria',
-    name:          'Bacteria',
-    r:             0.72,
-    p:             0.002,
-    q:             0.02,
-    lag_samples:   0,
-    lag_hours:     0,
-    n_pairs:       40,
-  },
-]
+// /api/correlations/family returns { results: [...], prescreened, ... }
+// (already q<0.05 filtered server-side within results) -- prescreened is
+// false here since these tests use the default (fast) method, which
+// never triggers the circular_shift-only prescreen path.
+const DEFAULT_CORRELATES = {
+  results: [
+    {
+      catalog_id:    7,
+      annotation_id: 'Bacteria',
+      name:          'Bacteria',
+      r:             0.72,
+      p:             0.002,
+      q:             0.02,
+      lag_samples:   0,
+      lag_hours:     0,
+      n_pairs:       40,
+    },
+  ],
+  prescreened:         false,
+  prescreen_pool_size: null,
+  prescreen_top_n:     null,
+}
 
 function setupDefaultMocks() {
   mockFetch.mockImplementation((url: string) => {
@@ -1547,11 +1554,14 @@ describe('CorrelatesPanel', () => {
       if (url.includes('/api/correlations/family'))
         return Promise.resolve({
           ok: true, status: 200,
-          json: async () => ([{
-            catalog_id: 9, annotation_id: 'Bacteria;Proteobacteria;Rhizobiaceae;Bosea',
-            name: 'Bosea', depth: 6,
-            r: 0.72, p: 0.02, q: 0.03, lag_samples: 0, lag_hours: 0, n_pairs: 40,
-          }]),
+          json: async () => ({
+            results: [{
+              catalog_id: 9, annotation_id: 'Bacteria;Proteobacteria;Rhizobiaceae;Bosea',
+              name: 'Bosea', depth: 6,
+              r: 0.72, p: 0.02, q: 0.03, lag_samples: 0, lag_hours: 0, n_pairs: 40,
+            }],
+            prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+          }),
         })
       if (url.includes('/api/timepoints'))
         return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
@@ -1605,10 +1615,13 @@ describe('CorrelatesPanel', () => {
       if (url.includes('/api/correlations/family'))
         return Promise.resolve({
           ok: true, status: 200,
-          json: async () => ([{
-            catalog_id: 7, annotation_id: 'Bacteria', name: 'Bacteria',
-            r: 0.72, p: 0.02, q: 0.03, lag_samples: 0, lag_hours: 0, n_pairs: 12,
-          }]),
+          json: async () => ({
+            results: [{
+              catalog_id: 7, annotation_id: 'Bacteria', name: 'Bacteria',
+              r: 0.72, p: 0.02, q: 0.03, lag_samples: 0, lag_hours: 0, n_pairs: 12,
+            }],
+            prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+          }),
         })
       if (url.includes('/api/timepoints'))
         return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })

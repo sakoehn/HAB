@@ -305,7 +305,7 @@ export function AboutPage() {
               ['/api/correlation?catalog_id_a=…&catalog_id_b=…&metric=egc&method=spearman',
                'Score (or read the cached score for) one specific pair. method: raw_pearson, log_pearson, spearman, or circular_shift. Returns r, p, lag_samples, n_pairs'],
               ['/api/correlations/family?ref_source=…&ref_annotation_id=…&target_source=…&metric=egc&method=spearman&limit=50',
-               'Every eligible candidate in target_source scored against the reference (same-source parents/children/siblings excluded), sorted by |r| descending, capped at limit, gated to q < 0.05'],
+               'Returns {results, prescreened, prescreen_pool_size, prescreen_top_n}. results: every eligible candidate in target_source scored against the reference (same-source parents/children/siblings excluded), sorted by |r| descending, capped at limit, gated to q < 0.05. For method=circular_shift on a large family, only the strongest prescreen_top_n of prescreen_pool_size candidates (by a fast method) get the full permutation test — prescreened is true when that happened.'],
               ['/api/annotations/scaffolds/summary?source=…&annotation_id=…',
                'Per-sample scaffold and gene counts for one annotation'],
               ['/api/annotations/scaffolds?source=…&annotation_id=…&sample=…&page=1&page_size=500',

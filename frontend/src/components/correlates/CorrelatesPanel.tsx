@@ -19,7 +19,8 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type {
-  ApiStatus, AnnotationSourceKey, ChartMetric, CorrMethod, CorrelationFamilyResult,
+  ApiStatus, AnnotationSourceKey, ChartMetric, CorrMethod,
+  CorrelationFamilyResult, CorrelationFamilyResponse,
 } from '../../types'
 import { SOURCE_TAG_CLS, taxonomyRankLabel } from '../../constants'
 import { taxonomyDomainFromId } from '../../utils/taxonomy'
@@ -52,6 +53,10 @@ export function CorrelatesPanel({
   const [open,   setOpen]   = useState(false)
   const [data,   setData]   = useState<CorrelationFamilyResult[]>([])
   const [status, setStatus] = useState<ApiStatus>('idle')
+  // Set only when method=circular_shift screened the family down before
+  // running the expensive permutation test (docs/AUDIT-2026-09-22.md,
+  // CR8 follow-up) -- null otherwise, including for every other method.
+  const [prescreen, setPrescreen] = useState<{ poolSize: number; topN: number } | null>(null)
 
   // Default to enzyme (the smallest real family, ~3.5k candidates) rather
   // than taxonomy (~60k, by far the largest) -- on a cold cache this is
@@ -111,9 +116,14 @@ export function CorrelatesPanel({
       // worst case even after the genus-and-coarser depth cutoff
       // (measured ~9 min cold against the real db); every other source
       // finishes in well under a minute.
-      const result = await apiFetch<CorrelationFamilyResult[]>(url, 600_000)
+      const result = await apiFetch<CorrelationFamilyResponse>(url, 600_000)
       if (requestId !== requestSeqRef.current) return
-      setData(result ?? [])
+      setData(result?.results ?? [])
+      setPrescreen(
+        result?.prescreened && result.prescreen_pool_size != null && result.prescreen_top_n != null
+          ? { poolSize: result.prescreen_pool_size, topN: result.prescreen_top_n }
+          : null,
+      )
       setStatus('ok')
     } catch {
       if (requestId !== requestSeqRef.current) return
@@ -199,7 +209,7 @@ export function CorrelatesPanel({
                   onClick={() => setMethod(m)}
                   title={
                     m === 'circular_shift'
-                      ? 'Same Spearman r as the "spearman" option, but the significance test accounts for autocorrelation in the time series (a circular-shift permutation) instead of assuming independent timepoints. More statistically defensible, and noticeably slower on a cold (uncached) query.'
+                      ? 'Same Spearman r as the "spearman" option, but the significance test accounts for autocorrelation in the time series (a circular-shift permutation) instead of assuming independent timepoints. More statistically defensible, and noticeably slower on a cold (uncached) query. For a large family, this only runs the full permutation test on the strongest candidates from a fast pre-screen, not every candidate -- see the note above the results when that happens.'
                       : `Score correlations using ${METHOD_LABEL[m]}`
                   }
                 >
@@ -274,6 +284,17 @@ export function CorrelatesPanel({
                 >
                   Retry
                 </button>
+              </div>
+            )}
+            {status === 'ok' && prescreen && (
+              <div className="corr-empty" style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
+                  This family has {prescreen.poolSize.toLocaleString()} candidates —
+                  circular_shift only ran its full permutation test on the
+                  strongest {prescreen.topN} (by a fast pre-screen), not all
+                  of them.
+                </span>
+                <HelpTooltip text="circular_shift is far slower than the other methods, so testing every candidate in a large family isn't practical. The candidates are first ranked by a fast method (Spearman r), and only the strongest ones go through the full, statistically rigorous permutation test. A real correlate with an unusually weak raw r could in theory be missed, but the q-values shown describe significance among the tested candidates, not the whole family." />
               </div>
             )}
             {status === 'ok' && data.length === 0 && (

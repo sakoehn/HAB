@@ -22,7 +22,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { CorrelatesPanel } from '../components/correlates/CorrelatesPanel'
@@ -79,9 +79,12 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     mockFetch
       .mockRejectedValueOnce(new Error('timed out'))
       .mockRejectedValueOnce(new Error('timed out'))
-      .mockResolvedValueOnce(jsonResponse([
-        { catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 },
-      ]))
+      .mockResolvedValueOnce(jsonResponse({
+        results: [
+          { catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 },
+        ],
+        prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+      }))
     await selectCircularShift(user)
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(3))
@@ -123,5 +126,54 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
 
     expect(await screen.findByText(/check server connection/i)).toBeInTheDocument()
     expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('CorrelatesPanel — prescreen disclosure (CR8 follow-up)', () => {
+  it('shows the prescreen banner and explanatory tooltip when the family was screened', async () => {
+    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
+    const user = await openPanel()
+
+    mockFetch.mockResolvedValue(jsonResponse({
+      results: [
+        { catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 },
+      ],
+      prescreened: true, prescreen_pool_size: 3559, prescreen_top_n: 200,
+    }))
+    await selectCircularShift(user)
+
+    const banner = (await screen.findByText(/3,559 candidates/)).closest('.corr-empty') as HTMLElement
+    expect(within(banner).getByText(/strongest 200/)).toBeInTheDocument()
+
+    // The explanation of what prescreening means for the q-values shown --
+    // HelpTooltip is click-to-reveal, so the real text only renders after clicking it.
+    await user.click(within(banner).getByTitle('Help'))
+    expect(await screen.findByText(/significance among the tested candidates, not the whole family/i)).toBeInTheDocument()
+  })
+
+  it('does not show the prescreen banner when the family was small enough not to need it', async () => {
+    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
+    const user = await openPanel()
+
+    mockFetch.mockResolvedValue(jsonResponse({
+      results: [], prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+    }))
+    await selectCircularShift(user)
+
+    await screen.findByText(/no significant correlates/i)
+    expect(screen.queryByText(/candidates/)).not.toBeInTheDocument()
+  })
+
+  it('does not show the prescreen banner for non-circular_shift methods', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({
+      results: [], prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+    }))
+    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /Find Correlates/i }))
+
+    await screen.findByText(/no significant correlates/i)
+    expect(screen.queryByText(/candidates/)).not.toBeInTheDocument()
   })
 })

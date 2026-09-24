@@ -211,6 +211,21 @@ export type CorrelationFamilyResult = {
   n_pairs:       number
 }
 
+// /api/correlations/family's real response envelope (not a bare array).
+// prescreened=true means method=circular_shift was run only against the
+// prescreen_top_n strongest candidates (by a fast method) out of
+// prescreen_pool_size real candidates in the family, not the whole
+// family -- circular_shift is ~900x slower per candidate than a
+// parametric method (measured against the real db), so scoring a
+// multi-thousand-candidate family in full is hours of work. When false,
+// prescreen_pool_size/prescreen_top_n are both null.
+export type CorrelationFamilyResponse = {
+  results:             CorrelationFamilyResult[]
+  prescreened:         boolean
+  prescreen_pool_size: number | null
+  prescreen_top_n:     number | null
+}
+
 // ── Chart / UI state ───────────────────────────────────────────────────────
 // Metric and standardize are independent: any metric can be combined with
 // standardize on or off (e.g. Z-scored Relative Abundance).
