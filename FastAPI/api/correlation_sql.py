@@ -1,6 +1,7 @@
 import math
 import numpy as np
 import random
+import threading
 from scipy import stats
 import os
 import sqlite3
@@ -26,6 +27,38 @@ router = APIRouter()
 # ── Correlation result cache ──────────────────────────────────────────────────
 
 _CORR_CACHE: dict[tuple, list] = {}
+
+# ── Per-family compute lock ───────────────────────────────────────────────────
+# correlation_family_endpoint is a synchronous route, run in FastAPI's
+# thread pool -- a slow (circular_shift) request that outlives its own
+# client-side timeout keeps running in its thread regardless, which is
+# what makes the frontend's auto-retry-on-timeout useful in the first
+# place. But without this lock, each retry's thread ALSO starts its own
+# full scoring loop over the same family, so N concurrent
+# attempts/retries for the identical (ref, target, metric, method)
+# redundantly recompute the same still-uncached candidates in parallel --
+# competing for CPU rather than helping. Confirmed happening in practice
+# (not just theoretical): after ~2 retries on a real circular_shift
+# family, the process had 8 threads with real accumulated CPU time, and
+# the per-candidate rate had roughly doubled (7.5s/candidate measured vs.
+# 3.6s/candidate in isolation).
+#
+# A single process-wide dict of locks (not one global lock) so unrelated
+# families can still compute concurrently -- only requests for the EXACT
+# same family+method+metric serialize against each other. Correct for
+# this app's actual deployment (a single uvicorn worker process, see
+# reference_aws_deployment) -- would need a cross-process mechanism
+# (e.g. a row in correlations_cache itself) if ever run with multiple
+# worker processes.
+_family_locks: dict[tuple, threading.Lock] = {}
+_family_locks_guard = threading.Lock()
+
+
+def _get_family_lock(key: tuple) -> threading.Lock:
+    with _family_locks_guard:
+        if key not in _family_locks:
+            _family_locks[key] = threading.Lock()
+        return _family_locks[key]
 
 
 # ── Math primitives ───────────────────────────────────────────────────────────
@@ -502,38 +535,46 @@ def correlation_family_endpoint(
 
         prescreened = False
         prescreen_pool_size = None
-        if method == "circular_shift" and len(candidates) > CIRCULAR_SHIFT_SCREEN_TOP_N:
-            prescreened = True
-            prescreen_pool_size = len(candidates)
-            fast_scored = []
+        # Serializes concurrent/retried requests for this EXACT family so
+        # they cooperate on the cache instead of redundantly recomputing
+        # the same still-uncached candidates in parallel -- see
+        # _get_family_lock's docstring. A waiter that blocks here and
+        # then proceeds will find most or all candidates already cached
+        # by whichever request got there first, so its own pass is fast.
+        family_lock = _get_family_lock((ref_catalog_id, target_source, metric, method))
+        with family_lock:
+            if method == "circular_shift" and len(candidates) > CIRCULAR_SHIFT_SCREEN_TOP_N:
+                prescreened = True
+                prescreen_pool_size = len(candidates)
+                fast_scored = []
+                for cand in candidates:
+                    result = _get_or_compute_correlation(
+                        conn, ref_catalog_id, cand["id"], metric, "spearman", get_sample_order=get_sample_order,
+                    )
+                    if result is None:
+                        continue
+                    fast_scored.append((abs(result["r"]), cand))
+                fast_scored.sort(key=lambda pair: pair[0], reverse=True)
+                candidates = [cand for _abs_r, cand in fast_scored[:CIRCULAR_SHIFT_SCREEN_TOP_N]]
+
+            scored = []
             for cand in candidates:
                 result = _get_or_compute_correlation(
-                    conn, ref_catalog_id, cand["id"], metric, "spearman", get_sample_order=get_sample_order,
+                    conn, ref_catalog_id, cand["id"], metric, method, get_sample_order=get_sample_order,
                 )
                 if result is None:
                     continue
-                fast_scored.append((abs(result["r"]), cand))
-            fast_scored.sort(key=lambda pair: pair[0], reverse=True)
-            candidates = [cand for _abs_r, cand in fast_scored[:CIRCULAR_SHIFT_SCREEN_TOP_N]]
-
-        scored = []
-        for cand in candidates:
-            result = _get_or_compute_correlation(
-                conn, ref_catalog_id, cand["id"], metric, method, get_sample_order=get_sample_order,
-            )
-            if result is None:
-                continue
-            scored.append({
-                "catalog_id":    cand["id"],
-                "annotation_id": cand["annotation_id"],
-                "name":          cand["name"],
-                "depth":         cand["depth"],
-                "r":             result["r"],
-                "p":             result["p"],
-                "lag_samples":   result["lag_samples"],
-                "lag_hours":     result["lag_samples"] * LAG_HOURS_PER_SAMPLE,
-                "n_pairs":       result["n_pairs"],
-            })
+                scored.append({
+                    "catalog_id":    cand["id"],
+                    "annotation_id": cand["annotation_id"],
+                    "name":          cand["name"],
+                    "depth":         cand["depth"],
+                    "r":             result["r"],
+                    "p":             result["p"],
+                    "lag_samples":   result["lag_samples"],
+                    "lag_hours":     result["lag_samples"] * LAG_HOURS_PER_SAMPLE,
+                    "n_pairs":       result["n_pairs"],
+                })
 
         scored = _apply_fdr(scored)
         significant = [entry for entry in scored if entry["q"] < 0.05]

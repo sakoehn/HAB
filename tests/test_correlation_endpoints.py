@@ -13,6 +13,8 @@ reverse-engineering data that produces a particular p-value by chance.
 import os
 import sqlite3
 import sys
+import threading
+import time
 
 import pytest
 from fastapi import FastAPI
@@ -361,6 +363,70 @@ class TestCorrelationFamilyEndpoint:
         assert response.status_code == 200
         catalog_ids = {entry["catalog_id"] for entry in response.json()["results"]}
         assert 4 not in catalog_ids
+
+
+class TestCorrelationFamilyLock:
+    # Confirmed happening in practice, not just theoretical (session that
+    # added this): after ~2 auto-retries on a real circular_shift family,
+    # the server process had 8 threads with real accumulated CPU time, and
+    # the per-candidate rate had roughly doubled (7.5s/candidate measured
+    # live vs. 3.6s/candidate in isolation) -- concurrent requests for the
+    # SAME family were each redundantly recomputing the same still-
+    # uncached candidates in parallel instead of cooperating on the cache.
+
+    def test_concurrent_requests_for_the_same_family_do_not_duplicate_work(self, circular_shift_client, monkeypatch):
+        # Of this fixture's 3 candidates, K00002/K00004 return None (no
+        # series data / constant) and are NEVER cached -- so every
+        # request recomputes them regardless of any lock (2 unavoidable
+        # score_pair calls each, x2 concurrent requests = 4 total). Only
+        # K00006 produces a real score that gets cached -- the lock's
+        # whole point is that this ONE candidate must be genuinely
+        # computed only once across both requests, not once each.
+        # Expected total with the lock working: 4 (unavoidable) + 1
+        # (K00006, deduplicated) = 5. Without the lock: 4 + 2 = 6.
+        call_count = {"n": 0}
+        real_score_pair = correlation_sql.score_pair
+
+        def counting_slow_score_pair(ref, cand, method):
+            # Small real sleep (not a mock) so a second thread genuinely
+            # has a window to start its own redundant computation if the
+            # lock isn't actually serializing them.
+            time.sleep(0.05)
+            call_count["n"] += 1
+            return real_score_pair(ref, cand, method)
+
+        monkeypatch.setattr(correlation_sql, "score_pair", counting_slow_score_pair)
+
+        results = []
+        def make_request():
+            resp = circular_shift_client.get(
+                "/correlations/family",
+                params={
+                    "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                    "target_source": "kegg", "metric": "egc", "method": "circular_shift",
+                },
+            )
+            results.append(resp)
+
+        t1 = threading.Thread(target=make_request)
+        t2 = threading.Thread(target=make_request)
+        t1.start()
+        time.sleep(0.02)  # let t1 reach (and acquire) the lock first, deterministically
+        t2.start()
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+
+        assert len(results) == 2
+        for resp in results:
+            assert resp.status_code == 200
+
+        assert call_count["n"] == 5, (
+            f"score_pair called {call_count['n']} times, expected exactly 5 "
+            "(4 unavoidable for the 2 never-cached candidates x 2 requests, "
+            "+ 1 for K00006 -- if this is 6, the lock let both requests "
+            "redundantly compute K00006 instead of the second one waiting "
+            "and then getting a cache hit)"
+        )
 
 
 @pytest.fixture
