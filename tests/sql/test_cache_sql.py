@@ -1092,16 +1092,26 @@ def test_top_result_matches_independently_recomputed_stats(conn):
     always dominates any single leaf. "J" (Translation, ribosomal
     structure and biogenesis) is the real #1 result across these two
     samples; mean/max independently computed in plain Python from the raw
-    rows, not assumed."""
+    rows, not assumed.
+
+    Values updated post-E17 (docs/AUDIT-2026-09-22.md, Phase 3
+    regeneration, 2026-09-24): category J itself was one of the
+    undercounted categories -- some of its real member COGs belong to a
+    second NCBI category too and were previously only registered there.
+    J's true mean_egc for these two samples is higher than before
+    (902813.5 -> 1027092.5), independently re-verified directly against
+    DataStructures/COG/{3300060358,3300060359}.cog.json's own 'J' entries
+    (1228876.0 and 825309.0 -> mean 1027092.5, max 1228876.0), not just
+    trusted from the SQL layer."""
     results = get_top_annotations_sql(conn, "cog", TWO_SAMPLES)
     top = results[0]
     assert top["annotation_id"] == "J"
     assert top["name"] == "Translation, ribosomal structure and biogenesis"
     assert top["parent"] is None  # category root -- nothing above it
-    assert top["mean_egc"] == 902813.5
-    assert top["max_egc"] == 1083306.0
-    assert top["mean_norm_egc"] == 0.06118465386297324
-    assert top["max_norm_egc"] == 0.0671277405384987
+    assert top["mean_egc"] == 1027092.5
+    assert top["max_egc"] == 1228876.0
+    assert top["mean_norm_egc"] == 0.06963297348891212
+    assert top["max_norm_egc"] == 0.07614807753486837
 
 
 def test_known_leaf_annotation_matches_independently_recomputed_stats(conn):
