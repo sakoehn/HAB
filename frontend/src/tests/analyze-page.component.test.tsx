@@ -1366,9 +1366,17 @@ describe('MappingsPanel', () => {
     expect(toggles.length).toBe(1)
   })
 
-  it('shows a help tooltip when no kegg mappings found', async () => {
+  it('shows a plain "no mappings found" message, with no help tooltip, for kegg', async () => {
     // DEFAULT_SEARCH's result card is source=kegg, so the default
     // renderWithChartAndWait() flow already exercises the kegg case.
+    //
+    // Pre-W24 (docs/AUDIT-2026-09-22.md), a category/pathway-level kegg
+    // id could never return mappings at all (only leaf ids matched), so
+    // this state carried a help tooltip explaining that limitation. W24
+    // fixed the underlying search to resolve non-leaf ids too, so an
+    // empty result here now genuinely means "no mappings in the selected
+    // samples" for any source -- the tooltip explaining a limitation
+    // that no longer exists was removed, not just for kegg specifically.
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/mappings/search'))
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [], total: 0 }) })
@@ -1390,10 +1398,13 @@ describe('MappingsPanel', () => {
       expect(screen.getByText(/no mappings found/i)).toBeInTheDocument()
     })
     const stateBox = screen.getByText(/no mappings found/i).closest('.state-box') as HTMLElement
-    expect(within(stateBox).getByTitle('Help')).toBeInTheDocument()
+    expect(within(stateBox).queryByTitle('Help')).not.toBeInTheDocument()
   })
 
-  it('does NOT show a help tooltip when no cog mappings found', async () => {
+  it('shows the same plain message, with no help tooltip, for cog', async () => {
+    // Same case as the kegg test above, for the other source that used
+    // to get the (now-removed) tooltip -- confirms the fix isn't
+    // source-specific.
     const cogSearch = {
       data: [{
         annotation_id: 'COG0001',

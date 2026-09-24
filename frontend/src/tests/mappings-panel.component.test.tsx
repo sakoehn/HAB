@@ -31,6 +31,20 @@ import userEvent from '@testing-library/user-event'
 import { MappingsPanel } from '../components/mappings/MappingsPanel'
 import type { MappingSearchRow } from '../types'
 
+// downloadCsv itself is a thin browser-download side effect (Blob/anchor
+// click) with nothing meaningful to assert on in jsdom -- mocked so these
+// tests can assert on WHAT it was called with (i.e. which rows, from
+// which fetch) without depending on jsdom's Blob/URL.createObjectURL
+// support. apiFetch is left real so the existing global-fetch-mock
+// pattern below still drives it normally. vi.mock's factory is hoisted
+// above imports/const declarations, so the mock fn itself must be
+// created via vi.hoisted rather than a plain top-level const.
+const { mockDownloadCsv } = vi.hoisted(() => ({ mockDownloadCsv: vi.fn() }))
+vi.mock('../utils/api', async importOriginal => {
+  const actual = await importOriginal<typeof import('../utils/api')>()
+  return { ...actual, downloadCsv: mockDownloadCsv }
+})
+
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
@@ -40,6 +54,7 @@ function jsonResponse(data: unknown) {
 
 beforeEach(() => {
   mockFetch.mockReset()
+  mockDownloadCsv.mockReset()
 })
 
 function makeRow(datetime: string, kegg_id: string | null = 'K00001'): MappingSearchRow {
@@ -202,15 +217,18 @@ describe('MappingsPanel — pagination', () => {
 
 describe('MappingsPanel — controls trigger real re-fetches', () => {
   it('toggling "Unique pairs only" immediately re-fetches with the new value', async () => {
+    // COG0001 is a leaf id, so it defaults to unique_pairs=false (W24 --
+    // see the isLikelyLeafAnnotation default tests below); toggling the
+    // checkbox on should flip that to true.
     mockFetch.mockResolvedValue(jsonResponse({ data: [makeRow('5/27/21 8:00')] }))
     render(<MappingsPanel annotationId="COG0001" source="cog" />)
     const user = await open()
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
-    expect(mockFetch.mock.calls[0][0]).toContain('unique_pairs=true')
+    expect(mockFetch.mock.calls[0][0]).toContain('unique_pairs=false')
 
     await user.click(screen.getByRole('checkbox', { name: /Unique pairs only/i }))
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
-    expect(mockFetch.mock.calls[1][0]).toContain('unique_pairs=false')
+    expect(mockFetch.mock.calls[1][0]).toContain('unique_pairs=true')
   })
 
   it('Load re-fetches using the current sample-count input value', async () => {
@@ -230,5 +248,62 @@ describe('MappingsPanel — controls trigger real re-fetches', () => {
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
     expect(mockFetch.mock.calls[1][0]).toContain('sample_count=10')
+  })
+})
+
+describe('MappingsPanel — broad-category cap (W24, docs/AUDIT-2026-09-22.md)', () => {
+  it('reflects the effective (capped) sample count back into the Samples field, not just the banner', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({
+      data: [makeRow('5/27/21 8:00')],
+      sample_count: 5,
+      samples_were_capped: true,
+    }))
+    render(<MappingsPanel annotationId="H" source="cog" />)
+    await open()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+
+    expect(screen.getByText(/broad category/i)).toBeInTheDocument()
+    const sampleInput = screen.getByRole('spinbutton') as HTMLInputElement
+    expect(sampleInput.value).toBe('5')
+  })
+
+  it('CSV export re-fetches uncapped (bypass_cap) when the preview was capped, and downloads that data, not the capped preview', async () => {
+    const cappedRow = makeRow('5/27/21 8:00', 'K00001')
+    const fullRow1   = makeRow('5/27/21 8:00', 'K00001')
+    const fullRow2   = makeRow('6/1/21 8:00', 'K00002')
+
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      data: [cappedRow], sample_count: 5, samples_were_capped: true,
+    }))
+    render(<MappingsPanel annotationId="H" source="cog" />)
+    await open()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+
+    mockFetch.mockResolvedValueOnce(jsonResponse({ data: [fullRow1, fullRow2] }))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /CSV/i }))
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
+    expect(mockFetch.mock.calls[1][0]).toContain('bypass_cap=true')
+    expect(mockFetch.mock.calls[1][0]).toContain('sample_count=128')
+
+    await waitFor(() => expect(mockDownloadCsv).toHaveBeenCalledTimes(1))
+    const [rows] = mockDownloadCsv.mock.calls[0]
+    expect(rows).toHaveLength(2) // the full uncapped fetch, not the 1-row capped preview
+  })
+
+  it('CSV export does NOT re-fetch when the preview was never capped -- uses the already-loaded rows', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({
+      data: [makeRow('5/27/21 8:00')], sample_count: 128, samples_were_capped: false,
+    }))
+    render(<MappingsPanel annotationId="COG0055" source="cog" />)
+    await open()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /CSV/i }))
+
+    await waitFor(() => expect(mockDownloadCsv).toHaveBeenCalledTimes(1))
+    expect(mockFetch).toHaveBeenCalledTimes(1) // no second fetch
   })
 })

@@ -63,6 +63,7 @@ export function CorrelatesPanel({
   const [method, setMethod] = useState<CorrMethod>('spearman')
   const [metric, setMetric] = useState<ChartMetric>('norm_egc')
   const requestSeqRef = useRef(0)
+  const [retryAttempt, setRetryAttempt] = useState(0)
 
   const allSources: AnnotationSourceKey[] = ['kegg', 'cog', 'enzyme', 'taxonomy']
 
@@ -72,10 +73,27 @@ export function CorrelatesPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetSource, method, metric])
 
-  async function fetchCorr() {
+  // circular_shift runs a real permutation test per candidate (1,000
+  // reshuffles x 9 lags each) instead of one parametric pass -- measured
+  // directly against the real db at ~900x slower per candidate than the
+  // default method (spearman: 4ms/pair, circular_shift: 3.6s/pair). A
+  // large family can take hours, not minutes, to fully populate its
+  // cache. correlation_family_endpoint is a synchronous route, which
+  // FastAPI runs in a background thread -- so even after this request's
+  // own timeout fires, the server keeps scoring candidates and caching
+  // each one individually. A client-side timeout here is therefore not a
+  // real failure for this method; it just means "ask again" gets you
+  // further along, since already-cached pairs return instantly. Capped at
+  // MAX_CIRCULAR_SHIFT_RETRIES (not truly unlimited) so a genuinely dead
+  // backend still surfaces as an error eventually rather than retrying
+  // forever.
+  const MAX_CIRCULAR_SHIFT_RETRIES = 12 // ~12 x 10 min = up to 2h before giving up
+
+  async function fetchCorr(attempt = 0) {
     const requestId = ++requestSeqRef.current
     setData([])
     setStatus('loading')
+    setRetryAttempt(attempt)
 
     try {
       const url =
@@ -98,9 +116,12 @@ export function CorrelatesPanel({
       setData(result ?? [])
       setStatus('ok')
     } catch {
-      if (requestId === requestSeqRef.current) {
-        setStatus('error')
+      if (requestId !== requestSeqRef.current) return
+      if (method === 'circular_shift' && attempt < MAX_CIRCULAR_SHIFT_RETRIES) {
+        void fetchCorr(attempt + 1)
+        return
       }
+      setStatus('error')
     }
   }
 
@@ -206,6 +227,15 @@ export function CorrelatesPanel({
             {status === 'loading' && (
               <div style={{ padding: '4px 0' }}>
                 <span className="sr-only">Computing correlations…</span>
+                {method === 'circular_shift' && (
+                  <div style={{
+                    padding: '9px 12px', font: '11px var(--mono)', color: 'var(--text-dim)',
+                  }}>
+                    {retryAttempt === 0
+                      ? 'This method is slower and can take a while on a large family. It keeps trying on its own, so feel free to leave this open.'
+                      : `Still working — about ${retryAttempt * 10} min so far. Large families can take a while with this method; it keeps retrying automatically.`}
+                  </div>
+                )}
                 {Array.from({ length: 7 }).map((_, i) => (
                   <div
                     key={i}
@@ -221,7 +251,16 @@ export function CorrelatesPanel({
             {status === 'error' && (
               <div className="corr-empty corr-empty-error">
                 <span className="corr-empty-icon">⚠</span>
-                Correlation failed — check server connection.{' '}
+                {method === 'circular_shift' ? (
+                  <>
+                    Still not done after about {MAX_CIRCULAR_SHIFT_RETRIES * 10 / 60} hours of
+                    trying — this family may just be too large for this
+                    method right now. Try spearman, or a smaller target
+                    source.{' '}
+                  </>
+                ) : (
+                  <>Correlation failed — check server connection.{' '}</>
+                )}
                 <button
                   onClick={() => void fetchCorr()}
                   style={{

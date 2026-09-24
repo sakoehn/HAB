@@ -220,6 +220,12 @@ def search_mappings(
     source: AnnotationSource = Query(..., description="Source type: kegg, cog, enzyme, taxonomy"),
     sample_count: int = Query(128, ge=1, le=128),
     unique_pairs: bool = Query(False),
+    bypass_cap: bool = Query(
+        False,
+        description="Skip the broad-category sample cap. For an explicit, "
+                     "deliberate full export (e.g. CSV download) -- never "
+                     "set by the default interactive search/browse path.",
+    ),
     page: int = 1, page_size: int = 100,
 ):
     """
@@ -237,8 +243,10 @@ def search_mappings(
     clamped to _MAX_SAMPLES_FOR_MANY_LEAVES regardless of what was
     requested -- a broad category times all 128 samples can be millions
     of raw rows (measured: a 269-member COG category is 3,015,883 rows at
-    128 samples). The response's sample_count always reflects what was
-    actually used, not what was requested.
+    128 samples) -- unless bypass_cap is set, for a caller that explicitly
+    wants the full, uncapped export and is willing to wait. The response's
+    sample_count always reflects what was actually used, not what was
+    requested.
     """
     samples = get_all_sample_names_sql(request.app.state.sql_conn)
     if not samples:
@@ -250,7 +258,7 @@ def search_mappings(
     leaf_count = None
     if source.value in ("kegg", "cog", "enzyme"):
         leaf_count = len(_expand_to_leaf_ids(request.app.state.sql_conn, source.value, annotation_id))
-        if leaf_count > _MANY_LEAVES_THRESHOLD:
+        if leaf_count > _MANY_LEAVES_THRESHOLD and not bypass_cap:
             allowed_samples = allowed_samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
 
     seen_keys: set[str] = set()
@@ -275,7 +283,7 @@ def search_mappings(
         "annotation_id":       annotation_id,
         "source":              source.value,
         "sample_count":        len(allowed_samples),
-        "samples_were_capped": leaf_count is not None and leaf_count > _MANY_LEAVES_THRESHOLD,
+        "samples_were_capped": leaf_count is not None and leaf_count > _MANY_LEAVES_THRESHOLD and not bypass_cap,
         "leaf_count":          leaf_count,
         **paginate(results, page, page_size),
     }

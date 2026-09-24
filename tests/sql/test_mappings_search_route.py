@@ -262,6 +262,24 @@ def test_broad_category_caps_sample_count_and_discloses_it(client):
     assert body["leaf_count"] is not None and body["leaf_count"] > 20
 
 
+def test_bypass_cap_honors_the_full_requested_sample_count(client):
+    """bypass_cap=true is for an explicit, deliberate full export (e.g. CSV
+    download) -- it must skip the broad-category clamp entirely, unlike
+    the default interactive path. Uses a modest sample_count (10, not 128)
+    so this test itself stays fast -- the mechanism being tested is "does
+    the clamp get skipped", not "can it handle the full 128-sample case
+    quickly", which is a separate, already-accepted cost of bypassing."""
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "H", "source": "cog", "sample_count": 10, "bypass_cap": True},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["samples_were_capped"] is False
+    assert body["sample_count"] == 10
+    assert body["leaf_count"] is not None and body["leaf_count"] > 20
+
+
 def test_leaf_id_never_triggers_the_broad_category_cap(client):
     """A single real leaf COG id must always get its full requested
     sample_count -- the cap is specifically for non-leaf ids with many

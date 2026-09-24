@@ -66,6 +66,7 @@ import {
   totalPages,
   buildMappingsUrl,
   buildMappingCsvRow,
+  isLikelyLeafAnnotation,
   MAPPINGS_PAGE_SIZE,
 } from '../components/mappings/MappingsPanel'
 import type { MappingSortCol, MappingSearchRow } from '../types'
@@ -556,6 +557,34 @@ describe('mappings API URL construction', () => {
     // backend's own default (100).
     const url = buildMappingsUrl('K02014', 'kegg', 128, false)
     expect(url).toContain('page_size=200000')
+  })
+
+  it('omits bypass_cap by default, includes it when explicitly requested', () => {
+    expect(buildMappingsUrl('K02014', 'kegg', 128, false)).not.toContain('bypass_cap')
+    expect(buildMappingsUrl('K02014', 'kegg', 128, false, false)).not.toContain('bypass_cap')
+    expect(buildMappingsUrl('00910', 'kegg', 128, false, true)).toContain('bypass_cap=true')
+  })
+})
+
+describe('isLikelyLeafAnnotation (W24 default for "Unique pairs only")', () => {
+  it('recognizes real leaf ids for each source', () => {
+    expect(isLikelyLeafAnnotation('cog', 'COG0055')).toBe(true)
+    expect(isLikelyLeafAnnotation('kegg', 'K02014')).toBe(true)
+    expect(isLikelyLeafAnnotation('enzyme', '7.1.2.2')).toBe(true)
+    expect(isLikelyLeafAnnotation('taxonomy', 'Bacteria;Proteobacteria')).toBe(true)
+  })
+
+  it('recognizes real non-leaf (pathway/class/category) ids for each source', () => {
+    expect(isLikelyLeafAnnotation('cog', 'H')).toBe(false)          // bare category letter
+    expect(isLikelyLeafAnnotation('kegg', '00910')).toBe(false)     // numeric pathway code
+    expect(isLikelyLeafAnnotation('enzyme', '7.1.2')).toBe(false)   // 3-segment EC class
+    expect(isLikelyLeafAnnotation('enzyme', '7.1')).toBe(false)
+    expect(isLikelyLeafAnnotation('enzyme', '7')).toBe(false)
+  })
+
+  it('is case-insensitive for cog/kegg id shape', () => {
+    expect(isLikelyLeafAnnotation('cog', 'cog0055')).toBe(true)
+    expect(isLikelyLeafAnnotation('kegg', 'k02014')).toBe(true)
   })
 })
 

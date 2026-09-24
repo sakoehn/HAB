@@ -5,12 +5,21 @@
 // Data source: /api/mappings/search?annotation_id=…&source=…&sample_count=…&unique_pairs=…
 //
 // Features:
-//   - Adjustable sample count (1–128)
+//   - Adjustable sample count (1–128), clamped server-side for a broad
+//     category (W24, docs/AUDIT-2026-09-22.md) -- reflected back into the
+//     field itself once a load reports it was capped, not just a banner
 //   - Unique pairs toggle (deduplicates taxonomy|kegg|enzyme|cog combinations)
-//     defaults to ON — most researchers want distinct combinations, not every row
+//     -- defaults to OFF for a leaf id (one specific gene: every sample it
+//     appears in is real signal, not noise to collapse) and ON for a
+//     pathway/class/category id (hundreds of genes, where duplicate
+//     combinations really are redundant)
 //   - Sortable columns (date, time, taxonomy, kegg_id, enzyme, cog_id)
 //   - Pagination (100 rows per page)
-//   - CSV export of all sorted rows
+//   - CSV export: uses the already-loaded (possibly capped) rows normally;
+//     for a capped broad-category result, does a separate uncapped fetch
+//     first (bypass_cap=true) so the download isn't limited by the fast
+//     on-screen preview's cap -- a deliberate, explicit action a researcher
+//     opts into and is willing to wait on, unlike passive browsing
 
 import React, { useState, useMemo } from 'react'
 
@@ -105,8 +114,27 @@ export function buildMappingsUrl(
   source:       string,
   sampleCount:  number,
   uniquePairs:  boolean,
+  bypassCap = false,
 ): string {
-  return `/api/mappings/search?annotation_id=${encodeURIComponent(annotationId)}&source=${source}&sample_count=${sampleCount}&unique_pairs=${uniquePairs}&page_size=${MAPPINGS_FETCH_PAGE_SIZE}`
+  const base = `/api/mappings/search?annotation_id=${encodeURIComponent(annotationId)}&source=${source}&sample_count=${sampleCount}&unique_pairs=${uniquePairs}&page_size=${MAPPINGS_FETCH_PAGE_SIZE}`
+  return bypassCap ? `${base}&bypass_cap=true` : base
+}
+
+// Leaf ids have a fixed, well-known shape per source (mirrors the same
+// shape assumptions cache_sql.py's _expand_to_leaf_ids already relies on
+// server-side: a COG category is always a bare letter, never "COG####";
+// a KEGG pathway/BRITE code is numeric, never "K#####"; an Enzyme class
+// has fewer than 4 dot-separated segments). Used only to pick a sensible
+// *default* for the unique-pairs checkbox before the first response comes
+// back -- a wrong guess here doesn't affect correctness, just which
+// starting checkbox state the user sees, and they can always toggle it.
+export function isLikelyLeafAnnotation(source: string, annotationId: string): boolean {
+  switch (source) {
+    case 'cog':     return /^COG\d+$/i.test(annotationId)
+    case 'kegg':    return /^K\d+$/i.test(annotationId)
+    case 'enzyme':  return /^\d+\.\d+\.\d+\.\d+$/.test(annotationId)
+    default:        return true // taxonomy: always a specific node, not a category
+  }
 }
 
 export function buildMappingCsvRow(
@@ -143,7 +171,7 @@ export function MappingsPanel({
 }) {
   const [open, setOpen]               = useState(false)
   const [sampleCount, setSampleCount] = useState(128)
-  const [uniqueOnly, setUniqueOnly]   = useState(true)
+  const [uniqueOnly, setUniqueOnly]   = useState(() => !isLikelyLeafAnnotation(source, annotationId))
   const [allRows, setAllRows]         = useState<MappingSearchRow[]>([])
   const [status, setStatus]           = useState<ApiStatus>('idle')
   const [sortCol, setSortCol]         = useState<MappingSortCol>('date')
@@ -151,10 +179,17 @@ export function MappingsPanel({
   const [page, setPage]               = useState(1)
   const [samplesCapped, setSamplesCapped] = useState(false)
   const [usedSampleCount, setUsedSampleCount] = useState<number | null>(null)
+  // What THIS request actually asked for, captured before sampleCount
+  // itself gets overwritten below to reflect the effective count -- the
+  // capped-notice banner needs both numbers ("5 instead of the requested
+  // 128"), and sampleCount alone can't hold both once it's corrected.
+  const [requestedSampleCount, setRequestedSampleCount] = useState(128)
+  const [csvStatus, setCsvStatus]     = useState<ApiStatus>('idle')
 
   async function loadMappings(count = sampleCount, unique = uniqueOnly) {
     setStatus('loading')
     setPage(1)
+    setRequestedSampleCount(count)
     try {
       const r = await apiFetch<{
         data: MappingSearchRow[]
@@ -167,9 +202,45 @@ export function MappingsPanel({
       setAllRows(r.data ?? [])
       setSamplesCapped(r.samples_were_capped ?? false)
       setUsedSampleCount(r.sample_count ?? null)
+      // Reflect what was ACTUALLY used back into the field itself, not
+      // just a banner below it -- a capped request must not leave the
+      // input silently showing a number that wasn't honored.
+      if (r.samples_were_capped && r.sample_count != null) {
+        setSampleCount(r.sample_count)
+      }
       setStatus('ok')
     } catch {
       setStatus('error')
+    }
+  }
+
+  // Full, uncapped CSV export for a broad category ("all 128 samples",
+  // not whatever number happened to be left in the Samples field after a
+  // cap overwrote it -- see loadMappings). The on-screen table stays
+  // fast/capped (samplesCapped), but a download is an explicit, one-off
+  // action a researcher opts into and is willing to wait on.
+  const FULL_SAMPLE_COUNT = 128
+
+  async function downloadFullCsv() {
+    if (!samplesCapped) {
+      downloadCsv(
+        sortedRows.map(r => buildMappingCsvRow(r, annotationId, source)),
+        `${annotationId}_mappings.csv`,
+      )
+      return
+    }
+    setCsvStatus('loading')
+    try {
+      const r = await apiFetch<{ data: MappingSearchRow[] }>(
+        buildMappingsUrl(annotationId, source, FULL_SAMPLE_COUNT, uniqueOnly, true),
+      )
+      downloadCsv(
+        sortMappingRows(r.data ?? [], sortCol, sortDir).map(row => buildMappingCsvRow(row, annotationId, source)),
+        `${annotationId}_mappings.csv`,
+      )
+      setCsvStatus('ok')
+    } catch {
+      setCsvStatus('error')
     }
   }
 
@@ -257,15 +328,21 @@ export function MappingsPanel({
             {status === 'ok' && allRows.length > 0 && (
               <button
                 className="btn sm"
-                onClick={() => downloadCsv(
-                  sortedRows.map(r => buildMappingCsvRow(r, annotationId, source)),
-                  `${annotationId}_mappings.csv`,
-                )}
+                onClick={downloadFullCsv}
+                disabled={csvStatus === 'loading'}
+                title={samplesCapped ? `Export all ${FULL_SAMPLE_COUNT} samples (not just the ${usedSampleCount ?? requestedSampleCount}-sample preview) -- may take a while` : undefined}
               >
-                ↓ CSV
+                {csvStatus === 'loading'
+                  ? 'Exporting…'
+                  : samplesCapped ? `↓ CSV (all ${FULL_SAMPLE_COUNT})` : '↓ CSV'}
               </button>
             )}
           </div>
+          {csvStatus === 'error' && (
+            <div className="state-box error" style={{ padding: '8px 12px', marginTop: 4 }}>
+              <span>Full CSV export failed -- try again, or export the {usedSampleCount ?? requestedSampleCount}-sample preview by narrowing to a specific gene/id first.</span>
+            </div>
+          )}
 
           {/* ── States ── */}
           {status === 'loading' && (
@@ -273,7 +350,7 @@ export function MappingsPanel({
               <div style={{
                 font: '11px var(--mono)', color: 'var(--text-dim)', marginBottom: 4,
               }}>
-                Searching mappings across {sampleCount} samples…
+                Searching mappings across {requestedSampleCount} samples…
               </div>
               <SkeletonTable columns={6} rows={6} />
             </div>
@@ -288,7 +365,7 @@ export function MappingsPanel({
               <div className="state-icon">∅</div>
               <span>
                 No mappings found for <strong>{annotationId}</strong> in the
-                selected {sampleCount} sample{sampleCount === 1 ? '' : 's'}.
+                selected {requestedSampleCount} sample{requestedSampleCount === 1 ? '' : 's'}.
               </span>
             </div>
           )}
@@ -301,8 +378,9 @@ export function MappingsPanel({
                   <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
                     {annotationId} is a broad category — showing results from
                     only {usedSampleCount ?? '—'} sample{usedSampleCount === 1 ? '' : 's'} instead
-                    of the requested {sampleCount} to keep this fast. Narrow to a
-                    specific gene/id for full sample coverage.
+                    of the requested {requestedSampleCount} to keep this fast. Narrow to a
+                    specific gene/id for full sample coverage, or use "Export all" below
+                    for the full uncapped download.
                   </span>
                 </div>
               )}
