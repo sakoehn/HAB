@@ -297,7 +297,7 @@ export function AboutPage() {
               ['/api/enzyme/path?id=…',
                'Ancestor path (root to node) for an Enzyme (EC) node — every EC id has exactly one real parent, so this is always unambiguous'],
               ['/api/cog/path?id=…',
-               'Ancestor path (root to node) for a COG node — every COG id has exactly one real category, so this is always unambiguous'],
+               'Every real ancestor path (root to node) for a COG node — a COG id can have multiple real categories (e.g. COG0028 is real under both Amino acid transport and metabolism and Coenzyme transport and metabolism)'],
               ['/api/mappings/search?annotation_id=…&source=…',
                'Filtered cross-sample mapping rows'],
               ['/api/annotations/top?source=…&limit=25',

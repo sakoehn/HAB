@@ -17,7 +17,6 @@ import React, { useState, useMemo } from 'react'
 import type { ApiStatus, MappingSortCol, SortDir, MappingSearchRow } from '../../types'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
-import { HelpTooltip } from '../ui/HelpTooltip'
 import { SkeletonTable } from '../ui/Skeleton'
 
 // ── MappingsSortTh ─────────────────────────────────────────────────────────
@@ -93,13 +92,21 @@ export function totalPages(rowCount: number, pageSize: number = MAPPINGS_PAGE_SI
   return Math.ceil(rowCount / pageSize)
 }
 
+// page_size is set far above any realistic result size (the backend
+// additionally clamps sample_count for broad categories -- see
+// SAMPLES_CAPPED_NOTE below -- so even a worst-case broad-category result
+// stays well under this) so the panel keeps fetching everything in one
+// call and sorting/paginating client-side, same as it always has, rather
+// than needing a page-by-page rewrite (W24, docs/AUDIT-2026-09-22.md).
+const MAPPINGS_FETCH_PAGE_SIZE = 200_000
+
 export function buildMappingsUrl(
   annotationId: string,
   source:       string,
   sampleCount:  number,
   uniquePairs:  boolean,
 ): string {
-  return `/api/mappings/search?annotation_id=${encodeURIComponent(annotationId)}&source=${source}&sample_count=${sampleCount}&unique_pairs=${uniquePairs}`
+  return `/api/mappings/search?annotation_id=${encodeURIComponent(annotationId)}&source=${source}&sample_count=${sampleCount}&unique_pairs=${uniquePairs}&page_size=${MAPPINGS_FETCH_PAGE_SIZE}`
 }
 
 export function buildMappingCsvRow(
@@ -142,15 +149,24 @@ export function MappingsPanel({
   const [sortCol, setSortCol]         = useState<MappingSortCol>('date')
   const [sortDir, setSortDir]         = useState<SortDir>('asc')
   const [page, setPage]               = useState(1)
+  const [samplesCapped, setSamplesCapped] = useState(false)
+  const [usedSampleCount, setUsedSampleCount] = useState<number | null>(null)
 
   async function loadMappings(count = sampleCount, unique = uniqueOnly) {
     setStatus('loading')
     setPage(1)
     try {
-      const r = await apiFetch<{ data: MappingSearchRow[]; total: number }>(
+      const r = await apiFetch<{
+        data: MappingSearchRow[]
+        total: number
+        sample_count: number
+        samples_were_capped: boolean
+      }>(
         buildMappingsUrl(annotationId, source, count, unique),
       )
       setAllRows(r.data ?? [])
+      setSamplesCapped(r.samples_were_capped ?? false)
+      setUsedSampleCount(r.sample_count ?? null)
       setStatus('ok')
     } catch {
       setStatus('error')
@@ -271,9 +287,8 @@ export function MappingsPanel({
             <div className="state-box" style={{ padding: '20px' }}>
               <div className="state-icon">∅</div>
               <span>
-                No mappings found for <strong>{annotationId}</strong>.
-                {(source ==='kegg' || source ==='enzyme') &&
-                ( <HelpTooltip text="Category/pathway-level annotations (e.g. a KEGG BRITE category or pathway, or an Enzyme class like 6.3.2) aren't tagged directly on individual genes — only leaf-level IDs (e.g. KO:K02112, EC:7.1.2.2) appear in gene mappings." />)}
+                No mappings found for <strong>{annotationId}</strong> in the
+                selected {sampleCount} sample{sampleCount === 1 ? '' : 's'}.
               </span>
             </div>
           )}
@@ -281,6 +296,16 @@ export function MappingsPanel({
           {/* ── Table ── */}
           {status === 'ok' && allRows.length > 0 && (
             <>
+              {samplesCapped && (
+                <div className="state-box" style={{ padding: '10px 12px', marginBottom: 8 }}>
+                  <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
+                    {annotationId} is a broad category — showing results from
+                    only {usedSampleCount ?? '—'} sample{usedSampleCount === 1 ? '' : 's'} instead
+                    of the requested {sampleCount} to keep this fast. Narrow to a
+                    specific gene/id for full sample coverage.
+                  </span>
+                </div>
+              )}
               <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
                 <table className="mappings-table">
                   <thead>

@@ -314,6 +314,11 @@ def test_search_response_shape_correct(conn):
 
 @pytest.mark.slow
 def test_exact_match_only_search(conn):
+    """No fuzzy/substring matching against a string that isn't a real
+    node at ANY level (leaf or ancestor). "EC:7.1.2" is deliberately NOT
+    used as a negative example here -- it's a real EC class node (see
+    test_enzyme_class_id_is_not_a_substring_match_it_is_a_real_node
+    below), so post-W24 it correctly returns real rows, not []."""
 
     assert get_mappings_sql(conn, "cog", "COG0055")
     assert get_mappings_sql(conn, "cog", "COG005") == []
@@ -322,16 +327,23 @@ def test_exact_match_only_search(conn):
     assert get_mappings_sql(conn, "kegg", "KO:K0211") == []
 
     assert get_mappings_sql(conn, "enzyme", "EC:7.1.2.2")
-    assert get_mappings_sql(conn, "enzyme", "EC:7.1.2") == []
+    assert get_mappings_sql(conn, "enzyme", "EC:99.99.99.99") == []
 
     # nonexistent taxonomy value returns empty, not an error
     assert get_mappings_sql(conn, "taxonomy", "INVALID ID") == []
 
-    assert get_mappings_sql(conn, "kegg", "KO:K02112")
-    assert get_mappings_sql(conn, "kegg", "KO:K0211") == []
 
-    assert get_mappings_sql(conn, "enzyme", "EC:7.1.2.2")
-    assert get_mappings_sql(conn, "enzyme", "EC:7.1.2") == []
+def test_enzyme_class_id_is_not_a_substring_match_it_is_a_real_node(conn):
+    """W24 (docs/AUDIT-2026-09-22.md): "EC:7.1.2" ("Linked to the
+    hydrolysis of a nucleoside triphosphate") is a real, non-leaf EC
+    class with 2 real member leaf ECs -- pre-fix, this returned [] not
+    because the match was correctly rejected, but because the exact-match
+    code could never match anything but a full 4-level leaf EC number.
+    A test previously asserted the pre-fix [] as if it were the intended
+    "reject substrings" behavior; this replaces that assertion."""
+    rows = get_mappings_sql(conn, "enzyme", "EC:7.1.2")
+    assert rows, "EC:7.1.2 is a real EC class and must resolve to its member leaves' mappings"
+    assert all(row["enzyme"] and "7.1.2." in row["enzyme"] for row in rows)
 
 
 @pytest.mark.slow
@@ -352,6 +364,48 @@ def test_bare_id_normalizes_to_prefixed_storage_form(conn):
     prefix_enzyme = get_mappings_sql(conn, "enzyme", "EC:7.1.2.2")
     assert bare_enzyme, "bare EC id must not return zero rows"
     assert len(bare_enzyme) == len(prefix_enzyme)
+
+
+#=============================================================
+#  W24 (docs/AUDIT-2026-09-22.md): non-leaf ids now resolve
+#=============================================================
+# get_mappings_sql used to match ONLY the exact leaf id (kegg_id = ?,
+# ec_id = ?, cog_id = ?), so a pathway/class/category id -- which never
+# appears as any gene's own kegg_id/ec_id/cog_id, only leaf ids do --
+# always returned zero rows, silently and indistinguishably from "this
+# annotation genuinely has no mappings". Pre-fix, the kegg branch built
+# `kegg_id = f"KO:{annotation_id}"` -- for annotation_id="00910" that's
+# the literal string "KO:00910", which mappings.kegg_id never contains
+# (it only ever holds "KO:K#####" leaf forms) -- so this was
+# unconditionally [] for every non-leaf kegg/enzyme/cog id, confirmed by
+# reading the pre-fix query, not just assumed.
+
+def test_kegg_pathway_id_now_returns_its_member_kos_mappings(conn):
+    """00910 (Nitrogen metabolism) is a real KEGG pathway with real member
+    KOs in this dataset -- restricted to one sample to keep this fast."""
+    rows = get_mappings_sql(conn, "kegg", "00910", samples=["3300060410"])
+    assert rows, "a real KEGG pathway id must resolve to its member KOs' mappings, not []"
+    # every returned row's own kegg_id must be a real leaf KO under 00910,
+    # never the bare pathway code itself -- proves this is a real
+    # leaf-level match, not e.g. a substring/accidental hit.
+    assert all(row["kegg_id"] and row["kegg_id"].startswith("KO:K") for row in rows)
+
+
+def test_cog_category_id_now_returns_its_member_cogs_mappings(conn):
+    """H (Coenzyme transport and metabolism) is a real COG category with
+    real member COGs in this dataset."""
+    rows = get_mappings_sql(conn, "cog", "H", samples=["3300060410"])
+    assert rows, "a real COG category letter must resolve to its member COGs' mappings, not []"
+    assert all(row["cog_id"] for row in rows)
+
+
+def test_unknown_nonleaf_id_still_returns_empty_not_an_error(conn):
+    """A string that isn't any real pathway/class/category/leaf id at all
+    must still cleanly return [] -- the expansion must not raise or match
+    everything when given garbage."""
+    assert get_mappings_sql(conn, "kegg", "NOT_A_REAL_KEGG_ID_AT_ALL") == []
+    assert get_mappings_sql(conn, "cog", "NOT_A_REAL_COG_ID_AT_ALL") == []
+    assert get_mappings_sql(conn, "enzyme", "NOT_A_REAL_EC_ID_AT_ALL") == []
 
     # cog has no prefix in raw storage -- bare and "prefixed" are the same
     # string already, included here so the four sources are covered together.

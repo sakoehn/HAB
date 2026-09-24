@@ -177,11 +177,13 @@ export function expandParentLabel(parent: string, source: string): string {
     // "Bacteria;Proteobacteria;Alphaproteobacteria") — show just its bare
     // rank label, not the whole chain. segments[0] is the domain root,
     // which the lineage prefix always carries regardless of how deep it
-    // goes -- see taxonomyRankLabel's comment for why Eukaryota is excluded
-    // from the fixed-depth ladder (W7).
+    // goes. Eukaryota uses the same 8-position Domain..Strain ladder as
+    // every other domain (confirmed live via /taxonomy/children — depth 2
+    // under Eukaryota is real phyla like Annelida, Arthropoda), so it is
+    // not special-cased here (W7).
     const segments = parent.split(';')
     const bareName = segments[segments.length - 1]
-    const rank = segments[0] !== 'Eukaryota' ? TAXONOMY_RANK_NAMES[segments.length] : undefined
+    const rank = TAXONOMY_RANK_NAMES[segments.length]
     return rank ? `${bareName} (${rank})` : bareName
   }
 
@@ -189,10 +191,10 @@ export function expandParentLabel(parent: string, source: string): string {
 }
 
 // ── Taxonomy rank names ─────────────────────────────────────────────────────
-// depth -> rank name, for the 3 domains whose lineages compress cleanly into
-// an 8-level ladder (Bacteria, Archaea, Viruses). Eukaryota lineages have
-// extra intermediate NCBI ranks that don't fit this ladder, so depths for
-// category === 'Eukaryota' fall back to "Level N" instead.
+// depth -> rank name. All four domains (Bacteria, Archaea, Viruses,
+// Eukaryota) use the same 8-position Domain..Strain ladder -- confirmed
+// live via /taxonomy/children: depth 2 under Eukaryota is real phyla
+// (Annelida, Arthropoda, Chordata, ...), same as every other domain (W7).
 
 export const TAXONOMY_RANK_NAMES: Record<number, string> = {
   1: 'Domain',
@@ -207,18 +209,13 @@ export const TAXONOMY_RANK_NAMES: Record<number, string> = {
 
 // domain: the taxon's domain root ("Bacteria" | "Archaea" | "Eukaryota" |
 // "Viruses"), when known -- e.g. via taxonomyDomainFromId(annotationId) or
-// a node/row's own `category` field. Optional and defaults to applying the
-// fixed-depth ladder: callers that only have a bare depth number with no
-// domain in scope (e.g. a rank-FILTER pill spanning many taxa of possibly
-// different, mixed domains at once) can't resolve this correctly either
-// way, so they're left on the old best-effort behavior rather than blocked
-// on passing something that isn't meaningfully available (W7).
-export function taxonomyRankLabel(depth: number | null, domain?: string | null): string {
+// a node/row's own `category` field. Currently unused by the ladder lookup
+// itself (every domain uses the same ladder), kept in the signature since
+// callers already resolve and pass it and a future domain-specific rank
+// naming difference may need it again.
+export function taxonomyRankLabel(depth: number | null, _domain?: string | null): string {
   if (depth == null) return 'Unknown rank'
-  if (domain !== 'Eukaryota' && TAXONOMY_RANK_NAMES[depth]) {
-    return TAXONOMY_RANK_NAMES[depth]
-  }
-  return `Level ${depth}`
+  return TAXONOMY_RANK_NAMES[depth] ?? `Level ${depth}`
 }
 
 // ── Taxonomy-aware primary label ────────────────────────────────────────────

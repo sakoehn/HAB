@@ -519,17 +519,19 @@ def get_cog_children_sql(conn: sqlite3.Connection, parent_id: str | None, depth:
 def get_cog_path_sql(conn: sqlite3.Connection, annotation_id: str) -> dict | None:
     """Return every real ancestor path (root to node) for a COG node, for
     auto-expanding/highlighting a node in the hierarchy popup. Same
-    GROUP BY-deduplicated shape as get_kegg_path_sql for response parity,
-    even though every COG id has exactly one real category (no KEGG-style
-    multi-parent case) -- `paths` will always have exactly 1 entry here.
+    GROUP BY-deduplicated shape as get_kegg_path_sql for response parity --
+    a COG id can have multiple real categories (E17,
+    docs/AUDIT-2026-09-22.md; e.g. COG0028 is real under both E and H), so
+    `paths` can have more than 1 entry, same as KEGG's multi-parent case.
 
     Args:
         conn: Open SQLite connection.
         annotation_id: A COG annotation id, e.g. 'H' or 'COG0001'.
 
     Returns:
-        {"annotation_id": ..., "paths": [[{"annotation_id","name","depth"}, ...]],
-         "path_count": 1}, or None if annotation_id isn't a real COG node at all.
+        {"annotation_id": ..., "paths": [[{"annotation_id","name","depth"}, ...], ...],
+         "path_count": <number of real categories this id has>}, or None if
+        annotation_id isn't a real COG node at all.
     """
     depth = _cog_node_depth(conn, annotation_id)
     if depth is None:
@@ -796,19 +798,78 @@ def _sort_group_concat(value: str | None) -> str | None:
     return ",".join(sorted(value.split(","))) if value else value
 
 
+
+# Non-leaf mapping searches (a KEGG pathway, an Enzyme class, a COG
+# category) can expand to hundreds of real leaf ids -- see
+# _expand_to_leaf_ids. Above this many resolved leaves, get_mappings_sql
+# clamps how many samples it will scan regardless of the caller's
+# requested sample count, the same way /annotations/top's sample_count
+# already reports back the effective count rather than assuming the
+# requested one was honored (W24, docs/AUDIT-2026-09-22.md). Sized from
+# direct measurement: a single leaf (COG0055) is 29,663 raw rows across
+# all 128 samples and already completes in ~0.85-2.3s (see below); a
+# 269-member category is 3,015,883 rows at 128 samples but a comparable
+# ~115K at 5 samples -- kept in the same ballpark as the proven-OK case.
+_MANY_LEAVES_THRESHOLD = 20
+_MAX_SAMPLES_FOR_MANY_LEAVES = 5
+
+
+def _expand_to_leaf_ids(conn: sqlite3.Connection, source: str, annotation_id: str) -> list[str]:
+    """Resolve annotation_id to every real leaf id it reaches -- itself,
+    if it's already a leaf, or every descendant leaf if it's a pathway/
+    class/category node. Unifies the leaf and non-leaf cases: a leaf id
+    only ever matches its own leaf column, so this returns exactly [id]
+    for a leaf without needing a separate branch (W24,
+    docs/AUDIT-2026-09-22.md -- the pre-fix code only ever matched a leaf
+    id, so a pathway/class/category id always resolved to zero rows).
+
+    Args:
+        conn: Open SQLite connection.
+        source: "kegg", "cog", or "enzyme" (taxonomy already does
+            prefix matching and doesn't go through this).
+        annotation_id: A leaf or non-leaf annotation id for that source.
+
+    Returns:
+        Sorted list of real leaf ids (bare, no KO:/EC: prefix). Empty if
+        annotation_id isn't a real node at all.
+    """
+    if source == "cog":
+        rows = conn.execute(
+            "SELECT DISTINCT b_id FROM cog_paths WHERE a_id = ? OR b_id = ?",
+            (annotation_id, annotation_id),
+        ).fetchall()
+        return sorted(row[0] for row in rows)
+
+    table = "kegg_paths" if source == "kegg" else "enzyme_paths"
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT d_id FROM {table}
+        WHERE (a_id = ? OR b_id = ? OR c_id = ? OR d_id = ?) AND d_id IS NOT NULL
+        """,
+        (annotation_id, annotation_id, annotation_id, annotation_id),
+    ).fetchall()
+    return sorted(row[0] for row in rows)
+
+
 def get_mappings_sql(
     conn: sqlite3.Connection, source: str, annotation_id: str,
     samples: list[str] | None = None,
 ) -> list[dict]:
     """Return every mapping row (gene/sample/scaffold, plus its
-    annotations across all four sources) whose `source` annotation
-    exactly matches `annotation_id`.
+    annotations across all four sources) reachable from `annotation_id`.
+
+    For kegg/enzyme/cog, annotation_id no longer has to be a leaf id --
+    a pathway, EC class, or COG category expands to every real leaf id
+    beneath it via _expand_to_leaf_ids and matches any of them (W24,
+    docs/AUDIT-2026-09-22.md). A leaf id still matches only itself, same
+    as before.
 
     Args:
         conn: Open SQLite connection.
         source: Annotation source to match on ("cog", "kegg", "enzyme",
             "taxonomy").
-        annotation_id: Exact ID to match (not a substring search).
+        annotation_id: Leaf or non-leaf id to match (not a substring
+            search).
         samples: If given, restrict to these sample names at the SQL level
             instead of fetching every matching row for every sample and
             filtering in Python afterward. Found via direct measurement
@@ -818,7 +879,11 @@ def get_mappings_sql(
             caller-chosen subset (its sample_count param) -- fetching and
             GROUP_CONCAT-ing all of them regardless, every call, was pure
             wasted work. An empty list returns [] immediately (no matching
-            samples requested, not "no filter").
+            samples requested, not "no filter"). When annotation_id
+            expands to more than _MANY_LEAVES_THRESHOLD real leaves, this
+            is additionally clamped to at most _MAX_SAMPLES_FOR_MANY_LEAVES
+            entries regardless of how many were passed in -- see the
+            module-level comment above _MANY_LEAVES_THRESHOLD.
 
     Returns:
         List of dicts keyed sample, gene_id, contig_id, kegg_id, cog_id,
@@ -829,6 +894,25 @@ def get_mappings_sql(
     """
     if samples is not None and not samples:
         return []
+
+    if source in ("kegg", "cog", "enzyme"):
+        # kegg_paths/enzyme_paths store bare ids at every level (no "KO:"/
+        # "EC:" prefix, same as e.g. a bare pathway code) -- strip it here
+        # so a caller passing either form (both are real call patterns,
+        # see test_bare_id_normalizes_to_prefixed_storage_form) resolves
+        # the same way. The prefix is re-added below when matching against
+        # mappings.kegg_id / gene_enzyme.ec_id, which DO store it.
+        expand_id = annotation_id
+        if source == "kegg" and expand_id.startswith("KO:"):
+            expand_id = expand_id[len("KO:"):]
+        elif source == "enzyme" and expand_id.startswith("EC:"):
+            expand_id = expand_id[len("EC:"):]
+
+        leaf_ids = _expand_to_leaf_ids(conn, source, expand_id)
+        if not leaf_ids:
+            return []
+        if samples is not None and len(leaf_ids) > _MANY_LEAVES_THRESHOLD:
+            samples = samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
 
     # Pushed into the subquery itself (not just the outer WHERE) so it
     # actually narrows what the subquery's JOIN has to scan, rather than
@@ -843,30 +927,33 @@ def get_mappings_sql(
         sample_filter_params = tuple(samples)
 
     if source == "kegg":
-        kegg_id = annotation_id if annotation_id.startswith("KO:") else f"KO:{annotation_id}"
+        kegg_ids = [f"KO:{leaf}" for leaf in leaf_ids]
+        placeholders = ", ".join("?" * len(kegg_ids))
         where_sql = f"""
             SELECT id
             FROM mappings
-            WHERE kegg_id = ?{sample_filter_sql}
+            WHERE kegg_id IN ({placeholders}){sample_filter_sql}
         """
-        where_params = (kegg_id,) + sample_filter_params
+        where_params = tuple(kegg_ids) + sample_filter_params
     elif source == "cog":
+        placeholders = ", ".join("?" * len(leaf_ids))
         where_sql = f"""
             SELECT gene_cog.mapping_id AS id
             FROM mappings
             JOIN gene_cog ON gene_cog.mapping_id = mappings.id
-            WHERE gene_cog.cog_id = ?{sample_filter_sql}
+            WHERE gene_cog.cog_id IN ({placeholders}){sample_filter_sql}
         """
-        where_params = (annotation_id,) + sample_filter_params
+        where_params = tuple(leaf_ids) + sample_filter_params
     elif source == "enzyme":
-        ec_id = annotation_id if annotation_id.startswith("EC:") else f"EC:{annotation_id}"
+        ec_ids = [f"EC:{leaf}" for leaf in leaf_ids]
+        placeholders = ", ".join("?" * len(ec_ids))
         where_sql = f"""
                 SELECT gene_enzyme.mapping_id AS id
                 FROM mappings
                 JOIN gene_enzyme ON gene_enzyme.mapping_id = mappings.id
-                WHERE gene_enzyme.ec_id = ?{sample_filter_sql}
+                WHERE gene_enzyme.ec_id IN ({placeholders}){sample_filter_sql}
         """
-        where_params = (ec_id,) + sample_filter_params
+        where_params = tuple(ec_ids) + sample_filter_params
     elif source == "taxonomy":
         where_sql = f"""
             SELECT id

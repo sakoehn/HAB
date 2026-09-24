@@ -90,3 +90,23 @@ def test_cog_path_returns_full_chain_with_path_count_one(client):
 def test_cog_path_unknown_id_returns_404(client):
     resp = client.get("/cog/path", params={"id": "NOT_A_REAL_COG_ID"})
     assert resp.status_code == 404
+
+
+def test_cog_path_resolves_multicategory_node_to_all_real_paths(client):
+    """COG0028 is confirmed real under both category E (Amino acid
+    transport and metabolism) and category H (Coenzyme transport and
+    metabolism) on NCBI's own site (E17, docs/AUDIT-2026-09-22.md) --
+    before that fix, cog_paths could only ever hold one of the two, so
+    this route could never have returned both. Skips if this dataset
+    doesn't happen to have COG0028 annotated."""
+    resp = client.get("/cog/path", params={"id": "COG0028"})
+    if resp.status_code == 404:
+        pytest.skip("COG0028 not present in this dataset's annotation_catalog")
+    assert resp.status_code == 200
+    body = resp.json()
+    categories = {path[0]["annotation_id"] for path in body["paths"]}
+    assert categories == {"E", "H"}, (
+        f"expected COG0028 under both E and H, got {categories} -- "
+        "if this is a single category, cog_paths hasn't been regenerated "
+        "from the E17-fixed notebook yet (Phase 3)"
+    )

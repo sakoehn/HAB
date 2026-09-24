@@ -32,7 +32,10 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from .cache_sql import (
     _cog_node_depth,
     _enzyme_node_exists,
+    _expand_to_leaf_ids,
     _kegg_node_depth,
+    _MANY_LEAVES_THRESHOLD,
+    _MAX_SAMPLES_FOR_MANY_LEAVES,
     get_annotation_scaffolds_sql,
     get_annotation_series_sql,
     get_all_sample_names_sql,
@@ -217,11 +220,25 @@ def search_mappings(
     source: AnnotationSource = Query(..., description="Source type: kegg, cog, enzyme, taxonomy"),
     sample_count: int = Query(128, ge=1, le=128),
     unique_pairs: bool = Query(False),
+    page: int = 1, page_size: int = 100,
 ):
     """
     Search mappings for a given annotation ID and source.
 
-    Results are sorted chronologically and limited to sample_count samples.
+    For kegg/enzyme/cog, annotation_id can be a pathway/class/category
+    node, not just a leaf id -- it's expanded to every real leaf id
+    beneath it (W24, docs/AUDIT-2026-09-22.md; e.g. source=kegg,
+    annotation_id=00910 now returns every gene mapped to any KO under
+    Nitrogen metabolism, not zero rows).
+
+    Results are deduplicated (if unique_pairs), sorted chronologically,
+    then paginated. When annotation_id resolves to more than
+    _MANY_LEAVES_THRESHOLD real leaves, sample_count is additionally
+    clamped to _MAX_SAMPLES_FOR_MANY_LEAVES regardless of what was
+    requested -- a broad category times all 128 samples can be millions
+    of raw rows (measured: a 269-member COG category is 3,015,883 rows at
+    128 samples). The response's sample_count always reflects what was
+    actually used, not what was requested.
     """
     samples = get_all_sample_names_sql(request.app.state.sql_conn)
     if not samples:
@@ -229,6 +246,13 @@ def search_mappings(
 
     samples_sorted  = sorted(samples, key=timepoint_sort_key)
     allowed_samples = samples_sorted[:sample_count]
+
+    leaf_count = None
+    if source.value in ("kegg", "cog", "enzyme"):
+        leaf_count = len(_expand_to_leaf_ids(request.app.state.sql_conn, source.value, annotation_id))
+        if leaf_count > _MANY_LEAVES_THRESHOLD:
+            allowed_samples = allowed_samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
+
     seen_keys: set[str] = set()
 
     mappings = get_mappings_sql(
@@ -248,11 +272,12 @@ def search_mappings(
 
     results.sort(key=lambda r: timepoint_dt_sort_key((r.get("timepoint") or {}).get("datetime")))
     return {
-        "annotation_id": annotation_id,
-        "source":        source.value,
-        "sample_count":  min(sample_count, len(samples)),
-        "total":         len(results),
-        "data":          results,
+        "annotation_id":       annotation_id,
+        "source":              source.value,
+        "sample_count":        len(allowed_samples),
+        "samples_were_capped": leaf_count is not None and leaf_count > _MANY_LEAVES_THRESHOLD,
+        "leaf_count":          leaf_count,
+        **paginate(results, page, page_size),
     }
 
 
@@ -448,9 +473,11 @@ async def cog_children(request: Request, parent: str | None = Query(None)):
     production and conversion, etc.).
 
     SQL backend only, same reasoning as /kegg/children -- cog_paths (see
-    migrate_cog_paths_to_sql.py) has no JSON-backend equivalent. Unlike
-    KEGG, every COG id has exactly one real category, and the hierarchy
-    is only 2 levels deep (category -> specific COG id), not 4.
+    migrate_cog_paths_to_sql.py) has no JSON-backend equivalent. A COG id
+    can belong to more than one category, same as KEGG (E17,
+    docs/AUDIT-2026-09-22.md) -- cog_paths has one row per real
+    (category, COG) membership. The hierarchy is only 2 levels deep
+    (category -> specific COG id), not 4.
     """
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="COG hierarchy browsing requires DATA_BACKEND=sql")

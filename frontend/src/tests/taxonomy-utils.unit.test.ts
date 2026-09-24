@@ -308,10 +308,13 @@ describe('taxonomyDomainFromId', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// taxonomyRankLabel (W7) -- Eukaryota lineages carry extra NCBI ranks that
-// don't fit the fixed 8-level ladder (Domain..Strain), so a depth number
-// alone is ambiguous: depth 3 means "Class" for Bacteria but something else
-// for Eukaryota. The domain must be passed in to disambiguate.
+// taxonomyRankLabel -- all four domains (Bacteria, Archaea, Viruses,
+// Eukaryota) use the same fixed 8-level ladder (Domain..Strain). Confirmed
+// live (2026-09-22 re-audit) via /taxonomy/children: depth 2 under
+// Eukaryota is real phyla (Annelida, Arthropoda, Chordata, ...), same as
+// every other domain. An earlier fix pass special-cased Eukaryota to
+// "Level N" based on a premise that didn't hold up (W7 regression) --
+// reverted.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('taxonomyRankLabel', () => {
@@ -332,10 +335,10 @@ describe('taxonomyRankLabel', () => {
     expect(taxonomyRankLabel(8, 'Viruses')).toBe('Strain')
   })
 
-  it('Eukaryota: always falls back to "Level N", never the ladder (the actual W7 bug)', () => {
-    expect(taxonomyRankLabel(3, 'Eukaryota')).toBe('Level 3')
-    expect(taxonomyRankLabel(6, 'Eukaryota')).toBe('Level 6')
-    expect(taxonomyRankLabel(1, 'Eukaryota')).toBe('Level 1')
+  it('Eukaryota: uses the same fixed ladder as every other domain (W7)', () => {
+    expect(taxonomyRankLabel(3, 'Eukaryota')).toBe('Class')
+    expect(taxonomyRankLabel(6, 'Eukaryota')).toBe('Genus')
+    expect(taxonomyRankLabel(1, 'Eukaryota')).toBe('Domain')
   })
 
   it('depth beyond the ladder (9+): "Level N" regardless of domain', () => {
@@ -351,29 +354,27 @@ describe('taxonomyRankLabel', () => {
     )).toBe('Class')
     expect(taxonomyRankLabel(
       taxonomyDepthFromId(eukaryotaId), taxonomyDomainFromId(eukaryotaId),
-    )).toBe('Level 3')
+    )).toBe('Class')
   })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// expandParentLabel — taxonomy branch (W7): same ladder-vs-Eukaryota bug as
-// taxonomyRankLabel, found incidentally while fixing it (same file, same
-// root cause: TAXONOMY_RANK_NAMES[segments.length] with no domain check).
+// expandParentLabel — taxonomy branch (W7): uses the same fixed ladder for
+// every domain, including Eukaryota (see taxonomyRankLabel above).
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('expandParentLabel — taxonomy Eukaryota regression (W7)', () => {
-  it('Bacteria ancestor still gets its rank suffix', () => {
+describe('expandParentLabel — taxonomy rank suffix (W7)', () => {
+  it('Bacteria ancestor gets its rank suffix', () => {
     expect(expandParentLabel('Bacteria;Proteobacteria;Alphaproteobacteria', 'taxonomy'))
       .toBe('Alphaproteobacteria (Class)')
   })
 
-  it('Eukaryota ancestor at the same depth gets no rank suffix, not a wrong one', () => {
+  it('Eukaryota ancestor at the same depth gets the same rank suffix', () => {
     const result = expandParentLabel('Eukaryota;Metazoa;Chordata', 'taxonomy')
-    expect(result).toBe('Chordata')
-    expect(result).not.toContain('Class')
+    expect(result).toBe('Chordata (Class)')
   })
 
-  it('Eukaryota domain-level id: bare name, no "(Domain)" suffix', () => {
-    expect(expandParentLabel('Eukaryota', 'taxonomy')).toBe('Eukaryota')
+  it('Eukaryota domain-level id: gets the "(Domain)" suffix, same as any other domain', () => {
+    expect(expandParentLabel('Eukaryota', 'taxonomy')).toBe('Eukaryota (Domain)')
   })
 })

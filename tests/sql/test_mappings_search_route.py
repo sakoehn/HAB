@@ -71,11 +71,23 @@ def test_search_returns_correct_shape(client):
     assert resp.status_code == 200
     body = resp.json()
 
-    assert set(body.keys()) == {"annotation_id", "source", "sample_count", "total", "data"}
+    # W24 (docs/AUDIT-2026-09-22.md) added samples_were_capped/leaf_count
+    # (non-leaf-id disclosure) and real page/page_size/total_pages
+    # pagination alongside the pre-existing keys.
+    assert set(body.keys()) == {
+        "annotation_id", "source", "sample_count", "samples_were_capped",
+        "leaf_count", "total", "page", "page_size", "total_pages", "data",
+    }
     assert body["annotation_id"] == "COG0055"
     assert body["source"] == "cog"
-    assert body["total"] == len(body["data"])
+    # total is the full match count across all pages; data is just page 1
+    # (default page_size=100) -- these legitimately differ once real
+    # pagination exists (W24), unlike the pre-pagination response where
+    # `data` always held everything.
+    assert len(body["data"]) == min(body["total"], body["page_size"])
     assert body["data"], "expected at least one matching row"
+    assert body["samples_were_capped"] is False, "a single real leaf id must never trigger the broad-category cap"
+    assert body["leaf_count"] == 1
 
     for row in body["data"]:
         assert set(row.keys()) == EXPECTED_ROW_KEYS
@@ -99,7 +111,7 @@ def test_search_returns_correct_shape_for_kegg_and_enzyme(client):
 
         assert body["annotation_id"] == bare_id
         assert body["source"] == source
-        assert body["total"] == len(body["data"])
+        assert len(body["data"]) == min(body["total"], body["page_size"])
         assert body["data"], f"expected at least one matching row for source={source}, id={bare_id}"
 
         for row in body["data"]:
@@ -208,3 +220,58 @@ def test_exact_match_rejects_substring_query(client):
     body = resp.json()
     assert resp.status_code == 200
     assert body['total'] == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# W24 (docs/AUDIT-2026-09-22.md): non-leaf (pathway/class/category) ids
+# now resolve to their member leaves' mappings at the route level, and a
+# broad category clamps sample_count with a disclosed leaf_count/
+# samples_were_capped rather than silently fetching millions of rows.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_kegg_pathway_search_returns_real_rows_at_the_route_level(client):
+    """00910 (Nitrogen metabolism) is a real KEGG pathway -- pre-fix, this
+    exact route call always returned total=0 (kegg_id was built as
+    "KO:00910", which mappings.kegg_id never contains)."""
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "00910", "source": "kegg", "sample_count": 1},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] > 0, "a real KEGG pathway id must return real mappings, not 0"
+    assert body["leaf_count"] is not None and body["leaf_count"] > 1
+    for row in body["data"]:
+        assert row["kegg_id"].startswith("KO:K")
+
+
+def test_broad_category_caps_sample_count_and_discloses_it(client):
+    """H (Coenzyme transport and metabolism) resolves to well over
+    _MANY_LEAVES_THRESHOLD (20) real COGs -- requesting all 128 samples
+    must come back capped to _MAX_SAMPLES_FOR_MANY_LEAVES (5), with
+    samples_were_capped=True so the frontend can disclose it (rather than
+    the caller silently getting a partial answer with no indication)."""
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "H", "source": "cog", "sample_count": 128},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["samples_were_capped"] is True
+    assert body["sample_count"] == 5
+    assert body["leaf_count"] is not None and body["leaf_count"] > 20
+
+
+def test_leaf_id_never_triggers_the_broad_category_cap(client):
+    """A single real leaf COG id must always get its full requested
+    sample_count -- the cap is specifically for non-leaf ids with many
+    real member leaves, not for ordinary leaf searches."""
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "COG0055", "source": "cog", "sample_count": 128},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["samples_were_capped"] is False
+    assert body["sample_count"] == 128
+    assert body["leaf_count"] == 1

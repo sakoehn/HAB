@@ -811,15 +811,46 @@ def test_cog_paths_every_node_id_is_a_real_annotation(conn):
     assert path_ids.issubset(real_ids)
 
 
-def test_cog_paths_row_count_matches_annotation_catalog_depth2_count(conn):
-    """cog_paths is one row per real COG id (not per category) -- its total
-    row count must exactly match annotation_catalog's real depth=2 COG
-    count, confirming the join neither drops nor duplicates rows."""
-    catalog_count = conn.execute(
-        "SELECT COUNT(*) FROM annotation_catalog WHERE source = 'cog' AND depth = 2"
-    ).fetchone()[0]
-    paths_count = conn.execute("SELECT COUNT(*) FROM cog_paths").fetchone()[0]
-    assert paths_count == catalog_count
+def test_cog_paths_distinct_leaf_count_matches_annotation_catalog_depth2_count(conn):
+    """cog_paths can have MORE than one row per real COG id now (E17,
+    docs/AUDIT-2026-09-22.md -- a COG can belong to several NCBI
+    categories), so total row count is no longer the right invariant.
+    What must still hold: every real COG id has at least one row, and no
+    id appears that isn't real -- i.e. the set of distinct b_id values
+    exactly matches annotation_catalog's real depth=2 COG ids."""
+    catalog_ids = {
+        row[0] for row in conn.execute(
+            "SELECT annotation_id FROM annotation_catalog WHERE source = 'cog' AND depth = 2"
+        )
+    }
+    path_leaf_ids = {
+        row[0] for row in conn.execute("SELECT DISTINCT b_id FROM cog_paths")
+    }
+    assert path_leaf_ids == catalog_ids
+
+
+def test_cog_paths_has_one_row_per_membership_for_a_real_multi_category_cog(conn):
+    """COG0028 is confirmed real under both category E (Amino acid
+    transport and metabolism) and category H (Coenzyme transport and
+    metabolism) on NCBI's own site -- before the E17 fix, cog_paths could
+    only ever hold one of those two rows (last-scraped-page-wins). Skips
+    if this dataset doesn't happen to have COG0028 annotated (not every
+    real COG id is necessarily observed in every 128-sample dataset)."""
+    catalog_has_it = conn.execute(
+        "SELECT 1 FROM annotation_catalog WHERE source = 'cog' AND annotation_id = 'COG0028'"
+    ).fetchone()
+    if not catalog_has_it:
+        pytest.skip("COG0028 not present in this dataset's annotation_catalog")
+
+    rows = conn.execute(
+        "SELECT a_id FROM cog_paths WHERE b_id = 'COG0028'"
+    ).fetchall()
+    categories = {row[0] for row in rows}
+    assert categories == {"E", "H"}, (
+        f"expected COG0028 under both E and H, got {categories} -- "
+        "if this is {{'H'}} or {{'E'}} alone, cog_paths hasn't been "
+        "regenerated from the E17-fixed notebook yet (Phase 3)"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -1,37 +1,29 @@
 """
 migrate_cog_paths_to_sql.py
 =============================
-Populates `cog_paths` (see create_sql_schema.py) -- one row per real COG
-id, joining its category letter+name (depth=1) to its own id+name
-(depth=2), read entirely from `annotation_catalog` (source='cog').
+Populates `cog_paths` (see create_sql_schema.py) -- one row per real
+(category letter, COG id) membership, parsed directly from
+DataStructures/COG/cog_categories.json.
 
-Unlike KEGG/Enzyme, COG has no downloadable BRITE-style reference file to
-parse -- the category assignment for each COG id is scraped from NCBI
-per-category pages inside EGC_COG_TREE.ipynb itself (see project memory,
-E15) and already baked into the regenerated annotation JSONs.
-annotation_catalog is therefore both the source of truth AND the
-real-ids filter here, not just a validity filter the way it is for
-migrate_kegg_paths_to_sql.py / migrate_enzyme_paths_to_sql.py.
+E17 (docs/AUDIT-2026-09-22.md): a COG id can belong to more than one of
+NCBI's 26 categories (confirmed: 400 of ~5,000 COGs). cog_categories.json
+is written by EGC_COG_TREE.ipynb's scraping cell and already contains one
+row per real membership -- unlike the original version of this script,
+this does NOT read annotation_catalog.parent, which is a single TEXT
+column and can only ever express one category per COG. That mirrors how
+migrate_kegg_paths_to_sql.py reads ko00001.keg directly instead of
+annotation_catalog's single-valued parent column, for the same reason
+(KEGG nodes can have multiple real parents too, see E14/CR3).
 
-COG's hierarchy is exactly 2 levels (category -> specific COG id), not 4
--- a category letter has no further real subdivision the way KEGG
-pathways or EC numbers do.
+annotation_catalog is still used as the "is this COG id actually real in
+our dataset" filter -- a membership row is only kept if its COG id is a
+real depth=2 leaf in annotation_catalog(source='cog').
 
-A depth=2 COG row's own `parent` column (see
-migrate_annotations_to_sql.build_annotation_series_row) holds the
-category's own letter/id (e.g. "C"), not its display name -- CR3
-(docs/AUDIT.md) switched this from parent_name to parent_id for
-kegg/enzyme/cog alike, specifically so parent always matches another
-row's own annotation_id (needed by both the correlation family-exclusion
-tree-walk and this join). So the join below is a plain id-to-id match:
-category.annotation_id = cog.parent.
-
-IMPORTANT: annotation_catalog must be current before running this -- if
-it still reflects a stale/pre-fix regeneration, this script will find
-zero depth=1 category rows to join against (they didn't exist before the
-E15 fix was resynced) and produce an empty table. Run
-migrate_annotations_to_sql.py + migrate_annotation_catalog_sql.py first
-if there's any doubt.
+IMPORTANT: both annotation_catalog and cog_categories.json must be current
+before running this -- if annotation_catalog still reflects a stale/pre-fix
+regeneration, this script will find zero real COG ids to keep and produce
+an empty table. Run migrate_annotations_to_sql.py +
+migrate_annotation_catalog_sql.py first if there's any doubt.
 
 Safe to re-run: DELETE-then-reinsert on every run, same reasoning as
 migrate_kegg_paths_to_sql.py -- this table isn't scoped per-sample, so
@@ -41,43 +33,65 @@ Usage (from FastAPI/):
     python scripts/migrate_cog_paths_to_sql.py
 """
 
+import json
 import os
 import sqlite3
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from api.config import SQLITE_DB_PATH  # pylint: disable=wrong-import-position,import-error
+from api.config import COG_DIR, SQLITE_DB_PATH  # pylint: disable=wrong-import-position,import-error
+
+COG_CATEGORIES_FILE = os.path.join(COG_DIR, "cog_categories.json")
 
 
-def iter_cog_path_rows(conn: sqlite3.Connection):
-    """Join every real depth=2 COG id to its depth=1 category, both read
-    from annotation_catalog(source='cog').
+def load_real_cog_leaf_ids(conn: sqlite3.Connection) -> set[str]:
+    """Return every COG id that's actually a real depth=2 leaf in this
+    dataset -- i.e. present in annotation_catalog, meaning at least one
+    real gene's rollup reached it in at least one sample.
 
     Args:
         conn: Open SQLite connection.
+
+    Returns:
+        Set of COG id strings (e.g. "COG0055").
+    """
+    cursor = conn.execute(
+        "SELECT annotation_id FROM annotation_catalog WHERE source='cog' AND depth=2"
+    )
+    return {row[0] for row in cursor.fetchall()}
+
+
+def iter_cog_path_rows(categories_file_path: str, valid_leaf_ids: set[str]):
+    """Read cog_categories.json and yield one row dict per (category, COG)
+    membership whose COG id is in `valid_leaf_ids`.
+
+    Args:
+        categories_file_path: Path to cog_categories.json (written by
+            EGC_COG_TREE.ipynb).
+        valid_leaf_ids: Real COG leaf ids from load_real_cog_leaf_ids() --
+            a membership row is only yielded if its b_id is in this set.
 
     Yields:
         Dicts with keys a_id, a_name (category letter, category name),
         b_id, b_name (COG id, COG name), and full_path ("a_id|b_id").
     """
-    query = """
-        SELECT category.annotation_id, category.name, cog.annotation_id, cog.name
-        FROM annotation_catalog AS cog
-        JOIN annotation_catalog AS category
-            ON category.source = 'cog' AND category.depth = 1 AND category.annotation_id = cog.parent
-        WHERE cog.source = 'cog' AND cog.depth = 2
-    """
-    for a_id, a_name, b_id, b_name in conn.execute(query):
+    with open(categories_file_path, encoding="utf-8") as f:
+        rows = json.load(f)
+
+    for row in rows:
+        if row["b_id"] not in valid_leaf_ids:
+            continue
         yield {
-            "a_id": a_id, "a_name": a_name,
-            "b_id": b_id, "b_name": b_name,
-            "full_path": f"{a_id}|{b_id}",
+            "a_id": row["a_id"], "a_name": row["a_name"],
+            "b_id": row["b_id"], "b_name": row["b_name"],
+            "full_path": f"{row['a_id']}|{row['b_id']}",
         }
 
 
 def populate_cog_paths(conn: sqlite3.Connection) -> int:
-    """Rebuild cog_paths from annotation_catalog.
+    """Rebuild cog_paths from cog_categories.json, filtered to real
+    annotations.
 
     Args:
         conn: Open SQLite connection.
@@ -85,7 +99,8 @@ def populate_cog_paths(conn: sqlite3.Connection) -> int:
     Returns:
         Number of rows inserted.
     """
-    rows = list(iter_cog_path_rows(conn))
+    valid_leaf_ids = load_real_cog_leaf_ids(conn)
+    rows = list(iter_cog_path_rows(COG_CATEGORIES_FILE, valid_leaf_ids))
 
     cursor = conn.cursor()
     cursor.execute("DELETE FROM cog_paths")

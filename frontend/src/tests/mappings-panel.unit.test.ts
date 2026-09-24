@@ -547,6 +547,16 @@ describe('mappings API URL construction', () => {
     const url = buildMappingsUrl('Tenacibaculum maritimum', 'taxonomy', 128, false)
     expect(url).toContain('Tenacibaculum%20maritimum')
   })
+
+  it('requests a page_size far above any realistic result count, so the panel keeps fetching everything in one call (W24)', () => {
+    // The backend now supports real page/page_size (docs/AUDIT-2026-09-22.md),
+    // but the panel still does its own client-side sort/paginate over the
+    // full result set -- passing a large page_size here is what keeps that
+    // existing behavior working instead of silently truncating to the
+    // backend's own default (100).
+    const url = buildMappingsUrl('K02014', 'kegg', 128, false)
+    expect(url).toContain('page_size=200000')
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

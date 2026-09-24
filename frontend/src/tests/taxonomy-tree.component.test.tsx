@@ -68,17 +68,19 @@ describe('TaxonomyTree — rendering', () => {
     expect(screen.getByText('Phylum')).toBeInTheDocument()
   })
 
-  it('W7: Eukaryota gets a generic "Level N" label, not the prokaryote ladder', async () => {
-    // Eukaryota lineages carry extra NCBI ranks that don't fit the fixed
-    // 8-level ladder (Domain..Strain) the other 3 domains use, so depth 2
-    // must NOT be labelled "Phylum" here the way it would be for Bacteria.
+  it('W7: Eukaryota uses the same rank ladder as every other domain', async () => {
+    // Confirmed live (2026-09-22 re-audit) via /taxonomy/children: depth 2
+    // under Eukaryota is real phyla (Annelida, Arthropoda, Chordata, ...),
+    // and a full lineage like Eukaryota;Annelida;...;Helobdella robusta has
+    // exactly 8 segments -- the same Domain..Strain ladder Bacteria uses.
+    // Depth 2 must be labelled "Phylum" here, not a generic "Level 2".
     mockFetch.mockResolvedValue(jsonResponse({
       data: [{ annotation_id: 'Chordata', name: 'Chordata', depth: 2, category: 'Eukaryota' }],
     }))
     render(<TaxonomyTree rootId="Eukaryota" excludedIds={new Set()} onToggleExclude={vi.fn()} />)
 
-    expect(await screen.findByText('Level 2')).toBeInTheDocument()
-    expect(screen.queryByText('Phylum')).not.toBeInTheDocument()
+    expect(await screen.findByText('Phylum')).toBeInTheDocument()
+    expect(screen.queryByText('Level 2')).not.toBeInTheDocument()
   })
 })
 
