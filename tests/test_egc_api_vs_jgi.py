@@ -19,11 +19,18 @@ legitimately keeps JGI's own prefixed format).
 Scope
 -----
 - Series endpoint (/series/annotations): single-copy COGs + first 10 KEGG
-- Per-sample endpoint: structure checks only — not value comparison against JGI
-  because the per-sample endpoint returns ALL annotations including high-copy
-  paralogs that legitimately diverge from JGI (scaffold-level vs per-gene
-  coverage — see conftest.py).  Value correctness for specific annotations is
-  covered by test_annotation_trees.py.
+
+Removed 2026-09-24: this file used to also have a TestPerSampleStructure
+class checking /samples/<id>/<source> (structure only, not value
+comparison against JGI). Those 8 per-sample routes were deliberately
+deleted as W20 (docs/AUDIT.md, dead-route cleanup) — this class was
+never updated to match and had been failing on every run since. The one
+property it checked that isn't redundant with the series tests above --
+COG and KEGG per-sample entries sharing the same depth denominator -- is
+covered more rigorously by tests/test_weighted_totals.py's
+TestNormEgcMatchesSqlDatabase, which checks all 4 sources (not just 2)
+against an independently computed ground-truth denominator, not just
+against each other.
 
 All tests skip automatically when the server is not reachable.
 
@@ -95,20 +102,6 @@ def _series_egc(series: dict) -> dict[str, float]:
 
 def _series_rows(series: dict) -> list[dict]:
     return series.get("data", [])
-
-
-def _per_sample(client: httpx.Client, sid: str, source: str) -> dict[str, dict]:
-    r = client.get(f"/samples/{sid}/{source}", params={"page_size": 10000})
-    r.raise_for_status()
-    result: dict[str, dict] = {}
-    for item in r.json().get("data", []):
-        if not isinstance(item, dict):
-            continue
-        key = item.get("key") or item.get("annotation_id")
-        val = item.get("value")
-        if key and isinstance(val, dict):
-            result[key] = val
-    return result
 
 
 def _fmt(ann: str, sid: str, backend: float, jgi: float) -> str:
@@ -269,93 +262,3 @@ class TestNormEGCInSeriesResponse:
             and (float(r["norm_egc"]) <= 0 or float(r["norm_egc"]) > 1 + NORM_TOLERANCE)
         ]
         assert not bad, "K00001 norm_egc out of range:\n" + "\n".join(bad)
-
-
-# ── Per-sample endpoint: structure only ───────────────────────────────────────
-
-@pytest.mark.api
-@server_required
-class TestPerSampleStructure:
-    """
-    Verifies the /samples/<id>/<source> endpoint returns a well-formed response.
-    Value comparison against JGI is intentionally excluded here because the
-    per-sample response includes ALL COG annotations, many of which are
-    high-copy paralogs that legitimately diverge from JGI.
-    Value correctness for specific annotations is covered by the series tests.
-    """
-
-    @pytest.mark.parametrize("sid", ["3300060410", "3300060358", "3300067202"])
-    def test_cog_per_sample_has_data(self, api_client, sid):
-        data = _per_sample(api_client, sid, "cog")
-        assert data, f"Empty COG per-sample response for {sid}"
-
-    @pytest.mark.parametrize("sid", ["3300060410", "3300060358", "3300067202"])
-    def test_kegg_per_sample_has_data(self, api_client, sid):
-        data = _per_sample(api_client, sid, "kegg")
-        assert data, f"Empty KEGG per-sample response for {sid}"
-
-    def test_cog_per_sample_entries_have_egc_and_norm_egc(self, api_client):
-        data = _per_sample(api_client, "3300060410", "cog")
-        ann  = next(iter(data))
-        assert "egc"      in data[ann], f"egc missing from per-sample COG entry {ann}"
-        assert "norm_egc" in data[ann], f"norm_egc missing from per-sample COG entry {ann}"
-
-    def test_kegg_per_sample_entries_have_egc_and_norm_egc(self, api_client):
-        data = _per_sample(api_client, "3300060410", "kegg")
-        ann  = next(iter(data))
-        assert "egc"      in data[ann], f"egc missing from per-sample KEGG entry {ann}"
-        assert "norm_egc" in data[ann], f"norm_egc missing from per-sample KEGG entry {ann}"
-
-    def test_cog_per_sample_norm_egc_ratio_uniform(self, api_client):
-        """All entries in a per-sample response must share the same depth denominator."""
-        data    = _per_sample(api_client, "3300060410", "cog")
-        ref_k   = None
-        bad: list[str] = []
-        for ann, entry in data.items():
-            egc  = entry.get("egc")
-            norm = entry.get("norm_egc")
-            if not egc or norm is None or float(egc) == 0:
-                continue
-            k = float(norm) / float(egc)
-            if ref_k is None:
-                ref_k = k
-            elif abs(k - ref_k) > NORM_TOLERANCE:
-                bad.append(f"  {ann}: k={k:.12f} ≠ ref={ref_k:.12f}")
-                if len(bad) >= 5:
-                    break
-        assert not bad, "norm_egc/egc not uniform in COG per-sample:\n" + "\n".join(bad)
-
-    def test_kegg_per_sample_norm_egc_ratio_uniform(self, api_client):
-        data    = _per_sample(api_client, "3300060410", "kegg")
-        ref_k   = None
-        bad: list[str] = []
-        for ann, entry in data.items():
-            egc  = entry.get("egc")
-            norm = entry.get("norm_egc")
-            if not egc or norm is None or float(egc) == 0:
-                continue
-            k = float(norm) / float(egc)
-            if ref_k is None:
-                ref_k = k
-            elif abs(k - ref_k) > NORM_TOLERANCE:
-                bad.append(f"  {ann}: k={k:.12f} ≠ ref={ref_k:.12f}")
-                if len(bad) >= 5:
-                    break
-        assert not bad, "norm_egc/egc not uniform in KEGG per-sample:\n" + "\n".join(bad)
-
-    def test_cog_and_kegg_per_sample_share_depth_denominator(self, api_client):
-        def first_k(data: dict):
-            for entry in data.values():
-                egc  = entry.get("egc")
-                norm = entry.get("norm_egc")
-                if egc and norm and float(egc) > 0:
-                    return float(norm) / float(egc)
-            return None
-
-        k_cog  = first_k(_per_sample(api_client, "3300060410", "cog"))
-        k_kegg = first_k(_per_sample(api_client, "3300060410", "kegg"))
-        assert k_cog  is not None
-        assert k_kegg is not None
-        assert abs(k_cog - k_kegg) <= NORM_TOLERANCE, (
-            f"COG/KEGG depth denominator mismatch: COG k={k_cog:.12f}, KEGG k={k_kegg:.12f}"
-        )
