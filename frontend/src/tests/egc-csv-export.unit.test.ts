@@ -107,8 +107,8 @@ describe('buildEgcTimeseriesCsvRows', () => {
 
 describe('buildMultiEgcCsvRows', () => {
   const series = [
-    { annotationId: 'K00001', source: 'kegg' },
-    { annotationId: 'COG0001', source: 'cog' },
+    { id: 'K00001', annotationId: 'K00001', source: 'kegg' },
+    { id: 'COG0001', annotationId: 'COG0001', source: 'cog' },
   ]
   const chartData = [
     { date: '05/27/21', _dt: '5/27/21 8:00', K00001: 100, COG0001: 50 },
@@ -156,6 +156,45 @@ describe('buildMultiEgcCsvRows', () => {
       [{ date: '05/27/21', K00001: 100 }], [series[0]], 'egc', false, false, false,
     )
     expect(rows[0].date).toBe('05/27/21')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W26 (docs/AUDIT-2026-09-22.md): two different groups can share the exact
+// same user-typed label (annotationId, for a group) while summing
+// completely different, unrelated members. Before `id` existed as a
+// separate field, chartData's rows were keyed by `annotationId`, so the
+// second same-labelled group's data silently overwrote the first's at
+// every shared datetime -- this reproduces the audit's own live example
+// (two different "iron (2)" groups, one kegg/one cog).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('buildMultiEgcCsvRows — W26 same-label groups', () => {
+  it('two series sharing the same annotationId (label) export their own distinct values, keyed by id', () => {
+    const series = [
+      { id: 'group::iron::1000', annotationId: 'iron (2)', source: 'kegg' },
+      { id: 'group::iron::2000', annotationId: 'iron (2)', source: 'cog' },
+    ]
+    const chartData = [
+      {
+        date: '05/27/21', _dt: '5/27/21 8:00',
+        'group::iron::1000': 300,
+        'group::iron::2000': 170000,
+      },
+    ]
+
+    const rows = buildMultiEgcCsvRows(chartData, series, 'egc', false, false, false)
+
+    expect(rows).toHaveLength(2)
+    const keggRow = rows.find(r => r.source === 'kegg')
+    const cogRow  = rows.find(r => r.source === 'cog')
+    // Both rows correctly read "iron (2)" as their displayed annotation_id
+    // (expected -- that's genuinely what the user typed for both) --
+    // the bug was that their VALUES collided, not their labels.
+    expect(keggRow?.annotation_id).toBe('iron (2)')
+    expect(cogRow?.annotation_id).toBe('iron (2)')
+    expect(keggRow?.egc).toBe(300)
+    expect(cogRow?.egc).toBe(170000)
   })
 })
 

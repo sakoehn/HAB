@@ -447,6 +447,7 @@ function CompareDrawer({
         const cached = seriesCache[c.key]
         if (cached?.status !== 'ok') return []
         return [{
+          id:           c.key,
           annotationId: c.annotationId,
           name:         c.name,
           data:         cached.data,
@@ -486,7 +487,16 @@ function CompareDrawer({
 
       if (!summedData.length) return []
 
+      // W26 (docs/AUDIT-2026-09-22.md): id is c.key (genuinely unique, see
+      // addSelectedAsGroup's `group::${termLabel}::${Date.now()}`), NOT
+      // c.label -- two different groups can share the exact same
+      // user-typed label (e.g. two "iron (2)" searches with different
+      // members), and MultiEgcChart keys every internal row/lookup by
+      // `id`, not `annotationId`. Before `id` existed, this used label for
+      // both roles and the second same-labelled group's data silently
+      // overwrote the first's, in both the chart and the CSV export.
       return [{
+        id:           c.key,
         annotationId: c.label,
         name:         c.label,
         data:         summedData,

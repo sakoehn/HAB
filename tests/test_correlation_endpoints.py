@@ -347,6 +347,24 @@ class TestCorrelationFamilyEndpoint:
         assert len(results) == 1
         assert results[0]["catalog_id"] == 2  # the stronger of the two significant matches
 
+    def test_significant_count_reflects_the_true_total_even_when_limit_cuts_it_shorter(self, client):
+        # CR10 (docs/AUDIT-2026-09-22.md): a request that caps `results` at
+        # 1 must still disclose that there were really 2 significant
+        # candidates -- otherwise "1 result" and "1 of 2,847 results" render
+        # identically and a real cap looks like the whole answer.
+        response = client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "raw_pearson",
+                "limit": 1,
+            },
+        )
+
+        body = response.json()
+        assert len(body["results"]) == 1
+        assert body["significant_count"] == 2  # pairs (1,2) and (1,5) -- (1,3) isn't significant
+
     def test_constant_candidate_is_omitted_not_a_crash(self, client):
         # CR4: candidate 4 (K00004) is constant across every sample -- must
         # come back 200 with candidate 4 simply absent from the results,

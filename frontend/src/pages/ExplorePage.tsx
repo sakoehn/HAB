@@ -232,6 +232,13 @@ export function DatasetOverviewPanel({
   const temporalSeries = useMemo(() => {
     if (!Object.keys(seriesData).length) return []
     return top5Groups.map((group, gi) => ({
+      // W26 (docs/AUDIT-2026-09-22.md): id must be unique per series --
+      // group.label alone isn't guaranteed to be (two different parent
+      // categories can share a display name, e.g. the W30 KEGG/Enzyme
+      // mislabeling case). gi is this group's fixed position in the
+      // top-5 list, safe to use since MultiEgcChart only uses id for
+      // internal row-keying, never display.
+      id:           `group-${gi}`,
       annotationId: group.label,
       name:         group.label,
       color:        CHART_GROUP_COLORS[gi],

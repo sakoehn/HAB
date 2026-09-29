@@ -220,7 +220,12 @@ export type CorrelationFamilyResult = {
 // multi-thousand-candidate family in full is hours of work. When false,
 // prescreen_pool_size/prescreen_top_n are both null.
 export type CorrelationFamilyResponse = {
-  results:             CorrelationFamilyResult[]
+  results:           CorrelationFamilyResult[]
+  // CR10 (docs/AUDIT-2026-09-22.md): the true count of significant (q<0.05)
+  // candidates BEFORE `limit` truncates `results` -- lets the panel show
+  // "top N of {significant_count}" instead of a bare N that looks the same
+  // whether N was the whole answer or a silent cut of a much larger one.
+  significant_count: number
   prescreened:         boolean
   prescreen_pool_size: number | null
   prescreen_top_n:     number | null
@@ -293,6 +298,13 @@ export type CompareEntryMember = {
 }
 
 export type CompareEntry = {
+  // W26 (docs/AUDIT-2026-09-22.md): stable per-slot id (e.g. "entry-0"),
+  // assigned once at entry creation from the fixed compare-slot index --
+  // used ONLY for series keying (MultiEgcChart), never for display.
+  // `annotationId` alone can't serve that role: for a group it's just the
+  // user-typed label, and two different groups (different, unrelated
+  // members) can share the exact same label.
+  id:              string
   // Display identity
   annotationId:    string          // annotation_id for singles; group label for groups
   source:          string          // source for singles; first member source for groups

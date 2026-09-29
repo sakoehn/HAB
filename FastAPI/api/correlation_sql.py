@@ -184,7 +184,11 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
     for cog same as kegg/enzyme, so the same by_id/children_of tree-walk
     below works for it without a special case. kegg gets its own,
     different exclusion path (_kegg_family_exclusions above) since it's
-    the one source where a node can have MULTIPLE real parents.
+    the one source where a node can have MULTIPLE real parents. Taxonomy
+    gets its own ancestor-exclusion path too (CR9, docs/AUDIT-2026-09-22.md):
+    the by_id tree-walk only sees ancestors shallower than
+    TAXONOMY_DEPTH_CUTOFF, so it silently stopped short for a species/strain
+    reference -- see the comment at the taxonomy branch below.
 
     Returns a list of dicts:
         {"id": ..., "annotation_id": ..., "parent": ..., "name": ..., "depth": ...}
@@ -243,11 +247,29 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
         by_id[annotation_id] = parent
         children_of.setdefault(parent, []).append(annotation_id)
 
-    # Ancestors: walk up from ref_parent.
-    cur = ref_parent
-    while cur is not None and cur not in excluded:
-        excluded.add(cur)
-        cur = by_id.get(cur)
+    if target_source == AnnotationSource.taxonomy.value:
+        # CR9 (docs/AUDIT-2026-09-22.md): walking ancestors via by_id (built
+        # only from target_rows, which is itself capped at depth <=
+        # TAXONOMY_DEPTH_CUTOFF) breaks for a species/strain reference --
+        # ref_parent's own depth already exceeds the cutoff, so it's not a
+        # key in by_id and the walk stops immediately, leaving every real
+        # ancestor (genus and coarser) unexcluded. A taxonomy annotation_id
+        # IS its full ';'-joined lineage, so every real ancestor is exactly
+        # a ';'-prefix of ref_annotation_id -- checking that directly finds
+        # every ancestor regardless of ref's own depth, without relying on
+        # the depth-truncated by_id map at all. Same trick as
+        # frontend/src/utils/annotationHierarchy.ts's isTaxonomyDescendant,
+        # mirrored for the ancestor direction.
+        excluded |= {
+            row[1] for row in target_rows
+            if ref_annotation_id.startswith(row[1] + ';')
+        }
+    else:
+        # Ancestors: walk up from ref_parent.
+        cur = ref_parent
+        while cur is not None and cur not in excluded:
+            excluded.add(cur)
+            cur = by_id.get(cur)
 
     # Descendants: BFS down from ref_annotation_id.
     stack = [ref_annotation_id]
@@ -607,8 +629,15 @@ def correlation_family_endpoint(
         # |r| descending and cap the list so the first screen is the
         # strongest correlates, not an arbitrary alphabetical slice.
         significant.sort(key=lambda entry: abs(entry["r"]), reverse=True)
+        # CR10 (docs/AUDIT-2026-09-22.md): `limit` (default 50) silently cut
+        # the list with no way for the caller to tell "there were exactly
+        # 50 significant results" from "there were 3,000 and you're seeing
+        # the top 50" -- both looked identical. significant_count is the
+        # real total BEFORE the limit is applied, so the panel can show
+        # "top N of {significant_count}" instead of just N.
         return {
-            "results":             significant[:limit],
+            "results":           significant[:limit],
+            "significant_count": len(significant),
             "prescreened":         prescreened,
             "prescreen_pool_size": prescreen_pool_size,
             "prescreen_top_n":     CIRCULAR_SHIFT_SCREEN_TOP_N if prescreened else None,

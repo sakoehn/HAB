@@ -53,6 +53,10 @@ export function CorrelatesPanel({
   const [open,   setOpen]   = useState(false)
   const [data,   setData]   = useState<CorrelationFamilyResult[]>([])
   const [status, setStatus] = useState<ApiStatus>('idle')
+  // CR10 (docs/AUDIT-2026-09-22.md): the real total before `limit` cuts the
+  // list -- null only in the idle/loading/error states before a real
+  // response has landed.
+  const [significantCount, setSignificantCount] = useState<number | null>(null)
   // Set only when method=circular_shift screened the family down before
   // running the expensive permutation test (docs/AUDIT-2026-09-22.md,
   // CR8 follow-up) -- null otherwise, including for every other method.
@@ -97,6 +101,7 @@ export function CorrelatesPanel({
   async function fetchCorr(attempt = 0) {
     const requestId = ++requestSeqRef.current
     setData([])
+    setSignificantCount(null)
     setStatus('loading')
     setRetryAttempt(attempt)
 
@@ -119,6 +124,7 @@ export function CorrelatesPanel({
       const result = await apiFetch<CorrelationFamilyResponse>(url, 600_000)
       if (requestId !== requestSeqRef.current) return
       setData(result?.results ?? [])
+      setSignificantCount(result?.significant_count ?? null)
       setPrescreen(
         result?.prescreened && result.prescreen_pool_size != null && result.prescreen_top_n != null
           ? { poolSize: result.prescreen_pool_size, topN: result.prescreen_top_n }
@@ -308,6 +314,15 @@ export function CorrelatesPanel({
               <>
                 <div className="corr-legend">
                   {METHOD_LABEL[method]} · {METRIC_LABEL[metric]} · q&lt;0.05 (BH-corrected)
+                  {significantCount != null && significantCount > data.length && (
+                    <>
+                      {' · '}
+                      <span className="corr-legend-warn">
+                        showing top {data.length} of {significantCount.toLocaleString()} significant
+                      </span>
+                      <HelpTooltip text="Results are capped for performance. These are the strongest matches by |r|, not the whole significant set -- there are more real correlates than shown here." />
+                    </>
+                  )}
                   {data.some(d => d.n_pairs < 30) && (
                     <span className="corr-legend-warn"> · ⚠ some n&lt;30</span>
                   )}

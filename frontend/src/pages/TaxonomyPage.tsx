@@ -194,6 +194,7 @@ export function TaxonomyPage({
 
     const rootName = bareTaxonName(state.rootId)
     const full = {
+      id:           state.rootId,
       annotationId: state.rootId,
       name:         `${rootName} (full)`,
       data:         rootData,
@@ -220,6 +221,7 @@ export function TaxonomyPage({
     // be human-readable itself.
     const minusLabel = `${rootName} (minus ${excludedLoaded.length} exclusion${excludedLoaded.length !== 1 ? 's' : ''})`
     const minus = {
+      id:           `${state.rootId}__minus`,
       annotationId: `${state.rootId}__minus`,
       name:         minusLabel,
       data:         computeExclusionSeries(rootData, excludedLoaded, excludedSeriesArrays, `${state.rootId}__excl`, null),

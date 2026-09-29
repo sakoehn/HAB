@@ -34,6 +34,19 @@ function resolveCssVar(value: string, fallback: string): string {
 const CB_EXTRA_GROUPS = ['#E69F00', '#56B4E9', '#D55E00', '#CC79A7', '#0072B2', '#009E73']
 
 type SeriesEntry = {
+  // W26 (docs/AUDIT-2026-09-22.md): `id` is the ONLY field used to key rows
+  // internally (dtMap/chartData columns, CSV lookups, React list keys) --
+  // it must be genuinely unique per series. `annotationId` is display-only
+  // (shown in the legend, hover text, trace name) and is NOT guaranteed
+  // unique: for a grouped series it's the user-typed label (e.g. "iron
+  // (2)"), and two different groups can easily share that same label while
+  // summing completely different, unrelated members. Before this field
+  // existed, `annotationId` was used for both roles, so two same-labeled
+  // groups silently overwrote each other's data at every shared datetime
+  // (confirmed live: grouping 2 kegg hits vs. 2 cog hits both labelled
+  // "iron (2)" made the CSV export read the cog group's sum, 170000, for
+  // BOTH rows).
+  id:           string
   annotationId: string
   name:         string | null
   data:         AnnotationItem[]
@@ -50,7 +63,7 @@ type SeriesEntry = {
 // recorded on every row.
 export function buildMultiEgcCsvRows(
   chartData:   Record<string, unknown>[],
-  series:      { annotationId: string; source?: string }[],
+  series:      { id: string; annotationId: string; source?: string }[],
   metric:      ChartMetric,
   standardize: boolean,
   smoothed:    boolean,
@@ -59,7 +72,7 @@ export function buildMultiEgcCsvRows(
   const rows: Record<string, unknown>[] = []
   for (const row of chartData) {
     for (const s of series) {
-      const val = row[s.annotationId]
+      const val = row[s.id]
       if (val !== null && val !== undefined) {
         rows.push({
           annotation_id: s.annotationId,
@@ -123,8 +136,8 @@ export function MultiEgcChart({
         if (dateTo   && iso > dateTo)   continue
         const dt = d.timepoint?.datetime ?? ''
         if (!dtMap[dt]) dtMap[dt] = { date: fmtDate(dt), _dt: dt, _ts: parseDateTime(dt) }
-        dtMap[dt][s.annotationId]            = extractEgc(d.value)
-        dtMap[dt][s.annotationId + '__norm'] = extractNormEgc(d.value)
+        dtMap[dt][s.id]            = extractEgc(d.value)
+        dtMap[dt][s.id + '__norm'] = extractNormEgc(d.value)
       }
     }
     return Object.values(dtMap).sort((a, b) => a._ts - b._ts)
@@ -137,20 +150,20 @@ export function MultiEgcChart({
       let processed: { egc: number | null; datetime?: string; ts: number }[]
       if (metric === 'norm_egc') {
         processed = rows.map(row => ({
-          egc:      (row[s.annotationId + '__norm'] as number | null) ?? null,
+          egc:      (row[s.id + '__norm'] as number | null) ?? null,
           datetime: row._dt,
           ts:       row._ts,
         }))
       } else {
         processed = rows.map(row => ({
-          egc:      (row[s.annotationId] as number | null) ?? null,
+          egc:      (row[s.id] as number | null) ?? null,
           datetime: row._dt,
           ts:       row._ts,
         }))
       }
       if (standardize) processed = applyZScore(processed) as typeof processed
       if (smoothed) processed = applyLowess(processed, smoothBandwidth) as typeof processed
-      rows = rows.map((row, i) => ({ ...row, [s.annotationId]: processed[i].egc }))
+      rows = rows.map((row, i) => ({ ...row, [s.id]: processed[i].egc }))
     }
     return rows
   }, [baseRows, metric, standardize, smoothed, smoothBandwidth, series])
@@ -179,7 +192,7 @@ export function MultiEgcChart({
     const out: number[] = []
     for (const s of series) {
       for (const row of chartData) {
-        const v = row[s.annotationId]
+        const v = row[s.id]
         if (typeof v === 'number') out.push(v)
       }
     }
@@ -251,12 +264,12 @@ export function MultiEgcChart({
     const traces: object[] = series.map(s => {
       const sw      = hasGroup ? (s.isGrouped ? 3.5 : 1.5) : 2
       const opacity = hasGroup ? (s.isGrouped ? 1   : 0.45) : 1
-      const ys      = chartData.map(r => (r[s.annotationId] as number | null) ?? null)
+      const ys      = chartData.map(r => (r[s.id] as number | null) ?? null)
 
       // Grouped series: first gets the theme's near-black/neutral, extras cycle CB palette.
       let traceColor = s.color
       if (s.isGrouped) {
-        const gIdx = groupedSeries.findIndex(g => g.annotationId === s.annotationId)
+        const gIdx = groupedSeries.findIndex(g => g.id === s.id)
         traceColor = gIdx === 0 ? groupColor : CB_EXTRA_GROUPS[(gIdx - 1) % CB_EXTRA_GROUPS.length]
       }
 
@@ -383,7 +396,7 @@ export function MultiEgcChart({
           <button className="btn sm" onClick={handleExportCsv}>↓ CSV</button>
           <div className="chart-legend">
             {series.map(s => (
-              <div className="legend-item" key={s.annotationId}>
+              <div className="legend-item" key={s.id}>
                 <div className="legend-dot" style={{ background: s.color }} />
                 <span
                   title={s.annotationId}

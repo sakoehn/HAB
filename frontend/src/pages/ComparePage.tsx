@@ -176,12 +176,17 @@ export function ComparePage({
         : nextColorForSource('kegg'), // group gets a fresh color slot
     )
 
-    // Optimistic loading state — one entry per incoming annotation/group
+    // Optimistic loading state — one entry per incoming annotation/group.
+    // id is the fixed compare-slot index (W26) -- stable identity for
+    // series-keying purposes regardless of what two entries' labels
+    // happen to be, assigned once here and carried through unchanged by
+    // the resolved-entry construction below.
     setState(prev => ({
       ...prev,
       entries: toLoad.map((ann, i) =>
         ann.kind === 'single'
           ? {
+              id:           `entry-${i}`,
               annotationId: ann.annotationId,
               source:       ann.source,
               name:         ann.name,
@@ -190,6 +195,7 @@ export function ComparePage({
               color:        colors[i],
             }
           : {
+              id:              `entry-${i}`,
               annotationId:    ann.label,
               source:          ann.members[0]?.source ?? 'kegg',
               name:            ann.label,
@@ -220,6 +226,7 @@ export function ComparePage({
             return {
               i,
               entry: {
+                id:           `entry-${i}`,
                 annotationId: ann.annotationId,
                 source:       ann.source,
                 name:         ann.name,
@@ -232,6 +239,7 @@ export function ComparePage({
             return {
               i,
               entry: {
+                id:           `entry-${i}`,
                 annotationId: ann.annotationId,
                 source:       ann.source,
                 name:         ann.name,
@@ -252,6 +260,7 @@ export function ComparePage({
         return {
           i,
           entry: {
+            id:              `entry-${i}`,
             annotationId:    ann.label,
             source:          ann.members[0]?.source ?? 'kegg',
             name:            ann.label,
@@ -312,8 +321,10 @@ export function ComparePage({
     const toAdd  = state.searchResults.filter(r => bulkSelected.has(`${r.annotation_id}::${r.source}`))
     if (!toAdd.length) return
 
-    const colors     = toAdd.map(ann => nextColorForSource(ann.source))
+    const colors      = toAdd.map(ann => nextColorForSource(ann.source))
+    const startIndex  = state.entries.length
     const newEntries: CompareEntry[] = toAdd.map((ann, i) => ({
+      id:           `entry-${startIndex + i}`,
       annotationId: ann.annotation_id,
       source:       ann.source,
       name:         ann.name,
@@ -364,9 +375,11 @@ export function ComparePage({
     )) return
 
     const color = nextColorForSource(ann.source)
+    const id    = `entry-${state.entries.length}`
     setState(prev => ({
       ...prev,
       entries: [...prev.entries, {
+        id,
         annotationId: ann.annotation_id,
         source:       ann.source,
         name:         ann.name,
@@ -410,7 +423,7 @@ export function ComparePage({
     setState(prev => ({
       ...prev,
       entries: prev.entries.map(e =>
-        e.annotationId === entry.annotationId && e.source === entry.source
+        e.id === entry.id
           ? { ...e, status: 'loading' as ApiStatus }
           : e,
       ),
@@ -422,7 +435,7 @@ export function ComparePage({
       setState(prev => ({
         ...prev,
         entries: prev.entries.map(e =>
-          e.annotationId === entry.annotationId && e.source === entry.source
+          e.id === entry.id
             ? {
                 ...e,
                 data:    summedData,
@@ -442,7 +455,7 @@ export function ComparePage({
       setState(prev => ({
         ...prev,
         entries: prev.entries.map(e =>
-          e.annotationId === entry.annotationId && e.source === entry.source
+          e.id === entry.id
             ? { ...e, data: json.data ?? [], status: 'ok' as ApiStatus }
             : e,
         ),
@@ -451,7 +464,7 @@ export function ComparePage({
       setState(prev => ({
         ...prev,
         entries: prev.entries.map(e =>
-          e.annotationId === entry.annotationId && e.source === entry.source
+          e.id === entry.id
             ? { ...e, status: 'error' as ApiStatus }
             : e,
         ),
@@ -668,7 +681,7 @@ export function ComparePage({
             <div style={{ marginBottom: 10 }}><h2>Selected Annotations</h2></div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
               {state.entries.map(e => (
-                <div key={`${e.annotationId}::${e.source}`}>
+                <div key={e.id}>
                   <div className="compare-chip">
                     <div className="chip-color" style={{ background: e.color }} />
                     {e.isGrouped ? (
@@ -726,7 +739,7 @@ export function ComparePage({
                         onClick={() => setState(prev => ({
                           ...prev,
                           entries: prev.entries.map(x =>
-                            x.annotationId === e.annotationId && x.source === e.source
+                            x.id === e.id
                               ? { ...x, membersExpanded: !x.membersExpanded }
                               : x,
                           ),
@@ -739,7 +752,7 @@ export function ComparePage({
                       <button
                         className="btn sm ghost"
                         style={{ fontFamily: 'var(--mono)', fontSize: 11, padding: '2px 8px' }}
-                        onClick={() => setScaffoldModalFor(`${e.annotationId}::${e.source}`)}
+                        onClick={() => setScaffoldModalFor(e.id)}
                         title={`View scaffolds for all ${e.members?.length ?? 0} annotations in this group`}
                       >
                         🧬 Scaffolds
@@ -748,9 +761,11 @@ export function ComparePage({
                     <button
                       className="chip-remove"
                       onClick={() => setState(prev => {
-                        const next = prev.entries.filter(
-                          x => !(x.annotationId === e.annotationId && x.source === e.source),
-                        )
+                        // W26: match by id, not annotationId+source -- two
+                        // different groups can share the same label, and
+                        // matching by label would remove BOTH when the user
+                        // meant to remove just one.
+                        const next = prev.entries.filter(x => x.id !== e.id)
                         if (next.length === 0) resetSourceCounters()
                         return { ...prev, entries: next }
                       })}
@@ -759,7 +774,7 @@ export function ComparePage({
                     </button>
                   </div>
 
-                  {e.isGrouped && scaffoldModalFor === `${e.annotationId}::${e.source}` && (
+                  {e.isGrouped && scaffoldModalFor === e.id && (
                     <GroupScaffoldModal
                       members={(e.members ?? []).map(m => ({
                         annotationId: m.annotationId,
@@ -881,6 +896,7 @@ export function ComparePage({
                 <ChartErrorBoundary label="Compare overlay">
                   <MultiEgcChart
                     series={readyEntries.map(e => ({
+                      id:           e.id,
                       annotationId: e.annotationId,
                       name:         e.name,
                       data:         e.data,
@@ -923,7 +939,7 @@ export function ComparePage({
                 </button>
                 {state.showMappings && readyEntries.map(e => (
                   <div
-                    key={`${e.annotationId}::${e.source}`}
+                    key={e.id}
                     style={{ marginBottom: 16 }}
                   >
                     <div style={{

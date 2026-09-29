@@ -60,7 +60,7 @@ function pressed(name: string | RegExp): boolean {
 }
 
 describe('MultiEgcChart — defaults', () => {
-  const series = [{ annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]
+  const series = [{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]
 
   it('opens on Relative Abundance with Z-score off', () => {
     render(<MultiEgcChart series={series} dateFrom="" dateTo="" />)
@@ -83,7 +83,7 @@ describe('MultiEgcChart — empty state', () => {
   it('shows a message when the date range excludes every point', () => {
     render(
       <MultiEgcChart
-        series={[{ annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]}
+        series={[{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]}
         dateFrom="2021-12-01"
         dateTo=""
       />,
@@ -98,8 +98,8 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
     render(
       <MultiEgcChart
         series={[
-          { annotationId: 'Small', name: 'Small', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10)] },
-          { annotationId: 'Big', name: 'Big', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200)] },
+          { id: 'Small', annotationId: 'Small', name: 'Small', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10)] },
+          { id: 'Big', annotationId: 'Big', name: 'Big', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200)] },
         ]}
         dateFrom="" dateTo=""
       />,
@@ -113,8 +113,8 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
     render(
       <MultiEgcChart
         series={[
-          { annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 50)] },
-          { annotationId: 'B', name: 'B', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200)] },
+          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 50)] },
+          { id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200)] },
         ]}
         dateFrom="" dateTo=""
       />,
@@ -128,8 +128,8 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
     render(
       <MultiEgcChart
         series={[
-          { annotationId: 'Small', name: 'Small', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10)] },
-          { annotationId: 'Big', name: 'Big', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200)] },
+          { id: 'Small', annotationId: 'Small', name: 'Small', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10)] },
+          { id: 'Big', annotationId: 'Big', name: 'Big', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200)] },
         ]}
         dateFrom="" dateTo=""
       />,
@@ -145,8 +145,8 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
     render(
       <MultiEgcChart
         series={[
-          { annotationId: 'Small', name: 'Small', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10)] },
-          { annotationId: 'Big', name: 'Big', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200)] },
+          { id: 'Small', annotationId: 'Small', name: 'Small', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10)] },
+          { id: 'Big', annotationId: 'Big', name: 'Big', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200)] },
         ]}
         dateFrom="" dateTo=""
       />,
@@ -161,7 +161,7 @@ describe('MultiEgcChart — legend', () => {
     render(
       <MultiEgcChart
         series={[{
-          annotationId: 'Bacteria;Proteobacteria', name: 'Proteobacteria', color: '#000',
+          id: 'Bacteria;Proteobacteria', annotationId: 'Bacteria;Proteobacteria', name: 'Proteobacteria', color: '#000',
           source: 'taxonomy', data: [makePoint('5/27/21 8:00', 100)],
         }]}
         dateFrom="" dateTo=""
@@ -175,7 +175,7 @@ describe('MultiEgcChart — legend', () => {
   it('shows a non-taxonomy series\' annotation id directly, not italicized', () => {
     render(
       <MultiEgcChart
-        series={[{ annotationId: 'COG0001', name: 'GroEL', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]}
+        series={[{ id: 'COG0001', annotationId: 'COG0001', name: 'GroEL', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]}
         dateFrom="" dateTo=""
       />,
     )
@@ -187,7 +187,7 @@ describe('MultiEgcChart — legend', () => {
     render(
       <MultiEgcChart
         series={[{
-          annotationId: 'COG0001', name: 'GroEL', color: '#000', source: 'cog',
+          id: 'COG0001', annotationId: 'COG0001', name: 'GroEL', color: '#000', source: 'cog',
           data: [makePoint('5/27/21 8:00', 100)], scaffoldsDisabled: true,
         }]}
         dateFrom="" dateTo=""
@@ -199,7 +199,7 @@ describe('MultiEgcChart — legend', () => {
   it('shows the per-series Hierarchy button when scaffoldsDisabled is not set', () => {
     render(
       <MultiEgcChart
-        series={[{ annotationId: 'COG0001', name: 'GroEL', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]}
+        series={[{ id: 'COG0001', annotationId: 'COG0001', name: 'GroEL', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]}
         dateFrom="" dateTo=""
       />,
     )
@@ -213,8 +213,8 @@ describe('MultiEgcChart — stats pool every series\' values, unsummed', () => {
     render(
       <MultiEgcChart
         series={[
-          { annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10)] },
-          { annotationId: 'B', name: 'B', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 30)] },
+          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10)] },
+          { id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 30)] },
         ]}
         dateFrom="" dateTo=""
       />,
@@ -226,6 +226,33 @@ describe('MultiEgcChart — stats pool every series\' values, unsummed', () => {
     expect(statValue('n')).toBe(2)
     expect(statValue('Mean')).toBeCloseTo(20)
   })
+
+  // W26 (docs/AUDIT-2026-09-22.md): two different groups sharing the same
+  // user-typed label (annotationId) must not collide -- their real,
+  // different data must both survive the full render pipeline
+  // (baseRows/dtMap, which is keyed internally by `id`, not annotationId).
+  // Before `id` existed, the second same-labelled series' points silently
+  // overwrote the first's at every shared datetime -- n would read 1
+  // (only the second series' value survived), not 2.
+  it('two series sharing the same annotationId (label) both survive -- keyed internally by id, not annotationId', async () => {
+    const user = userEvent.setup()
+    render(
+      <MultiEgcChart
+        series={[
+          { id: 'group::iron::1000', annotationId: 'iron (2)', name: 'iron (2)', color: '#000', source: 'kegg', data: [makePoint('5/27/21 8:00', 10)] },
+          { id: 'group::iron::2000', annotationId: 'iron (2)', name: 'iron (2)', color: '#000', source: 'cog',  data: [makePoint('5/27/21 8:00', 170000)] },
+        ]}
+        dateFrom="" dateTo=""
+      />,
+    )
+    await selectRawEgc(user)
+    await user.click(screen.getByRole('button', { name: /Σ Stats/i }))
+    expect(statValue('n')).toBe(2)
+    // True mean is 85005; StatsPanel displays Mean at toPrecision(4), which
+    // rounds the 5th significant digit up: 85010. If the two series had
+    // collided (second overwriting first), n would read 1 and Mean 170000.
+    expect(statValue('Mean')).toBeCloseTo(85010)
+  })
 })
 
 describe('MultiEgcChart — date range props', () => {
@@ -234,7 +261,7 @@ describe('MultiEgcChart — date range props', () => {
     render(
       <MultiEgcChart
         series={[{
-          annotationId: 'A', name: 'A', color: '#000', source: 'cog',
+          id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog',
           data: [makePoint('5/27/21 8:00', 100), makePoint('6/1/21 8:00', 300)],
         }]}
         dateFrom="2021-05-29" dateTo=""

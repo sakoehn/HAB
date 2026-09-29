@@ -197,7 +197,9 @@ export function AboutPage() {
                 accounts for autocorrelation between nearby timepoints that the other three
                 methods don't. A Benjamini-Hochberg correction is then applied across every
                 candidate scored in the same family request, and only candidates with
-                q &lt; 0.05 are shown.
+                q &lt; 0.05 are shown. The list is further capped at the top 50 by |r|
+                (up to 500 with the API's own limit parameter) — the panel discloses
+                the true significant count whenever there are more than that.
               </span>
             </p>
 
@@ -330,7 +332,7 @@ export function AboutPage() {
               ['/api/correlation?catalog_id_a=…&catalog_id_b=…&metric=egc&method=spearman',
                'Score (or read the cached score for) one specific pair. method: raw_pearson, log_pearson, spearman, or circular_shift. Returns r, p, lag_samples, n_pairs'],
               ['/api/correlations/family?ref_source=…&ref_annotation_id=…&target_source=…&metric=egc&method=spearman&limit=50',
-               'Returns {results, prescreened, prescreen_pool_size, prescreen_top_n}. results: every eligible candidate in target_source scored against the reference (same-source parents/children/siblings excluded), sorted by |r| descending, capped at limit, gated to q < 0.05. For method=circular_shift on a large family, only the strongest prescreen_top_n of prescreen_pool_size candidates (by a fast method) get the full permutation test — prescreened is true when that happened.'],
+               'Returns {results, significant_count, prescreened, prescreen_pool_size, prescreen_top_n}. results: every eligible candidate in target_source scored against the reference (same-source parents/children/siblings excluded), sorted by |r| descending, capped at limit, gated to q < 0.05. significant_count is the true q<0.05 total before limit truncates results. For method=circular_shift on a large family, only the strongest prescreen_top_n of prescreen_pool_size candidates (by a fast method) get the full permutation test — prescreened is true when that happened.'],
               ['/api/annotations/scaffolds/summary?source=…&annotation_id=…',
                'Per-sample scaffold and gene counts for one annotation'],
               ['/api/annotations/scaffolds?source=…&annotation_id=…&sample=…&page=1&page_size=500',

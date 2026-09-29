@@ -322,3 +322,54 @@ class TestTaxonomyDepthCutoff:
         family = get_family_candidates(conn, ref_catalog_id=1, target_source="kegg")
 
         assert {c["id"] for c in family} == {2, 3}
+
+
+class TestCR9StrainSelfCorrelation:
+    # CR9 (docs/AUDIT-2026-09-22.md): the ancestor walk in
+    # get_family_candidates keys off `by_id`, which is built only from
+    # target_rows -- itself already capped at depth <= TAXONOMY_DEPTH_CUTOFF
+    # (see TestTaxonomyDepthCutoff above). For a STRAIN reference (depth 8),
+    # ref_parent is the species (depth 7) -- one level past the cutoff, so
+    # it's not a key in by_id and the walk stops on its very first lookup.
+    # Every real ancestor from genus (depth 6) up through domain (depth 1)
+    # then stays unexcluded, despite each one genuinely containing every
+    # gene the strain has. Confirmed live against the real local database
+    # before writing this fix: a real depth-8 strain reference leaked
+    # exactly 6 real ancestors (depths 1-6) as "significant correlates" of
+    # itself.
+    #
+    # A SPECIES reference (depth 7) doesn't hit this bug under the old code
+    # -- ref_parent is the genus (depth 6), which *is* in by_id, so the walk
+    # continues correctly all the way to domain. Both cases are covered here
+    # since the fix replaces the whole ancestor-computation mechanism for
+    # taxonomy (a direct ';'-prefix check against ref_annotation_id, not a
+    # walk through the depth-truncated by_id map), not just the strain path.
+
+    def test_strain_reference_excludes_every_real_ancestor_past_the_depth_cutoff(self, conn):
+        insert(conn, 1, "taxonomy", "D", depth=1)                                                            # domain
+        insert(conn, 2, "taxonomy", "D;P", parent="D", depth=2)                                              # phylum
+        insert(conn, 3, "taxonomy", "D;P;C", parent="D;P", depth=3)                                          # class
+        insert(conn, 4, "taxonomy", "D;P;C;O", parent="D;P;C", depth=4)                                      # order
+        insert(conn, 5, "taxonomy", "D;P;C;O;F", parent="D;P;C;O", depth=5)                                  # family
+        insert(conn, 6, "taxonomy", "D;P;C;O;F;G", parent="D;P;C;O;F", depth=6)                              # genus -- real ancestor, past every by_id lookup a strain ref can reach
+        insert(conn, 7, "taxonomy", "D;P;C;O;F;G;S", parent="D;P;C;O;F;G", depth=7)                          # species -- not a candidate itself (depth > cutoff), but this is the ref_parent that breaks the old by_id walk
+        insert(conn, 8, "taxonomy", "D;P;C;O;F;G;S;strain1", parent="D;P;C;O;F;G;S", depth=8)                # ref
+        insert(conn, 9, "taxonomy", "D;P;C;O;F;G2", parent="D;P;C;O;F", depth=6)                             # unrelated cousin genus -- real negative control, must stay included
+
+        family = get_family_candidates(conn, ref_catalog_id=8, target_source="taxonomy")
+
+        assert {c["id"] for c in family} == {9}
+
+    def test_species_reference_also_excludes_every_real_ancestor(self, conn):
+        insert(conn, 1, "taxonomy", "D", depth=1)
+        insert(conn, 2, "taxonomy", "D;P", parent="D", depth=2)
+        insert(conn, 3, "taxonomy", "D;P;C", parent="D;P", depth=3)
+        insert(conn, 4, "taxonomy", "D;P;C;O", parent="D;P;C", depth=4)
+        insert(conn, 5, "taxonomy", "D;P;C;O;F", parent="D;P;C;O", depth=5)
+        insert(conn, 6, "taxonomy", "D;P;C;O;F;G", parent="D;P;C;O;F", depth=6)      # genus
+        insert(conn, 7, "taxonomy", "D;P;C;O;F;G;S", parent="D;P;C;O;F;G", depth=7)  # ref (species)
+        insert(conn, 8, "taxonomy", "D;P;C;O;F;G2", parent="D;P;C;O;F", depth=6)     # unrelated cousin genus
+
+        family = get_family_candidates(conn, ref_catalog_id=7, target_source="taxonomy")
+
+        assert {c["id"] for c in family} == {8}

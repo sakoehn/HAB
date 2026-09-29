@@ -177,3 +177,36 @@ describe('CorrelatesPanel — prescreen disclosure (CR8 follow-up)', () => {
     expect(screen.queryByText(/candidates/)).not.toBeInTheDocument()
   })
 })
+
+describe('CorrelatesPanel — significant_count disclosure (CR10)', () => {
+  it('discloses the true total when `limit` cut the list shorter', async () => {
+    render(<CorrelatesPanel annotationId="K00001" source="kegg" onAddAnnotation={vi.fn()} />)
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      results: [
+        { catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 },
+      ],
+      significant_count: 2847,
+      prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+    }))
+
+    await userEvent.click(screen.getByRole('button', { name: /Find Correlates/i }))
+
+    expect(await screen.findByText(/showing top 1 of 2,847 significant/)).toBeInTheDocument()
+  })
+
+  it('does not show the cap disclosure when every significant result is already shown', async () => {
+    render(<CorrelatesPanel annotationId="K00001" source="kegg" onAddAnnotation={vi.fn()} />)
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      results: [
+        { catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 },
+      ],
+      significant_count: 1,
+      prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+    }))
+
+    await userEvent.click(screen.getByRole('button', { name: /Find Correlates/i }))
+
+    await screen.findByText(/COG0001/)
+    expect(screen.queryByText(/showing top/)).not.toBeInTheDocument()
+  })
+})
