@@ -213,6 +213,22 @@ export function computeDayBands(
   })
 }
 
+// ── formatRelativeAbundancePercent ──────────────────────────────────────────
+// Format a norm_egc fraction (0-1) as a percentage for chart tooltips.
+//
+// W23 (docs/AUDIT-2026-09-22.md): most real annotations have a norm_egc far
+// below 0.1% (rare KOs can be as low as ~1e-8, e.g. mean norm_egc for K24448
+// is 6.3e-8 in the real local database) -- a fixed 3-4 decimal places
+// (.toFixed) rounds every one of these down to a meaningless "0.000%",
+// silently discarding the only information the tooltip was there to show.
+// .toPrecision keeps 3 SIGNIFICANT figures regardless of magnitude instead,
+// so a tiny real value still reads as a tiny real number ("0.0000000633%")
+// rather than indistinguishable from zero.
+
+export function formatRelativeAbundancePercent(v: number): string {
+  return (v * 100).toPrecision(3) + '%'
+}
+
 // ── parseGroupDate ───────────────────────────────────────────────────────
 // Parse a "M/D/YY" calendar-date string (the `date` key produced by
 // computeDayBands's grouping step) into a local midnight Date, for elapsed

@@ -8,6 +8,7 @@ import { extractEgc, extractNormEgc } from '../../utils/stats'
 import { applyZScore, applyLowess } from '../../utils/signal'
 import {
   parseDateTime, fmtDate, isoDate, computeDayBands, toPlotlyDate,
+  formatRelativeAbundancePercent,
 } from '../../utils/format'
 import { computeNightBands, alignTideToChartPoints } from '../../utils/solar'
 import { useSolarTideData } from '../../utils/useSolarTideData'
@@ -187,7 +188,7 @@ export function GroupedEgcChart({
     const fmtVal = (v: number | null) => {
       if (v === null) return '--'
       if (standardize)          return v.toFixed(3) + 'σ'
-      if (metric === 'norm_egc') return (v * 100).toFixed(3) + '%'
+      if (metric === 'norm_egc') return formatRelativeAbundancePercent(v)
       return v.toExponential(3)
     }
     const xs = processedPoints.map(p => toPlotlyDate(p.ts))

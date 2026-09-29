@@ -72,6 +72,7 @@ import {
   isoDate,
   computeDayBands,
   toPlotlyDate,
+  formatRelativeAbundancePercent,
 } from '../utils/format'
 
 import {
@@ -981,6 +982,41 @@ describe('computeDayBands', () => {
     const bands = computeDayBands(SAMPLE_POINTS)
     const lastPtTs = new Date(2021, 4, 27, 20, 0).getTime()  // 20:00 sample
     expect(bands[0].x2Ts).toBeGreaterThan(lastPtTs)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// formatRelativeAbundancePercent — W23 (docs/AUDIT-2026-09-22.md): tooltips
+// showed "0.000%" for the many real annotations whose norm_egc is far below
+// 0.1% (a fixed .toFixed(3/4) rounds them all down to indistinguishable
+// zero). Real production example: K24448's mean norm_egc is 6.328e-8.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('formatRelativeAbundancePercent', () => {
+  it('a typical mid-range value keeps 3 significant figures', () => {
+    expect(formatRelativeAbundancePercent(0.05165)).toBe('5.17%')
+  })
+
+  it('a real rare-annotation value does NOT collapse to "0.000%" (the W23 bug)', () => {
+    // K24448, real local database: mean_norm_egc = 6.328266950938043e-08
+    const result = formatRelativeAbundancePercent(6.328266950938043e-08)
+    expect(result).not.toBe('0.000%')
+    expect(result).not.toBe('0.0000%')
+    expect(result).toBe('0.00000633%')
+  })
+
+  it('a value so small it would need scientific notation still shows real digits, not zero', () => {
+    const result = formatRelativeAbundancePercent(1e-10)
+    expect(result).not.toMatch(/^0\.0*%$/)
+    expect(result).toBe('1.00e-8%')
+  })
+
+  it('zero is still exactly "0.00%", not scientific notation', () => {
+    expect(formatRelativeAbundancePercent(0)).toBe('0.00%')
+  })
+
+  it('a full 100% value formats cleanly', () => {
+    expect(formatRelativeAbundancePercent(1)).toBe('100%')
   })
 })
 
