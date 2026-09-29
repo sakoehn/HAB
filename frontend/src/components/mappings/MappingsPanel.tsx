@@ -185,22 +185,56 @@ export function MappingsPanel({
   // 128"), and sampleCount alone can't hold both once it's corrected.
   const [requestedSampleCount, setRequestedSampleCount] = useState(128)
   const [csvStatus, setCsvStatus]     = useState<ApiStatus>('idle')
+  // Distinguishes WHY a request got capped: either annotationId resolved
+  // to many real leaf ids (a genuine category/pathway/class -- leafCount
+  // > 1), or it's a single leaf that's just individually high-volume
+  // (leafCount === 1, e.g. COG2801 -- one specific COG, not a category,
+  // but still 271K+ raw rows across 128 samples). The capped-notice
+  // banner below must not call a single leaf id "a broad category" --
+  // caught live, 2026-09-25, when a user correctly pointed out COG only
+  // has 2 hierarchy levels and a leaf id has no "members" to be broad.
+  const [leafCount, setLeafCount] = useState<number | null>(null)
+  // A DIFFERENT failure mode from samplesCapped -- found live in
+  // production, 2026-09-25: a single, specific, real leaf-level
+  // organism (leafCount=1, not a category, so samplesCapped never
+  // fires) can itself have millions of rows across all 128 samples
+  // (the single most abundant organism in this dataset: 2,235,509).
+  // The backend's hard row-count safety limit can truncate results even
+  // when the sample count was never reduced at all.
+  const [resultsWereTruncated, setResultsWereTruncated] = useState(false)
+  // A handful of very-high-volume ids (kegg/cog/enzyme leaves that match
+  // hundreds of thousands of rows, or broad categories) were measured
+  // live in production, 2026-09-25, taking up to ~55s even after the cap
+  // and the composite-index fixes for kegg/cog/enzyme -- kept generous
+  // headroom above that rather than assuming every case is now fast.
+  // A longer timeout plus a delayed reassurance message means "slow"
+  // reads as "still working", not "Failed to load".
+  const MAPPINGS_TIMEOUT_MS = 120_000
+  const SLOW_NOTICE_DELAY_MS = 8_000
+  const [showSlowNotice, setShowSlowNotice] = useState(false)
 
   async function loadMappings(count = sampleCount, unique = uniqueOnly) {
     setStatus('loading')
     setPage(1)
     setRequestedSampleCount(count)
+    setShowSlowNotice(false)
+    const slowTimer = setTimeout(() => setShowSlowNotice(true), SLOW_NOTICE_DELAY_MS)
     try {
       const r = await apiFetch<{
         data: MappingSearchRow[]
         total: number
         sample_count: number
         samples_were_capped: boolean
+        results_were_truncated: boolean
+        leaf_count: number | null
       }>(
         buildMappingsUrl(annotationId, source, count, unique),
+        MAPPINGS_TIMEOUT_MS,
       )
       setAllRows(r.data ?? [])
       setSamplesCapped(r.samples_were_capped ?? false)
+      setResultsWereTruncated(r.results_were_truncated ?? false)
+      setLeafCount(r.leaf_count ?? null)
       setUsedSampleCount(r.sample_count ?? null)
       // Reflect what was ACTUALLY used back into the field itself, not
       // just a banner below it -- a capped request must not leave the
@@ -211,6 +245,9 @@ export function MappingsPanel({
       setStatus('ok')
     } catch {
       setStatus('error')
+    } finally {
+      clearTimeout(slowTimer)
+      setShowSlowNotice(false)
     }
   }
 
@@ -231,8 +268,13 @@ export function MappingsPanel({
     }
     setCsvStatus('loading')
     try {
+      // Uncapped, all-128-samples -- can take noticeably longer than the
+      // capped preview (up to several minutes for a high-volume cog/enzyme
+      // id, see MAPPINGS_TIMEOUT_MS above), but this is an explicit,
+      // opted-into export, not a passive browse.
       const r = await apiFetch<{ data: MappingSearchRow[] }>(
         buildMappingsUrl(annotationId, source, FULL_SAMPLE_COUNT, uniqueOnly, true),
+        300_000,
       )
       downloadCsv(
         sortMappingRows(r.data ?? [], sortCol, sortDir).map(row => buildMappingCsvRow(row, annotationId, source)),
@@ -350,7 +392,9 @@ export function MappingsPanel({
               <div style={{
                 font: '11px var(--mono)', color: 'var(--text-dim)', marginBottom: 4,
               }}>
-                Searching mappings across {requestedSampleCount} samples…
+                {showSlowNotice
+                  ? 'Still working — some common ids take up to a minute…'
+                  : `Searching mappings across ${requestedSampleCount} samples…`}
               </div>
               <SkeletonTable columns={6} rows={6} />
             </div>
@@ -376,11 +420,27 @@ export function MappingsPanel({
               {samplesCapped && (
                 <div className="state-box" style={{ padding: '10px 12px', marginBottom: 8 }}>
                   <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
-                    {annotationId} is a broad category — showing results from
+                    {leafCount !== null && leafCount > 1
+                      ? `${annotationId} is a broad category (${leafCount} member ids)`
+                      : `${annotationId} matches a very large number of gene records`}
+                    {' '}— showing results from
                     only {usedSampleCount ?? '—'} sample{usedSampleCount === 1 ? '' : 's'} instead
                     of the requested {requestedSampleCount} to keep this fast. Narrow to a
                     specific gene/id for full sample coverage, or use "Export all" below
                     for the full uncapped download.
+                  </span>
+                </div>
+              )}
+              {resultsWereTruncated && (
+                <div className="state-box" style={{ padding: '10px 12px', marginBottom: 8 }}>
+                  <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
+                    {annotationId} has an extremely large number of individual gene
+                    records{samplesCapped ? '' : ` across the ${usedSampleCount ?? requestedSampleCount} sample${(usedSampleCount ?? requestedSampleCount) === 1 ? '' : 's'} shown`} —
+                    only the first 50,000 are included below. This is a hard safety
+                    limit (a prior version of this page crashed trying to load
+                    everything at once), and no CSV export of this annotation
+                    (including "Export all") can go past it either — a complete
+                    export of every record isn't available for an annotation this large.
                   </span>
                 </div>
               )}

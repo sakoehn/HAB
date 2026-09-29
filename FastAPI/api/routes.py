@@ -23,6 +23,19 @@ GET /taxonomy/export
 
 All business logic (pagination, search, EGC extraction) lives here or in
 cache.py / index.py — endpoints are intentionally thin.
+
+Each route opens its own short-lived connect_to_sql() connection instead
+of reusing the single connection main.py's lifespan stashes on
+app.state.sql_conn (still opened there, but now only for the one-time
+startup sample-order check). A single sqlite3.Connection shared across
+every request/thread produced non-deterministic hangs and
+sqlite3.InterfaceError: bad parameter or other API misuse under real
+concurrent traffic in production (2026-09-25) -- confirmed via a live
+py-spy stack dump (multiple threads permanently stuck mid-conn.execute())
+and ruled out as a cache/RAM sizing issue by running the identical query
+through an independent connection, which returned in under a second. This
+mirrors the per-call connection pattern correlation_sql.py's _connect()
+already used successfully.
 """
 
 import os
@@ -36,6 +49,10 @@ from .cache_sql import (
     _kegg_node_depth,
     _MANY_LEAVES_THRESHOLD,
     _MAX_SAMPLES_FOR_MANY_LEAVES,
+    _MAPPINGS_ROW_LIMIT,
+    _ROW_VOLUME_THRESHOLD,
+    count_taxa_under_sql,
+    estimate_mapping_row_count_sql,
     get_annotation_scaffolds_sql,
     get_annotation_series_sql,
     get_all_sample_names_sql,
@@ -62,6 +79,7 @@ from .cache import (
     AnnotationSource,
     get_timepoint,
 )
+from .db import connect_to_sql, close_sql_connection
 from .config import (
     BASE_DIR,
     DATA_BACKEND,
@@ -120,7 +138,7 @@ def debug():
 @router.get("/sql-test")
 def sql_test(request: Request):
     """ Test SQLite connection by a test query."""
-    db = request.app.state.sql_conn
+    db = connect_to_sql()
     try:
         query = f"""
             SELECT *
@@ -131,6 +149,8 @@ def sql_test(request: Request):
         return cursor.fetchall()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"SQL operation failed: {str(e)}")
+    finally:
+        close_sql_connection(db)
 
 @router.get("/status")
 def api_status():
@@ -161,7 +181,11 @@ def list_timepoints(request: Request, page: int = 1, page_size: int = 50):
     """Return all samples with their readable dates, paginated."""
     if not TIMEPOINTS:
         raise HTTPException(status_code=404, detail="Timepoints data not found")
-    real_samples = get_all_sample_names_sql(request.app.state.sql_conn)
+    conn = connect_to_sql()
+    try:
+        real_samples = get_all_sample_names_sql(conn)
+    finally:
+        close_sql_connection(conn)
     rows = _filter_timepoints_to_real_samples(TIMEPOINTS, real_samples)
     return paginate(rows, page, page_size)
 
@@ -169,7 +193,11 @@ def list_timepoints(request: Request, page: int = 1, page_size: int = 50):
 @router.get("/samples")
 def list_samples(request: Request, page: int = 1, page_size: int = 50):
     """Return all sample names with their readable dates, paginated."""
-    samples = get_all_sample_names_sql(request.app.state.sql_conn)
+    conn = connect_to_sql()
+    try:
+        samples = get_all_sample_names_sql(conn)
+    finally:
+        close_sql_connection(conn)
     return paginate([{"sample": s, "timepoint": get_timepoint(s)} for s in samples], page, page_size)
 
 
@@ -238,34 +266,91 @@ def search_mappings(
     Nitrogen metabolism, not zero rows).
 
     Results are deduplicated (if unique_pairs), sorted chronologically,
-    then paginated. When annotation_id resolves to more than
-    _MANY_LEAVES_THRESHOLD real leaves, sample_count is additionally
-    clamped to _MAX_SAMPLES_FOR_MANY_LEAVES regardless of what was
-    requested -- a broad category times all 128 samples can be millions
-    of raw rows (measured: a 269-member COG category is 3,015,883 rows at
-    128 samples) -- unless bypass_cap is set, for a caller that explicitly
-    wants the full, uncapped export and is willing to wait. The response's
+    then paginated. sample_count is clamped to _MAX_SAMPLES_FOR_MANY_LEAVES
+    regardless of what was requested when either: annotation_id resolves
+    to more than _MANY_LEAVES_THRESHOLD real leaves (a broad category
+    times all 128 samples can be millions of raw rows -- measured: a
+    269-member COG category is 3,015,883 rows at 128 samples), or -- found
+    live in production, 2026-09-25 -- a single common leaf id alone
+    already matches more than _ROW_VOLUME_THRESHOLD rows (K02014 is one
+    leaf but 271,284 rows at 128 samples, a 249.8s query). Either way,
+    unless bypass_cap is set, for a caller that explicitly wants the
+    full, uncapped export and is willing to wait. The response's
     sample_count always reflects what was actually used, not what was
     requested.
+
+    Separately, results_were_truncated discloses a DIFFERENT failure
+    mode: get_mappings_sql's hard _MAPPINGS_ROW_LIMIT (50,000 raw rows)
+    can trigger even when sample_count was never capped at all -- found
+    live in production, 2026-09-25, a single real leaf-level organism
+    (leaf_count=1, not a broad category, so the caps above never fire)
+    can itself have millions of rows across 128 samples (the single most
+    abundant organism in this dataset has 2,235,509). That case first
+    crashed the whole server via the kernel OOM killer before this limit
+    existed; it's now a silent, safe truncation instead, disclosed here.
     """
-    samples = get_all_sample_names_sql(request.app.state.sql_conn)
-    if not samples:
-        raise HTTPException(status_code=404, detail="No samples found")
+    conn = connect_to_sql()
+    try:
+        samples = get_all_sample_names_sql(conn)
+        if not samples:
+            raise HTTPException(status_code=404, detail="No samples found")
 
-    samples_sorted  = sorted(samples, key=timepoint_sort_key)
-    allowed_samples = samples_sorted[:sample_count]
+        samples_sorted  = sorted(samples, key=timepoint_sort_key)
+        allowed_samples = samples_sorted[:sample_count]
 
-    leaf_count = None
-    if source.value in ("kegg", "cog", "enzyme"):
-        leaf_count = len(_expand_to_leaf_ids(request.app.state.sql_conn, source.value, annotation_id))
-        if leaf_count > _MANY_LEAVES_THRESHOLD and not bypass_cap:
-            allowed_samples = allowed_samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
+        leaf_count = None
+        samples_were_capped = False
+        if source.value in ("kegg", "cog", "enzyme"):
+            leaf_ids = _expand_to_leaf_ids(conn, source.value, annotation_id)
+            leaf_count = len(leaf_ids)
+            if leaf_count > _MANY_LEAVES_THRESHOLD and not bypass_cap:
+                allowed_samples = allowed_samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
+                samples_were_capped = True
+            elif not bypass_cap:
+                estimated_rows = estimate_mapping_row_count_sql(
+                    conn, source.value, leaf_ids, allowed_samples
+                )
+                if estimated_rows > _ROW_VOLUME_THRESHOLD:
+                    allowed_samples = allowed_samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
+                    samples_were_capped = True
+        elif source.value == "taxonomy":
+            # Never capped at all until this fix (2026-09-25) -- a broad
+            # node (e.g. a domain) went straight to the uncapped full
+            # query. source=taxonomy, annotation_id=Bacteria touches
+            # 59,780,871 of ~74M total mappings rows (81% of the entire
+            # dataset) and hung indefinitely. count_taxa_under_sql is
+            # taxonomy's leaf_count analog (real leaf taxa at or under
+            # this lineage prefix, via the much smaller taxon_paths
+            # table -- see its docstring for why the row-volume-estimate
+            # approach used for kegg/cog/enzyme doesn't work here).
+            leaf_count = count_taxa_under_sql(conn, annotation_id)
+            if leaf_count > _MANY_LEAVES_THRESHOLD and not bypass_cap:
+                allowed_samples = allowed_samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
+                samples_were_capped = True
 
-    seen_keys: set[str] = set()
+        seen_keys: set[str] = set()
 
-    mappings = get_mappings_sql(
-        request.app.state.sql_conn, source.value, annotation_id, samples=allowed_samples
-    )
+        mappings = get_mappings_sql(
+            conn, source.value, annotation_id, samples=allowed_samples
+        )
+        # A DIFFERENT failure mode from samples_were_capped, disclosed
+        # separately: get_mappings_sql's hard _MAPPINGS_ROW_LIMIT can
+        # truncate raw results even when the sample-count cap above never
+        # triggered at all -- found live in production, 2026-09-25, a
+        # single real leaf-level organism (leaf_count=1, not a broad
+        # category) has 2,235,509 rows across all 128 samples on its
+        # own. len(mappings) is a close-enough proxy for "the raw
+        # subquery hit the limit" (mappings.id is the table's primary
+        # key, so kegg/taxonomy's per-row subqueries can never produce
+        # duplicates the later GROUP BY would collapse; only cog/enzyme's
+        # junction-table subquery theoretically could, if the same gene
+        # matches more than one of several searched leaf ids -- a case
+        # that's already sample-count-capped down to low volume before
+        # this could matter).
+        results_were_truncated = len(mappings) >= _MAPPINGS_ROW_LIMIT
+    finally:
+        close_sql_connection(conn)
+
     results = []
     for row in mappings:
         row['timepoint'] = get_timepoint(row['sample'])
@@ -282,9 +367,10 @@ def search_mappings(
     return {
         "annotation_id":       annotation_id,
         "source":              source.value,
-        "sample_count":        len(allowed_samples),
-        "samples_were_capped": leaf_count is not None and leaf_count > _MANY_LEAVES_THRESHOLD and not bypass_cap,
-        "leaf_count":          leaf_count,
+        "sample_count":            len(allowed_samples),
+        "samples_were_capped":     samples_were_capped,
+        "results_were_truncated":  results_were_truncated,
+        "leaf_count":              leaf_count,
         **paginate(results, page, page_size),
     }
 
@@ -309,10 +395,13 @@ def search_annotations(
             status_code=400,
             detail="Provide at least one of: q, annotation_id, or name_exact",
         )
-    db = request.app.state.sql_conn
     if q is not None and len(q) < 3:
         raise HTTPException(status_code=400, detail="Search must have at least 3 characters.")
-    results = get_search_annotations(db, sources, q, annotation_id, name_exact)
+    db = connect_to_sql()
+    try:
+        results = get_search_annotations(db, sources, q, annotation_id, name_exact)
+    finally:
+        close_sql_connection(db)
     results.sort(key=lambda r: r.get("mean_egc") or 0, reverse=True)
     return {
         "query":         q,
@@ -335,7 +424,11 @@ async def annotation_time_series(
     sorted chronologically."""
     results: list[dict] = []
 
-    rows = get_annotation_series_sql(request.app.state.sql_conn, source.value, annotation_id)
+    conn = connect_to_sql()
+    try:
+        rows = get_annotation_series_sql(conn, source.value, annotation_id)
+    finally:
+        close_sql_connection(conn)
     for row in rows:
         value_out = {
             "name":     row.get("name"),
@@ -374,10 +467,13 @@ async def taxonomy_children(request: Request, parent: str | None = Query(None)):
 
     parent omitted/empty -> the 4 domain roots (value['parent'] is None).
     """
-    db = request.app.state.sql_conn
-    if parent and not taxon_exists_sql(db, parent):
-        raise HTTPException(status_code=404, detail=f"Unknown taxon '{parent}'")
-    children = get_taxonomy_children_sql(db, parent)
+    db = connect_to_sql()
+    try:
+        if parent and not taxon_exists_sql(db, parent):
+            raise HTTPException(status_code=404, detail=f"Unknown taxon '{parent}'")
+        children = get_taxonomy_children_sql(db, parent)
+    finally:
+        close_sql_connection(db)
     return {'parent': parent, 'count': len(children), 'data': children}
 
 
@@ -399,11 +495,14 @@ async def kegg_children(request: Request, parent: str | None = Query(None)):
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="KEGG hierarchy browsing requires DATA_BACKEND=sql")
 
-    db = request.app.state.sql_conn
-    if parent is not None and _kegg_node_depth(db, parent) is None:
-        raise HTTPException(status_code=404, detail=f"Unknown KEGG node '{parent}'")
+    db = connect_to_sql()
+    try:
+        if parent is not None and _kegg_node_depth(db, parent) is None:
+            raise HTTPException(status_code=404, detail=f"Unknown KEGG node '{parent}'")
 
-    children = get_kegg_children_sql(db, parent)
+        children = get_kegg_children_sql(db, parent)
+    finally:
+        close_sql_connection(db)
     return {'parent': parent, 'count': len(children), 'data': children}
 
 
@@ -419,8 +518,11 @@ async def kegg_path(request: Request, id: str = Query(...)):
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="KEGG hierarchy browsing requires DATA_BACKEND=sql")
 
-    db = request.app.state.sql_conn
-    result = get_kegg_path_sql(db, id)
+    db = connect_to_sql()
+    try:
+        result = get_kegg_path_sql(db, id)
+    finally:
+        close_sql_connection(db)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Unknown KEGG node '{id}'")
     return result
@@ -444,11 +546,14 @@ async def enzyme_children(request: Request, parent: str | None = Query(None)):
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="Enzyme hierarchy browsing requires DATA_BACKEND=sql")
 
-    db = request.app.state.sql_conn
-    if parent is not None and not _enzyme_node_exists(db, parent):
-        raise HTTPException(status_code=404, detail=f"Unknown Enzyme node '{parent}'")
+    db = connect_to_sql()
+    try:
+        if parent is not None and not _enzyme_node_exists(db, parent):
+            raise HTTPException(status_code=404, detail=f"Unknown Enzyme node '{parent}'")
 
-    children = get_enzyme_children_sql(db, parent)
+        children = get_enzyme_children_sql(db, parent)
+    finally:
+        close_sql_connection(db)
     return {'parent': parent, 'count': len(children), 'data': children}
 
 
@@ -464,8 +569,11 @@ async def enzyme_path(request: Request, id: str = Query(...)):
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="Enzyme hierarchy browsing requires DATA_BACKEND=sql")
 
-    db = request.app.state.sql_conn
-    result = get_enzyme_path_sql(db, id)
+    db = connect_to_sql()
+    try:
+        result = get_enzyme_path_sql(db, id)
+    finally:
+        close_sql_connection(db)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Unknown Enzyme node '{id}'")
     return result
@@ -490,11 +598,14 @@ async def cog_children(request: Request, parent: str | None = Query(None)):
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="COG hierarchy browsing requires DATA_BACKEND=sql")
 
-    db = request.app.state.sql_conn
-    if parent is not None and _cog_node_depth(db, parent) is None:
-        raise HTTPException(status_code=404, detail=f"Unknown COG node '{parent}'")
+    db = connect_to_sql()
+    try:
+        if parent is not None and _cog_node_depth(db, parent) is None:
+            raise HTTPException(status_code=404, detail=f"Unknown COG node '{parent}'")
 
-    children = get_cog_children_sql(db, parent)
+        children = get_cog_children_sql(db, parent)
+    finally:
+        close_sql_connection(db)
     return {'parent': parent, 'count': len(children), 'data': children}
 
 
@@ -510,8 +621,11 @@ async def cog_path(request: Request, id: str = Query(...)):
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="COG hierarchy browsing requires DATA_BACKEND=sql")
 
-    db = request.app.state.sql_conn
-    result = get_cog_path_sql(db, id)
+    db = connect_to_sql()
+    try:
+        result = get_cog_path_sql(db, id)
+    finally:
+        close_sql_connection(db)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Unknown COG node '{id}'")
     return result
@@ -531,31 +645,34 @@ async def top_annotations_by_egc(
 
     Cached per (source, date_from, date_to).
     """
-    db = request.app.state.sql_conn
-    samples = get_all_sample_names_sql(db)
-    if not samples:
-        raise HTTPException(status_code=404, detail="No samples found")
+    db = connect_to_sql()
+    try:
+        samples = get_all_sample_names_sql(db)
+        if not samples:
+            raise HTTPException(status_code=404, detail="No samples found")
 
-    cache_key = (source.value, date_from or "", date_to or "")
+        cache_key = (source.value, date_from or "", date_to or "")
 
-    if cache_key not in _TOP_ANN_CACHE_SQL:
-        if not date_from and not date_to:
-            # Unfiltered requests are the common case -- go straight to the
-            # precomputed annotation_catalog table instead of the per-sample
-            # timepoint scan below, which exists only to resolve date-range
-            # filters and would otherwise run needlessly on every request.
-            _TOP_ANN_CACHE_SQL[cache_key] = (
-                get_top_annotations_from_catalog_sql(db, source.value), len(samples)
-            )
-        else:
-            active_samples = [
-                s for s in samples
-                if is_within_date_range((get_timepoint(s) or {}).get("datetime"), date_from, date_to)
-            ]
-            _TOP_ANN_CACHE_SQL[cache_key] = (
-                (get_top_annotations_sql(db, source.value, active_samples), len(active_samples))
-                if active_samples else ([], 0)
-            )
+        if cache_key not in _TOP_ANN_CACHE_SQL:
+            if not date_from and not date_to:
+                # Unfiltered requests are the common case -- go straight to the
+                # precomputed annotation_catalog table instead of the per-sample
+                # timepoint scan below, which exists only to resolve date-range
+                # filters and would otherwise run needlessly on every request.
+                _TOP_ANN_CACHE_SQL[cache_key] = (
+                    get_top_annotations_from_catalog_sql(db, source.value), len(samples)
+                )
+            else:
+                active_samples = [
+                    s for s in samples
+                    if is_within_date_range((get_timepoint(s) or {}).get("datetime"), date_from, date_to)
+                ]
+                _TOP_ANN_CACHE_SQL[cache_key] = (
+                    (get_top_annotations_sql(db, source.value, active_samples), len(active_samples))
+                    if active_samples else ([], 0)
+                )
+    finally:
+        close_sql_connection(db)
 
     cached, filtered_sample_count = _TOP_ANN_CACHE_SQL[cache_key]
     return {
@@ -590,9 +707,11 @@ async def annotation_scaffolds(
     Returns { annotation_id, source, sample, total, page, page_size, data }
     where data is [{ sample, date, scaffold, count }], sorted by date.
     """
-    scaffolds = get_annotation_scaffolds_sql(
-        request.app.state.sql_conn, source.value, annotation_id, sample=sample
-    )
+    conn = connect_to_sql()
+    try:
+        scaffolds = get_annotation_scaffolds_sql(conn, source.value, annotation_id, sample=sample)
+    finally:
+        close_sql_connection(conn)
     rows: list[dict] = []
     for scaff in scaffolds:
         dt = (get_timepoint(scaff['sample_name']) or {}).get('datetime', '')
@@ -641,9 +760,11 @@ async def annotation_scaffolds_summary(
     gene_count     = sum of all scaffold hit counts
 
     """
-    docs = get_annotation_series_sql(
-        request.app.state.sql_conn, source.value, annotation_id
-    )
+    conn = connect_to_sql()
+    try:
+        docs = get_annotation_series_sql(conn, source.value, annotation_id)
+    finally:
+        close_sql_connection(conn)
     rows: list[dict] = []
     for doc in docs:
         if not doc.get("scaffold_count"):
@@ -667,7 +788,6 @@ async def annotation_scaffolds_summary(
 @router.get("/taxonomy/export")
 async def taxonomy_rank_export(request: Request, rank: str):
     """Return all taxa at the given taxonomic rank (e.g. "genus", "order")."""
-    db = request.app.state.sql_conn
     depth = None
     for d, column in RANK_COLUMNS.items():
         # strip('"') undoes "order"'s SQL-reserved-word quoting;
@@ -678,5 +798,9 @@ async def taxonomy_rank_export(request: Request, rank: str):
 
     if depth is None:
         raise HTTPException(status_code=400, detail=f"Rank '{rank}' not found")
-    rows = get_taxa_at_rank_sql(db, depth)
+    db = connect_to_sql()
+    try:
+        rows = get_taxa_at_rank_sql(db, depth)
+    finally:
+        close_sql_connection(db)
     return rows

@@ -615,6 +615,43 @@ def taxon_exists_sql(conn: sqlite3.Connection, lineage_prefix: str) -> bool:
     return row is not None
 
 
+def count_taxa_under_sql(conn: sqlite3.Connection, lineage_prefix: str) -> int:
+    """Count of real leaf taxa (specific full lineages) at or under
+    lineage_prefix -- taxonomy's analog of _expand_to_leaf_ids's
+    leaf_count for kegg/cog/enzyme, used the same way by
+    /mappings/search to decide whether to cap sample_count.
+
+    Found live in production, 2026-09-25: taxonomy was never covered by
+    that capping at all, so a broad node like a domain went completely
+    uncapped -- source=taxonomy, annotation_id=Bacteria touches
+    59,780,871 of the ~74M total mappings rows (81% of the entire
+    dataset) and hung indefinitely. The row-volume-estimate approach used
+    for kegg/cog/enzyme (summing annotation_series.gene_count) doesn't
+    work here: annotation_series.annotation_id is a full lineage string,
+    so matching "under this prefix" needs the same un-indexable
+    substr(...) scan _expand_to_leaf_ids's IN(...) lookup avoids for the
+    other three sources, and annotation_series is 5.15M rows -- too big
+    for that scan to be cheap (measured: 13.7s, not a "cheap check"
+    anymore). taxon_paths is only 42,099 rows, so the identical
+    substr(...) pattern here stays fast (measured: 0.01-0.14s) even
+    though it can't use an index either.
+
+    Args:
+        conn: Open SQLite connection.
+        lineage_prefix: Lineage-prefix string, e.g. "Bacteria" or
+            "Bacteria;Bacteroidetes".
+
+    Returns:
+        Number of taxon_paths rows at or under lineage_prefix (1 for an
+        already-leaf/strain-level lineage with no descendants).
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) FROM taxon_paths WHERE full_path = ? OR substr(full_path, 1, ?) = ?",
+        (lineage_prefix, len(lineage_prefix) + 1, lineage_prefix + ';'),
+    ).fetchone()
+    return row[0] if row else 0
+
+
 def get_top_annotations_sql(conn: sqlite3.Connection, source: str, sample_names: list[str]) -> list[dict]:
     """Return mean/max EGC and norm_egc per annotation_id, aggregated
     across the given samples, sorted by mean_egc descending.
@@ -813,6 +850,88 @@ def _sort_group_concat(value: str | None) -> str | None:
 _MANY_LEAVES_THRESHOLD = 20
 _MAX_SAMPLES_FOR_MANY_LEAVES = 5
 
+# The leaf-count cap above only catches breadth (a category with many
+# member leaves) -- it does nothing for a SINGLE leaf id that's just
+# common. Found live in production (2026-09-25): source=kegg,
+# annotation_id=K02014 is one leaf (leaf_count=1, no cap applied) but
+# matches 271,284 real mappings rows across all 128 samples and took
+# 249.8s to run get_mappings_sql's full query (measured directly against
+# the real db -- indexes were fine, EXPLAIN QUERY PLAN showed SEARCH not
+# SCAN throughout; the cost is genuine: this instance's storage is
+# IOPS-bound, and GROUP_CONCAT(DISTINCT ...) needs a per-group temp
+# b-tree for all ~271K groups). A smaller real case, K00001 (3,126 rows),
+# took 7.7s -- still slow for an interactive click. This threshold is
+# sized to clamp K02014-scale volume while leaving K00001 alone.
+_ROW_VOLUME_THRESHOLD = 5000
+
+# Hard backstop, independent of every cap above: found live in
+# production, 2026-09-25, this crashed the whole server (kernel
+# OOM-killed the process). Two ways to reach it, both real, both
+# ordinary user actions, not edge cases:
+#   - A domain-level taxonomy node (annotation_id=Bacteria, 39,237 real
+#     leaf taxa) still returned 1.7M+ raw rows even after capping to 5
+#     samples -- the sample-count cap bounds SAMPLES, not the breadth of
+#     a category with an extreme number of members.
+#   - A single, specific, real leaf-level taxon -- not a category at
+#     all, leaf_count=1, so no cap applies -- can itself be enormous:
+#     the single most abundant organism in this dataset
+#     ("...Marine gamma proteobacterium sp. HTCC2207") has 2,235,509
+#     rows across all 128 samples. Ordinary abundant-species searches
+#     hit this, not just domain-level browsing.
+# No amount of correct sample-count/leaf-count capping logic can be
+# trusted alone to bound memory for every possible category or organism,
+# so this LIMIT bounds the raw row count directly, for every source,
+# regardless of what capped it or whether it was capped at all. Sized
+# well above every real, already-working case measured this session
+# (kegg K02014 capped: 7,391; cog COG2801 capped: 2,313; cog COG0055
+# uncapped: 29,663) and well below the row count that actually caused
+# the OOM crash (~1.7M-2.2M). get_mappings_sql's caller
+# (search_mappings) checks len(results) >= this to disclose truncation
+# separately from samples_were_capped -- the two are different failure
+# modes with different causes.
+_MAPPINGS_ROW_LIMIT = 50_000
+
+
+def estimate_mapping_row_count_sql(
+    conn: sqlite3.Connection, source: str, leaf_ids: list[str], samples: list[str],
+) -> int:
+    """Cheap upper-bound estimate of how many `mappings` rows source/
+    leaf_ids will touch across samples -- without querying `mappings`
+    (74M rows) at all.
+
+    Uses annotation_series.gene_count, precomputed per (source, sample,
+    annotation_id) by the EGC migration scripts. Verified directly
+    against the real production db (2026-09-25): SUM(gene_count) for
+    kegg/K02014 across all 128 samples is exactly 271,284 -- an exact
+    match for a real COUNT(*) against `mappings` for the same filter --
+    and the sum itself runs in ~0.1s thanks to
+    idx_annotation_series_source_annotation_id, versus 94.6s for the
+    equivalent direct COUNT(*) against `mappings`.
+
+    Args:
+        conn: Open SQLite connection.
+        source: "kegg", "cog", or "enzyme".
+        leaf_ids: Real leaf ids from _expand_to_leaf_ids (bare, no
+            KO:/EC: prefix -- matches annotation_series.annotation_id's
+            storage form for all three sources).
+        samples: Sample names the real query would be restricted to.
+
+    Returns:
+        Total matching row count (0 if leaf_ids or samples is empty).
+    """
+    if not leaf_ids or not samples:
+        return 0
+    id_placeholders = ", ".join("?" * len(leaf_ids))
+    sample_placeholders = ", ".join("?" * len(samples))
+    query = f"""
+        SELECT COALESCE(SUM(gene_count), 0)
+        FROM annotation_series
+        WHERE source = ? AND annotation_id IN ({id_placeholders})
+          AND sample IN ({sample_placeholders})
+    """
+    row = conn.execute(query, (source, *leaf_ids, *samples)).fetchone()
+    return row[0] if row else 0
+
 
 def _expand_to_leaf_ids(conn: sqlite3.Connection, source: str, annotation_id: str) -> list[str]:
     """Resolve annotation_id to every real leaf id it reaches -- itself,
@@ -919,12 +1038,18 @@ def get_mappings_sql(
     # being a residual per-row check applied after the full unfiltered
     # subquery already ran -- confirmed via EXPLAIN QUERY PLAN that the
     # outer-WHERE-only version left the subquery's cost completely
-    # unaffected (no SEARCH step referencing mappings.sample at all).
-    sample_filter_sql = ""
-    sample_filter_params: tuple = ()
-    if samples is not None:
-        sample_filter_sql = f" AND mappings.sample IN ({', '.join('?' * len(samples))})"
-        sample_filter_params = tuple(samples)
+    # unaffected (no SEARCH step referencing the sample column at all).
+    # cog/enzyme filter on their OWN denormalized sample column
+    # (gene_cog.sample/gene_enzyme.sample, not mappings.sample) so the
+    # composite (cog_id, sample)/(ec_id, sample) indexes can be used
+    # directly instead of visiting every cog_id/ec_id match regardless of
+    # which samples were requested (found live in production, 2026-09-25:
+    # COG2801 took 55.0s without this -- see create_sql_indexes.py).
+    sample_placeholders = ", ".join("?" * len(samples)) if samples is not None else ""
+    sample_filter_params: tuple = tuple(samples) if samples is not None else ()
+
+    def _sample_filter(column: str) -> str:
+        return f" AND {column} IN ({sample_placeholders})" if samples is not None else ""
 
     if source == "kegg":
         kegg_ids = [f"KO:{leaf}" for leaf in leaf_ids]
@@ -932,16 +1057,17 @@ def get_mappings_sql(
         where_sql = f"""
             SELECT id
             FROM mappings
-            WHERE kegg_id IN ({placeholders}){sample_filter_sql}
+            WHERE kegg_id IN ({placeholders}){_sample_filter('mappings.sample')}
+            LIMIT {_MAPPINGS_ROW_LIMIT}
         """
         where_params = tuple(kegg_ids) + sample_filter_params
     elif source == "cog":
         placeholders = ", ".join("?" * len(leaf_ids))
         where_sql = f"""
             SELECT gene_cog.mapping_id AS id
-            FROM mappings
-            JOIN gene_cog ON gene_cog.mapping_id = mappings.id
-            WHERE gene_cog.cog_id IN ({placeholders}){sample_filter_sql}
+            FROM gene_cog
+            WHERE gene_cog.cog_id IN ({placeholders}){_sample_filter('gene_cog.sample')}
+            LIMIT {_MAPPINGS_ROW_LIMIT}
         """
         where_params = tuple(leaf_ids) + sample_filter_params
     elif source == "enzyme":
@@ -949,9 +1075,9 @@ def get_mappings_sql(
         placeholders = ", ".join("?" * len(ec_ids))
         where_sql = f"""
                 SELECT gene_enzyme.mapping_id AS id
-                FROM mappings
-                JOIN gene_enzyme ON gene_enzyme.mapping_id = mappings.id
-                WHERE gene_enzyme.ec_id IN ({placeholders}){sample_filter_sql}
+                FROM gene_enzyme
+                WHERE gene_enzyme.ec_id IN ({placeholders}){_sample_filter('gene_enzyme.sample')}
+                LIMIT {_MAPPINGS_ROW_LIMIT}
         """
         where_params = tuple(ec_ids) + sample_filter_params
     elif source == "taxonomy":
@@ -961,7 +1087,8 @@ def get_mappings_sql(
             WHERE taxon_path_id IN (
                 SELECT id FROM taxon_paths
                 WHERE full_path = ? OR substr(full_path, 1, ?) = ?
-            ){sample_filter_sql}
+            ){_sample_filter('mappings.sample')}
+            LIMIT {_MAPPINGS_ROW_LIMIT}
         """
         where_params = (annotation_id, len(annotation_id) + 1, annotation_id + ';') + sample_filter_params
 
@@ -969,7 +1096,7 @@ def get_mappings_sql(
         raise ValueError(f"Unknown source: {source}")
 
     main_query = f"""
-        SELECT sample,
+        SELECT mappings.sample,
             gene_id,
             scaffold_id,
             kegg_id,

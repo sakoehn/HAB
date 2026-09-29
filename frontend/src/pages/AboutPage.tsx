@@ -15,6 +15,31 @@ export function AboutPage() {
 
       <div className="page-body">
 
+        {/* ── Data Updates ── */}
+        <div>
+          <div style={{ marginBottom: 12 }}><h2>Data Updates</h2></div>
+          <div className="about-card" style={{ lineHeight: 1.9 }}>
+            <p>
+              <strong style={{ color: 'var(--teal)' }}>2026-09-25 — KEGG/COG data corrected</strong>
+              <br />
+              <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                The production database was running an incomplete, outdated
+                dataset. It has now been corrected and regenerated against
+                the full real data (128 samples). If a number looks
+                different than you remember — a KEGG pathway's EGC
+                magnitude, a COG's mapping-search result count, which
+                categories a COG belongs to — this is that correction, not
+                new or erroneous data. Mapping searches for a very common
+                id (e.g. a COG or KEGG id matching hundreds of thousands of
+                gene records across all samples) are now capped to a
+                handful of samples by default to stay fast; see the notice
+                shown on a capped result, or use "Export all" for the
+                complete, uncapped data.
+              </span>
+            </p>
+          </div>
+        </div>
+
         {/* ── Annotation Types ── */}
         <div>
           <div style={{ marginBottom: 12 }}><h2>Annotation Types</h2></div>

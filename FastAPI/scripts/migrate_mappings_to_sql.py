@@ -240,18 +240,18 @@ def populate_mappings_for_sample(
     }
 
     cog_rows = [
-        (gene_to_mapping_id[gene_id], cog_id)
+        (gene_to_mapping_id[gene_id], cog_id, sample)
         for gene_id, cog_ids in cog_by_gene.items()
         for cog_id in cog_ids
     ]
     enzyme_rows = [
-        (gene_to_mapping_id[gene_id], ec_id)
+        (gene_to_mapping_id[gene_id], ec_id, sample)
         for gene_id, ec_ids in enzyme_by_gene.items()
         for ec_id in ec_ids
     ]
 
-    cursor.executemany("INSERT INTO gene_cog (mapping_id, cog_id) VALUES (?, ?)", cog_rows)
-    cursor.executemany("INSERT INTO gene_enzyme (mapping_id, ec_id) VALUES (?, ?)", enzyme_rows)
+    cursor.executemany("INSERT INTO gene_cog (mapping_id, cog_id, sample) VALUES (?, ?, ?)", cog_rows)
+    cursor.executemany("INSERT INTO gene_enzyme (mapping_id, ec_id, sample) VALUES (?, ?, ?)", enzyme_rows)
 
     connection.commit()
     return len(mapping_rows)

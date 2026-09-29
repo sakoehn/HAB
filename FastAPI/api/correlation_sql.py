@@ -392,7 +392,7 @@ def score_pair(ref: list[float], cand: list[float], method):
     return best_r, bonf_p, best_lag, best_n
 
 # ── Internal: Tier 1 read-through cache ─────────────────────────
-def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method, get_sample_order=None):
+def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method, get_sample_order=None, get_vector=None):
     # 1. canonicalize catalog_id_a/catalog_id_b -> low, high (numeric compare)
     low, high = None, None
     if catalog_id_a <= catalog_id_b:
@@ -420,9 +420,13 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
         row_low = cursor_low.fetchone()
         cursor_high = conn.execute(query_can, (high,))
         row_high = cursor_high.fetchone()
-        sample_order = get_sample_order() if get_sample_order else load_sample_order(conn)
-        vec_low = load_vector(conn, row_low[0], row_low[1], sample_order, metric)
-        vec_high = load_vector(conn, row_high[0], row_high[1], sample_order, metric)
+        if get_vector:
+            vec_low = get_vector(row_low[0], row_low[1])
+            vec_high = get_vector(row_high[0], row_high[1])
+        else:
+            sample_order = get_sample_order() if get_sample_order else load_sample_order(conn)
+            vec_low = load_vector(conn, row_low[0], row_low[1], sample_order, metric)
+            vec_high = load_vector(conn, row_high[0], row_high[1], sample_order, metric)
         result = score_pair(vec_low, vec_high, method)
 
         if result is None: return None # idk what is best to return here
@@ -527,6 +531,24 @@ def correlation_family_endpoint(
         # Memoized so it only runs (at most once) if some candidate in this
         # family is actually a cache miss -- an all-cache-hit family (the
         # steady-state case once Tier 1 is warm) never pays for it.
+        # Memoized the same way as get_sample_order below, but keyed per
+        # (source, annotation_id) -- without this, the REFERENCE
+        # annotation's vector gets reloaded from annotation_series on
+        # every single candidate iteration (it's one side of every pair
+        # scored in this family), even though it's identical every time.
+        # Found live in production, 2026-09-25: a single load_vector call
+        # measured ~75ms on this instance's storage; across a
+        # 12,863-candidate kegg family that's ~16 minutes of pure waste
+        # reloading the same reference vector, on top of an already very
+        # long prescreening pass (measured ~1.2 pairs/sec -- ~3 hours for
+        # that family alone, well past the frontend's ~2h retry ceiling).
+        _vector_cache: dict[tuple[str, str], list] = {}
+        def get_vector(source: str, annotation_id: str) -> list:
+            key = (source, annotation_id)
+            if key not in _vector_cache:
+                _vector_cache[key] = load_vector(conn, source, annotation_id, get_sample_order(), metric)
+            return _vector_cache[key]
+
         _sample_order_box = []
         def get_sample_order():
             if not _sample_order_box:
@@ -549,7 +571,8 @@ def correlation_family_endpoint(
                 fast_scored = []
                 for cand in candidates:
                     result = _get_or_compute_correlation(
-                        conn, ref_catalog_id, cand["id"], metric, "spearman", get_sample_order=get_sample_order,
+                        conn, ref_catalog_id, cand["id"], metric, "spearman",
+                        get_sample_order=get_sample_order, get_vector=get_vector,
                     )
                     if result is None:
                         continue
@@ -560,7 +583,8 @@ def correlation_family_endpoint(
             scored = []
             for cand in candidates:
                 result = _get_or_compute_correlation(
-                    conn, ref_catalog_id, cand["id"], metric, method, get_sample_order=get_sample_order,
+                    conn, ref_catalog_id, cand["id"], metric, method,
+                    get_sample_order=get_sample_order, get_vector=get_vector,
                 )
                 if result is None:
                     continue

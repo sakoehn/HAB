@@ -73,10 +73,14 @@ def test_search_returns_correct_shape(client):
 
     # W24 (docs/AUDIT-2026-09-22.md) added samples_were_capped/leaf_count
     # (non-leaf-id disclosure) and real page/page_size/total_pages
-    # pagination alongside the pre-existing keys.
+    # pagination alongside the pre-existing keys. results_were_truncated
+    # (2026-09-25) discloses get_mappings_sql's hard row-count safety
+    # limit separately from samples_were_capped -- a different failure
+    # mode with a different cause (see search_mappings's docstring).
     assert set(body.keys()) == {
         "annotation_id", "source", "sample_count", "samples_were_capped",
-        "leaf_count", "total", "page", "page_size", "total_pages", "data",
+        "results_were_truncated", "leaf_count",
+        "total", "page", "page_size", "total_pages", "data",
     }
     assert body["annotation_id"] == "COG0055"
     assert body["source"] == "cog"
@@ -280,16 +284,163 @@ def test_bypass_cap_honors_the_full_requested_sample_count(client):
     assert body["leaf_count"] is not None and body["leaf_count"] > 20
 
 
-def test_leaf_id_never_triggers_the_broad_category_cap(client):
-    """A single real leaf COG id must always get its full requested
-    sample_count -- the cap is specifically for non-leaf ids with many
-    real member leaves, not for ordinary leaf searches."""
+def test_low_volume_leaf_id_is_never_capped(client):
+    """A leaf id that's both narrow (leaf_count=1) AND low-volume must
+    always get its full requested sample_count. K00001 is a real,
+    verified-cheap case: 3,126 rows across all 128 samples (measured
+    directly against the real production db, 2026-09-25) -- comfortably
+    under _ROW_VOLUME_THRESHOLD."""
     resp = client.get(
         "/mappings/search",
-        params={"annotation_id": "COG0055", "source": "cog", "sample_count": 128},
+        params={"annotation_id": "K00001", "source": "kegg", "sample_count": 128},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["samples_were_capped"] is False
     assert body["sample_count"] == 128
     assert body["leaf_count"] == 1
+
+
+def test_high_volume_leaf_id_is_capped_by_row_count_not_leaf_count(client):
+    """A single leaf id (leaf_count=1, so the breadth-based
+    _MANY_LEAVES_THRESHOLD cap never fires) can still be expensive on its
+    own -- found live in production, 2026-09-25: source=kegg,
+    annotation_id=K02014 is one leaf but matches 271,284 real mappings
+    rows across all 128 samples and took 249.8s to run uncapped (measured
+    directly against the real db). This must be caught by the row-volume
+    cap (estimate_mapping_row_count_sql vs _ROW_VOLUME_THRESHOLD) even
+    though leaf_count itself never exceeds _MANY_LEAVES_THRESHOLD."""
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "K02014", "source": "kegg", "sample_count": 128},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["leaf_count"] == 1
+    assert body["samples_were_capped"] is True
+    assert body["sample_count"] == 5
+    assert body["results_were_truncated"] is False, (
+        "the sample-count cap alone should already bring K02014 well "
+        "under _MAPPINGS_ROW_LIMIT (measured: 7,391 rows at 5 samples) "
+        "-- both mechanisms firing here would suggest the sample cap "
+        "regressed, not that this assertion is wrong"
+    )
+
+
+def test_broad_taxonomy_node_is_capped_too(client):
+    """Taxonomy was never covered by the leaf-count cap at all until this
+    fix (2026-09-25) -- found live in production: source=taxonomy,
+    annotation_id=Bacteria touches 59,780,871 of ~74M total mappings rows
+    (81% of the entire dataset) and hung indefinitely, uncapped, because
+    the kegg/cog/enzyme-only capping branch skipped taxonomy entirely.
+    count_taxa_under_sql (taxon_paths-based, taxonomy's leaf_count analog)
+    must now catch this the same way _expand_to_leaf_ids does for the
+    other three sources."""
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "Bacteria", "source": "taxonomy", "sample_count": 128},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["samples_were_capped"] is True
+    assert body["sample_count"] == 5
+    assert body["leaf_count"] is not None and body["leaf_count"] > 20
+    # Unlike the single-abundant-organism case below, Bacteria's real
+    # row count even at 5 samples (measured: ~1.7M) still exceeds
+    # _MAPPINGS_ROW_LIMIT -- both mechanisms legitimately fire together
+    # here, unlike the K02014 case above.
+    assert body["results_were_truncated"] is True
+
+
+def test_leaf_level_taxon_is_not_capped(client):
+    """A specific strain/species-level lineage (no real descendants in
+    taxon_paths) must behave like an ordinary leaf id -- not treated as
+    broad just because it went through the same new code path as
+    Bacteria."""
+    resp = client.get(
+        "/mappings/search",
+        params={
+            "annotation_id": (
+                "Bacteria;Proteobacteria;Acidithiobacillia;Acidithiobacillales;"
+                "Acidithiobacillaceae;Acidithiobacillus;Acidithiobacillus albertensis;"
+                "Acidithiobacillus albertensis DSM 14366"
+            ),
+            "source": "taxonomy",
+            "sample_count": 128,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["leaf_count"] == 1
+    assert body["samples_were_capped"] is False
+    assert body["results_were_truncated"] is False
+
+
+def test_single_abundant_leaf_taxon_is_row_limited_even_though_never_capped(client):
+    """A DIFFERENT failure mode from the broad-category cap above: a
+    single, specific, real leaf-level organism (leaf_count=1, not a
+    category at all, so samples_were_capped never fires) can itself be
+    enormous. Found live in production, 2026-09-25: the single most
+    abundant organism in this dataset has 2,235,509 rows across all 128
+    samples -- this first crashed the whole server via the kernel OOM
+    killer before _MAPPINGS_ROW_LIMIT existed. results_were_truncated
+    must disclose this separately from samples_were_capped, since here
+    the sample count was never reduced at all -- only the raw row count
+    was capped."""
+    resp = client.get(
+        "/mappings/search",
+        params={
+            "annotation_id": (
+                "Bacteria;Proteobacteria;Gammaproteobacteria;Cellvibrionales;"
+                "Porticoccaceae;unclassified Porticoccaceae;"
+                "gamma proteobacterium HTCC2207;"
+                "Marine gamma proteobacterium sp. HTCC2207"
+            ),
+            "source": "taxonomy",
+            "sample_count": 128,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["leaf_count"] == 1
+    assert body["samples_were_capped"] is False
+    assert body["sample_count"] == 128
+    assert body["results_were_truncated"] is True
+
+
+def test_concurrent_requests_do_not_hang_or_corrupt_the_shared_connection(client):
+    """Regression test for a real production incident (2026-09-25): every
+    route in routes.py used to read one sqlite3.Connection shared off
+    app.state.sql_conn across every request/thread. Under real concurrent
+    traffic this produced non-deterministic hangs and
+    sqlite3.InterfaceError: bad parameter or other API misuse -- confirmed
+    live via a py-spy stack dump showing multiple threads permanently stuck
+    mid-conn.execute() on the one shared connection. The fix (routes.py
+    now opens its own connect_to_sql() connection per request, see its
+    module docstring) means concurrent requests must no longer interfere
+    with each other at all. Fires a real mix of leaf and non-leaf lookups
+    from multiple threads at once and requires every single one to return
+    200 within a real wall-clock deadline -- a hang (the actual failure
+    mode observed in production) times out ThreadPoolExecutor's `.result()`
+    rather than failing fast, so this would have caught it.
+    """
+    import concurrent.futures
+
+    requests = [
+        {"annotation_id": "K02014", "source": "kegg", "sample_count": 5},
+        {"annotation_id": "COG0055", "source": "cog", "sample_count": 5},
+        {"annotation_id": "H", "source": "cog", "sample_count": 5},
+        {"annotation_id": "00910", "source": "kegg", "sample_count": 5},
+        {"annotation_id": "K02014", "source": "kegg", "sample_count": 5},
+        {"annotation_id": "COG0055", "source": "cog", "sample_count": 5},
+    ] * 3  # 18 concurrent requests, deliberately repeating the same ids
+
+    def fire(params):
+        return client.get("/mappings/search", params=params)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(requests)) as pool:
+        futures = [pool.submit(fire, params) for params in requests]
+        responses = [f.result(timeout=30) for f in futures]
+
+    statuses = [r.status_code for r in responses]
+    assert all(s == 200 for s in statuses), f"Expected all 200, got: {statuses}"

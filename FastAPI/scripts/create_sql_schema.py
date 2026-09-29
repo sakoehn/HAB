@@ -107,13 +107,21 @@ CREATE TABLE IF NOT EXISTS mappings (
 CREATE TABLE IF NOT EXISTS gene_cog (
     id         INTEGER PRIMARY KEY,
     mapping_id INTEGER NOT NULL REFERENCES mappings(id),
-    cog_id     TEXT NOT NULL
+    cog_id     TEXT NOT NULL,
+    sample     TEXT NOT NULL  -- denormalized from mappings.sample: lets
+                              -- get_mappings_sql seek by (cog_id, sample)
+                              -- together via a composite index instead of
+                              -- visiting every cog_id match regardless of
+                              -- which samples were requested (found live
+                              -- in production, 2026-09-25: COG2801 took
+                              -- 55.0s without this)
 );
 
 CREATE TABLE IF NOT EXISTS gene_enzyme (
     id         INTEGER PRIMARY KEY,
     mapping_id INTEGER NOT NULL REFERENCES mappings(id),
-    ec_id      TEXT NOT NULL
+    ec_id      TEXT NOT NULL,
+    sample     TEXT NOT NULL  -- see gene_cog.sample
 );
 
 CREATE TABLE IF NOT EXISTS annotation_series(

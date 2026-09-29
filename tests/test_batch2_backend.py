@@ -241,19 +241,31 @@ class TestSqlTestRoute:
         assert isinstance(rows, list)
         assert len(rows) == 1
 
-    def test_raises_500_not_a_raw_exception_on_a_bad_connection(self):
+    def test_raises_500_not_a_raw_exception_on_a_bad_connection(self, monkeypatch):
         """Real robustness check, not hypothetical: sql_test wraps its
         query in try/except specifically so a broken connection surfaces
-        as a clean 500, not an unhandled exception escaping the route."""
+        as a clean 500, not an unhandled exception escaping the route.
+
+        sql_test opens its own connection via connect_to_sql() (2026-09-25
+        fix -- see routes.py's module docstring: a single connection
+        shared across every request/thread caused real production hangs
+        and corruption) instead of reading one off request.app.state, so
+        the exploding connection is injected by patching connect_to_sql
+        itself rather than via _FakeRequest.
+        """
         from fastapi import HTTPException
-        from api.routes import sql_test
+        import api.routes as routes_mod
 
         class _ExplodingConn:
             def execute(self, *_a, **_kw):
                 raise RuntimeError("connection lost")
+            def close(self):
+                pass
+
+        monkeypatch.setattr(routes_mod, "connect_to_sql", lambda: _ExplodingConn())
 
         with pytest.raises(HTTPException) as exc_info:
-            sql_test(_FakeRequest(_ExplodingConn()))
+            routes_mod.sql_test(_FakeRequest(None))
         assert exc_info.value.status_code == 500
 
 

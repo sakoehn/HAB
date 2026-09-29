@@ -257,6 +257,7 @@ describe('MappingsPanel — broad-category cap (W24, docs/AUDIT-2026-09-22.md)',
       data: [makeRow('5/27/21 8:00')],
       sample_count: 5,
       samples_were_capped: true,
+      leaf_count: 25, // "H" is a real, many-member COG category
     }))
     render(<MappingsPanel annotationId="H" source="cog" />)
     await open()
@@ -265,6 +266,38 @@ describe('MappingsPanel — broad-category cap (W24, docs/AUDIT-2026-09-22.md)',
     expect(screen.getByText(/broad category/i)).toBeInTheDocument()
     const sampleInput = screen.getByRole('spinbutton') as HTMLInputElement
     expect(sampleInput.value).toBe('5')
+  })
+
+  it('does NOT call a single high-volume leaf id "a broad category" (2026-09-25 fix: COG only has 2 hierarchy levels -- a leaf has no members to be broad)', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({
+      data: [makeRow('5/27/21 8:00')],
+      sample_count: 5,
+      samples_were_capped: true,
+      leaf_count: 1, // e.g. COG2801: one specific COG, just individually high-volume
+    }))
+    render(<MappingsPanel annotationId="COG2801" source="cog" />)
+    await open()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+
+    expect(screen.queryByText(/broad category/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/matches a very large number of gene records/i)).toBeInTheDocument()
+  })
+
+  it('discloses results_were_truncated separately from samples_were_capped -- a single abundant leaf organism that was never sample-capped at all (2026-09-25 fix: this case first crashed the whole server via OOM before the row limit existed)', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({
+      data: [makeRow('5/27/21 8:00')],
+      sample_count: 128,
+      samples_were_capped: false,
+      results_were_truncated: true,
+      leaf_count: 1,
+    }))
+    render(<MappingsPanel annotationId="Marine gamma proteobacterium sp. HTCC2207" source="taxonomy" />)
+    await open()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+
+    expect(screen.queryByText(/broad category/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/extremely large number of individual gene records/i)).toBeInTheDocument()
+    expect(screen.getByText(/first 50,000/i)).toBeInTheDocument()
   })
 
   it('CSV export re-fetches uncapped (bypass_cap) when the preview was capped, and downloads that data, not the capped preview', async () => {
