@@ -133,9 +133,8 @@ describe('filterRedundantAnnotations — kegg/cog/enzyme (real /path fetch)', ()
     expect(dropped.map(d => d.candidate.annotationId)).toEqual(['K00844'])
   })
 
-  it('does not compare across different sources -- a taxonomy id can never contain a kegg id', async () => {
+  it('a lone candidate in a source never triggers a fetch (nothing to compare against)', async () => {
     mockApiFetch.mockImplementation(async (url: string) => {
-      if (url.includes('/kegg/path')) return pathResponse([['00010', 'K00001']])
       throw new Error(`unexpected url: ${url}`)
     })
 
@@ -145,6 +144,59 @@ describe('filterRedundantAnnotations — kegg/cog/enzyme (real /path fetch)', ()
     ])
     expect(kept).toHaveLength(2)
     expect(dropped).toHaveLength(0)
+    expect(mockApiFetch).not.toHaveBeenCalled()
+  })
+
+  it('kegg and cog candidates present at once never cross into each other\'s /path endpoint', async () => {
+    // A prior version of this test used 1 candidate per source, which can't
+    // actually detect cross-source contamination -- group.length < 2 means
+    // no fetch happens at all regardless of source-scoping. This version
+    // puts 2+ real candidates in TWO hierarchy sources at once (one pair
+    // genuinely related, one pair genuinely unrelated) and asserts on the
+    // real fetch call log, not just the final kept/dropped outcome --
+    // confirmed by deliberately breaking the source filter
+    // (candidates.filter(c => c.source === source) -> c.source !== 'taxonomy',
+    // pooling kegg/cog/enzyme into one shared group) and watching the
+    // outcome assertions below still pass while the call-log assertions
+    // correctly failed, before reverting.
+    mockApiFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/api/cog/path')) {
+        if (url.includes('id=H'))       return pathResponse([['H']])
+        if (url.includes('id=COG0028')) return pathResponse([['H', 'COG0028']])
+      }
+      if (url.includes('/api/kegg/path')) {
+        if (url.includes('id=09100'))  return pathResponse([['09100']])
+        // Genuinely unrelated to 09100 -- its real parent is a different
+        // pathway entirely.
+        if (url.includes('id=K00010')) return pathResponse([['09999', 'K00010']])
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+
+    const { kept, dropped } = await filterRedundantAnnotations([
+      { annotationId: 'H',       source: 'cog' },
+      { annotationId: 'COG0028', source: 'cog' },
+      { annotationId: '09100',   source: 'kegg' },
+      { annotationId: 'K00010',  source: 'kegg' },
+    ])
+
+    expect(kept).toEqual(expect.arrayContaining([
+      { annotationId: 'H',      source: 'cog' },
+      { annotationId: '09100',  source: 'kegg' },
+      { annotationId: 'K00010', source: 'kegg' },
+    ]))
+    expect(dropped).toEqual([{
+      candidate:   { annotationId: 'COG0028', source: 'cog' },
+      containedBy: { annotationId: 'H', source: 'cog' },
+    }])
+
+    const urls = mockApiFetch.mock.calls.map(call => call[0] as string)
+    for (const url of urls.filter(u => u.includes('id=H') || u.includes('id=COG0028'))) {
+      expect(url).toContain('/api/cog/path')
+    }
+    for (const url of urls.filter(u => u.includes('id=09100') || u.includes('id=K00010'))) {
+      expect(url).toContain('/api/kegg/path')
+    }
   })
 
   it('a failed path fetch keeps the candidate rather than risking an incorrect drop', async () => {
