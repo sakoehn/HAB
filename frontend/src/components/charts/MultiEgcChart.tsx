@@ -111,7 +111,7 @@ export function MultiEgcChart({
   const [metric, setMetric]                   = useState<ChartMetric>('norm_egc')
   const [standardize, setStandardize]         = useState(defaultStandardize)
   const [smoothed, setSmoothed]               = useState(false)
-  const [smoothBandwidth, setSmoothBandwidth] = useState(0.05)
+  const [smoothBandwidth, setSmoothBandwidth] = useState(0.3) // W27: within the real [0.1, 0.8] slider range
   const [showStats, setShowStats]             = useState(false)
   const [showNightShading, setShowNightShading] = useState(false)
   const [showTide, setShowTide]                 = useState(false)
@@ -143,8 +143,12 @@ export function MultiEgcChart({
     return Object.values(dtMap).sort((a, b) => a._ts - b._ts)
   }, [series, dateFrom, dateTo])
 
-  const chartDataRaw = useMemo<ChartRow[]>(() => {
-    if (metric === 'egc' && !standardize && !smoothed) return baseRows
+  // W27 (docs/AUDIT-2026-09-22.md): unsmoothed is the metric/standardize
+  // pipeline WITHOUT LOWESS -- stats (perSeriesVals below) read this, so
+  // toggling Smooth never changes the reported numbers, only the drawn
+  // curve. `chartDataRaw` adds smoothing per series on top of this.
+  const unsmoothedRows = useMemo<ChartRow[]>(() => {
+    if (metric === 'egc' && !standardize) return baseRows
     let rows = baseRows
     for (const s of series) {
       let processed: { egc: number | null; datetime?: string; ts: number }[]
@@ -162,11 +166,25 @@ export function MultiEgcChart({
         }))
       }
       if (standardize) processed = applyZScore(processed) as typeof processed
-      if (smoothed) processed = applyLowess(processed, smoothBandwidth) as typeof processed
       rows = rows.map((row, i) => ({ ...row, [s.id]: processed[i].egc }))
     }
     return rows
-  }, [baseRows, metric, standardize, smoothed, smoothBandwidth, series])
+  }, [baseRows, metric, standardize, series])
+
+  const chartDataRaw = useMemo<ChartRow[]>(() => {
+    if (!smoothed) return unsmoothedRows
+    let rows = unsmoothedRows
+    for (const s of series) {
+      const processed = rows.map(row => ({
+        egc:      (row[s.id] as number | null) ?? null,
+        datetime: row._dt,
+        ts:       row._ts,
+      }))
+      const smoothedProcessed = applyLowess(processed, smoothBandwidth)
+      rows = rows.map((row, i) => ({ ...row, [s.id]: smoothedProcessed[i].egc }))
+    }
+    return rows
+  }, [unsmoothedRows, smoothed, smoothBandwidth, series])
 
   const chartData = useMemo<ChartRow[]>(() => {
     if (!showTide || !tides || tides.length === 0) {
@@ -194,16 +212,19 @@ export function MultiEgcChart({
   // a 7.8e-6 series gave one meaningless "mean" of 2.4e-4). Label matches
   // the legend's own taxonomyAwarePrimaryLabel exactly, so a series reads
   // the same way in both places.
+  //
+  // W27: reads unsmoothedRows, NOT chartData -- stats must never change
+  // just because Smooth is toggled, only the drawn curve should.
   const perSeriesVals = useMemo(() => {
     return series.map(s => {
       const vals: number[] = []
-      for (const row of chartData) {
+      for (const row of unsmoothedRows) {
         const v = row[s.id]
         if (typeof v === 'number') vals.push(v)
       }
       return { label: taxonomyAwarePrimaryLabel(s.source, s.annotationId, s.name), vals }
     })
-  }, [chartData, series])
+  }, [unsmoothedRows, series])
 
   const scaleMismatch = useMemo(() => {
     // Suppressed once either metric or standardize moves off its raw default —
@@ -292,7 +313,9 @@ export function MultiEgcChart({
         customdata: chartData.map((r, i) => [fmtVal(ys[i]), r._dt]),
         hovertemplate:
           '<b>%{customdata[1]}</b><br>' +
-          s.annotationId + ': %{customdata[0]}' +
+          // W27: discloses when the hovered value is a fitted LOWESS
+          // curve, not the real sample value -- previously indistinguishable.
+          s.annotationId + (smoothed ? ' (smoothed)' : '') + ': %{customdata[0]}' +
           '<extra></extra>',
       }
     })
@@ -311,7 +334,7 @@ export function MultiEgcChart({
     }
 
     return traces
-  }, [chartData, series, showTide, metric, standardize, groupColor])
+  }, [chartData, series, showTide, metric, standardize, groupColor, smoothed])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {

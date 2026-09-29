@@ -83,6 +83,8 @@ import {
   CHART_COLORS,
 } from '../constants'
 
+import { LOWESS_BANDWIDTH_MIN } from '../components/charts/ChartControls'
+
 import { computeNightBands, resolveSunTimes, alignTideToChartPoints } from '../utils/solar'
 import type { SunTimes, TidePoint } from '../utils/solar'
 
@@ -570,10 +572,54 @@ describe('applyLowess', () => {
     expect(r[1].egc).toBeNull()
   })
 
-  it('minimum bandwidth 0.05 runs without error', () => {
+  it('the real minimum slider bandwidth runs without error', () => {
     const data = Array.from({ length: 20 }, (_, i) => ({ egc: i, ts: i }))
-    expect(() => applyLowess(data, 0.05)).not.toThrow()
-    expect(applyLowess(data, 0.05)).toHaveLength(20)
+    expect(() => applyLowess(data, LOWESS_BANDWIDTH_MIN)).not.toThrow()
+    expect(applyLowess(data, LOWESS_BANDWIDTH_MIN)).toHaveLength(20)
+  })
+
+  // W27 (docs/AUDIT-2026-09-22.md): confirmed live before this fix, on real
+  // COG0055 data (128 samples) -- the OLD bandwidth range (0.01-0.05) gave
+  // spans of only 2-7 points, and a 2-point window is mathematically
+  // guaranteed to reproduce the raw value exactly regardless of weighting
+  // (a line through 2 points, evaluated at one of those points, always
+  // passes through it) -- 0 of 128 points changed at the two lowest
+  // settings. This is the audit's own explicit "Verify" bar: at the
+  // lowest real slider setting, more than 0 points must actually change.
+  it('at the real minimum slider bandwidth, most points change on a realistic 128-sample series', () => {
+    const n = 128
+    const data = Array.from({ length: n }, (_, ts) => ({
+      egc: 5 + 4 * Math.sin(ts / 3) + (ts % 2 === 0 ? 3 : -3),
+      ts,
+    }))
+    const result = applyLowess(data, LOWESS_BANDWIDTH_MIN)
+    const changed = result.filter((d, i) => Math.abs((d.egc as number) - data[i].egc) > 1e-9).length
+    expect(changed).toBeGreaterThan(0)
+    // Not just a token 1-2 points -- a real local regression at this
+    // bandwidth (span=13) should touch nearly every point.
+    expect(changed).toBeGreaterThan(n * 0.9)
+  })
+
+  // The actual root cause: the tricube weight w=(1-u^3)^3 is exactly 0 at
+  // u=1, and the OLD code always defined maxDist from the farthest point
+  // actually included in the window -- so that point's own distance ratio
+  // u was always exactly 1, zeroing its weight out. For a 3-point window
+  // this wastes a full third of the window's real signal.
+  it('the farthest point in the window gets a real nonzero weight, not exactly 0', () => {
+    // 5 evenly-spaced points, query point in the middle -- with a 3-point
+    // window (span=3: self + 1 on each side), the OLD code always gave the
+    // 3rd (farthest) neighbor exactly 0 weight, so the fit reduced to a
+    // 2-point case and reproduced the raw value exactly (same mathematical
+    // degeneracy as the 2-point case above). The fix must actually move
+    // the fitted value away from the raw value, using real information
+    // from that 3rd point.
+    const data = [
+      { egc: 10, ts: 0 }, { egc: 100, ts: 1 }, { egc: 10, ts: 2 },
+      { egc: 100, ts: 3 }, { egc: 10, ts: 4 },
+    ]
+    // bandwidth chosen so span = Math.ceil(bw * 5) = 3
+    const result = applyLowess(data, 0.5)
+    expect(Math.abs((result[2].egc as number) - 10)).toBeGreaterThan(0.01)
   })
 
   it('reduces variance on noisy alternating series', () => {

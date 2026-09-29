@@ -296,3 +296,30 @@ describe('MultiEgcChart — date range props', () => {
     expect(statValue('Mean')).toBeCloseTo(300)
   })
 })
+
+// W27 (docs/AUDIT-2026-09-22.md): stats used to be computed from the
+// smoothed values -- confirmed live, SD dropped 5.57e-5 -> 4.50e-5 (-19%)
+// purely from toggling Smooth on. Verify bar from the audit itself:
+// toggling Smooth must never change the reported statistics.
+describe('MultiEgcChart — statistics are unaffected by the Smooth toggle (W27)', () => {
+  it('n/Mean/Std Dev read identically whether Smooth is on or off', async () => {
+    const user = userEvent.setup()
+    const points = Array.from({ length: 20 }, (_, i) =>
+      makePoint(`5/${27 + i}/21 8:00`, 100 + (i % 2 === 0 ? 40 : -40) + i),
+    )
+    render(
+      <MultiEgcChart
+        series={[{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: points }]}
+        dateFrom="" dateTo=""
+      />,
+    )
+    await selectRawEgc(user)
+    await user.click(screen.getByRole('button', { name: /Σ Stats/i }))
+    const before = statValueForSeries('A', 'Std Dev s')
+
+    await user.click(screen.getByTitle('LOWESS: locally weighted regression.'))
+    const after = statValueForSeries('A', 'Std Dev s')
+
+    expect(after).toBe(before)
+  })
+})

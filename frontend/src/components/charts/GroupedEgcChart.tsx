@@ -71,7 +71,7 @@ export function GroupedEgcChart({
   const [metric, setMetric]                   = useState<ChartMetric>('norm_egc')
   const [standardize, setStandardize]         = useState(false)
   const [smoothed, setSmoothed]               = useState(false)
-  const [smoothBandwidth, setSmoothBandwidth] = useState(0.05)
+  const [smoothBandwidth, setSmoothBandwidth] = useState(0.3) // W27: within the real [0.1, 0.8] slider range
   const [dateFrom, setDateFrom]               = useState('')
   const [dateTo, setDateTo]                   = useState('')
   const [showNightShading, setShowNightShading] = useState(false)
@@ -110,13 +110,21 @@ export function GroupedEgcChart({
       }))
   }, [allSeries, dateFrom, dateTo, metric])
 
-  const processedPointsRaw = useMemo(() => {
+  // W27 (docs/AUDIT-2026-09-22.md): unsmoothed is the metric/standardize
+  // pipeline WITHOUT LOWESS -- stats read this, so toggling Smooth never
+  // changes the reported numbers, only the drawn curve.
+  const unsmoothedPointsRaw = useMemo(() => {
     // The metric swap is handled upstream in summedPoints so it is absent here.
     let pts = summedPoints as { egc: number | null; datetime: string; ts: number; date: string }[]
     if (standardize) pts = applyZScore(pts) as typeof pts
-    if (smoothed) pts = applyLowess(pts, smoothBandwidth) as typeof pts
     return pts
-  }, [summedPoints, standardize, smoothed, smoothBandwidth])
+  }, [summedPoints, standardize])
+
+  const processedPointsRaw = useMemo(() => {
+    return smoothed
+      ? applyLowess(unsmoothedPointsRaw, smoothBandwidth) as typeof unsmoothedPointsRaw
+      : unsmoothedPointsRaw
+  }, [unsmoothedPointsRaw, smoothed, smoothBandwidth])
 
   const processedPoints = useMemo(() => {
     if (!showTide || !tides || tides.length === 0) {
@@ -129,9 +137,10 @@ export function GroupedEgcChart({
     }))
   }, [processedPointsRaw, showTide, tides])
 
+  // W27: stats read the unsmoothed values, unaffected by the Smooth toggle.
   const egcVals = useMemo(
-    () => processedPoints.map(d => d.egc).filter((v): v is number => v !== null),
-    [processedPoints],
+    () => unsmoothedPointsRaw.map(d => d.egc).filter((v): v is number => v !== null),
+    [unsmoothedPointsRaw],
   )
 
   const dayBandsList = useMemo(
@@ -151,6 +160,11 @@ export function GroupedEgcChart({
   const yLabel = metric === 'norm_egc'
     ? (standardize ? 'Summed Relative Abundance (Z-score)' : 'Summed Relative Abundance')
     : (standardize ? 'Summed EGC (Z-score)' : 'Summed EGC')
+  // W27: tooltip-only label -- discloses when the hovered value is a fitted
+  // LOWESS curve, not the real summed sample value. Deliberately NOT used
+  // for the axis/StatsPanel yLabel above, since those now always describe
+  // the unsmoothed data regardless of the Smooth toggle.
+  const hoverYLabel = yLabel + (smoothed ? ' (smoothed)' : '')
 
   // ── Shapes: night/day bands positioned by real timestamps ─────────────────
   const shapes = useMemo(() => {
@@ -204,7 +218,7 @@ export function GroupedEgcChart({
       customdata: processedPoints.map(p => [fmtVal(p.egc), p.datetime]),
       hovertemplate:
         '<b>%{customdata[1]}</b><br>' +
-        yLabel + ': %{customdata[0]}' +
+        hoverYLabel + ': %{customdata[0]}' +
         '<extra></extra>',
     }]
     if (showTide) {
@@ -220,7 +234,7 @@ export function GroupedEgcChart({
       })
     }
     return traces
-  }, [processedPoints, lineColor, groupLabel, yLabel, showTide, metric, standardize])
+  }, [processedPoints, lineColor, groupLabel, hoverYLabel, showTide, metric, standardize])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {

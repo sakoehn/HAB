@@ -29,9 +29,18 @@ import { HelpTooltip } from '../ui/HelpTooltip'
 
 // Exported so tests assert against the real bounds instead of a
 // hand-maintained copy that can silently drift from them.
-export const LOWESS_BANDWIDTH_MIN  = 0.01
-export const LOWESS_BANDWIDTH_MAX  = 0.05
-export const LOWESS_BANDWIDTH_STEP = 0.01
+//
+// W27 (docs/AUDIT-2026-09-22.md): this range used to be 0.01-0.05 -- for a
+// typical 128-sample series that's a span of only 2-7 neighbours, and a
+// 2-neighbour window is mathematically guaranteed to reproduce the raw
+// value exactly regardless of weighting (a line through 2 points, evaluated
+// at one of those points, always passes through it) -- confirmed live: 0 of
+// 128 points changed at the two lowest settings. See signal.ts's
+// applyLowess for the matching weight-formula fix (necessary but not
+// sufficient on its own at span 2).
+export const LOWESS_BANDWIDTH_MIN  = 0.1
+export const LOWESS_BANDWIDTH_MAX  = 0.8
+export const LOWESS_BANDWIDTH_STEP = 0.05
 export const LOWESS_DEBOUNCE_MS    = 150
 
 export function ChartControls({

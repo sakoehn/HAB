@@ -132,6 +132,43 @@ describe('EgcChart — stats panel toggle', () => {
   })
 })
 
+// W27 (docs/AUDIT-2026-09-22.md): statistics used to be computed from the
+// SMOOTHED (LOWESS-fitted) values, so the SD/CV/etc. silently described a
+// fitted curve while the heading still just said "Descriptive Statistics"
+// -- confirmed live: SD dropped 5.57e-5 -> 4.50e-5 (-19%) purely from
+// toggling Smooth on, nothing about the underlying data changed. Verify
+// bar from the audit itself: toggling Smooth must never change the
+// reported statistics, only the drawn curve.
+describe('EgcChart — statistics are unaffected by the Smooth toggle (W27)', () => {
+  function statValue(label: string): string {
+    return screen.getAllByText(label).find(el => el.className === 'stat-cell-label')!
+      .closest('.stat-cell')!.querySelector('.stat-cell-value')!.textContent!
+  }
+
+  it('n/Mean/Std Dev read identically whether Smooth is on or off', async () => {
+    const user = userEvent.setup()
+    // A real, noisy-enough series -- LOWESS actually changes these values
+    // when applied (the whole point of this test), unlike a flat/tiny
+    // fixture where smoothing would be a no-op regardless of the bug.
+    const points = Array.from({ length: 20 }, (_, i) =>
+      makePoint(`5/${27 + i}/21 8:00`, 100 + (i % 2 === 0 ? 40 : -40) + i, `s${i}`),
+    )
+    render(<EgcChart data={points} annotationId="COG0001" annotationName="GroEL" />)
+
+    await user.click(screen.getByRole('button', { name: /Σ Stats/i }))
+    const before = {
+      n: statValue('n'), mean: statValue('Mean'), std: statValue('Std Dev s'),
+    }
+
+    await user.click(screen.getByTitle('LOWESS: locally weighted regression.'))
+    const after = {
+      n: statValue('n'), mean: statValue('Mean'), std: statValue('Std Dev s'),
+    }
+
+    expect(after).toEqual(before)
+  })
+})
+
 describe('EgcChart — timepoint selector', () => {
   function threeDayPoints() {
     return [

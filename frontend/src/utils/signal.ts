@@ -59,9 +59,15 @@ export function applyZScore(
 // point is simply the intercept -- this also avoids catastrophic
 // cancellation from squaring/differencing raw epoch-millisecond magnitudes.
 //
-// bandwidth: fraction of data used as neighbours per fit (0.01 – 0.05).
+// bandwidth: fraction of data used as neighbours per fit (0.1 – 0.8).
 //   Lower → tighter fit to local fluctuations.
 //   Higher → smoother global trend.
+//
+// W27 (docs/AUDIT-2026-09-22.md): this range used to be 0.01-0.05 -- for a
+// typical 128-sample series that's a span of only 2-7 points, and combined
+// with the tricube-weight bug below (fixed here), meant "0 of 128 points
+// change" at the two lowest slider settings, confirmed live on real COG0055
+// data before this fix.
 //
 // Points with egc = null are excluded from the fit but retained in the
 // output array so the chart's x-axis alignment is preserved.
@@ -86,7 +92,19 @@ export function applyLowess(
     const dists    = pts.map(p => ({ p, d: Math.abs(p.x - pt.x) }))
     dists.sort((a, b) => a.d - b.d)
     const neighbors = dists.slice(0, span)
-    const maxDist   = neighbors[neighbors.length - 1].d || 1
+    // W27 (docs/AUDIT-2026-09-22.md): the tricube weight w=(1-u^3)^3 is
+    // exactly 0 at u=1 -- so using the farthest INCLUDED point's own
+    // distance as maxDist always zeroed out that point's contribution,
+    // silently shrinking every window by one real point (worst for small
+    // spans: with span=2, the only other point in the window got weight 0,
+    // making the "fit" just return the point's own unweighted value
+    // unchanged). Using the distance to the next point just OUTSIDE the
+    // window instead means every included point gets a real, nonzero
+    // weight. Falls back to the old boundary behavior only when the
+    // window already covers the entire series (no "next point" exists).
+    const maxDist = span < dists.length
+      ? (dists[span].d || 1)
+      : (neighbors[neighbors.length - 1].d || 1)
 
     let sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0
     for (const { p, d } of neighbors) {

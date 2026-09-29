@@ -14,11 +14,12 @@
  *   Z-score hint text      — 'Std deviations from mean'
  *   all 4 metric×standardize combinations verified via applyZScore directly
  *
- * ChartControls — LOWESS slider:
- *   minimum bandwidth   — 0.05 (allows tight local fit)
- *   maximum bandwidth   — 0.75
+ * ChartControls — LOWESS slider (W27, docs/AUDIT-2026-09-22.md -- widened
+ * from 0.01-0.05, which gave a 2-7 point window that trivially reproduced
+ * the raw value at a realistic 128-sample series):
+ *   minimum bandwidth   — 0.1
+ *   maximum bandwidth   — 0.8
  *   step                — 0.05
- *   default             — 0.4
  *   debounce            — 150ms (prevents O(n²) recompute on every drag pixel)
  *
  * Line visual hierarchy (MultiEgcChart):
@@ -163,11 +164,11 @@ describe('metric + standardize pipeline — all 4 combinations', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Previously this block asserted against a LOWESS_SLIDER object hand-copied
-// into this test file (min 0.05/max 0.75/step 0.05/default 0.4) instead of
-// importing the real bounds -- so when the component's actual slider
-// (min 0.01/max 0.05/step 0.01, see ChartControls.tsx) changed, this block
-// kept passing regardless, asserting nothing about the real component.
-// Fixed by importing the real exported constants directly, so a future
+// into this test file instead of importing the real bounds -- so when the
+// component's actual slider changed, this block kept passing regardless,
+// asserting nothing about the real component. Fixed by importing the real
+// exported constants directly (currently min 0.1/max 0.8/step 0.05, see
+// ChartControls.tsx -- W27 widened this from 0.01/0.05/0.01), so a future
 // change to the actual slider bounds will break these tests rather than
 // silently leaving them checking a stale copy.
 import { LOWESS_BANDWIDTH_MIN, LOWESS_BANDWIDTH_MAX, LOWESS_BANDWIDTH_STEP, LOWESS_DEBOUNCE_MS } from '../components/charts/ChartControls'
@@ -202,13 +203,13 @@ describe('ChartControls — LOWESS slider', () => {
   it('applyLowess at the real maximum bandwidth produces a smoother result than at the minimum, at a realistic sample count', () => {
     // applyLowess's neighbor window is Math.max(2, Math.ceil(bandwidth * n))
     // (see utils/signal.ts) -- at the real dataset's actual scale (up to 128
-    // real samples per annotation), min (0.01) and max (0.05) bandwidth
-    // resolve to meaningfully different window sizes (2 vs 7). At a small n
-    // like 15, BOTH ceil(0.01*15) and ceil(0.05*15) floor to the same
-    // minimum window of 2, so the two ends of the real slider range would
-    // produce byte-identical output -- not a LOWESS bug, just this test's
-    // original dataset being far smaller than any real chart, which is what
-    // this test is specifically guarding against reintroducing.
+    // real samples per annotation), min (0.1) and max (0.8) bandwidth
+    // resolve to meaningfully different window sizes (13 vs 103). At a small
+    // n like 15, both ends could floor to much closer window sizes, so the
+    // two ends of the real slider range could produce near-identical output
+    // -- not a LOWESS bug, just this test's original dataset being far
+    // smaller than any real chart, which is what this test is specifically
+    // guarding against reintroducing.
     const n = 128
     const noisy = Array.from({ length: n }, (_, ts) => ({
       egc: 5 + 4 * Math.sin(ts / 3) + (ts % 2 === 0 ? 3 : -3), // oscillating + noise

@@ -98,7 +98,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   const [metric, setMetric]                   = useState<ChartMetric>('norm_egc')
   const [standardize, setStandardize]         = useState(false)
   const [smoothed, setSmoothed]               = useState(false)
-  const [smoothBandwidth, setSmoothBandwidth] = useState(0.05)
+  const [smoothBandwidth, setSmoothBandwidth] = useState(0.3) // W27: within the real [0.1, 0.8] slider range
   const [showStats, setShowStats]             = useState(false)
   const [tpPanelOpen, setTpPanelOpen]         = useState(false)
   const [selectedDates, setSelectedDates]     = useState<Set<string> | null>(null)
@@ -224,7 +224,12 @@ export const EgcChart = forwardRef<EgcChartHandle, {
     }),
   [allPoints, dateFrom, dateTo, selectedDates, allSelected, selectedTimes, allTimesSelected])
 
-  const processedPoints = useMemo(() => {
+  // W27 (docs/AUDIT-2026-09-22.md): unsmoothed is the metric/standardize
+  // pipeline WITHOUT LOWESS -- this is what statistics/detection-count
+  // reads, so toggling Smooth never changes the reported numbers, only the
+  // displayed curve. `processedPoints` (below) adds smoothing on top of
+  // this for the chart line and tooltips only.
+  const unsmoothedPoints = useMemo(() => {
     let pts = (metric === 'norm_egc'
       ? filteredPoints.map(d => ({
           ...d,
@@ -233,9 +238,14 @@ export const EgcChart = forwardRef<EgcChartHandle, {
       : filteredPoints
     ) as { egc: number | null; datetime: string; ts: number; date: string; iso: string; sample: string }[]
     if (standardize) pts = applyZScore(pts) as typeof pts
-    if (smoothed) pts = applyLowess(pts, smoothBandwidth) as typeof pts
     return pts
-  }, [filteredPoints, metric, standardize, smoothed, smoothBandwidth])
+  }, [filteredPoints, metric, standardize])
+
+  const processedPoints = useMemo(() => {
+    return smoothed
+      ? applyLowess(unsmoothedPoints, smoothBandwidth) as typeof unsmoothedPoints
+      : unsmoothedPoints
+  }, [unsmoothedPoints, smoothed, smoothBandwidth])
 
   const pointsWithTide = useMemo(() => {
     if (!showTide || !tides || tides.length === 0) {
@@ -260,13 +270,17 @@ export const EgcChart = forwardRef<EgcChartHandle, {
 
   const resolvedColor = useMemo(() => resolveCssVar(color, '#4f8ef7'), [color])
 
+  // W27: stats/detection-count read the unsmoothed values -- toggling
+  // Smooth must never change these numbers, only the drawn curve.
   const egcVals = useMemo(
-    () => processedPoints.map(d => d.egc).filter((v): v is number => v !== null),
-    [processedPoints],
+    () => unsmoothedPoints.map(d => d.egc).filter((v): v is number => v !== null),
+    [unsmoothedPoints],
   )
 
   const yLabel      = getEgcYLabel(metric, standardize)
-  const hoverYLabel = getEgcHoverYLabel(metric, standardize)
+  // W27: disclose in the tooltip itself when the shown value is a fitted
+  // LOWESS curve, not the real sample value -- previously indistinguishable.
+  const hoverYLabel = getEgcHoverYLabel(metric, standardize) + (smoothed ? ' (smoothed)' : '')
 
   // ── Shapes: night/day bands positioned by real timestamps ─────────────────
   // x0/x1 are ISO datetime strings on Plotly's date axis, so a band from

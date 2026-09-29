@@ -202,3 +202,29 @@ describe('GroupedEgcChart — date range filtering', () => {
     expect(screen.getByText('No data available.')).toBeInTheDocument()
   })
 })
+
+// W27 (docs/AUDIT-2026-09-22.md): stats used to be computed from the
+// smoothed values -- confirmed live, SD dropped 5.57e-5 -> 4.50e-5 (-19%)
+// purely from toggling Smooth on. Verify bar from the audit itself:
+// toggling Smooth must never change the reported statistics.
+describe('GroupedEgcChart — statistics are unaffected by the Smooth toggle (W27)', () => {
+  it('n/Mean/Std Dev read identically whether Smooth is on or off', async () => {
+    const user = userEvent.setup()
+    const points = Array.from({ length: 20 }, (_, i) =>
+      makePoint('A', `5/${27 + i}/21 8:00`, 100 + (i % 2 === 0 ? 40 : -40) + i),
+    )
+    render(
+      <GroupedEgcChart
+        groupLabel="Test Group"
+        allSeries={[{ annotationId: 'A', name: 'A', color: '#000', data: points }]}
+      />,
+    )
+    await selectRawEgc(user)
+
+    const before = { n: statValue('n'), mean: statValue('Mean'), std: statValue('Std Dev s') }
+    await user.click(screen.getByTitle('LOWESS: locally weighted regression.'))
+    const after = { n: statValue('n'), mean: statValue('Mean'), std: statValue('Std Dev s') }
+
+    expect(after).toEqual(before)
+  })
+})
