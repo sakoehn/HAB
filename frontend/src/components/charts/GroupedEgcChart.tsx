@@ -305,7 +305,7 @@ export function GroupedEgcChart({
         </div>
       </div>
 
-      <StatsPanel vals={egcVals} yLabel={yLabel} />
+      <StatsPanel vals={egcVals} yLabel={yLabel} standardize={standardize} />
 
       <div style={{ marginBottom: 10 }}>
         <DateRangePicker

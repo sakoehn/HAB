@@ -9,9 +9,10 @@
  * each series separate side-by-side for comparison -- so its own
  * distinctive, easy-to-get-backwards logic is what these tests target:
  * the scaleMismatch heuristic (a real >10x mean-ratio threshold, not a
- * cosmetic check) and StatsPanel receiving every raw value from every
- * series pooled together, not summed per timepoint the way
- * GroupedEgcChart's does.
+ * cosmetic check) and StatsPanel receiving one independent value array PER
+ * series (W25, docs/AUDIT-2026-09-22.md -- used to pool every series into
+ * one flat array, giving one meaningless blended mean/CV for the whole
+ * group; now each series gets its own row).
  *
  * Coverage
  * --------
@@ -21,7 +22,8 @@
  *     the raw default (both of those already resolve the scale problem)
  *   legend: taxonomy-aware label, italic styling for taxonomy, and
  *     scaffoldsDisabled hides the per-series Scaffold/Hierarchy buttons
- *   stats pool every series' raw values together (not summed per timepoint)
+ *   stats are per-series (W25), not pooled together -- and same-labelled
+ *     groups' data doesn't collide (W26)
  *   dateFrom/dateTo props actually exclude out-of-range points, not just
  *     from the chart but from what feeds the stats too
  *
@@ -29,7 +31,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { MultiEgcChart } from '../components/charts/MultiEgcChart'
@@ -45,6 +47,17 @@ function makePoint(datetime: string, egc: number | null): AnnotationItem {
 
 function statValue(label: string): number {
   const cell = screen.getAllByText(label).find(el => el.className === 'stat-cell-label')!
+    .closest('.stat-cell')!
+  return Number(cell.querySelector('.stat-cell-value')!.textContent!)
+}
+
+// W25 (docs/AUDIT-2026-09-22.md): StatsPanel now renders one labelled block
+// per series (`.stats-panel-series`), not one pooled set of numbers -- this
+// finds a specific stat within a specific series' own block.
+function statValueForSeries(seriesLabel: string, statLabel: string): number {
+  const label = screen.getAllByText(seriesLabel, { selector: '.stats-panel-series-label' })[0]
+  const block = label.closest('.stats-panel-series')!
+  const cell  = within(block).getAllByText(statLabel).find(el => el.className === 'stat-cell-label')!
     .closest('.stat-cell')!
   return Number(cell.querySelector('.stat-cell-value')!.textContent!)
 }
@@ -207,24 +220,33 @@ describe('MultiEgcChart — legend', () => {
   })
 })
 
-describe('MultiEgcChart — stats pool every series\' values, unsummed', () => {
-  it('Mean reflects every raw value from every series pooled together, not summed per timepoint', async () => {
+describe('MultiEgcChart — stats are per-series, not pooled (W25)', () => {
+  it('each series gets its own n/Mean row -- not blended into one pooled set', async () => {
     const user = userEvent.setup()
     render(
       <MultiEgcChart
         series={[
-          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10)] },
-          { id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 30)] },
+          {
+            id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog',
+            data: [makePoint('5/27/21 8:00', 10), makePoint('5/27/21 12:00', 30)],
+          },
+          {
+            id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'cog',
+            data: [makePoint('5/27/21 8:00', 100), makePoint('5/27/21 12:00', 300)],
+          },
         ]}
         dateFrom="" dateTo=""
       />,
     )
     await selectRawEgc(user)
     await user.click(screen.getByRole('button', { name: /Σ Stats/i }))
-    // Pooled mean of [10, 30] is 20 -- if this component accidentally summed
-    // per timepoint the way GroupedEgcChart does, n would be 1 and Mean 40.
-    expect(statValue('n')).toBe(2)
-    expect(statValue('Mean')).toBeCloseTo(20)
+    // A's own mean is 20, B's own mean is 200 -- if these were pooled into
+    // one blended set (the pre-W25 behavior), there would be only one "n"
+    // (4) and one "Mean" (~137.5) describing neither series correctly.
+    expect(statValueForSeries('A', 'n')).toBe(2)
+    expect(statValueForSeries('A', 'Mean')).toBeCloseTo(20)
+    expect(statValueForSeries('B', 'n')).toBe(2)
+    expect(statValueForSeries('B', 'Mean')).toBeCloseTo(200)
   })
 
   // W26 (docs/AUDIT-2026-09-22.md): two different groups sharing the same
@@ -232,8 +254,7 @@ describe('MultiEgcChart — stats pool every series\' values, unsummed', () => {
   // different data must both survive the full render pipeline
   // (baseRows/dtMap, which is keyed internally by `id`, not annotationId).
   // Before `id` existed, the second same-labelled series' points silently
-  // overwrote the first's at every shared datetime -- n would read 1
-  // (only the second series' value survived), not 2.
+  // overwrote the first's at every shared datetime.
   it('two series sharing the same annotationId (label) both survive -- keyed internally by id, not annotationId', async () => {
     const user = userEvent.setup()
     render(
@@ -247,11 +268,13 @@ describe('MultiEgcChart — stats pool every series\' values, unsummed', () => {
     )
     await selectRawEgc(user)
     await user.click(screen.getByRole('button', { name: /Σ Stats/i }))
-    expect(statValue('n')).toBe(2)
-    // True mean is 85005; StatsPanel displays Mean at toPrecision(4), which
-    // rounds the 5th significant digit up: 85010. If the two series had
-    // collided (second overwriting first), n would read 1 and Mean 170000.
-    expect(statValue('Mean')).toBeCloseTo(85010)
+    // Both series display as "iron (2)" (expected -- that's genuinely what
+    // both are labelled), so there are 2 same-labelled blocks; each must
+    // carry its own real, distinct value, not one overwriting the other.
+    const means = screen.getAllByText('Mean').map(el =>
+      Number(el.closest('.stat-cell')!.querySelector('.stat-cell-value')!.textContent),
+    )
+    expect(means.sort((a, b) => a - b)).toEqual([10, 170000])
   })
 })
 

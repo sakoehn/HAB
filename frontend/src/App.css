@@ -477,6 +477,15 @@ select.field { cursor: pointer; }
 }
 .stat-cell-value { font: 600 12px var(--mono); color: var(--teal); }
 
+/* Multi-series mode (W25): one labelled block per annotation, stacked. */
+.stats-panel-series + .stats-panel-series {
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+}
+.stats-panel-series-label {
+  font: 600 11px var(--mono); color: var(--text);
+  margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* â”€â”€ Mappings section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mappings-toggle {
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px; cursor: pointer;

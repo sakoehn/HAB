@@ -502,7 +502,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
       </div>
 
       {/* ── Stats panel ── */}
-      {showStats && <StatsPanel vals={egcVals} yLabel={yLabel} />}
+      {showStats && <StatsPanel vals={egcVals} yLabel={yLabel} standardize={standardize} />}
 
       {/* ── Filter dates ── */}
       <div className="chart-filter-box" style={{ borderColor: sourceColor }}>

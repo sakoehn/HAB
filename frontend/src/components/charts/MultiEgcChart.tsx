@@ -188,15 +188,21 @@ export function MultiEgcChart({
     [showNightShading, sunTimes, chartData],
   )
 
-  const allVals = useMemo(() => {
-    const out: number[] = []
-    for (const s of series) {
+  // W25 (docs/AUDIT-2026-09-22.md): one value array PER series, not pooled
+  // into one flat array -- a pooled mean/CV describes neither series when
+  // they're on genuinely different scales (e.g. mixing a 4.8e-4 series with
+  // a 7.8e-6 series gave one meaningless "mean" of 2.4e-4). Label matches
+  // the legend's own taxonomyAwarePrimaryLabel exactly, so a series reads
+  // the same way in both places.
+  const perSeriesVals = useMemo(() => {
+    return series.map(s => {
+      const vals: number[] = []
       for (const row of chartData) {
         const v = row[s.id]
-        if (typeof v === 'number') out.push(v)
+        if (typeof v === 'number') vals.push(v)
       }
-    }
-    return out
+      return { label: taxonomyAwarePrimaryLabel(s.source, s.annotationId, s.name), vals }
+    })
   }, [chartData, series])
 
   const scaleMismatch = useMemo(() => {
@@ -425,7 +431,7 @@ export function MultiEgcChart({
         </div>
       </div>
 
-      {showStats && <StatsPanel vals={allVals} yLabel={yLabel} />}
+      {showStats && <StatsPanel series={perSeriesVals} yLabel={yLabel} standardize={standardize} />}
 
       {scaleMismatch && (
         <div className="scale-mismatch-warning" style={{
