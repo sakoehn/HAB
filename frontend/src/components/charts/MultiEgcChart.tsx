@@ -275,6 +275,36 @@ export function MultiEgcChart({
     return out
   }, [dayBandsList, nightBands])
 
+  // W28 (docs/AUDIT-2026-09-22.md): resolved ONCE here and used for BOTH the
+  // Plotly trace AND the legend swatch below -- previously each computed its
+  // own color independently and could disagree. Two distinct ways they used
+  // to diverge:
+  //   (a) a non-grouped series' color came straight from a source-color
+  //       constant like SOURCE_COLORS/CHART_COLORS, which is a raw CSS
+  //       `var(--chart-1)` string -- real DOM/CSS (the legend's `<div
+  //       style={{background: ...}}>`) resolves that correctly, but
+  //       Plotly's SVG renderer can't parse `var()` at all and silently
+  //       fell back to black, while the legend showed the real color.
+  //   (b) a grouped series' PLOTTED line was deliberately recolored to the
+  //       theme's near-black/CB-safe palette (for visual hierarchy against
+  //       ungrouped lines), but the legend swatch kept showing the
+  //       series' own original (unrelated) color -- confirmed live: a
+  //       group's legend dot showed sky blue while its actual line was
+  //       near-black.
+  const resolvedColors = useMemo(() => {
+    const groupedSeries = series.filter(s => s.isGrouped)
+    const map = new Map<string, string>()
+    for (const s of series) {
+      if (s.isGrouped) {
+        const gIdx = groupedSeries.findIndex(g => g.id === s.id)
+        map.set(s.id, gIdx === 0 ? groupColor : CB_EXTRA_GROUPS[(gIdx - 1) % CB_EXTRA_GROUPS.length])
+      } else {
+        map.set(s.id, resolveCssVar(s.color, '#4f8ef7'))
+      }
+    }
+    return map
+  }, [series, groupColor])
+
   // ── Traces ────────────────────────────────────────────────────────────────
   const plotData = useMemo(() => {
     const fmtVal = (v: number | null) => {
@@ -285,20 +315,13 @@ export function MultiEgcChart({
     }
 
     const hasGroup = series.some(s => s.isGrouped)
-    const groupedSeries = series.filter(s => s.isGrouped)
     const xs = chartData.map(r => toPlotlyDate(r._ts))
 
     const traces: object[] = series.map(s => {
       const sw      = hasGroup ? (s.isGrouped ? 3.5 : 1.5) : 2
       const opacity = hasGroup ? (s.isGrouped ? 1   : 0.45) : 1
       const ys      = chartData.map(r => (r[s.id] as number | null) ?? null)
-
-      // Grouped series: first gets the theme's near-black/neutral, extras cycle CB palette.
-      let traceColor = s.color
-      if (s.isGrouped) {
-        const gIdx = groupedSeries.findIndex(g => g.id === s.id)
-        traceColor = gIdx === 0 ? groupColor : CB_EXTRA_GROUPS[(gIdx - 1) % CB_EXTRA_GROUPS.length]
-      }
+      const traceColor = resolvedColors.get(s.id)!
 
       return {
         type: 'scatter', mode: 'lines+markers',
@@ -334,7 +357,7 @@ export function MultiEgcChart({
     }
 
     return traces
-  }, [chartData, series, showTide, metric, standardize, groupColor, smoothed])
+  }, [chartData, series, showTide, metric, standardize, resolvedColors, smoothed])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {
@@ -426,7 +449,7 @@ export function MultiEgcChart({
           <div className="chart-legend">
             {series.map(s => (
               <div className="legend-item" key={s.id}>
-                <div className="legend-dot" style={{ background: s.color }} />
+                <div className="legend-dot" style={{ background: resolvedColors.get(s.id) }} />
                 <span
                   title={s.annotationId}
                   style={s.source === 'taxonomy' ? { fontStyle: 'italic' } : undefined}

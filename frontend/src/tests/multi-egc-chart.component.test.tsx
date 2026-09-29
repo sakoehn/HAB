@@ -220,6 +220,79 @@ describe('MultiEgcChart — legend', () => {
   })
 })
 
+// W28 (docs/AUDIT-2026-09-22.md): the legend swatch and the plotted trace
+// used to compute their colors independently and could disagree. Two real
+// live examples: (a) a non-grouped series' color is often a raw CSS
+// `var(--chart-1)` string (from SOURCE_COLORS/CHART_COLORS) -- real CSS
+// (the legend dot) resolves that correctly, but Plotly's SVG renderer
+// can't parse var() at all and silently fell back to black; (b) a grouped
+// series' PLOTTED line is deliberately recolored for visual hierarchy
+// (near-black for the first group, a CB-safe palette for extras), but the
+// legend dot kept showing the series' own original, unrelated color.
+describe('MultiEgcChart — legend color matches the plotted trace (W28)', () => {
+  function legendDotColor(labelText: string): string {
+    return screen.getByText(labelText).closest('.legend-item')!
+      .querySelector('.legend-dot')!.style.background
+  }
+
+  it('a grouped series\' legend dot uses the group-hierarchy color, not its own original color', () => {
+    render(
+      <MultiEgcChart
+        series={[
+          {
+            id: 'grp1', annotationId: 'iron (2)', name: 'iron (2)', color: '#ff00ff',
+            source: 'kegg', isGrouped: true, data: [makePoint('5/27/21 8:00', 100)],
+          },
+          {
+            id: 'single1', annotationId: 'K00001', name: 'K00001', color: '#00ffff',
+            source: 'kegg', isGrouped: false, data: [makePoint('5/27/21 8:00', 50)],
+          },
+        ]}
+        dateFrom="" dateTo=""
+      />,
+    )
+    // Real live example: a group's legend dot showed sky blue while its
+    // actual plotted line was near-black -- the ORIGINAL color (#ff00ff
+    // here) must NOT be what the legend shows once a series is grouped.
+    expect(legendDotColor('iron (2)')).not.toBe('rgb(255, 0, 255)')
+  })
+
+  it('a second grouped series gets the deterministic CB-safe extra-group color, matching the trace exactly', () => {
+    render(
+      <MultiEgcChart
+        series={[
+          {
+            id: 'grp1', annotationId: 'Group A', name: 'Group A', color: '#ff00ff',
+            source: 'kegg', isGrouped: true, data: [makePoint('5/27/21 8:00', 100)],
+          },
+          {
+            id: 'grp2', annotationId: 'Group B', name: 'Group B', color: '#00ffff',
+            source: 'cog', isGrouped: true, data: [makePoint('5/27/21 8:00', 50)],
+          },
+        ]}
+        dateFrom="" dateTo=""
+      />,
+    )
+    // CB_EXTRA_GROUPS[0] -- deterministic, not dependent on jsdom's CSS
+    // custom-property resolution (unlike the first group's near-black,
+    // which comes from a var() fallback).
+    expect(legendDotColor('Group B')).toBe('rgb(230, 159, 0)')
+  })
+
+  it('a non-grouped series with a raw CSS var() color still shows a resolved value in the legend, not the literal var() string', () => {
+    render(
+      <MultiEgcChart
+        series={[{
+          id: 'K00001', annotationId: 'K00001', name: 'K00001', color: 'var(--chart-1)',
+          source: 'kegg', data: [makePoint('5/27/21 8:00', 100)],
+        }]}
+        dateFrom="" dateTo=""
+      />,
+    )
+    expect(legendDotColor('K00001')).not.toBe('var(--chart-1)')
+  })
+})
+
 describe('MultiEgcChart — stats are per-series, not pooled (W25)', () => {
   it('each series gets its own n/Mean row -- not blended into one pooled set', async () => {
     const user = userEvent.setup()
