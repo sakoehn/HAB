@@ -11,6 +11,7 @@ import {
 } from '../../utils/format'
 import { computeNightBands, alignTideToChartPoints, resolveSunTimes } from '../../utils/solar'
 import { useSolarTideData } from '../../utils/useSolarTideData'
+import { useAllSamples } from '../../utils/useAllSamples'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL, getEgcYLabel, getEgcHoverYLabel } from '../../utils/chartTheme'
 import { taxonomyRankLabel, SOURCE_COLORS } from '../../constants'
@@ -101,6 +102,19 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   const [tpPanelOpen, setTpPanelOpen]         = useState(false)
   const [selectedDates, setSelectedDates]     = useState<Set<string> | null>(null)
   const [selectedTimes, setSelectedTimes]     = useState<Set<string> | null>(null)
+  // W21 (docs/AUDIT-2026-09-22.md) gap-fill fix: allDates/allTimes now
+  // come from allPoints, which can grow after first render once
+  // useAllSamples finishes loading (the true full timeline arrives async,
+  // after the initial detected-only fallback). Without tracking whether
+  // the user has actually touched these filters, the old "seed once"
+  // effect below would freeze selectedDates at whatever smaller set
+  // existed on first render, silently excluding every date that only
+  // shows up once the real timeline loads -- confirmed live: a 3-sample
+  // series with 1 real gap rendered "2 of 3 samples" instead of "3 of 3
+  // (detected in 2)", because the newly-revealed gap date's pill was
+  // never actually selected.
+  const [userTouchedDateFilter, setUserTouchedDateFilter] = useState(false)
+  const [userTouchedTimeFilter, setUserTouchedTimeFilter] = useState(false)
   const [showNightShading, setShowNightShading] = useState(false)
   const [showTide, setShowTide]                 = useState(false)
   const [showDayBands, setShowDayBands]         = useState(false)
@@ -108,24 +122,56 @@ export const EgcChart = forwardRef<EgcChartHandle, {
 
   const { sunTimes, tides, tidesLoading, tidesError } =
     useSolarTideData(showNightShading || showTide || showDayBands)
+  const { allSamples } = useAllSamples()
 
-  const allPoints = useMemo(() => (
-    [...data]
-      .filter(d => d.timepoint?.datetime)
-      .sort((a, b) =>
-        parseDateTime(a.timepoint!.datetime) - parseDateTime(b.timepoint!.datetime)
-      )
-      .map(d => ({
-        date:     fmtDate(d.timepoint?.datetime ?? ''),
-        iso:      isoDate(d.timepoint?.datetime ?? ''),
-        datetime: d.timepoint?.datetime ?? '',
-        ts:       parseDateTime(d.timepoint?.datetime ?? ''),
-        egc:      extractEgc(d.value),
-        norm_egc: extractNormEgc(d.value),
-        sample:   d.sample,
-      }))
-      .filter(d => d.egc !== null)
-  ), [data])
+  // W21 (docs/AUDIT-2026-09-22.md): `data` only has rows for samples where
+  // this annotation was actually detected -- annotation_series has no row
+  // at all for an undetected sample, so there's nothing here to tell "not
+  // detected" apart from "sample doesn't exist". Left as-is, the line
+  // would run straight from one detection to the next across any stretch
+  // of non-detections, silently implying steady presence.
+  //
+  // Merges in the full real sample timeline (useAllSamples) so every
+  // actual sample gets a point -- egc/norm_egc null where undetected,
+  // real values where detected. A UNION with data's own detected
+  // samples, not a straight swap: guarantees every real detection still
+  // gets a point no matter what useAllSamples returns (still loading,
+  // empty, or an incomplete/malformed response) -- confirmed live this
+  // matters: a response missing `data` resolves useAllSamples to `[]`,
+  // and `[] ?? fallback` evaluates to `[]` (not the fallback, since ??
+  // only triggers on null/undefined), which would otherwise silently
+  // wipe out every real point already in hand. connectgaps is already
+  // false below; it just had nothing to act on before this had real
+  // null points to break the line at.
+  const allPoints = useMemo(() => {
+    const bySample = new Map(
+      data
+        .filter(d => d.timepoint?.datetime)
+        .map(d => [d.sample, d] as const)
+    )
+    const timeline = new Map(
+      [...bySample.entries()].map(([sample, d]) => [sample, d.timepoint!.datetime])
+    )
+    for (const entry of allSamples ?? []) {
+      if (!timeline.has(entry.sample)) timeline.set(entry.sample, entry.datetime)
+    }
+
+    return [...timeline.entries()]
+      .map(([sample, datetime]) => ({ sample, datetime }))
+      .sort((a, b) => parseDateTime(a.datetime) - parseDateTime(b.datetime))
+      .map(entry => {
+        const d = bySample.get(entry.sample)
+        return {
+          date:     fmtDate(entry.datetime),
+          iso:      isoDate(entry.datetime),
+          datetime: entry.datetime,
+          ts:       parseDateTime(entry.datetime),
+          egc:      d ? extractEgc(d.value) : null,
+          norm_egc: d ? extractNormEgc(d.value) : null,
+          sample:   entry.sample,
+        }
+      })
+  }, [data, allSamples])
 
   const [allDates, allTimes] = useMemo(() => {
     const seen  = new Set<string>()
@@ -150,13 +196,13 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   )
 
   useEffect(() => {
-    if (allDates.length > 0 && selectedDates === null) {
+    if (allDates.length > 0 && !userTouchedDateFilter) {
       setSelectedDates(new Set(allDates))
     }
-    if (allTimes.length > 0 && selectedTimes === null) {
+    if (allTimes.length > 0 && !userTouchedTimeFilter) {
       setSelectedTimes(new Set(allTimes))
     }
-  }, [allDates]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allDates, allTimes]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const allSelected = selectedDates === null || selectedDates.size === allDates.length
   const allTimesSelected = selectedTimes == null || selectedTimes.size === allTimes.length 
@@ -428,6 +474,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
             color: 'var(--text-dim)', marginTop: 2,
           }}>
             {yLabel} · {processedPoints.length} of {allPoints.length} samples
+            {egcVals.length < processedPoints.length && ` (detected in ${egcVals.length})`}
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -510,14 +557,14 @@ export const EgcChart = forwardRef<EgcChartHandle, {
             </span>
             <button
               className="btn ghost sm"
-              onClick={() => setSelectedDates(new Set(allDates))}
+              onClick={() => { setUserTouchedDateFilter(true); setSelectedDates(new Set(allDates)) }}
               style={{ fontSize: 10, padding: '1px 7px' }}
             >
               All
             </button>
             <button
               className="btn ghost sm"
-              onClick={() => setSelectedDates(new Set())}
+              onClick={() => { setUserTouchedDateFilter(true); setSelectedDates(new Set()) }}
               style={{ fontSize: 10, padding: '1px 7px' }}
             >
               None
@@ -535,6 +582,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
                   key={day}
                   className={`toggle-pill sm ${active ? 'on' : ''}`}
                   onClick={() => {
+                    setUserTouchedDateFilter(true)
                     setSelectedDates(prev => {
                       const next = new Set(prev ?? allDates)
                       if (next.has(day)) next.delete(day)
@@ -561,14 +609,14 @@ export const EgcChart = forwardRef<EgcChartHandle, {
             </span>
             <button
               className="btn ghost sm"
-              onClick={() => setSelectedTimes(new Set(allTimes))}
+              onClick={() => { setUserTouchedTimeFilter(true); setSelectedTimes(new Set(allTimes)) }}
               style={{ fontSize: 10, padding: '1px 7px' }}
             >
               All
             </button>
             <button
               className="btn ghost sm"
-              onClick={() => setSelectedTimes(new Set())}
+              onClick={() => { setUserTouchedTimeFilter(true); setSelectedTimes(new Set()) }}
               style={{ fontSize: 10, padding: '1px 7px' }}
             >
               None
@@ -582,6 +630,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
                   key={time}
                   className={`toggle-pill sm ${active ? 'on' : ''}`}
                   onClick={() => {
+                    setUserTouchedTimeFilter(true)
                     setSelectedTimes(prev => {
                       const next = new Set(prev ?? allTimes)
                       if (next.has(time)) next.delete(time)

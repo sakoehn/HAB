@@ -864,8 +864,15 @@ describe('LeftResultList — help tooltips', () => {
   }
 
   it('bulk action bar has a help tooltip explaining "+ Add" vs "∑ Group"', async () => {
-    render(<LeftResultList {...baseProps} rows={[makeRow('kegg', 'K00001')]} total={1} />)
-    await userEvent.click(screen.getByTitle('Help'))
+    const { container } = render(
+      <LeftResultList {...baseProps} rows={[makeRow('kegg', 'K00001')]} total={1} />,
+    )
+    // Scoped to the bulk-action bar specifically -- W21 (docs/AUDIT-2026-09-22.md)
+    // added a second, separate "Help" button elsewhere on this same render
+    // (the detection-count caveat next to "sorted by relevance"), so a bare
+    // screen.getByTitle('Help') is now ambiguous between the two.
+    const bulkBar = container.querySelector('.al-bulk-bar') as HTMLElement
+    await userEvent.click(within(bulkBar).getByTitle('Help'))
     await waitFor(() => {
       expect(screen.getByText(/sums all checked items/i)).toBeInTheDocument()
     })

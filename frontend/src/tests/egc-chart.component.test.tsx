@@ -229,3 +229,91 @@ describe('EgcChart — date range filter', () => {
     expect(screen.getByText(/1 of 2 samples/)).toBeInTheDocument()
   })
 })
+
+// W21 (docs/AUDIT-2026-09-22.md): a chart's own data only has rows for
+// samples where this specific annotation was detected -- there's no row
+// at all for an undetected sample, so nothing previously told "not
+// detected" apart from "sample doesn't exist". useAllSamples supplies
+// the real, full sample timeline so a chart can merge in an explicit
+// gap for anything its own series is missing.
+//
+// useAllSamples caches at MODULE scope (see its own unit test file for
+// why) and every EgcChart in this file mounts it unconditionally, so the
+// earlier tests above -- which never mock /api/samples -- already leave
+// that cache permanently set to a failed/empty state by the time these
+// run. vi.resetModules() + a fresh dynamic re-import of EgcChart gives
+// each test its own isolated copy of that cache, the same fix
+// use-all-samples.unit.test.ts already uses for the hook directly.
+describe('EgcChart — W21 detection gaps (useAllSamples merge)', () => {
+  const mockFetch = vi.fn()
+  vi.stubGlobal('fetch', mockFetch)
+
+  function jsonResponse(data: unknown) {
+    return { ok: true, status: 200, statusText: 'OK', json: async () => data }
+  }
+
+  async function freshEgcChart() {
+    vi.resetModules()
+    const mod = await import('../components/charts/EgcChart')
+    return mod.EgcChart
+  }
+
+  it('discloses an undetected real sample as a gap instead of silently omitting it', async () => {
+    const FreshEgcChart = await freshEgcChart()
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/samples?page_size=200') {
+        return jsonResponse({
+          data: [
+            { sample: 's1', timepoint: { taxon_oid: 's1', timepoint: '1', datetime: '5/27/21 8:00' } },
+            { sample: 's2', timepoint: { taxon_oid: 's2', timepoint: '2', datetime: '5/28/21 8:00' } },
+            { sample: 's3', timepoint: { taxon_oid: 's3', timepoint: '3', datetime: '5/29/21 8:00' } },
+          ],
+        })
+      }
+      throw new Error(`unexpected path: ${path}`)
+    })
+
+    render(
+      <FreshEgcChart
+        // s2 never detected this annotation -- data has no row for it at all,
+        // same as the real API contract this reproduces.
+        data={[makePoint('5/27/21 8:00', 100, 's1'), makePoint('5/29/21 8:00', 150, 's3')]}
+        annotationId="COG0001"
+        annotationName="GroEL"
+      />,
+    )
+
+    // Once the real 3-sample timeline loads, the header must show all 3
+    // real samples (not just the 2 with data) AND disclose that only 2
+    // were actually detected -- silently dropping s2 (the pre-fix
+    // behavior) would instead read "2 of 2 samples" with no caveat.
+    await screen.findByText(/3 of 3 samples/)
+    expect(screen.getByText(/\(detected in 2\)/)).toBeInTheDocument()
+  })
+
+  it('does not show the detection caveat when every real sample was actually detected', async () => {
+    const FreshEgcChart = await freshEgcChart()
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/samples?page_size=200') {
+        return jsonResponse({
+          data: [
+            { sample: 's1', timepoint: { taxon_oid: 's1', timepoint: '1', datetime: '5/27/21 8:00' } },
+            { sample: 's2', timepoint: { taxon_oid: 's2', timepoint: '2', datetime: '5/28/21 8:00' } },
+          ],
+        })
+      }
+      throw new Error(`unexpected path: ${path}`)
+    })
+
+    render(
+      <FreshEgcChart
+        data={[makePoint('5/27/21 8:00', 100, 's1'), makePoint('5/28/21 8:00', 150, 's2')]}
+        annotationId="COG0001"
+        annotationName="GroEL"
+      />,
+    )
+
+    await screen.findByText(/2 of 2 samples/)
+    expect(screen.queryByText(/detected in/)).not.toBeInTheDocument()
+  })
+})

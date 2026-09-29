@@ -26,6 +26,16 @@ import { HelpTooltip } from '../ui/HelpTooltip'
 const EMPTY_FILTER = new Set<string>()
 const EMPTY_RANK_FILTER = new Set<number>()
 
+// W21 (docs/AUDIT-2026-09-22.md): mean_egc here is a mean OVER THE
+// SAMPLES WHERE THE ANNOTATION WAS DETECTED, not an aggregate across all
+// 128 -- annotation_catalog's own AVG(egc) only ever sees detected rows,
+// since a sample without a detection has no annotation_series row to
+// average in the first place. A 9-sample mean and a 128-sample mean were
+// otherwise shown identically, with nothing here to tell them apart --
+// confirmed against the audit's own live example (a 9-sample mean
+// outranking dozens of 128-sample means with no visible difference).
+const TOTAL_SAMPLE_COUNT = 128
+
 export function LeftResultList({
   rows,
   termLabel,
@@ -263,6 +273,7 @@ export function LeftResultList({
           </span>
           <span className="al-result-hint">
             sorted by relevance · then EGC
+            <HelpTooltip text="EGC here is the mean across samples where the annotation was actually detected, not all 128 -- an annotation detected in only a few samples can rank above one detected everywhere. Check the (N/128) next to a row's number, when shown, before comparing two rows' rank." />
             {total > rows.length && ' · refine to narrow'}
           </span>
         </div>
@@ -315,7 +326,20 @@ export function LeftResultList({
                 <div className="al-row-name">{ann.name ?? '—'}</div>
                 {hasMeta && (
                   <div className="al-row-meta">
-                    <span>{(ann.mean_egc as number).toExponential(2)}</span>
+                    <span
+                      title={
+                        ann.sample_count != null
+                          ? `Mean when detected, across ${ann.sample_count} of ${TOTAL_SAMPLE_COUNT} samples`
+                          : undefined
+                      }
+                    >
+                      {(ann.mean_egc as number).toExponential(2)}
+                      {ann.sample_count != null && ann.sample_count < TOTAL_SAMPLE_COUNT && (
+                        <span className="al-row-detection-count">
+                          {' '}({ann.sample_count}/{TOTAL_SAMPLE_COUNT})
+                        </span>
+                      )}
+                    </span>
                     <div className="al-row-bar">
                       <div style={{
                         height:       '100%',

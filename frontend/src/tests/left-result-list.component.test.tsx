@@ -392,3 +392,33 @@ describe('LeftResultList — row interactions', () => {
     expect(onToggleCheck).toHaveBeenCalledWith('COG0001::cog')
   })
 })
+
+// W21 (docs/AUDIT-2026-09-22.md): mean_egc is a mean over samples where
+// the annotation was actually detected, not all 128 -- previously shown
+// with no indication of how many samples it came from, so a 9-sample
+// mean and a 128-sample mean looked identical.
+describe('LeftResultList — W21 detection count disclosure', () => {
+  it('shows (N/128) next to the mean when sample_count is under the full 128', () => {
+    renderList({
+      rows: [makeRow({ annotation_id: 'COG0001', mean_egc: 100, sample_count: 9 })],
+      total: 1,
+    })
+    expect(screen.getByText('(9/128)')).toBeInTheDocument()
+  })
+
+  it('does not show a detection count when the annotation was detected in all 128 samples', () => {
+    renderList({
+      rows: [makeRow({ annotation_id: 'COG0001', mean_egc: 100, sample_count: 128 })],
+      total: 1,
+    })
+    expect(screen.queryByText(/\/128\)/)).not.toBeInTheDocument()
+  })
+
+  it('does not show a detection count when sample_count is absent (older/other response shapes)', () => {
+    renderList({
+      rows: [makeRow({ annotation_id: 'COG0001', mean_egc: 100 })],
+      total: 1,
+    })
+    expect(screen.queryByText(/\/128\)/)).not.toBeInTheDocument()
+  })
+})
