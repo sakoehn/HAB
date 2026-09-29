@@ -720,9 +720,19 @@ describe('AnalyzePage — W22 redundant group members', () => {
     })
     expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('already included inside'))
 
-    await waitFor(() => {
-      expect(document.querySelector('.al-right-card-group')).toBeInTheDocument()
+    // The disclosure alone doesn't prove the redundant member was actually
+    // left out of the group -- assert the group's real composition too
+    // (each member renders as a `title={id}` chip, plus a "{N} annotations"
+    // count tag), not just that some group card exists.
+    const groupCard = await waitFor(() => {
+      const el = document.querySelector('.al-right-card-group')
+      expect(el).toBeInTheDocument()
+      return el as HTMLElement
     })
+    expect(within(groupCard).getByText('2 annotations')).toBeInTheDocument()
+    expect(within(groupCard).getByTitle('Bacteria')).toBeInTheDocument()
+    expect(within(groupCard).getByTitle('Archaea')).toBeInTheDocument()
+    expect(within(groupCard).queryByTitle('Bacteria;Proteobacteria')).toBeNull()
   })
 
   it('refuses to create a group when fewer than 2 non-redundant annotations remain', async () => {

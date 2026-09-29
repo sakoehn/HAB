@@ -73,9 +73,22 @@ describe('filterRedundantAnnotations — taxonomy (free prefix check)', () => {
       { annotationId: 'Bacteria;Proteobacteria;Alphaproteobacteria', source: 'taxonomy' },
     ])
     expect(kept).toEqual([{ annotationId: 'Bacteria', source: 'taxonomy' }])
-    expect(dropped.map(d => d.candidate.annotationId)).toEqual([
-      'Bacteria;Proteobacteria',
-      'Bacteria;Proteobacteria;Alphaproteobacteria',
+    // Pin down `containedBy`, not just which candidates get dropped -- both
+    // are correctly attributed to Bacteria here (the first ancestor found
+    // in list order), not the nearer Proteobacteria. Containment is
+    // transitive so either attribution would be factually correct, but
+    // without this assertion a change to which one gets reported (e.g. to
+    // prefer the nearest ancestor for a more specific disclosure message)
+    // could land silently, with no test noticing either way.
+    expect(dropped).toEqual([
+      {
+        candidate:   { annotationId: 'Bacteria;Proteobacteria', source: 'taxonomy' },
+        containedBy: { annotationId: 'Bacteria', source: 'taxonomy' },
+      },
+      {
+        candidate:   { annotationId: 'Bacteria;Proteobacteria;Alphaproteobacteria', source: 'taxonomy' },
+        containedBy: { annotationId: 'Bacteria', source: 'taxonomy' },
+      },
     ])
   })
 })
