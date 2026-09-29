@@ -648,6 +648,135 @@ describe('AnalyzePage — group card member failure', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AnalyzePage — W22 (docs/AUDIT-2026-09-22.md): grouping an annotation with
+// one of its own ancestors/descendants double-counts the contained one's
+// value, since egc is a hierarchical rollup. addSelectedAsGroup must drop
+// the redundant member(s) before creating the group card.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TAXONOMY_ANCESTOR_DESCENDANT_SEARCH = {
+  data: [
+    {
+      annotation_id: 'Bacteria', source: 'taxonomy', name: 'Bacteria', parent: null, depth: 1,
+      mean_egc: 1, max_egc: 1, sample_count: 1, value: null, timepoint: null, sample: '',
+    },
+    {
+      annotation_id: 'Bacteria;Proteobacteria', source: 'taxonomy', name: 'Proteobacteria', parent: 'Bacteria', depth: 2,
+      mean_egc: 1, max_egc: 1, sample_count: 1, value: null, timepoint: null, sample: '',
+    },
+  ],
+  total: 2,
+}
+
+// Three rows: Bacteria + its descendant Proteobacteria (one of these two
+// must get dropped) + an unrelated third taxon -- so after the redundant
+// one is removed, 2 real (non-overlapping) members still remain and a
+// group can actually form. The 2-row fixture above can't express this: with
+// only 2 selected and 1 dropped, exactly 1 remains, which is correctly the
+// "too few to group" case (its own separate test below), not this one.
+const TAXONOMY_ANCESTOR_DESCENDANT_PLUS_UNRELATED_SEARCH = {
+  data: [
+    ...TAXONOMY_ANCESTOR_DESCENDANT_SEARCH.data,
+    {
+      annotation_id: 'Archaea', source: 'taxonomy', name: 'Archaea', parent: null, depth: 1,
+      mean_egc: 1, max_egc: 1, sample_count: 1, value: null, timepoint: null, sample: '',
+    },
+  ],
+  total: 3,
+}
+
+describe('AnalyzePage — W22 redundant group members', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'alert').mockImplementation(() => {})
+  })
+
+  it('drops a taxonomy descendant from the group when its ancestor is also selected, and discloses it', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => TAXONOMY_ANCESTOR_DESCENDANT_PLUS_UNRELATED_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    render(<App />)
+    const input = await getAnalyzeSearchInput()
+    await userEvent.type(input, 'bacteria')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-row-checkbox').length).toBe(3)
+    })
+    const checkboxes = document.querySelectorAll('.al-row-checkbox')
+    await userEvent.click(checkboxes[0])
+    await userEvent.click(checkboxes[1])
+    await userEvent.click(checkboxes[2])
+    await userEvent.click(screen.getByTitle(/Sum EGC across/i))
+
+    // Nothing here should double-count Proteobacteria's value into
+    // Bacteria's own -- the descendant must be left out of the group, with
+    // the user told why (not just silently dropped). Bacteria + Archaea
+    // (unrelated) still form a valid 2-member group.
+    await waitFor(() => {
+      expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('Bacteria;Proteobacteria'))
+    })
+    expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('already included inside'))
+
+    await waitFor(() => {
+      expect(document.querySelector('.al-right-card-group')).toBeInTheDocument()
+    })
+  })
+
+  it('refuses to create a group when fewer than 2 non-redundant annotations remain', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => TAXONOMY_ANCESTOR_DESCENDANT_SEARCH })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    render(<App />)
+    const input = await getAnalyzeSearchInput()
+    await userEvent.type(input, 'bacteria')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-row-checkbox').length).toBe(2)
+    })
+    const checkboxes = document.querySelectorAll('.al-row-checkbox')
+    await userEvent.click(checkboxes[0])
+    await userEvent.click(checkboxes[1])
+    await userEvent.click(screen.getByTitle(/Sum EGC across/i))
+
+    await waitFor(() => {
+      expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('nothing to group'))
+    })
+    expect(document.querySelector('.al-right-card-group')).toBeNull()
+  })
+
+  it('does not affect grouping unrelated (non-overlapping) annotations', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => TWO_ROW_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    render(<App />)
+    const input = await getAnalyzeSearchInput()
+    await userEvent.type(input, 'alcohol')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-row-checkbox').length).toBe(2)
+    })
+    const checkboxes = document.querySelectorAll('.al-row-checkbox')
+    await userEvent.click(checkboxes[0])
+    await userEvent.click(checkboxes[1])
+    await userEvent.click(screen.getByTitle(/Sum EGC across/i))
+
+    await waitFor(() => {
+      expect(document.querySelector('.al-right-card-group')).toBeInTheDocument()
+    })
+    expect(window.alert).not.toHaveBeenCalledWith(expect.stringContaining('already included inside'))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EgcChart — normalize controls (always visible, no mode toggle)
 // ─────────────────────────────────────────────────────────────────────────────
 

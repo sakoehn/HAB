@@ -120,6 +120,7 @@ import { fmtDate, fmtTime, parseDateTime, isoDate, toPlotlyDate } from '../../ut
 import { minMeanMax } from '../../utils/stats'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { taxonomyDepthFromId } from '../../utils/taxonomy'
+import { filterRedundantAnnotations, type DroppedRedundancy } from '../../utils/annotationHierarchy'
 import { DateRangePicker } from '../ui/DateRangePicker'
 import { HelpTooltip } from '../ui/HelpTooltip'
 
@@ -424,10 +425,53 @@ export function ScaffoldExplorePanel({
     [terms, termRankFilter],
   )
 
+  const readyTerms = useMemo(
+    () => visibleTerms.filter(t => t.status === 'ok' && t.summary.length > 0),
+    [visibleTerms],
+  )
+
+  // W22 (docs/AUDIT-2026-09-22.md): the default "All terms" line sums every
+  // ready term's scaffold/gene counts together with zero ancestor/
+  // descendant awareness -- egc/scaffold/gene counts are hierarchical
+  // rollups, so a nested chain (e.g. the real default top-10 taxonomy
+  // terms: Bacteria ⊃ Proteobacteria ⊃ Alphaproteobacteria ⊃ ...) gets
+  // double-, triple-, or worse-counted. Confirmed against the audit's own
+  // live numbers: summing just 3 of those nested terms gave 375,910
+  // scaffolds where the true distinct count (Bacteria's own) was 198,368.
+  // Only matters for the AGGREGATED view -- split-by-term shows each
+  // term's own line separately, nothing gets summed, nothing to drop.
+  const [redundancy, setRedundancy] = useState<{
+    droppedKeys: Set<string>
+    dropped:     DroppedRedundancy[]
+  }>({ droppedKeys: new Set(), dropped: [] })
+
+  const readyTermsKey = readyTerms.map(t => `${t.source}::${t.annotationId}`).join(',')
+
+  useEffect(() => {
+    if (splitByTerm || readyTerms.length < 2) {
+      setRedundancy({ droppedKeys: new Set(), dropped: [] })
+      return
+    }
+    let cancelled = false
+    filterRedundantAnnotations(
+      readyTerms.map(t => ({ annotationId: t.annotationId, source: t.source })),
+    ).then(({ dropped }) => {
+      if (cancelled) return
+      setRedundancy({
+        droppedKeys: new Set(dropped.map(d => `${d.candidate.source}::${d.candidate.annotationId}`)),
+        dropped,
+      })
+    })
+    return () => { cancelled = true }
+    // readyTermsKey is the real dependency (stable across re-renders that
+    // don't change WHICH terms are ready) -- readyTerms itself is a new
+    // array reference every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readyTermsKey, splitByTerm])
+
   // ── Chart data ─────────────────────────────────────────────────────────
 
   const chartSeries = useMemo(() => {
-    const readyTerms = visibleTerms.filter(t => t.status === 'ok' && t.summary.length > 0)
     if (!readyTerms.length) return []
 
     if (splitByTerm) {
@@ -439,13 +483,18 @@ export function ScaffoldExplorePanel({
       }))
     }
 
+    const aggregatedTerms = readyTerms.filter(
+      t => !redundancy.droppedKeys.has(`${t.source}::${t.annotationId}`),
+    )
+    if (!aggregatedTerms.length) return []
+
     return [{
       id:    'aggregated',
-      label: `All terms (${readyTerms.length})`,
+      label: `All terms (${aggregatedTerms.length})`,
       color: 'var(--chart-1)',
-      data:  buildAggregatedChartRows(readyTerms, dateFrom, dateTo),
+      data:  buildAggregatedChartRows(aggregatedTerms, dateFrom, dateTo),
     }]
-  }, [visibleTerms, dateFrom, dateTo, splitByTerm])
+  }, [readyTerms, redundancy, dateFrom, dateTo, splitByTerm])
 
   const chartRows = useMemo(() => {
     const dateSet = new Set<string>()
@@ -821,6 +870,23 @@ export function ScaffoldExplorePanel({
               </div>
             ))}
           </div>
+
+          {!splitByTerm && redundancy.dropped.length > 0 && (
+            <div className="state-box" style={{ padding: '8px 12px', marginBottom: 10 }}>
+              <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
+                {redundancy.dropped.length} term{redundancy.dropped.length === 1 ? '' : 's'} left out
+                of "All terms" -- already counted inside another tracked term, so including both
+                would double-count it:{' '}
+                {redundancy.dropped.map((d, i) => (
+                  <span key={`${d.candidate.source}::${d.candidate.annotationId}`}>
+                    {i > 0 && ', '}
+                    <strong>{d.candidate.annotationId}</strong> (inside {d.containedBy.annotationId})
+                  </span>
+                ))}
+                . Switch to "Split by term" to see every term's own line individually.
+              </span>
+            </div>
+          )}
 
           <Plot
             data={chartSeries.map(s =>

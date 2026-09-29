@@ -554,3 +554,99 @@ describe('ScaffoldExplorePanel — initialTerms', () => {
     })
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W22 (docs/AUDIT-2026-09-22.md): the default "All terms" aggregated view
+// sums every tracked term together with zero ancestor/descendant awareness
+// -- scaffold/gene counts are hierarchical rollups, so tracking a category
+// (H) and one of its own member COGs (COG0055) together double-counts
+// COG0055's contribution.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function mockCogPath(url: string) {
+  if (url.includes('/api/cog/path?id=H')) {
+    return Promise.resolve({
+      ok: true, status: 200,
+      json: async () => ({
+        annotation_id: 'H', path_count: 1,
+        paths: [[{ annotation_id: 'H', name: 'H', depth: 1 }]],
+      }),
+    })
+  }
+  if (url.includes('/api/cog/path?id=COG0055')) {
+    return Promise.resolve({
+      ok: true, status: 200,
+      json: async () => ({
+        annotation_id: 'COG0055', path_count: 1,
+        paths: [[
+          { annotation_id: 'H', name: 'H', depth: 1 },
+          { annotation_id: 'COG0055', name: 'COG0055', depth: 2 },
+        ]],
+      }),
+    })
+  }
+  return null
+}
+
+describe('ScaffoldExplorePanel — W22 redundant terms', () => {
+  it('drops a redundant descendant from the aggregated "All terms" line and discloses it', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      const cogPath = mockCogPath(url)
+      if (cogPath) return cogPath
+      if (url.includes('/api/annotations/scaffolds/summary'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => SUMMARY_ROWS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    render(
+      <ScaffoldExplorePanel
+        initialTerms={[
+          { annotationId: 'H', source: 'cog' },
+          { annotationId: 'COG0055', source: 'cog' },
+        ]}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(document.querySelectorAll('.scaffold-summary-card-row').length).toBe(2)
+    })
+
+    // COG0055's own value is already inside H's -- summing both would
+    // double-count it, so it must be left out of the aggregated line.
+    await waitFor(() => {
+      expect(screen.getByText(/already counted inside another tracked term/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText('All terms (1)')).toBeInTheDocument()
+  })
+
+  it('does not show the redundancy banner when split by term (nothing gets summed)', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      const cogPath = mockCogPath(url)
+      if (cogPath) return cogPath
+      if (url.includes('/api/annotations/scaffolds/summary'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => SUMMARY_ROWS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    render(
+      <ScaffoldExplorePanel
+        initialTerms={[
+          { annotationId: 'H', source: 'cog' },
+          { annotationId: 'COG0055', source: 'cog' },
+        ]}
+      />,
+    )
+    await waitFor(() => {
+      expect(document.querySelectorAll('.scaffold-summary-card-row').length).toBe(2)
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/already counted inside another tracked term/i)).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByText('Split by term'))
+
+    expect(screen.queryByText(/already counted inside another tracked term/i)).not.toBeInTheDocument()
+    expect(screen.getAllByText('H').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('COG0055').length).toBeGreaterThan(0)
+  })
+})

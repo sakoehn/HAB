@@ -23,6 +23,7 @@ import type {
   SeriesCache, SharedAnnotation,
 } from '../types'
 import { SOURCE_COLORS, SOURCE_TAG_CLS, CHART_COLORS, taxonomyAwarePrimaryLabel } from '../constants'
+import { filterRedundantAnnotations } from '../utils/annotationHierarchy'
 import { nextColorForSource } from '../constants'
 import { apiFetch } from '../utils/api'
 import { extractEgc, sumMembersByTimestamp } from '../utils/stats'
@@ -940,9 +941,39 @@ export function AnalyzePage({
       return
     }
 
+    // W22 (docs/AUDIT-2026-09-22.md): summing an annotation together with
+    // one of its own ancestors/descendants double-counts the contained
+    // one's value, since egc/scaffold counts are hierarchical rollups (a
+    // parent's value already includes everything under it). Drop the
+    // redundant ones before capping, not after -- a selection with 25
+    // rows where 10 are redundant should keep all 15 real ones, not
+    // arbitrarily cut some real ones to make room under MAX_GROUP while a
+    // redundant one survives by virtue of list position.
+    const { kept: nonRedundant, dropped } = await filterRedundantAnnotations(
+      rows.map(r => ({ annotationId: r.annotation_id, source: r.source })),
+    )
+    if (dropped.length > 0) {
+      const lines = dropped.map(d =>
+        `${d.candidate.annotationId} (already included inside ${d.containedBy.annotationId})`,
+      )
+      alert(
+        `${dropped.length} selected annotation${dropped.length === 1 ? ' is' : 's are'} ` +
+        `already counted inside another one you selected, so summing both would double-count it:\n\n` +
+        lines.join('\n') +
+        `\n\nThese were left out of the group.`,
+      )
+    }
+    if (nonRedundant.length < 2) {
+      alert('Fewer than 2 non-overlapping annotations remain after removing nested duplicates -- nothing to group.')
+      return
+    }
+    const rowsAfterRedundancy = rows.filter(r =>
+      nonRedundant.some(k => k.annotationId === r.annotation_id && k.source === r.source),
+    )
+
     const MAX_GROUP = 20
-    const capped    = rows.slice(0, MAX_GROUP)
-    if (rows.length > MAX_GROUP) {
+    const capped    = rowsAfterRedundancy.slice(0, MAX_GROUP)
+    if (rowsAfterRedundancy.length > MAX_GROUP) {
       alert(
         `Group capped at ${MAX_GROUP} annotations for performance. ` +
         `Only the first ${MAX_GROUP} will be included.`,
