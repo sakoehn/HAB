@@ -32,8 +32,25 @@ function jsonResponse(data: unknown) {
   return { ok: true, status: 200, json: async () => data }
 }
 
+// Captures the filename passed to downloadCsv (utils/api.ts sets
+// `a.download = filename` then calls `a.click()`) without actually
+// triggering a browser download.
+let lastDownloadFilename: string | null = null
+const originalCreateElement = document.createElement.bind(document)
+
 beforeEach(() => {
   mockFetch.mockReset()
+  lastDownloadFilename = null
+  vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+    const el = originalCreateElement(tag)
+    if (tag === 'a') {
+      Object.defineProperty(el, 'click', {
+        value: () => { lastDownloadFilename = (el as HTMLAnchorElement).download },
+        writable: true,
+      })
+    }
+    return el
+  })
 })
 
 function makeRow(id: string, parent: string, egc: number): TopAnnotation {
@@ -163,6 +180,15 @@ describe('DatasetOverviewPanel — labels reflect what was actually loaded, not 
       if (url.includes('/api/annotations/top')) {
         return pending.then(() => jsonResponse({ data: rows, sample_count: 128 }))
       }
+      if (url.includes('/api/series/annotations')) {
+        return Promise.resolve(jsonResponse({
+          data: [{
+            source: 'kegg', sample: 's1', annotation_id: 'K00001', name: 'K00001',
+            timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '5/27/21 8:00' },
+            value: { egc: 10 },
+          }],
+        }))
+      }
       return Promise.resolve(jsonResponse({}))
     })
     render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
@@ -179,5 +205,18 @@ describe('DatasetOverviewPanel — labels reflect what was actually loaded, not 
       expect(screen.getByText(/unique kegg annotations/i)).toBeInTheDocument()
     })
     expect(screen.queryByText(/unique cog annotations/i)).not.toBeInTheDocument()
+
+    // CSV export: filename and each row's `source` field must say kegg,
+    // never cog (the live dropdown at the time the response landed).
+    await user.click(screen.getByRole('button', { name: /^↓ CSV$/i }))
+    expect(lastDownloadFilename).toBe('overview_kegg.csv')
+
+    // "Load time series" follow-up request must also target kegg.
+    await user.click(await screen.findByRole('button', { name: /Load time series/i }))
+    await waitFor(() => {
+      const call = mockFetch.mock.calls.find(([u]) => String(u).includes('/api/series/annotations'))
+      expect(call).toBeTruthy()
+      expect(String(call![0])).toContain('source=kegg')
+    })
   })
 })

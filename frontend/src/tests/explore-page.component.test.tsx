@@ -13,10 +13,14 @@
  * --------
  *   Top EGC: switching the source dropdown while a request is still in
  *     flight does not relabel the eventually-returned rows under the new
- *     source (CSV filename + expandParentLabel read what was actually
- *     loaded, not the live dropdown)
+ *     source -- CSV export filename, ScaffoldBtn's `source` prop, and
+ *     HierarchyBtn's title all read what was actually loaded, not the
+ *     live dropdown
  *   Lookup: switching the source dropdown before a search resolves does
- *     not show the returned annotation tagged/labelled under the new source
+ *     not show the returned annotation tagged/labelled under the new
+ *     source -- the `.tag` element and the Depth field's per-source rank
+ *     label (kegg/cog/enzyme/taxonomy each have a different depth->label
+ *     map) both read what was actually searched
  *
  * Run: npx vitest run src/tests/explore-page.component.test.tsx
  */
@@ -35,8 +39,25 @@ function jsonResponse(data: unknown) {
   return { ok: true, status: 200, json: async () => data }
 }
 
+// Captures the filename passed to downloadCsv (utils/api.ts sets
+// `a.download = filename` then calls `a.click()`) without actually
+// triggering a browser download.
+let lastDownloadFilename: string | null = null
+const originalCreateElement = document.createElement.bind(document)
+
 beforeEach(() => {
   mockFetch.mockReset()
+  lastDownloadFilename = null
+  vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+    const el = originalCreateElement(tag)
+    if (tag === 'a') {
+      Object.defineProperty(el, 'click', {
+        value: () => { lastDownloadFilename = (el as HTMLAnchorElement).download },
+        writable: true,
+      })
+    }
+    return el
+  })
 })
 
 // Minimal stateful wrapper -- ExploreState is owned by App.tsx in
@@ -94,6 +115,18 @@ describe('ExplorePage — Top EGC Annotations source race (W29)', () => {
     // at the time the stale response landed).
     expect(screen.getByTitle('View K00001 in the kegg hierarchy')).toBeInTheDocument()
     expect(screen.queryByTitle('View K00001 in the cog hierarchy')).not.toBeInTheDocument()
+
+    // CSV export: filename must embed the real (kegg) source, never the
+    // live dropdown (cog) that was switched to mid-flight.
+    await user.click(screen.getByRole('button', { name: /^↓ CSV$/i }))
+    expect(lastDownloadFilename).toBe('top_kegg_annotations.csv')
+
+    // ScaffoldBtn's `source` prop must also be kegg -- confirmed via the
+    // opened ScaffoldModal's own source tag.
+    await user.click(screen.getByTestId('scaffold-btn'))
+    await waitFor(() => {
+      expect(screen.getByTestId('source-tag')).toHaveTextContent('kegg')
+    })
   })
 })
 
@@ -105,7 +138,7 @@ describe('ExplorePage — Annotation Lookup source race (W29)', () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/search/annotations') && url.includes('sources=kegg')) {
         return keggPending.then(() => jsonResponse({
-          data: [{ annotation_id: 'K02014', name: 'K02014 protein', parent: null, mean_egc: 100, max_egc: 200, sample_count: 128 }],
+          data: [{ annotation_id: 'K02014', name: 'K02014 protein', parent: null, depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 }],
           total: 1,
         }))
       }
@@ -129,5 +162,12 @@ describe('ExplorePage — Annotation Lookup source race (W29)', () => {
     // The result card must be tagged "kegg" (what was really searched),
     // never "cog" (the live dropdown at the time the response landed).
     expect(screen.queryByText('cog', { selector: '.tag' })).not.toBeInTheDocument()
+
+    // Depth field's rank-label switch must use kegg's depth->label map
+    // (depth 4 = "leaf (KO)"), not cog's (which has no depth-4 entry and
+    // would fall back to a bare "4").
+    await waitFor(() => {
+      expect(document.querySelector('.lookup-meta-value.mono')?.textContent).toContain('leaf (KO)')
+    })
   })
 })

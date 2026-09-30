@@ -459,6 +459,45 @@ describe('AnalyzePage — search', () => {
     expect(screen.queryByText('zinc', { selector: '.al-term-tab' })).not.toBeInTheDocument()
   })
 
+  // W29 (docs/AUDIT-2026-09-22.md): same root cause as the tab-label test
+  // above, but baked into a PERSISTENT chart card rather than a transient
+  // tab -- addSelectedAsGroup's `termLabel = displayTerms[termIdx] ?? 'group'`
+  // must also read what was actually searched, not the live text box, or a
+  // group created after editing the box (without re-searching) would be
+  // titled after text that was never actually searched.
+  it('editing the search box after a search does not relabel a newly created group', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => TWO_ROW_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    render(<App />)
+    const input = await getAnalyzeSearchInput()
+    await userEvent.type(input, 'iron')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-row-checkbox').length).toBe(2)
+    })
+
+    // Edit the box WITHOUT re-searching.
+    await userEvent.clear(input)
+    await userEvent.type(input, 'zinc')
+
+    const checkboxes = document.querySelectorAll('.al-row-checkbox')
+    await userEvent.click(checkboxes[0])
+    await userEvent.click(checkboxes[1])
+    await userEvent.click(screen.getByTitle(/Sum EGC across/i))
+
+    // The created group must be titled after "iron" (what was actually
+    // searched), never "zinc" (the live text box at group-creation time).
+    await waitFor(() => {
+      expect(screen.getByText(/^Grouped: iron \(2\)$/)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/^Grouped: zinc/)).not.toBeInTheDocument()
+  })
+
   it('shows error state when search API fails', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/search/annotations'))
