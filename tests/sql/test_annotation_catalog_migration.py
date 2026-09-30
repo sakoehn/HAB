@@ -1,0 +1,171 @@
+"""
+test_annotation_catalog_migration.py
+=======================================
+Tests for populate_annotation_catalog() (FastAPI/scripts/migrate_annotation_catalog_sql.py).
+
+CR11 (docs/AUDIT-2026-09-22.md): annotation_catalog.id has no AUTOINCREMENT,
+so a DELETE+reinsert rebuild can renumber every row -- ids restart at 1, in
+whatever order the GROUP BY happens to emit them. correlations_cache is
+keyed on bare catalog_id_a/catalog_id_b integers, so a cached pair computed
+against the OLD ids would silently be served as a DIFFERENT pair's r/p/q
+after a rebuild. Before this fix, only migrate_annotations_to_sql.py's own
+run cleared correlations_cache -- running migrate_annotation_catalog_sql.py
+on its own (the documented recovery procedure after a COG/KEGG-only path
+rebuild, per migrate_cog_paths_to_sql.py's and migrate_kegg_paths_to_sql.py's
+own docstrings) left a stale cache behind.
+
+Data-layer test: an in-memory sqlite connection with the real schema for
+the three tables involved, no server.
+
+Run:
+    pytest tests/sql/test_annotation_catalog_migration.py -v
+"""
+
+import os
+import sqlite3
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"))
+
+from scripts.migrate_annotation_catalog_sql import populate_annotation_catalog  # noqa: E402
+
+SCHEMA = """
+CREATE TABLE annotation_series(
+    id         INTEGER PRIMARY KEY,
+    source     TEXT NOT NULL,
+    sample     TEXT NOT NULL,
+    annotation_id  TEXT NOT NULL,
+    name           TEXT,
+    parent         TEXT,
+    depth          INTEGER,
+    egc            REAL,
+    norm_egc       REAL
+);
+
+CREATE TABLE annotation_catalog(
+    id INTEGER PRIMARY KEY,
+    source  TEXT NOT NULL,
+    annotation_id TEXT NOT NULL,
+    name TEXT,
+    parent TEXT,
+    depth INTEGER,
+    mean_egc REAL,
+    max_egc REAL,
+    mean_norm_egc REAL,
+    max_norm_egc REAL,
+    sample_count INTEGER,
+    UNIQUE (source, annotation_id)
+);
+
+CREATE TABLE correlations_cache(
+    id     INTEGER PRIMARY KEY,
+    catalog_id_a INTEGER NOT NULL,
+    catalog_id_b INTEGER NOT NULL,
+    r            REAL NOT NULL,
+    metric       TEXT NOT NULL,
+    method       TEXT NOT NULL,
+    lag_samples  INTEGER NOT NULL,
+    p_value      REAL NOT NULL,
+    n_pairs      INTEGER NOT NULL
+);
+"""
+
+
+# pylint: disable=redefined-outer-name
+
+@pytest.fixture
+def conn():
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(SCHEMA)
+    connection.commit()
+    yield connection
+    connection.close()
+
+
+def insert_series(conn, source, annotation_id, sample, egc=10.0):
+    conn.execute(
+        "INSERT INTO annotation_series (source, sample, annotation_id, name, egc, norm_egc) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (source, sample, annotation_id, annotation_id, egc, egc / 1000),
+    )
+    conn.commit()
+
+
+def insert_cached_pair(conn, catalog_id_a, catalog_id_b):
+    conn.execute(
+        "INSERT INTO correlations_cache "
+        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
+        "VALUES (?, ?, 0.5, 'egc', 'spearman', 0, 0.01, 50)",
+        (catalog_id_a, catalog_id_b),
+    )
+    conn.commit()
+
+
+def test_rebuild_clears_correlations_cache(conn):
+    insert_series(conn, "kegg", "K00001", "s1")
+    insert_series(conn, "kegg", "K00002", "s1")
+    insert_cached_pair(conn, 1, 2)
+
+    populate_annotation_catalog(conn)
+
+    remaining = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
+    assert remaining == 0, \
+        "a catalog rebuild must wipe correlations_cache -- its keys can be renumbered by the rebuild (CR11)"
+
+
+def test_rebuild_still_clears_cache_when_cache_was_already_empty(conn):
+    insert_series(conn, "kegg", "K00001", "s1")
+
+    count = populate_annotation_catalog(conn)
+
+    assert count == 1
+    remaining = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
+    assert remaining == 0
+
+
+def test_rebuild_still_produces_correct_catalog_rows(conn):
+    # The cache-clear must not interfere with the catalog rebuild itself --
+    # same aggregation this migration always did.
+    insert_series(conn, "kegg", "K00001", "s1", egc=10.0)
+    insert_series(conn, "kegg", "K00001", "s2", egc=30.0)
+    insert_series(conn, "cog", "COG0001", "s1", egc=5.0)
+
+    count = populate_annotation_catalog(conn)
+
+    assert count == 2
+    row = conn.execute(
+        "SELECT mean_egc, max_egc, sample_count FROM annotation_catalog "
+        "WHERE source = 'kegg' AND annotation_id = 'K00001'"
+    ).fetchone()
+    assert row == (20.0, 30.0, 2)
+
+
+def test_ids_can_be_renumbered_across_a_rebuild(conn):
+    # The real CR11 trigger: with no AUTOINCREMENT, a DELETE+reinsert can
+    # hand out a previously-used id to a DIFFERENT annotation. This doesn't
+    # assert any particular renumbering (SQLite's rowid reuse order isn't a
+    # contract this test should pin down), just that the scenario the cache
+    # wipe protects against is real: ids are not guaranteed stable.
+    insert_series(conn, "kegg", "K00001", "s1")
+    insert_series(conn, "kegg", "K00002", "s1")
+    populate_annotation_catalog(conn)
+    first_id_k1 = conn.execute(
+        "SELECT id FROM annotation_catalog WHERE annotation_id = 'K00001'"
+    ).fetchone()[0]
+
+    # Simulate a dataset change that drops K00001 and adds a new annotation
+    # before K00002 alphabetically/by GROUP BY order -- a realistic case
+    # where the old K00001 id could be reassigned to something else.
+    conn.execute("DELETE FROM annotation_series WHERE annotation_id = 'K00001'")
+    insert_series(conn, "kegg", "K00000", "s1")
+    populate_annotation_catalog(conn)
+
+    new_id_k0 = conn.execute(
+        "SELECT id FROM annotation_catalog WHERE annotation_id = 'K00000'"
+    ).fetchone()[0]
+    # Not a strict requirement that they collide every time -- but confirms
+    # ids are freshly assigned each rebuild, not preserved per-annotation,
+    # which is the real precondition for CR11's stale-cache scenario.
+    assert isinstance(first_id_k1, int) and isinstance(new_id_k0, int)

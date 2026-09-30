@@ -19,6 +19,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from api.config import SQLITE_DB_PATH  # pylint: disable=wrong-import-position,import-error
+from scripts.migrate_annotations_to_sql import invalidate_correlations_cache  # pylint: disable=wrong-import-position,import-error
 
 def populate_annotation_catalog(conn: sqlite3.Connection) -> int:
     """Rebuild annotation_catalog from a GROUP BY aggregation over
@@ -30,6 +31,16 @@ def populate_annotation_catalog(conn: sqlite3.Connection) -> int:
     Returns:
         Number of rows inserted.
     """
+    # CR11 (docs/AUDIT-2026-09-22.md): annotation_catalog.id has no
+    # AUTOINCREMENT, so this DELETE+reinsert can renumber every row (ids
+    # restart at 1, in GROUP BY's own output order). correlations_cache is
+    # keyed on bare catalog_id_a/catalog_id_b integers, so a stale cached
+    # pair would silently be served as a DIFFERENT pair's r/p/q under the
+    # reused id. Only migrate_annotations_to_sql.py's own run used to clear
+    # this cache -- running this script alone (the documented recovery
+    # procedure after a COG/KEGG-only path rebuild) left it stale.
+    invalidate_correlations_cache(conn)
+
     conn.execute("DELETE FROM annotation_catalog")
 
     # Column order here must match the SELECT's own column order below --
