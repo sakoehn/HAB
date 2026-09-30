@@ -88,15 +88,18 @@ EGC methodology note
     because per-gene coordinates are not consistently available across all 128
     samples (some depth files only contain scaffold-level values).
 
-    The difference is visible only on scaffolds that carry multiple genes of
-    the same annotation type (paralogs).  For those scaffolds this pipeline
-    multiplies whole-scaffold coverage by the gene count, while JGI computes
-    a separate fractional coverage per gene.  Observed divergence is within
-    ~1-5% for most terms but can reach ~1000 EGC units for high-abundance
-    annotations like COG0006 and COG0010.
+    This difference is theoretically possible on scaffolds that carry
+    multiple genes of the same annotation type (paralogs), where this
+    pipeline multiplies whole-scaffold coverage by the gene count while JGI
+    computes a separate fractional coverage per gene.
 
-    This is a deliberate methodological choice, not a bug.  EGC_TOLERANCE is
-    set to 1000.0 to accommodate the largest observed difference.
+    E12 (docs/AUDIT-2026-09-22.md): this note used to claim the divergence
+    "can reach ~1000 EGC units" and that EGC_TOLERANCE was set to 1000.0 to
+    match -- both stale.  In practice the theoretical divergence above does
+    not materialize: a full comparison across all 575,702 (COG) and 908,386
+    (KEGG) real data points found 0 mismatches (verified 2026-07-01).  The
+    real tolerance (EGC_ABS_FLOOR below) is 0.5 -- float/int comparison
+    noise only, not a methodology allowance.
 
 EGC file format (tab-separated)
 ---------------------------------
