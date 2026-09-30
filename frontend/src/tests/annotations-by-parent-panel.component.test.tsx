@@ -12,10 +12,14 @@
  * --------
  *   loading state, error state + retry re-fetches, empty state
  *   groups rendered sorted by summed EGC descending
- *   truncation note shown only at exactly 500 rows (the real fetch limit)
+ *   truncation note shown only at exactly 200 rows (the real fetch limit --
+ *     W31, docs/AUDIT-2026-09-22.md -- this used to check 500, a value the
+ *     real fetch could never produce)
  *   "Summed by parent" toggle shows the aggregate table instead
  *   expanding a group fetches and renders its member series
  *   a partial per-annotation series failure shows a warning + retry
+ *   expanding a group with more than 20 members discloses that its trend
+ *     chart only sums the first 20 (W31)
  *   collapsing and re-expanding does not re-fetch (cached), but Retry does
  *
  * Run: npx vitest run src/tests/annotations-by-parent-panel.component.test.tsx
@@ -91,12 +95,12 @@ describe('AnnotationsByParentPanel — parent grouping and sort order', () => {
     expect(labels).toEqual(['HighGroup', 'LowGroup'])
   })
 
-  it('shows a truncation note only when exactly 500 rows come back', async () => {
-    const rows = Array.from({ length: 500 }, (_, i) => makeRow(`K${i}`, `group${i % 5}`, 500 - i))
+  it('shows a truncation note only when exactly 200 rows come back (the real fetch limit)', async () => {
+    const rows = Array.from({ length: 200 }, (_, i) => makeRow(`K${i}`, `group${i % 5}`, 200 - i))
     mockFetch.mockResolvedValue(jsonResponse({ data: rows }))
     render(<AnnotationsByParentPanel source="kegg" />)
 
-    await waitFor(() => expect(screen.getByText(/Showing first 500/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/Showing first 200/i)).toBeInTheDocument())
   })
 
   it('does not show a truncation note when fewer than 500 rows come back', async () => {
@@ -190,6 +194,46 @@ describe('AnnotationsByParentPanel — expanding a group to load its series', ()
     const callsBeforeRetry = seriesCallCount
     await user.click(screen.getByTestId('parent-group-retry-btn'))
     await waitFor(() => expect(seriesCallCount).toBeGreaterThan(callsBeforeRetry))
+  })
+
+  // W31 (docs/AUDIT-2026-09-22.md): the group trend chart silently sums
+  // only the first 20 of a group's members -- confirmed live on COG data,
+  // where every parent is null and COG shows one 200-member "Ungrouped"
+  // group whose trend is the sum of just 20 of them, with nothing saying so.
+  it('discloses that the trend chart only sums the first 20 members when a group has more', async () => {
+    const rows = Array.from({ length: 25 }, (_, i) => makeRow(`C${i}`, 'BigGroup', 25 - i))
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) return Promise.resolve(jsonResponse({ data: rows }))
+      if (url.includes('/api/series/annotations')) return Promise.resolve(jsonResponse({ data: [] }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<AnnotationsByParentPanel source="cog" />)
+    await waitFor(() => expect(screen.getByText('BigGroup')).toBeInTheDocument())
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /BigGroup/ }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('parent-group-trend-truncated-warning')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('parent-group-trend-truncated-warning').textContent).toContain('25')
+  })
+
+  it('does not show the trend-truncation warning when a group has 20 or fewer members', async () => {
+    const rows = Array.from({ length: 20 }, (_, i) => makeRow(`C${i}`, 'SmallGroup', 20 - i))
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) return Promise.resolve(jsonResponse({ data: rows }))
+      if (url.includes('/api/series/annotations')) return Promise.resolve(jsonResponse({ data: [] }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<AnnotationsByParentPanel source="cog" />)
+    await waitFor(() => expect(screen.getByText('SmallGroup')).toBeInTheDocument())
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /SmallGroup/ }))
+
+    await waitFor(() => expect(screen.getByText('Mean EGC')).toBeInTheDocument())
+    expect(screen.queryByTestId('parent-group-trend-truncated-warning')).not.toBeInTheDocument()
   })
 
   it('does not re-fetch when collapsing and re-expanding the same group', async () => {

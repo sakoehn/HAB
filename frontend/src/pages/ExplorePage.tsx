@@ -694,13 +694,16 @@ export function AnnotationsByParentPanel({
     </div>
   )
 
-  // Shown inline above the toggle row when results were clipped
-  const truncationNote = allRows.length === 500 ? (
+  // Shown inline above the toggle row when results were clipped.
+  // W31 (docs/AUDIT-2026-09-22.md): this checked `=== 500` while the real
+  // fetch above uses `limit=200` -- the condition could never be true, so a
+  // truncated list looked complete. Matches the fetch's own limit now.
+  const truncationNote = allRows.length === 200 ? (
     <div style={{
       font: '11px var(--mono)', color: 'var(--amber)',
       marginBottom: 10,
     }}>
-      Showing first 500 annotations — use date filter in Dataset Overview to narrow.
+      Showing first 200 annotations — use date filter in Dataset Overview to narrow.
     </div>
   ) : null
 
@@ -841,6 +844,22 @@ export function AnnotationsByParentPanel({
                         >
                           Retry
                         </button>
+                      </div>
+                    )}
+                    {gs?.status === 'ok' && group.items.length > 20 && (
+                      <div
+                        className="state-box error"
+                        style={{ padding: '10px 16px', flexDirection: 'row', gap: 10, textAlign: 'left', marginBottom: 12 }}
+                        data-testid="parent-group-trend-truncated-warning"
+                      >
+                        <span style={{ flex: 1 }}>
+                          {/* W31 (docs/AUDIT-2026-09-22.md): the summed trend
+                              below only fetches the first 20 of this group's
+                              {group.items.length} members -- disclosed here
+                              instead of silently undercounting the total. */}
+                          This group has {group.items.length} member annotations, but the summed
+                          trend below only includes the first 20 — it may be undercounted.
+                        </span>
                       </div>
                     )}
                     {gs?.status === 'ok' && chartSeries.length > 0 && (
