@@ -46,6 +46,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from api.config import SQLITE_DB_PATH
+
 
 # cache.extract_annotation_name/extract_parent/extract_egc/extract_norm_egc
 # (TestExtractAnnotationName/TestExtractParent/TestExtractEgc/TestExtractNormEgc)
@@ -704,6 +706,11 @@ def patched_client():
         yield client
 
 
+@pytest.mark.skipif(
+    not os.path.exists(SQLITE_DB_PATH),
+    reason=f"{SQLITE_DB_PATH} not found -- these tests boot the real app via "
+           f"main.py's lifespan, which needs a real database (W12, docs/AUDIT-2026-09-22.md)",
+)
 class TestRoutesViaTestClient:
     """HTTP-level tests for the backend-agnostic endpoints (no DATA_BACKEND
     branch): /status, /tides, /sun-times, /debug."""
