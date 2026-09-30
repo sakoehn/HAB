@@ -15,7 +15,7 @@
 // defined in this file because they are only used here and are tightly
 // coupled to ExploreState.
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 
 import type {
   ApiStatus, TopAnnotation, AnnotationItem,
@@ -54,6 +54,14 @@ export type ExploreState = {
   rows:         TopAnnotation[]
   sampleCount:  number | null
   status:       ApiStatus
+  // W29 (docs/AUDIT-2026-09-22.md): the (source, dateFrom, dateTo) that
+  // actually produced `rows` -- distinct from the live `source`/`dateFrom`/
+  // `dateTo` above, which the user can change (dropdown/date fields) while
+  // a request is still in flight. Every label/link/follow-up-fetch derived
+  // from `rows` must read this instead of the live fields, or switching the
+  // dropdown after loading silently mislabels the still-displayed rows
+  // under the new source. null until the first load completes.
+  loadedParams: { source: string; dateFrom: string; dateTo: string } | null
   sortCol:      ExploreSortCol
   sortDir:      SortDir
   parentSource: string
@@ -71,6 +79,10 @@ export type ExploreState = {
   lookupSelected: TopAnnotation | null
   lookupTotal:    number
   lookupStatus:   ApiStatus
+  // W29: same rationale as loadedParams above, for the lookup card's own
+  // source -- switching lookupSource before a search resolves used to show
+  // the returned annotation tagged/linked under the NEW source.
+  lookupLoadedSource: string | null
   // Same taxonomy rank filter, applied to the lookup result list. Unlike
   // topRankFilter, lookupResults DOES carry real `depth` (it's fetched from
   // /api/search/annotations), so this reads row.depth directly.
@@ -89,6 +101,7 @@ export function makeDefaultExploreState(): ExploreState {
     rows:         [],
     sampleCount:  null,
     status:       'idle',
+    loadedParams: null,
     sortCol:      'mean_egc',
     sortDir:      'desc',
     parentSource: 'taxonomy',
@@ -100,6 +113,7 @@ export function makeDefaultExploreState(): ExploreState {
     lookupSelected: null,
     lookupTotal:    0,
     lookupStatus:   'idle',
+    lookupLoadedSource: null,
     lookupRankFilter: new Set(),
     scaffoldInitialTerms: undefined,
   }
@@ -152,26 +166,46 @@ export function DatasetOverviewPanel({
   const [seriesFailed, setSeriesFailed] = useState<string[]>([])
   const [seriesTruncatedFrom, setSeriesTruncatedFrom] = useState<number | null>(null)
 
+  // W29 (docs/AUDIT-2026-09-22.md): `rows` is only ever correct for whatever
+  // (source, dateFrom, dateTo) was actually sent with the request that
+  // produced it -- not necessarily what `source`/`dateFrom`/`dateTo` hold
+  // NOW, since the user can change the dropdown/date fields at any time,
+  // including while a request is still in flight. Every place that used to
+  // read the live `source`/`dateFrom`/`dateTo` for display, labeling, or a
+  // follow-up fetch (CSV export, the summary line, expandParentLabel,
+  // loadTemporalChart's own request) now reads `loadedParams` instead --
+  // the actual parameters snapshotted at the moment `rows` was set.
+  const [loadedParams, setLoadedParams] = useState<{ source: string; dateFrom: string; dateTo: string } | null>(null)
+  const requestSeqRef = useRef(0)
+
   useEffect(() => {
     setSource('taxonomy'); setDateFrom(''); setDateTo('')
     setRows([]); setSampleCount(null); setStatus('idle')
+    setLoadedParams(null)
     setSeriesData({}); setSeriesStatus('idle'); setSeriesFailed([])
     setSeriesTruncatedFrom(null)
   }, [resetKey])
 
   async function load() {
+    const requestId = ++requestSeqRef.current
+    const params = { source, dateFrom, dateTo }
     setStatus('loading')
     setSeriesData({}); setSeriesStatus('idle'); setSeriesFailed([])
     setSeriesTruncatedFrom(null)
     try {
-      let url = `/api/annotations/top?source=${source}&limit=200`
-      if (dateFrom) url += `&date_from=${dateFrom}`
-      if (dateTo)   url += `&date_to=${dateTo}`
+      let url = `/api/annotations/top?source=${params.source}&limit=200`
+      if (params.dateFrom) url += `&date_from=${params.dateFrom}`
+      if (params.dateTo)   url += `&date_to=${params.dateTo}`
       const r = await apiFetch<{ data: TopAnnotation[]; sample_count: number }>(url)
+      if (requestId !== requestSeqRef.current) return // a newer load() has since started
       setRows(r.data ?? [])
       setSampleCount(r.sample_count)
+      setLoadedParams(params)
       setStatus('ok')
-    } catch { setStatus('error') }
+    } catch {
+      if (requestId !== requestSeqRef.current) return
+      setStatus('error')
+    }
   }
 
   const parentGroups = useMemo(() => {
@@ -184,13 +218,13 @@ export function DatasetOverviewPanel({
     return Array.from(map.entries())
       .map(([parent, items]) => ({
         parent,
-        label:  expandParentLabel(parent, source),
+        label:  expandParentLabel(parent, loadedParams?.source ?? source),
         sumEgc: items.reduce((s, i) => s + i.mean_egc, 0),
         count:  items.length,
         items,
       }))
       .sort((a, b) => b.sumEgc - a.sumEgc)
-  }, [rows, source])
+  }, [rows, loadedParams])
 
   const top5Groups = parentGroups.slice(0, 5)
 
@@ -203,6 +237,11 @@ export function DatasetOverviewPanel({
     const allMembers = top5Groups.flatMap(g => g.items)
     const allAnns = allMembers.slice(0, 40)
     if (!allAnns.length) return
+    // W29: the actually-loaded source, not the live dropdown -- switching
+    // the source after loading rows (but before clicking this) must not
+    // silently fetch a different source's time series for rows still
+    // labelled/grouped under the one that was really loaded.
+    const loadedSource = loadedParams?.source ?? source
     // Silently dropping members past the 40-annotation fetch budget could
     // zero out an entire later group's summed total with no indication
     // anything was cut -- surfaced explicitly instead (also-noted item,
@@ -212,7 +251,7 @@ export function DatasetOverviewPanel({
     const results = await Promise.all(
       allAnns.map(ann =>
         apiFetch<{ data: AnnotationItem[] }>(
-          `/api/series/annotations?source=${source}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
+          `/api/series/annotations?source=${loadedSource}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
         )
           .then(r => ({ id: ann.annotation_id, data: r.data ?? [], failed: false }))
           .catch(() => ({ id: ann.annotation_id, data: [] as AnnotationItem[], failed: true })),
@@ -231,6 +270,11 @@ export function DatasetOverviewPanel({
 
   const temporalSeries = useMemo(() => {
     if (!Object.keys(seriesData).length) return []
+    // W29: seriesData was fetched under loadedSource (loadTemporalChart),
+    // not necessarily whatever the dropdown shows right now -- everything
+    // derived from it must agree, or a source-switch after loading would
+    // silently mislabel real kegg data as e.g. cog.
+    const loadedSource = loadedParams?.source ?? source
     return top5Groups.map((group, gi) => ({
       // W26 (docs/AUDIT-2026-09-22.md): id must be unique per series --
       // group.label alone isn't guaranteed to be (two different parent
@@ -242,17 +286,17 @@ export function DatasetOverviewPanel({
       annotationId: group.label,
       name:         group.label,
       color:        CHART_GROUP_COLORS[gi],
-      source,
+      source:       loadedSource,
       // Summed per timestamp across members, not raw per-member points --
       // see sumMembersByTimestamp's docstring for why (W14).
       data: sumMembersByTimestamp(
         group.items.map(ann => ann.annotation_id),
         seriesData,
         group.label,
-        source,
+        loadedSource,
       ),
     }))
-  }, [seriesData, top5Groups, source])
+  }, [seriesData, top5Groups, loadedParams, source])
 
   const overviewStats = useMemo(() => {
     if (!rows.length) return null
@@ -298,8 +342,10 @@ export function DatasetOverviewPanel({
           <button
             className="btn sm"
             onClick={() => downloadCsv(
-              rows.map(r => ({ ...r, source })),
-              `overview_${source}.csv`,
+              // W29: the source these rows were actually loaded under, not
+              // whichever the dropdown currently shows.
+              rows.map(r => ({ ...r, source: loadedParams?.source ?? source })),
+              `overview_${loadedParams?.source ?? source}.csv`,
             )}
           >
             ↓ CSV
@@ -341,7 +387,7 @@ export function DatasetOverviewPanel({
             <span style={{ color: 'var(--teal)', fontWeight: 600 }}>
               {rows.length}
             </span>{' '}
-            unique {source} annotations ·{' '}
+            unique {loadedParams?.source ?? source} annotations ·{' '}
             <span style={{ color: 'var(--teal)', fontWeight: 600 }}>
               {sampleCount}
             </span>{' '}
@@ -350,8 +396,8 @@ export function DatasetOverviewPanel({
               {parentGroups.length}
             </span>{' '}
             functional groups
-            {dateFrom || dateTo
-              ? ` · ${dateFrom || '…'} → ${dateTo || '…'}`
+            {loadedParams && (loadedParams.dateFrom || loadedParams.dateTo)
+              ? ` · ${loadedParams.dateFrom || '…'} → ${loadedParams.dateTo || '…'}`
               : ' · all dates'}
             {rows.length === 200 && (
               <span style={{ color: 'var(--amber)', marginLeft: 6 }}>
@@ -363,7 +409,7 @@ export function DatasetOverviewPanel({
           {overviewStats && (
             <StatsPanel
               vals={overviewStats}
-              yLabel={`Mean EGC distribution · ${source}`}
+              yLabel={`Mean EGC distribution · ${loadedParams?.source ?? source}`}
             />
           )}
 
@@ -543,17 +589,37 @@ export function AnnotationsByParentPanel({
     status: ApiStatus
   }>>({})
   const { copiedId, copy } = useCopyId()
+  // W29 (docs/AUDIT-2026-09-22.md): `source` is a prop that can change
+  // (parent dropdown) while a previous source's request is still in
+  // flight -- without a sequence guard, the slower (stale) response could
+  // land after the newer one and get labelled under the new `source`,
+  // showing e.g. real kegg rows grouped/labelled as "cog". `loadedSource`
+  // is the source that ACTUALLY produced `allRows`, used for every label
+  // derived from it (expandParentLabel here); the live `source` prop is
+  // only for the request itself and the dropdown's own display elsewhere.
+  const [loadedSource, setLoadedSource] = useState(source)
+  const requestSeqRef = useRef(0)
 
   function loadTop() {
+    const requestId = ++requestSeqRef.current
+    const requestedSource = source
     setStatus('loading')
     setAllRows([])
     setExpandedParents(new Set())
     setGroupSeriesData({})
     apiFetch<{ data: TopAnnotation[] }>(
-      `/api/annotations/top?source=${source}&limit=200`,
+      `/api/annotations/top?source=${requestedSource}&limit=200`,
     )
-      .then(r => { setAllRows(r.data ?? []); setStatus('ok') })
-      .catch(() => setStatus('error'))
+      .then(r => {
+        if (requestId !== requestSeqRef.current) return // superseded by a newer source change
+        setAllRows(r.data ?? [])
+        setLoadedSource(requestedSource)
+        setStatus('ok')
+      })
+      .catch(() => {
+        if (requestId !== requestSeqRef.current) return
+        setStatus('error')
+      })
   }
 
   useEffect(loadTop, [source])
@@ -568,13 +634,13 @@ export function AnnotationsByParentPanel({
     return Array.from(map.entries())
       .map(([parent, items]) => ({
         parent,
-        label:  expandParentLabel(parent, source),
+        label:  expandParentLabel(parent, loadedSource),
         items:  items.sort((a, b) => b.mean_egc - a.mean_egc),
         sumEgc: items.reduce((s, i) => s + i.mean_egc, 0),
         count:  items.length,
       }))
       .sort((a, b) => b.sumEgc - a.sumEgc)
-  }, [allRows, source])
+  }, [allRows, loadedSource])
 
   function toggleParent(p: string) {
     setExpandedParents(prev => {
@@ -589,8 +655,12 @@ export function AnnotationsByParentPanel({
     setGroupSeriesData(prev => ({ ...prev, [parent]: { data: {}, failed: [], status: 'loading' } }))
     const results = await Promise.all(
       items.slice(0, 20).map(ann =>
+        // W29: loadedSource, not the live `source` prop -- these items came
+        // from allRows, which was loaded under loadedSource; fetching their
+        // series under a source the user has since switched to would ask
+        // for the wrong annotations entirely.
         apiFetch<{ data: AnnotationItem[] }>(
-          `/api/series/annotations?source=${source}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
+          `/api/series/annotations?source=${loadedSource}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
         )
           .then(r => ({ id: ann.annotation_id, data: r.data ?? [], failed: false }))
           .catch(() => ({ id: ann.annotation_id, data: [] as AnnotationItem[], failed: true })),
@@ -620,7 +690,7 @@ export function AnnotationsByParentPanel({
   )
   if (status === 'ok' && parentGroups.length === 0) return (
     <div className="state-box" style={{ padding: 32 }}>
-      <span>No parent groupings found for {source}.</span>
+      <span>No parent groupings found for {loadedSource}.</span>
     </div>
   )
 
@@ -710,7 +780,7 @@ export function AnnotationsByParentPanel({
                   annotationId: ann.annotation_id,
                   name:         ann.name,
                   data:         gs.data[ann.annotation_id] ?? [],
-                  color:        SOURCE_COLORS[source] ?? 'var(--chart-1)',
+                  color:        SOURCE_COLORS[loadedSource] ?? 'var(--chart-1)',
                 })).filter(s => s.data.length > 0)
               : []
 
@@ -844,7 +914,7 @@ export function AnnotationsByParentPanel({
                               <td>
                                 <ScaffoldBtn
                                   annotationId={row.annotation_id}
-                                  source={source}
+                                  source={loadedSource}
                                   name={row.name}
                                   onGoExplore={onGoScaffoldExplore}
                                 />
@@ -852,7 +922,7 @@ export function AnnotationsByParentPanel({
                               <td>
                                 <HierarchyBtn
                                   annotationId={row.annotation_id}
-                                  source={source}
+                                  source={loadedSource}
                                   name={row.name}
                                 />
                               </td>
@@ -894,21 +964,39 @@ export function ExplorePage({
   onReset:             () => void
 }) {
   const { copiedId, copy } = useCopyId()
+  // W29 (docs/AUDIT-2026-09-22.md): request-sequence guards so a slower,
+  // superseded response (e.g. from a source the user has since switched
+  // away from) can't land after a newer one and overwrite it.
+  const topRequestSeqRef    = useRef(0)
+  const lookupRequestSeqRef = useRef(0)
+  // W29: everything that labels/links/filters the lookup card's ALREADY-
+  // LOADED results reads this instead of the live `state.lookupSource` --
+  // the dropdown itself is the one place that still needs the live value.
+  const effectiveLookupSource = state.lookupLoadedSource ?? state.lookupSource
+  // W29: same rationale for the Top EGC Annotations table's already-loaded
+  // `state.rows` -- the source dropdown for THIS section is the one place
+  // that still needs the live `state.source`.
+  const effectiveTopSource = state.loadedParams?.source ?? state.source
 
   async function load() {
+    const requestId = ++topRequestSeqRef.current
+    const params = { source: state.source, dateFrom: state.dateFrom, dateTo: state.dateTo }
     setState(prev => ({ ...prev, status: 'loading' }))
     try {
-      let url = `/api/annotations/top?source=${state.source}&limit=${state.limit}`
-      if (state.dateFrom) url += `&date_from=${state.dateFrom}`
-      if (state.dateTo)   url += `&date_to=${state.dateTo}`
+      let url = `/api/annotations/top?source=${params.source}&limit=${state.limit}`
+      if (params.dateFrom) url += `&date_from=${params.dateFrom}`
+      if (params.dateTo)   url += `&date_to=${params.dateTo}`
       const r = await apiFetch<{ data: TopAnnotation[]; sample_count: number }>(url)
+      if (requestId !== topRequestSeqRef.current) return // superseded
       setState(prev => ({
         ...prev,
         rows:        r.data ?? [],
         sampleCount: r.sample_count,
+        loadedParams: params,
         status:      'ok',
       }))
     } catch {
+      if (requestId !== topRequestSeqRef.current) return
       setState(prev => ({ ...prev, status: 'error' }))
     }
   }
@@ -948,21 +1036,21 @@ export function ExplorePage({
   }
 
   const availableLookupRanks = useMemo(
-    () => state.lookupSource !== 'taxonomy'
+    () => effectiveLookupSource !== 'taxonomy'
       ? []
       : [...new Set(
           state.lookupResults
             .map(r => r.depth)
             .filter((d): d is number => d != null),
         )].sort((a, b) => a - b),
-    [state.lookupResults, state.lookupSource],
+    [state.lookupResults, effectiveLookupSource],
   )
 
   const visibleLookupResults = useMemo(
-    () => state.lookupRankFilter.size === 0 || state.lookupSource !== 'taxonomy'
+    () => state.lookupRankFilter.size === 0 || effectiveLookupSource !== 'taxonomy'
       ? state.lookupResults
       : state.lookupResults.filter(r => r.depth != null && state.lookupRankFilter.has(r.depth)),
-    [state.lookupResults, state.lookupRankFilter, state.lookupSource],
+    [state.lookupResults, state.lookupRankFilter, effectiveLookupSource],
   )
 
   // A failed request and a genuinely empty result must stay distinguishable
@@ -971,19 +1059,24 @@ export function ExplorePage({
   async function runLookupSearch() {
     const term = state.lookupId.trim()
     if (!term) return
+    const requestId = ++lookupRequestSeqRef.current
+    const requestedSource = state.lookupSource
     setState(prev => ({ ...prev, lookupStatus: 'loading', lookupSelected: null }))
     try {
-      const url = `/api/search/annotations?q=${encodeURIComponent(term)}&sources=${state.lookupSource}&page_size=25`
+      const url = `/api/search/annotations?q=${encodeURIComponent(term)}&sources=${requestedSource}&page_size=25`
       const r   = await apiFetch<{ data: TopAnnotation[]; total: number }>(url)
+      if (requestId !== lookupRequestSeqRef.current) return // superseded
       const results = r.data ?? []
       setState(prev => ({
         ...prev,
-        lookupResults:  results,
-        lookupSelected: results.length === 1 ? results[0] : null,
-        lookupTotal:    r.total ?? results.length,
-        lookupStatus:   'ok',
+        lookupResults:      results,
+        lookupSelected:     results.length === 1 ? results[0] : null,
+        lookupTotal:        r.total ?? results.length,
+        lookupLoadedSource: requestedSource,
+        lookupStatus:       'ok',
       }))
     } catch {
+      if (requestId !== lookupRequestSeqRef.current) return
       setState(prev => ({ ...prev, lookupStatus: 'error' }))
     }
   }
@@ -993,10 +1086,10 @@ export function ExplorePage({
   // meaningful for source: 'taxonomy'; empty (and the pill row hidden)
   // otherwise, same as when the source is switched away on Analyze.
   const availableTopRanks = useMemo(
-    () => state.source !== 'taxonomy'
+    () => effectiveTopSource !== 'taxonomy'
       ? []
       : [...new Set(state.rows.map(r => taxonomyDepthFromId(r.annotation_id)))].sort((a, b) => a - b),
-    [state.rows, state.source],
+    [state.rows, effectiveTopSource],
   )
 
   const sorted = useMemo(() => {
@@ -1008,7 +1101,7 @@ export function ExplorePage({
         || (r.parent ?? '').toLowerCase().includes(q),
       )
       .filter(r => state.topRankFilter.size === 0
-        || state.source !== 'taxonomy'
+        || effectiveTopSource !== 'taxonomy'
         || state.topRankFilter.has(taxonomyDepthFromId(r.annotation_id)),
       )
       .sort((a, b) => {
@@ -1021,7 +1114,7 @@ export function ExplorePage({
           ? String(av).localeCompare(String(bv))
           : String(bv).localeCompare(String(av))
       })
-  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter, state.source])
+  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter, effectiveTopSource])
 
   const maxMean = Math.max(...state.rows.map(r => r.mean_egc), 1)
 
@@ -1178,8 +1271,8 @@ export function ExplorePage({
                   <button
                     className="btn sm"
                     onClick={() => downloadCsv(
-                      sorted.map(r => ({ ...r, source: state.source })),
-                      `top_${state.source}_annotations.csv`,
+                      sorted.map(r => ({ ...r, source: effectiveTopSource })),
+                      `top_${effectiveTopSource}_annotations.csv`,
                     )}
                   >
                     ↓ CSV
@@ -1330,12 +1423,12 @@ export function ExplorePage({
                         }}
                           title={
                             row.parent
-                              ? expandParentLabel(row.parent, state.source)
+                              ? expandParentLabel(row.parent, effectiveTopSource)
                               : undefined
                           }
                         >
                           {row.parent
-                            ? expandParentLabel(row.parent, state.source)
+                            ? expandParentLabel(row.parent, effectiveTopSource)
                             : '—'}
                         </td>
                         <td style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>
@@ -1347,7 +1440,7 @@ export function ExplorePage({
                         <td>
                           <ScaffoldBtn
                             annotationId={row.annotation_id}
-                            source={state.source}
+                            source={effectiveTopSource}
                             name={row.name}
                             onGoExplore={onGoScaffoldExplore}
                           />
@@ -1355,7 +1448,7 @@ export function ExplorePage({
                         <td>
                           <HierarchyBtn
                             annotationId={row.annotation_id}
-                            source={state.source}
+                            source={effectiveTopSource}
                             name={row.name}
                           />
                         </td>
@@ -1498,7 +1591,7 @@ export function ExplorePage({
                   <div className="state-icon">∅</div>
                   <span>
                     No results for <strong>{state.lookupId}</strong> in{' '}
-                    {state.lookupSource}.
+                    {effectiveLookupSource}.
                     {!indexReady && (
                       <span style={{
                         display: 'block', marginTop: 6,
@@ -1595,7 +1688,7 @@ export function ExplorePage({
                                 style={{
                                   font:      '600 12px var(--mono)',
                                   color:     'var(--teal)',
-                                  fontStyle: state.lookupSource === 'taxonomy' ? 'italic' : 'normal',
+                                  fontStyle: effectiveLookupSource === 'taxonomy' ? 'italic' : 'normal',
                                   whiteSpace:   'nowrap',
                                   overflow:     'hidden',
                                   textOverflow: 'ellipsis',
@@ -1603,7 +1696,7 @@ export function ExplorePage({
                                   minWidth:     0,
                                 }}
                               >
-                                {taxonomyAwarePrimaryLabel(state.lookupSource, row.annotation_id, row.name)}
+                                {taxonomyAwarePrimaryLabel(effectiveLookupSource, row.annotation_id, row.name)}
                               </span>
                               <span style={{
                                 font:  '400 10px var(--mono)',
@@ -1613,7 +1706,7 @@ export function ExplorePage({
                                 {row.mean_egc.toExponential(2)}
                               </span>
                             </div>
-                            {row.name && state.lookupSource !== 'taxonomy' && (
+                            {row.name && effectiveLookupSource !== 'taxonomy' && (
                               <div style={{
                                 font:         '12px var(--sans)',
                                 color:        'var(--text-dim)',
@@ -1635,37 +1728,37 @@ export function ExplorePage({
                     {state.lookupSelected ? (() => {
                       const r      = state.lookupSelected
                       const parent = r.parent
-                        ? expandParentLabel(r.parent, state.lookupSource)
+                        ? expandParentLabel(r.parent, effectiveLookupSource)
                         : null
                       const rawCategory = resolveLookupCategory(r)
                       const category    = rawCategory
-                        ? expandParentLabel(rawCategory, state.lookupSource)
+                        ? expandParentLabel(rawCategory, effectiveLookupSource)
                         : null
                       const scaffoldCount = resolveLookupScaffoldCount(r)
                       const depth         = resolveLookupDepth(r)
 
                       const depthLabel = (depth: number) => {
-                        if (state.lookupSource === 'kegg')     return { 1: 'pathway class', 2: 'subcategory', 3: 'pathway', 4: 'leaf (KO)' }[depth] ?? String(depth)
-                        if (state.lookupSource === 'cog')      return { 1: 'category', 2: 'leaf (COG)' }[depth] ?? String(depth)
-                        if (state.lookupSource === 'enzyme')   return { 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' }[depth] ?? String(depth)
-                        if (state.lookupSource === 'taxonomy') return taxonomyRankLabel(depth, rawCategory)
+                        if (effectiveLookupSource === 'kegg')     return { 1: 'pathway class', 2: 'subcategory', 3: 'pathway', 4: 'leaf (KO)' }[depth] ?? String(depth)
+                        if (effectiveLookupSource === 'cog')      return { 1: 'category', 2: 'leaf (COG)' }[depth] ?? String(depth)
+                        if (effectiveLookupSource === 'enzyme')   return { 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' }[depth] ?? String(depth)
+                        if (effectiveLookupSource === 'taxonomy') return taxonomyRankLabel(depth, rawCategory)
                         return String(depth)
                       }
 
                       return (
                         <div className="lookup-result">
                           <div className="lookup-header">
-                            <span className={`tag ${SOURCE_TAG_CLS[state.lookupSource] ?? ''}`}>
-                              {state.lookupSource}
+                            <span className={`tag ${SOURCE_TAG_CLS[effectiveLookupSource] ?? ''}`}>
+                              {effectiveLookupSource}
                             </span>
                             <span
                               className="lookup-id"
                               title={r.annotation_id}
-                              style={state.lookupSource === 'taxonomy' ? { fontStyle: 'italic' } : undefined}
+                              style={effectiveLookupSource === 'taxonomy' ? { fontStyle: 'italic' } : undefined}
                             >
-                              {taxonomyAwarePrimaryLabel(state.lookupSource, r.annotation_id, r.name)}
+                              {taxonomyAwarePrimaryLabel(effectiveLookupSource, r.annotation_id, r.name)}
                             </span>
-                            {r.name && state.lookupSource !== 'taxonomy' && (
+                            {r.name && effectiveLookupSource !== 'taxonomy' && (
                               <span className="lookup-name">{r.name}</span>
                             )}
                           </div>
@@ -1760,7 +1853,7 @@ export function ExplorePage({
                             <div className="lookup-links">
                               <ExternalLinks
                                 annotationId={r.annotation_id}
-                                source={state.lookupSource}
+                                source={effectiveLookupSource}
                               />
                             </div>
                           </div>

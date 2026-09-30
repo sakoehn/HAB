@@ -712,6 +712,50 @@ describe('ScaffoldModal — detail pagination', () => {
     await new Promise(r => setTimeout(r, 50))
     expect(mockFetch.mock.calls.length).toBe(2)
   })
+
+  // W29 (docs/AUDIT-2026-09-22.md): the audit's own live example -- click
+  // sample A (slow response), then sample B before A resolves. B's
+  // drill-down used to show A's scaffolds once A's stale response finally
+  // landed and overwrote B's real data.
+  it('clicking sample A (slow), then sample B before A resolves, ends up showing B\'s real scaffolds, not A\'s stale ones', async () => {
+    mockApiSuccess({ data: MOCK_SUMMARY })
+    render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
+    await waitFor(() => screen.getByTestId('row-s1'))
+
+    let resolveS1!: (v: unknown) => void
+    const s1Pending = new Promise(resolve => { resolveS1 = resolve })
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('sample=s1')) return s1Pending
+      if (url.includes('sample=s2')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            data: [{ sample: 's2', date: '2021-05-10 12:00', scaffold: 'REAL_S2_SCAFFOLD', count: 5 }],
+            total: 1,
+          }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ data: [], total: 0 }) })
+    })
+
+    fireEvent.click(screen.getByTestId('row-s1')) // slow -- still pending
+    fireEvent.click(screen.getByTestId('row-s2')) // fast -- resolves first
+    await waitFor(() => screen.getByText('REAL_S2_SCAFFOLD'))
+
+    // Now let A's stale response land.
+    resolveS1({
+      ok: true,
+      json: async () => ({
+        data: [{ sample: 's1', date: '2021-05-10 08:00', scaffold: 'STALE_S1_SCAFFOLD', count: 3 }],
+        total: 1,
+      }),
+    })
+    await new Promise(r => setTimeout(r, 20))
+
+    // Still B's real data -- A's late response must not have overwritten it.
+    expect(screen.getByText('REAL_S2_SCAFFOLD')).toBeInTheDocument()
+    expect(screen.queryByText('STALE_S1_SCAFFOLD')).not.toBeInTheDocument()
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

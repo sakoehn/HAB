@@ -235,4 +235,34 @@ describe('AnnotationsByParentPanel — re-fetches when the source prop changes',
     await waitFor(() => expect(screen.getByText('Metabolism')).toBeInTheDocument())
     expect(screen.queryByText('Custom Group')).not.toBeInTheDocument()
   })
+
+  // W29 (docs/AUDIT-2026-09-22.md): switching source while the PREVIOUS
+  // source's request is still in flight used to let the stale (slower)
+  // response land after the newer one and get labelled/grouped under the
+  // NEW source -- the audit's own live example: "switch from kegg to cog.
+  // The slower kegg response arrives last and is shown under 'cog'."
+  it('a stale response from the OLD source is ignored, even if it resolves after the new source\'s real response', async () => {
+    let resolveKegg!: (v: unknown) => void
+    const keggPending = new Promise(resolve => { resolveKegg = resolve })
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('source=kegg')) return keggPending
+      if (url.includes('source=cog'))
+        return Promise.resolve(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    const { rerender } = render(<AnnotationsByParentPanel source="kegg" />)
+
+    // Switch to cog BEFORE kegg's request resolves.
+    rerender(<AnnotationsByParentPanel source="cog" />)
+    await waitFor(() => expect(screen.getByText('Custom Group')).toBeInTheDocument())
+
+    // Now let the stale kegg response land.
+    resolveKegg(jsonResponse({ data: [makeRow('K00001', 'Metabolism', 50)] }))
+    await new Promise(r => setTimeout(r, 20))
+
+    // Still showing cog's real data -- kegg's late response must not have
+    // overwritten it, and must not be shown labelled as "cog" either.
+    expect(screen.getByText('Custom Group')).toBeInTheDocument()
+    expect(screen.queryByText('Metabolism')).not.toBeInTheDocument()
+  })
 })

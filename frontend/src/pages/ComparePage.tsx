@@ -274,8 +274,19 @@ export function ComparePage({
         }
       }),
     ).then(results => {
-      const ordered = [...results].sort((a, b) => a.i - b.i).map(r => r.entry)
-      setState(prev => ({ ...prev, entries: ordered }))
+      // W29 (docs/AUDIT-2026-09-22.md): this used to replace `entries`
+      // wholesale with the resolved results -- if the user manually added
+      // their own annotation (search + add) while this Promise.all was
+      // still in flight, that entry silently disappeared the moment this
+      // load finished, since it wasn't part of `results` at all. Merging
+      // by `id` instead only updates the slots THIS load actually owns
+      // (entry-0..entry-N-1), leaving anything the user added (or removed)
+      // in the meantime untouched.
+      const resolvedById = new Map(results.map(r => [r.entry.id, r.entry]))
+      setState(prev => ({
+        ...prev,
+        entries: prev.entries.map(e => resolvedById.get(e.id) ?? e),
+      }))
     })
   }, [initialAnnotations])
 

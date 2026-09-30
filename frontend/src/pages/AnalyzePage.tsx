@@ -46,6 +46,14 @@ import { SkeletonChart } from '../components/ui/Skeleton'
 
 export type AnalyzeState = {
   queryFields:   string[]
+  // W29 (docs/AUDIT-2026-09-22.md): the terms that actually produced
+  // resultsByTerm/totalsByTerm, snapshotted at the moment runSearch() fired
+  // -- distinct from queryFields, which keeps changing as the user types.
+  // Tabs, labels, and any lookup indexed by term must all read this, not
+  // the live text boxes, or e.g. typing "zinc" over "iron" results (without
+  // re-searching) instantly relabels the still-showing iron results as
+  // "zinc".
+  searchedTerms: string[]
   resultsByTerm: AnnotationItem[][]
   totalsByTerm:  number[]
   searchStatus:  ApiStatus
@@ -60,6 +68,7 @@ export type AnalyzeState = {
 export function makeDefaultAnalyzeState(): AnalyzeState {
   return {
     queryFields:   [''],
+    searchedTerms: [],
     resultsByTerm: [],
     totalsByTerm:  [],
     searchStatus:  'idle',
@@ -732,6 +741,9 @@ export function AnalyzePage({
 }) {
   const { copiedId, copy } = useCopyId()
   const firstInputRef      = useRef<HTMLInputElement>(null)
+  // W29: guards against a slower, superseded search response landing after
+  // a newer one and overwriting it.
+  const searchRequestSeqRef = useRef(0)
 
   // ── Drag-to-resize left column ──────────────────────────────────────────
   const [leftWidth, setLeftWidth] = useState(320)
@@ -776,12 +788,20 @@ export function AnalyzePage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indexReady])
 
-  const activeTerms   = state.queryFields.map(q => q.trim()).filter(q => q.length > 0)
+  // activeTerms: the LIVE text box contents -- used only to know what to
+  // search for when the user clicks Search/hits Enter (runSearch below).
+  const activeTerms = state.queryFields.map(q => q.trim()).filter(q => q.length > 0)
+  // displayTerms: what was actually searched (W29, docs/AUDIT-2026-09-22.md)
+  // -- every tab/label/lookup indexed into already-fetched results
+  // (resultsByTerm/totalsByTerm/checkedByTerm/uniqueByTerm) must read this,
+  // not activeTerms, or editing the text box after a search instantly
+  // relabels the still-showing results under the new, not-yet-searched text.
+  const displayTerms = state.searchedTerms
   const activeTermIdx = Math.min(
     state.activeTermIdx,
-    Math.max(0, activeTerms.length - 1),
+    Math.max(0, displayTerms.length - 1),
   )
-  const activeTerm = activeTerms[activeTermIdx] ?? ''
+  const activeTerm = displayTerms[activeTermIdx] ?? ''
 
   const uniqueByTerm = useMemo(() =>
     state.resultsByTerm.map(termRows => {
@@ -846,6 +866,8 @@ export function AnalyzePage({
   // ── Search ──────────────────────────────────────────────────────────
   async function runSearch() {
     if (activeTerms.length === 0) return
+    const requestId = ++searchRequestSeqRef.current
+    const requestedTerms = activeTerms
     setState(prev => ({
       ...prev,
       searchStatus:  'loading',
@@ -857,19 +879,22 @@ export function AnalyzePage({
     try {
       const src       = 'sources=kegg&sources=cog&sources=enzyme&sources=taxonomy'
       const responses = await Promise.all(
-        activeTerms.map(term =>
+        requestedTerms.map(term =>
           apiFetch<{ data: AnnotationItem[]; total: number }>(
             `/api/search/annotations?q=${encodeURIComponent(term)}&${src}&page_size=5000`,
           ),
         ),
       )
+      if (requestId !== searchRequestSeqRef.current) return // superseded by a newer search
       setState(prev => ({
         ...prev,
+        searchedTerms: requestedTerms,
         resultsByTerm: responses.map(r => r.data ?? []),
         totalsByTerm:  responses.map(r => r.total ?? r.data?.length ?? 0),
         searchStatus:  'ok',
       }))
     } catch {
+      if (requestId !== searchRequestSeqRef.current) return
       setState(prev => ({ ...prev, searchStatus: 'error' }))
     }
   }
@@ -939,9 +964,9 @@ export function AnalyzePage({
   async function addSelectedAsGroup() {
     const termIdx = Math.min(
       state.activeTermIdx,
-      Math.max(0, activeTerms.length - 1),
+      Math.max(0, displayTerms.length - 1),
     )
-    const termKey = activeTerms[termIdx] ?? ''
+    const termKey = displayTerms[termIdx] ?? ''
     const checked = state.checkedByTerm[termKey] ?? new Set<string>()
     const rows    = (uniqueByTerm[termIdx] ?? []).filter(
       r => checked.has(`${r.annotation_id}::${r.source}`),
@@ -990,7 +1015,7 @@ export function AnalyzePage({
       )
     }
 
-    const termLabel = activeTerms[termIdx] ?? 'group'
+    const termLabel = displayTerms[termIdx] ?? 'group'
     const label     = `${termLabel} (${capped.length})`
     const key       = `group::${termLabel}::${Date.now()}`
     const card: RightCard = {
@@ -1133,7 +1158,7 @@ export function AnalyzePage({
           <div className="state-icon">∅</div>
           <span>
             No annotations found for{' '}
-            {activeTerms.map(t => `"${t}"`).join(' or ')}
+            {displayTerms.map(t => `"${t}"`).join(' or ')}
           </span>
         </div>
       )}
@@ -1150,7 +1175,7 @@ export function AnalyzePage({
               title="Drag to resize"
             />
             <div className="al-term-tabs">
-              {activeTerms.map((term, i) => (
+              {displayTerms.map((term, i) => (
                 <button
                   key={i}
                   className={`al-term-tab ${activeTermIdx === i ? 'active' : ''}`}
@@ -1166,7 +1191,7 @@ export function AnalyzePage({
 
             <LeftResultList
               rows={activeRows}
-              termLabel={activeTerms[activeTermIdx] ?? ''}
+              termLabel={displayTerms[activeTermIdx] ?? ''}
               checkedKeys={activeChecked}
               seriesCache={state.seriesCache}
               rightCardKeys={rightCardKeys}

@@ -16,7 +16,7 @@
 // @ts-expect-error plotly.js-dist-min ships no .d.ts; types from @types/plotly.js
 import PlotlyBase from 'plotly.js-dist-min'
 import createPlotlyComponent from 'react-plotly.js/factory'
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = createPlotlyComponent(PlotlyBase as any)
@@ -81,9 +81,18 @@ export function ScaffoldModal({
   // rare sample whose scaffold count exceeds it gets the rest lazily, only
   // if the user actually clicks "Show all".
   const DETAIL_FETCH_PAGE = 500
+  // W29 (docs/AUDIT-2026-09-22.md): clicking sample A (slow response), then
+  // sample B before A resolves, used to let A's stale response land after
+  // B's and overwrite B's real data -- "B's drill-down lists A's
+  // scaffolds," per the audit's own live example. A ref (not the
+  // `expandedSample` state) tracks which sample is the CURRENT request,
+  // since the async closure below must compare against the latest value at
+  // resolve time, not whatever it captured when the request started.
+  const latestSampleRef = useRef<string | null>(null)
 
   async function loadDetail(sample: string) {
-    if (expandedSample === sample) { setExpanded(null); return }
+    if (expandedSample === sample) { setExpanded(null); latestSampleRef.current = null; return }
+    latestSampleRef.current = sample
     setExpanded(sample)
     setDetailRows([])
     setDetailTotal(0)
@@ -94,10 +103,12 @@ export function ScaffoldModal({
         `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`
         + `&sample=${encodeURIComponent(sample)}&page=1&page_size=${DETAIL_FETCH_PAGE}`,
       )
+      if (latestSampleRef.current !== sample) return // superseded by a later click
       setDetailRows(r.data ?? [])
       setDetailTotal(r.total ?? 0)
       setDetailStatus('ok')
     } catch {
+      if (latestSampleRef.current !== sample) return
       setDetailStatus('error')
     }
   }
@@ -123,9 +134,12 @@ export function ScaffoldModal({
         all = all.concat(r.data)
         page += 1
       }
+      // W29: same guard as loadDetail -- the user may have switched to a
+      // different sample while these extra pages were still loading.
+      if (latestSampleRef.current !== sample) return
       setDetailRows(all)
     } finally {
-      setDetailLoadingMore(false)
+      if (latestSampleRef.current === sample) setDetailLoadingMore(false)
     }
   }
 

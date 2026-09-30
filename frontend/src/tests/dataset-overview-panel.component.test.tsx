@@ -146,3 +146,38 @@ describe('DatasetOverviewPanel — 40-annotation temporal-chart fetch cap', () =
     expect(screen.queryByTestId('overview-series-truncated-warning')).not.toBeInTheDocument()
   })
 })
+
+// W29 (docs/AUDIT-2026-09-22.md): switching the source dropdown while a
+// Load Overview request is still in flight used to relabel the eventually-
+// returned rows under the NEW source, even though they were really fetched
+// under the OLD one -- the summary line, CSV export, and the follow-up
+// "Load time series" request all read the live dropdown, not what was
+// actually requested.
+describe('DatasetOverviewPanel — labels reflect what was actually loaded, not the live dropdown (W29)', () => {
+  it('switching source while the request is in flight does not relabel the still-loading rows', async () => {
+    const user = userEvent.setup()
+    const rows = [makeRow('K00001', 'groupA', 100)]
+    let resolveTop!: () => void
+    const pending = new Promise<void>(resolve => { resolveTop = resolve })
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) {
+        return pending.then(() => jsonResponse({ data: rows, sample_count: 128 }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+
+    const select = screen.getByRole('combobox')
+    await user.selectOptions(select, 'kegg')
+    await user.click(screen.getByRole('button', { name: /Load Overview/i }))
+
+    // Switch the dropdown to cog WHILE kegg's request is still pending.
+    await user.selectOptions(select, 'cog')
+
+    resolveTop()
+    await waitFor(() => {
+      expect(screen.getByText(/unique kegg annotations/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/unique cog annotations/i)).not.toBeInTheDocument()
+  })
+})

@@ -434,6 +434,31 @@ describe('AnalyzePage — search', () => {
     })
   })
 
+  // W29 (docs/AUDIT-2026-09-22.md): the audit's own live example -- "type
+  // 'zinc' over 'iron' results and the tab says 'zinc'." Tabs used to read
+  // the live text box (state.queryFields), not what was actually searched,
+  // so editing the box after a search instantly relabelled the
+  // still-showing results.
+  it('editing the search box after a search does not relabel the still-showing results tab', async () => {
+    render(<App />)
+    const input = await getAnalyzeSearchInput()
+    await userEvent.type(input, 'iron')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(screen.getByText('iron', { selector: '.al-term-tab' })).toBeInTheDocument()
+    })
+
+    // Edit the box WITHOUT re-searching.
+    await userEvent.clear(input)
+    await userEvent.type(input, 'zinc')
+
+    // The tab must still say "iron" -- the results shown are still iron's,
+    // and re-labelling them "zinc" before a real zinc search ever ran would
+    // be a lie about what's actually displayed.
+    expect(screen.getByText('iron', { selector: '.al-term-tab' })).toBeInTheDocument()
+    expect(screen.queryByText('zinc', { selector: '.al-term-tab' })).not.toBeInTheDocument()
+  })
+
   it('shows error state when search API fails', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/search/annotations'))

@@ -642,6 +642,52 @@ describe('ComparePage — initialAnnotations from Analyze page', () => {
     })
   })
 
+  // W29 (docs/AUDIT-2026-09-22.md): "an annotation added while the
+  // annotations sent from Analyze are still loading disappears when that
+  // load finishes." Manually searching+adding a new annotation while the
+  // initialAnnotations series fetch is still in flight used to get wiped
+  // out the moment that fetch's `.then()` replaced `entries` wholesale.
+  it('an annotation added manually while the initial (Analyze) load is still in flight is not wiped out when that load finishes', async () => {
+    let resolveInitial!: (v: unknown) => void
+    const initialPending = new Promise(resolve => { resolveInitial = resolve })
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations') && url.includes('annotation_id=K02014')) {
+        return initialPending
+      }
+      if (url.includes('/api/series/annotations') && url.includes('annotation_id=K00001')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      }
+      if (url.includes('/api/search/annotations')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SEARCH })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    render(<ManagedComparePage initialAnnotations={INIT_ANNS} />)
+
+    // K02014's series fetch (from Analyze) is still pending -- manually
+    // search for and add K00001 in the meantime.
+    const input = await screen.findByPlaceholderText(/search annotation id or name/i)
+    await userEvent.type(input, 'K00001')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+    await waitFor(() => expect(screen.getByText('Alcohol dehydrogenase')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('Alcohol dehydrogenase'))
+    await waitFor(() => {
+      // K00001 is now a real, loaded entry (its own series fetch is fast).
+      expect(screen.getAllByText('K00001').length).toBeGreaterThan(0)
+    })
+
+    // Now let K02014's slow (initial) fetch finally resolve.
+    resolveInitial({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+    await waitFor(() => {
+      expect(screen.getAllByText('K02014').length).toBeGreaterThan(0)
+    })
+
+    // K00001 must still be there -- it must not have been silently
+    // discarded when K02014's `.then()` landed.
+    expect(screen.getAllByText('K00001').length).toBeGreaterThan(0)
+  })
+
   it('capped at 4 even if more provided', async () => {
     const fiveAnns: SharedAnnotation[] = Array.from({ length: 5 }, (_, i) => ({
       kind:         'single' as const,
