@@ -41,9 +41,11 @@ function link(href: string, label: string, title: string): React.ReactNode {
 export function ExternalLinks({
   annotationId,
   source,
+  name,
 }: {
   annotationId: string
   source:       string
+  name?:        string | null
 }): React.ReactNode {
   const id = annotationId.trim()
   if (!id) return null
@@ -82,10 +84,24 @@ export function ExternalLinks({
         </button>,
       )
     } else {
+      // W32 (docs/AUDIT-2026-09-22.md): a bare code like `genome.jp/entry/00010`
+      // returns "No such data" -- KEGG requires an `entry`-type prefix. Real
+      // pathway maps (e.g. 00010 Glycolysis, 02024 Quorum sensing) use `map`;
+      // codes reserved purely for BRITE-only organizational groups (Brite
+      // Hierarchies, Not included in regular maps, Unclassified...) have no
+      // standalone pathway map and use `br:ko` instead. Confirmed against
+      // every code the audit itself cited: pathway maps fall below 09000,
+      // BRITE-only groups are the 09xxx/99xxx ranges (09100 Metabolism, 09180
+      // Brite Hierarchies, 99980/99996 Unclassified -- all real examples from
+      // W30's own BRITE code table).
+      const numeric = /^\d{5}$/.test(id) ? Number(id) : null
+      const isBriteOnlyGroup = numeric !== null && numeric >= 9000
       links.push(link(
-        `https://www.genome.jp/entry/${id}`,
+        isBriteOnlyGroup
+          ? `https://www.genome.jp/entry/br:ko${id}`
+          : `https://www.genome.jp/entry/map${id}`,
         'KEGG',
-        'KEGG database entry',
+        isBriteOnlyGroup ? 'KEGG BRITE hierarchy group' : 'KEGG pathway map',
       ))
     }
 
@@ -102,25 +118,35 @@ export function ExternalLinks({
 
   if (source === 'enzyme') {
     const ec = id.replace(/^EC:/i, '')
+    // W32: a partial EC (e.g. "2.7") isn't a valid genome.jp entry on its
+    // own -- KEGG's own convention for an EC class page pads the missing
+    // levels with dashes ("ec:2.7.-.-").
+    const parts   = ec.split('.')
+    const keggEc  = [...parts, '-', '-', '-'].slice(0, 4).join('.')
+    const isFullEc = parts.length === 4 && parts.every(p => /^\d+$/.test(p))
     return (
       <>
         {link(
-          `https://www.genome.jp/entry/ec:${ec}`,
+          `https://www.genome.jp/entry/ec:${keggEc}`,
           'KEGG',
           'KEGG ENZYME entry',
         )}
-        {link(
-          `https://www.ncbi.nlm.nih.gov/enzyme/?term=${encodeURIComponent(ec)}`,
-          'NCBI',
-          'NCBI Enzyme search',
+        {isFullEc && link(
+          `https://enzyme.expasy.org/EC/${ec}`,
+          'ExPASy',
+          'ExPASy ENZYME entry',
         )}
       </>
     )
   }
 
   if (source === 'taxonomy') {
+    // W32: NCBI Taxonomy search has no match for a full `;`-joined lineage
+    // string -- it needs just the leaf-most rank's bare name, the same
+    // value already shown as this annotation's own display label elsewhere.
+    const leafName = taxonomyAwarePrimaryLabel(source, id, name)
     return link(
-      `https://www.ncbi.nlm.nih.gov/taxonomy/?term=${encodeURIComponent(id)}`,
+      `https://www.ncbi.nlm.nih.gov/taxonomy/?term=${encodeURIComponent(leafName)}`,
       'NCBI Taxonomy',
       'Search NCBI Taxonomy',
     )
@@ -164,7 +190,7 @@ export function ExternalLink({
       >
         {taxonomyAwarePrimaryLabel(source, annotationId, name)}
       </span>
-      <ExternalLinks annotationId={annotationId} source={source} />
+      <ExternalLinks annotationId={annotationId} source={source} name={name} />
     </span>
   )
 }

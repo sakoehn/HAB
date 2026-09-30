@@ -78,7 +78,7 @@ export function AnnotationInfoDrawer({
           <div className="card-info-row card-info-links-row">
             <span className="card-info-label">Links</span>
             <div className="card-info-links">
-              <ExternalLinks annotationId={annotationId} source={source} />
+              <ExternalLinks annotationId={annotationId} source={source} name={name} />
             </div>
           </div>
         </div>

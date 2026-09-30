@@ -1873,6 +1873,7 @@ export function ExplorePage({
                               <ExternalLinks
                                 annotationId={r.annotation_id}
                                 source={effectiveLookupSource}
+                                name={r.name}
                               />
                             </div>
                           </div>
