@@ -692,14 +692,30 @@ def test_enzyme_paths_no_id_appears_at_more_than_one_level(conn):
 def test_enzyme_paths_every_intermediate_node_has_real_children(conn):
     """Same invariant as kegg_paths' equivalent test, for the same
     structural reason: an EC node only gets into enzyme_paths because a
-    real gene's rollup walk reached it (see load_real_enzyme_annotation_ids-
-    style filtering, mirroring KEGG's), and ko01000.keg's A/B/C/D lines
+    real gene's rollup walk reached it, and ko01000.keg's A/B/C/D lines
     are strictly nested the same way ko00001.keg's are -- a D-level line
-    can't exist without a real C-level ancestor on that occurrence. So
-    there's no such thing as a real-but-genuinely-childless intermediate
-    EC node either. If this ever fails, it means the enzyme_paths
-    migration script broke that construction, not that this assumption
-    was wrong."""
+    can't exist without a real C-level ancestor on that occurrence.
+
+    E18 (docs/AUDIT-2026-09-22.md) added exactly one real exception at the
+    c_id level: a gene whose only EC annotation is a 3-level partial/
+    wildcard id ("class.subclass.-", e.g. "3.1.27.-") is now correctly
+    attributed to its c_id node directly (resolve_partial_ec(), see
+    EGC_ENZYME_TREE.ipynb) instead of being silently dropped -- but a
+    wildcard id never names a specific d_id leaf, so that c_id can be
+    real and populated with NO real d_id child at all. Confirmed directly
+    against the real database (not assumed): exactly 2 such nodes exist,
+    '3.1.27' (494.0 mean EGC, 127 samples) and '4.5.1' (8.3 mean EGC, 16
+    samples) -- both real signal that was previously dropped entirely.
+    a_id and b_id are NOT exempted: a 1- or 2-level partial EC
+    ("class.-" or "class.subclass.-" registered ABOVE the c_id level)
+    still always lands on a node that also has other real fully-resolved
+    genes reaching it through a real c_id/d_id chain elsewhere, so those
+    two levels keep the original, stricter invariant. If a NEW a_id or
+    b_id childless node ever appears, or a c_id childless node other than
+    these 2 specific known ones, that's a real migration bug, not another
+    instance of this same exception."""
+    KNOWN_E18_CHILDLESS_C_IDS = {"3.1.27", "4.5.1"}
+
     for level_col, next_col in (("a_id", "b_id"), ("b_id", "c_id"), ("c_id", "d_id")):
         ids = {
             row[0] for row in conn.execute(f"SELECT DISTINCT {level_col} FROM enzyme_paths WHERE {level_col} IS NOT NULL")
@@ -710,7 +726,9 @@ def test_enzyme_paths_every_intermediate_node_has_real_children(conn):
             )
         }
         childless = ids - ids_with_children
-        assert not childless, f"{level_col} nodes with no real children at {next_col}: {childless}"
+        allowed = KNOWN_E18_CHILDLESS_C_IDS if level_col == "c_id" else set()
+        unexpected = childless - allowed
+        assert not unexpected, f"{level_col} nodes with no real children at {next_col}: {unexpected}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
