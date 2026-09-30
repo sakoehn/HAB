@@ -1348,12 +1348,34 @@ describe('expandParentLabel', () => {
     expect(expandParentLabel('01000 Enzymes', 'kegg')).toBe('Enzymes')
   })
 
-  it('KEGG resolves pure 5-digit BRITE code 00001', () => {
-    expect(expandParentLabel('00001', 'kegg')).toBe('KEGG Orthology (KO)')
+  // W30 (docs/AUDIT-2026-09-22.md): KEGG_BRITE_CODES was regenerated from
+  // real kegg_paths data (every value independently verified against the
+  // local db) rather than hand-typed -- 09100 is a real, common top-level
+  // BRITE category code (confirmed: 09100 -> 'Metabolism'). '00001' (used
+  // by the old table) was never actually a real stored kegg parent value.
+  it('KEGG resolves a real pure 5-digit BRITE code (09100)', () => {
+    expect(expandParentLabel('09100', 'kegg')).toBe('Metabolism')
   })
 
   it('KEGG unknown code uses BRITE group fallback', () => {
     expect(expandParentLabel('99123', 'kegg')).toBe('BRITE group 99123')
+  })
+
+  // W30: the audit's own 3 cited examples of the old hand-table being wrong
+  // -- each independently confirmed against the real kegg_paths table.
+  it('KEGG 02024 resolves to its real name, not the old table\'s wrong guess', () => {
+    expect(expandParentLabel('02024', 'kegg')).toBe('Quorum sensing')
+    expect(expandParentLabel('02024', 'kegg')).not.toBe('Transporters')
+  })
+
+  it('KEGG 99996 resolves to its real name, not the old table\'s wrong guess', () => {
+    expect(expandParentLabel('99996', 'kegg')).toBe('General function prediction only')
+    expect(expandParentLabel('99996', 'kegg')).not.toBe('Not included in regular maps')
+  })
+
+  it('KEGG 99980 resolves to its real name, not the old table\'s wrong guess', () => {
+    expect(expandParentLabel('99980', 'kegg')).toBe('Enzymes with EC numbers')
+    expect(expandParentLabel('99980', 'kegg')).not.toBe('Unclassified signaling/cellular processes')
   })
 
   it('taxonomy domain-level parent gets a rank suffix', () => {
