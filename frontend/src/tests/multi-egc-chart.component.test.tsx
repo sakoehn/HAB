@@ -18,8 +18,10 @@
  * --------
  *   empty state when the date range excludes every point
  *   scaleMismatch warning: fires above the real >10x mean-ratio threshold,
- *     not below it, and is suppressed once metric or standardize moves off
- *     the raw default (both of those already resolve the scale problem)
+ *     not below it, stays on in Relative Abundance mode (W33,
+ *     docs/AUDIT-2026-09-22.md -- that metric doesn't actually resolve a
+ *     raw-EGC scale gap), and is suppressed only once Z-score standardize
+ *     is on (which does resolve it)
  *   legend: taxonomy-aware label, italic styling for taxonomy, and
  *     scaffoldsDisabled hides the per-series Scaffold/Hierarchy buttons
  *   stats are per-series (W25), not pooled together -- and same-labelled
@@ -153,7 +155,11 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
     expect(screen.queryByText(/very different EGC scales/i)).not.toBeInTheDocument()
   })
 
-  it('is suppressed on the Relative Abundance metric, even with a >10x raw gap', async () => {
+  // W33 (docs/AUDIT-2026-09-22.md): Relative Abundance divides every series
+  // by the same per-sample total, so a raw-EGC scale gap survives it
+  // unchanged -- the warning must still fire on this metric. Only Z-score
+  // (covered above) actually resolves the mismatch.
+  it('still fires on the Relative Abundance metric, since it does not resolve a raw-EGC scale gap', async () => {
     const user = userEvent.setup()
     render(
       <MultiEgcChart
@@ -164,8 +170,9 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
         dateFrom="" dateTo=""
       />,
     )
+    // MultiEgcChart already opens on Relative Abundance by default.
     await user.click(screen.getByRole('button', { name: /Relative Abundance/i }))
-    expect(screen.queryByText(/very different EGC scales/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/very different EGC scales/i)).toBeInTheDocument()
   })
 })
 

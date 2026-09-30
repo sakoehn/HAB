@@ -227,9 +227,13 @@ export function MultiEgcChart({
   }, [unsmoothedRows, series])
 
   const scaleMismatch = useMemo(() => {
-    // Suppressed once either metric or standardize moves off its raw default —
-    // Relative Abundance and Z-score both resolve cross-series scale mismatch.
-    if (metric !== 'egc' || standardize) return false
+    // W33 (docs/AUDIT-2026-09-22.md): Relative Abundance divides every
+    // series by the same per-sample total, so a raw-EGC scale gap between
+    // series survives it unchanged (confirmed live: COG0055 vs K02568 are
+    // ~92x apart in raw EGC and ~108x apart in Relative Abundance) -- only
+    // Z-score actually resolves it, by re-centering each series on its own
+    // mean/SD independently.
+    if (standardize) return false
     const means = series
       .map(s => {
         const vals = s.data
@@ -240,7 +244,7 @@ export function MultiEgcChart({
       .filter(m => m > 0)
     if (means.length < 2) return false
     return Math.max(...means) / Math.min(...means) > 10
-  }, [series, metric, standardize])
+  }, [series, standardize])
 
   const yLabel = metric === 'norm_egc'
     ? (standardize ? 'Relative Abundance (Z-score, σ from mean)' : 'Relative Abundance')
