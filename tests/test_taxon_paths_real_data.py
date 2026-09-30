@@ -27,6 +27,11 @@ Data-dependent: needs the real Metagenome_Samples/ tree (not in git, not
 in CI -- see test_mappings_notebook_matches.py's HAB_DATA_ROOT convention,
 reused here). Skipped automatically when that data isn't present.
 
+has_empty_middle_segment()'s own logic (trailing-blank vs. middle-blank)
+is pure and has independent, always-run synthetic tests below -- the slow
+real-data scan only needs to prove no real lineage trips it, not that the
+predicate itself is correct.
+
 Run:
     pytest tests/test_taxon_paths_real_data.py -v
 """
@@ -40,6 +45,43 @@ import pytest
 # test_egc_json_vs_jgi.py / test_jgi_file_parsing.py.
 DATA_ROOT      = Path(os.environ.get("HAB_DATA_ROOT", r"C:\Users\sakoehn\Desktop\JGI"))
 METAGENOME_DIR = DATA_ROOT / "Metagenome_Samples"
+
+
+def has_empty_middle_segment(full_path: str) -> bool:
+    """True if `full_path` (a raw ';'-separated phylodist lineage) has a
+    blank segment with a real (non-blank) segment somewhere after it.
+
+    A trailing RUN of empty segments -- one or more -- doesn't cause a
+    depth mismatch: both the notebook's drop-and-shift and taxon_paths'
+    positional-None agree the lineage just ends there once every
+    remaining segment is blank. Only a blank segment that's followed by
+    another real segment makes the notebook's depth differ from
+    taxon_paths'. (Caught by this function's own synthetic tests below:
+    an earlier version only excluded the single last element, so it
+    wrongly flagged "Bacteria;Proteobacteria;;" -- two trailing blanks --
+    as a middle blank, even though both systems agree that lineage is
+    just 2 ranks deep.)
+    """
+    raw_parts = full_path.split(";")
+    trimmed = raw_parts
+    while trimmed and trimmed[-1].strip() == "":
+        trimmed = trimmed[:-1]
+    return any(p.strip() == "" for p in trimmed)
+
+
+# pylint: disable=redefined-outer-name -- see test_annotation_catalog.py's
+# own note on this same pytest fixture-injection pattern.
+
+@pytest.mark.parametrize("full_path,expected", [
+    ("Bacteria;Proteobacteria;Gammaproteobacteria", False),   # no blanks at all
+    ("Bacteria;Proteobacteria;", False),                      # trailing blank only
+    ("Bacteria;Proteobacteria;;", False),                     # multiple trailing blanks
+    ("Bacteria;;Gammaproteobacteria", True),                  # blank in the middle
+    ("Bacteria; ;Gammaproteobacteria", True),                 # whitespace-only middle segment
+    (";Bacteria;Proteobacteria", True),                       # leading blank (not the last segment)
+])
+def test_has_empty_middle_segment(full_path, expected):
+    assert has_empty_middle_segment(full_path) is expected
 
 
 @pytest.mark.skipif(
@@ -64,13 +106,7 @@ def test_no_real_phylodist_lineage_has_an_empty_middle_segment():
                     continue
                 full_path = parts[-1]
                 total_observations += 1
-                raw_parts = full_path.split(";")
-                # A trailing empty segment (or run of them) doesn't cause a
-                # mismatch -- both the notebook's drop-and-shift and
-                # taxon_paths' positional-None agree the lineage just ends
-                # there. Only a BLANK segment with a real segment after it
-                # would make the notebook's depth differ from taxon_paths'.
-                if any(p.strip() == "" for p in raw_parts[:-1]):
+                if has_empty_middle_segment(full_path):
                     if len(bad_examples) < 10:
                         bad_examples.append(full_path)
 
