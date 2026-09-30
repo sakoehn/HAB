@@ -10,7 +10,7 @@ import {
   parseDateTime, fmtDate, isoDate, computeDayBands, toPlotlyDate,
   formatRelativeAbundancePercent,
 } from '../../utils/format'
-import { computeNightBands, alignTideToChartPoints } from '../../utils/solar'
+import { computeNightBands, alignTideToChartPoints, nativeTideTrace } from '../../utils/solar'
 import { useSolarTideData } from '../../utils/useSolarTideData'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
@@ -137,6 +137,14 @@ export function GroupedEgcChart({
     }))
   }, [processedPointsRaw, showTide, tides])
 
+  // Tides (docs/AUDIT-2026-09-22.md): the VISUAL tide trace plots at its own
+  // native resolution -- see nativeTideTrace's doc comment in
+  // utils/solar.ts. The tide_wl field above still feeds CSV export.
+  const nativeTide = useMemo(
+    () => (showTide && tides) ? nativeTideTrace(tides, dateFrom || undefined, dateTo || undefined) : { x: [], y: [] },
+    [showTide, tides, dateFrom, dateTo],
+  )
+
   // W27: stats read the unsmoothed values, unaffected by the Smooth toggle.
   const egcVals = useMemo(
     () => unsmoothedPointsRaw.map(d => d.egc).filter((v): v is number => v !== null),
@@ -224,8 +232,8 @@ export function GroupedEgcChart({
     if (showTide) {
       traces.push({
         type: 'scatter', mode: 'lines',
-        x: xs,
-        y: processedPoints.map(p => p.tide_wl),
+        x: nativeTide.x,
+        y: nativeTide.y,
         fill: 'tozeroy', fillcolor: 'rgba(0,160,160,0.12)',
         line: { color: 'rgba(0,160,160,0.55)', width: 1.5 },
         name: 'Tide (m)', yaxis: 'y2',
@@ -234,7 +242,7 @@ export function GroupedEgcChart({
       })
     }
     return traces
-  }, [processedPoints, lineColor, groupLabel, hoverYLabel, showTide, metric, standardize])
+  }, [processedPoints, lineColor, groupLabel, hoverYLabel, showTide, metric, standardize, nativeTide])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {

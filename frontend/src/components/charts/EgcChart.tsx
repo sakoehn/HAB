@@ -10,7 +10,7 @@ import {
   parseDateTime, fmtDate, isoDate, computeDayBands, toPlotlyDate,
   formatRelativeAbundancePercent,
 } from '../../utils/format'
-import { computeNightBands, alignTideToChartPoints, resolveSunTimes } from '../../utils/solar'
+import { computeNightBands, alignTideToChartPoints, nativeTideTrace, resolveSunTimes } from '../../utils/solar'
 import { useSolarTideData } from '../../utils/useSolarTideData'
 import { useAllSamples } from '../../utils/useAllSamples'
 import { downloadCsv } from '../../utils/api'
@@ -258,6 +258,17 @@ export const EgcChart = forwardRef<EgcChartHandle, {
     return processedPoints.map(p => ({ ...p, tide_wl: aligned.get(p.datetime) ?? null }))
   }, [processedPoints, showTide, tides])
 
+  // Tides (docs/AUDIT-2026-09-22.md): the VISUAL tide trace plots at its own
+  // native (6-min) resolution, not snapped onto EGC sample timestamps like
+  // pointsWithTide.tide_wl above (that alignment still feeds the CSV export's
+  // per-sample-row column, a different, legitimate need). See
+  // nativeTideTrace's own doc comment in utils/solar.ts for why this doesn't
+  // need to share an x-axis with the EGC trace.
+  const nativeTide = useMemo(
+    () => (showTide && tides) ? nativeTideTrace(tides, dateFrom || undefined, dateTo || undefined) : { x: [], y: [] },
+    [showTide, tides, dateFrom, dateTo],
+  )
+
   const dayBandsList = useMemo(
     () => showDayBands ? computeDayBands(processedPoints) : [],
     [showDayBands, processedPoints],
@@ -347,8 +358,8 @@ export const EgcChart = forwardRef<EgcChartHandle, {
     if (showTide) {
       traces.push({
         type: 'scatter', mode: 'lines',
-        x: xs,
-        y: pointsWithTide.map(p => p.tide_wl),
+        x: nativeTide.x,
+        y: nativeTide.y,
         fill: 'tozeroy', fillcolor: 'rgba(0,160,160,0.12)',
         line: { color: 'rgba(0,160,160,0.55)', width: 1.5 },
         name: 'Tide (m)', yaxis: 'y2',
@@ -357,7 +368,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
       })
     }
     return traces
-  }, [pointsWithTide, resolvedColor, annotationId, hoverYLabel, yLabel, showTide, metric, standardize, showNightShading, showDayBands, sunTimes])
+  }, [pointsWithTide, resolvedColor, annotationId, hoverYLabel, yLabel, showTide, metric, standardize, showNightShading, showDayBands, sunTimes, nativeTide])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {

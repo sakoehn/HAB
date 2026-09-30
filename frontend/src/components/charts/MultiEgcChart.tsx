@@ -10,7 +10,7 @@ import {
   isoDate, fmtDate, parseDateTime, computeDayBands, toPlotlyDate,
   formatRelativeAbundancePercent,
 } from '../../utils/format'
-import { computeNightBands, alignTideToChartPoints } from '../../utils/solar'
+import { computeNightBands, alignTideToChartPoints, nativeTideTrace } from '../../utils/solar'
 import { useSolarTideData } from '../../utils/useSolarTideData'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
@@ -194,6 +194,14 @@ export function MultiEgcChart({
     return chartDataRaw.map(r => ({ ...r, tide_wl: aligned.get(r._dt) ?? null }))
   }, [chartDataRaw, showTide, tides])
 
+  // Tides (docs/AUDIT-2026-09-22.md): the VISUAL tide trace plots at its own
+  // native resolution -- see nativeTideTrace's doc comment in
+  // utils/solar.ts. chartData.tide_wl above still feeds CSV export.
+  const nativeTide = useMemo(
+    () => (showTide && tides) ? nativeTideTrace(tides, dateFrom || undefined, dateTo || undefined) : { x: [], y: [] },
+    [showTide, tides, dateFrom, dateTo],
+  )
+
   const dayBandsList = useMemo(
     () => showDayBands ? computeDayBands(chartData.map(r => ({ datetime: r._dt as string }))) : [],
     [showDayBands, chartData],
@@ -350,8 +358,8 @@ export function MultiEgcChart({
     if (showTide) {
       traces.push({
         type: 'scatter', mode: 'lines',
-        x: xs,
-        y: chartData.map(r => (r.tide_wl as number | null) ?? null),
+        x: nativeTide.x,
+        y: nativeTide.y,
         fill: 'tozeroy', fillcolor: 'rgba(0,160,160,0.12)',
         line: { color: 'rgba(0,160,160,0.55)', width: 1.5 },
         name: 'Tide (m)', yaxis: 'y2',
@@ -361,7 +369,7 @@ export function MultiEgcChart({
     }
 
     return traces
-  }, [chartData, series, showTide, metric, standardize, resolvedColors, smoothed])
+  }, [chartData, series, showTide, metric, standardize, resolvedColors, smoothed, nativeTide])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {

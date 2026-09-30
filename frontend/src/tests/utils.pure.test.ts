@@ -86,7 +86,7 @@ import {
 
 import { LOWESS_BANDWIDTH_MIN } from '../components/charts/ChartControls'
 
-import { computeNightBands, resolveSunTimes, alignTideToChartPoints } from '../utils/solar'
+import { computeNightBands, resolveSunTimes, alignTideToChartPoints, nativeTideTrace } from '../utils/solar'
 import type { SunTimes, TidePoint } from '../utils/solar'
 
 import type { AnnotationItem, TimepointMeta } from '../types'
@@ -1250,6 +1250,77 @@ describe('alignTideToChartPoints', () => {
     expect(result.get('2021-05-27 06:05')).toBe(1.0)
     expect(result.get('2021-05-27 11:55')).toBe(2.0)
     expect(result.get('2021-05-27 18:10')).toBe(3.0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// nativeTideTrace — the VISUAL tide trace at its own resolution, unlike
+// alignTideToChartPoints above (which snaps/downsamples onto sparse EGC
+// sample timestamps -- still used for CSV export, not for this).
+// Tides (docs/AUDIT-2026-09-22.md).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('nativeTideTrace', () => {
+  it('returns empty arrays for no tide data', () => {
+    expect(nativeTideTrace([])).toEqual({ x: [], y: [] })
+  })
+
+  it('preserves EVERY real tide reading when no date range is given -- no downsampling to sample cadence', () => {
+    // 7 real 6-min-resolution readings between two hypothetical 4h-apart
+    // EGC samples -- alignTideToChartPoints would collapse all of these
+    // into just 1 snapped value per sample; this must keep all 7.
+    const tides = [
+      tidePoint('2021-05-27 06:00', 1.0), tidePoint('2021-05-27 06:10', 1.1),
+      tidePoint('2021-05-27 06:20', 1.2), tidePoint('2021-05-27 06:30', 1.3),
+      tidePoint('2021-05-27 06:40', 1.4), tidePoint('2021-05-27 06:50', 1.5),
+      tidePoint('2021-05-27 07:00', 1.6),
+    ]
+    const result = nativeTideTrace(tides)
+    expect(result.x.length).toBe(7)
+    expect(result.y).toEqual([1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6])
+  })
+
+  it('reports the real predicted_wl values unchanged, not interpolated or snapped', () => {
+    const tides = [tidePoint('2021-05-27 06:00', 0.437), tidePoint('2021-05-27 06:06', -1.283)]
+    const result = nativeTideTrace(tides)
+    expect(result.y).toEqual([0.437, -1.283])
+  })
+
+  it('filters out readings before fromIso', () => {
+    const tides = [
+      tidePoint('2021-05-26 23:54', 1.0),
+      tidePoint('2021-05-27 00:00', 2.0),
+      tidePoint('2021-05-27 06:00', 3.0),
+    ]
+    const result = nativeTideTrace(tides, '2021-05-27')
+    expect(result.y).toEqual([2.0, 3.0])
+  })
+
+  it('filters out readings after toIso, but keeps the entire toIso day', () => {
+    const tides = [
+      tidePoint('2021-05-27 06:00', 1.0),
+      tidePoint('2021-05-27 23:54', 2.0),
+      tidePoint('2021-05-28 00:00', 3.0),
+    ]
+    const result = nativeTideTrace(tides, undefined, '2021-05-27')
+    expect(result.y).toEqual([1.0, 2.0])
+  })
+
+  it('applies both bounds together', () => {
+    const tides = [
+      tidePoint('2021-05-26 12:00', 0.0),
+      tidePoint('2021-05-27 12:00', 1.0),
+      tidePoint('2021-05-28 12:00', 2.0),
+      tidePoint('2021-05-29 12:00', 3.0),
+    ]
+    const result = nativeTideTrace(tides, '2021-05-27', '2021-05-28')
+    expect(result.y).toEqual([1.0, 2.0])
+  })
+
+  it('produces x values as real Plotly date strings built from each reading\'s own timestamp', () => {
+    const tides = [tidePoint('2021-05-27 06:00', 1.0)]
+    const result = nativeTideTrace(tides)
+    expect(result.x).toEqual(['2021-05-27 06:00:00'])
   })
 })
 

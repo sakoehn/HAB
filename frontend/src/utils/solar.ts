@@ -2,6 +2,8 @@
 // Pure functions for the day/night shading + tide-flow chart overlays.
 // No React imports — safe to use in tests and non-component code.
 
+import { toPlotlyDate } from './format'
+
 export type SunTimes = Record<string, { sunrise: string; sunset: string }>
 
 export type TidePoint = {
@@ -199,4 +201,47 @@ export function alignTideToChartPoints(
   }
 
   return result
+}
+
+// ── nativeTideTrace ───────────────────────────────────────────────────────
+// Tides (docs/AUDIT-2026-09-22.md): the tide OVERLAY chart trace used to be
+// built by snapping the real 6-min-resolution tide data onto the sparse
+// (4h-cadence) EGC sample timestamps via alignTideToChartPoints -- confirmed
+// live against /api/tides: 59 turning points shown versus 72 in the real
+// tide, up to 1.07m error, and the wrong flood/ebb direction 15.8% of the
+// time (a turning point strictly between two samples is invisible; the
+// straight line connecting their snapped values can show the opposite of
+// what's actually happening). alignTideToChartPoints existed only because
+// Recharts (the library this app used before it moved to Plotly) needed one
+// shared categorical x-axis across every series on a chart. Plotly has no
+// such constraint -- the day/night band shapes elsewhere in these chart
+// components already plot at arbitrary real timestamps on the same x-axis,
+// confirming a second trace can too. This returns the tide series at its
+// own native resolution, completely independent of EGC sample timestamps,
+// for the VISUAL trace. alignTideToChartPoints is kept for CSV export's
+// per-sample-row tide_predicted_wl_m column, a different, legitimate need
+// (one tide value per exported EGC row) that this function doesn't serve.
+//
+// fromIso/toIso ('YYYY-MM-DD', inclusive) restrict the trace to the chart's
+// visible date range, if any -- omit either to leave that side unbounded.
+
+export function nativeTideTrace(
+  tides:   TidePoint[],
+  fromIso?: string,
+  toIso?:   string,
+): { x: string[]; y: number[] } {
+  const x: string[] = []
+  const y: number[] = []
+
+  for (const t of tides) {
+    const tideDate = t.time.slice(0, 10)
+    if (fromIso && tideDate < fromIso) continue
+    if (toIso   && tideDate > toIso)   continue
+    const ts = parseLocalDateTime(t.time)?.getTime()
+    if (ts == null) continue
+    x.push(toPlotlyDate(ts))
+    y.push(t.predicted_wl)
+  }
+
+  return { x, y }
 }
