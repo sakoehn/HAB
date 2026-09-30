@@ -167,3 +167,46 @@ def test_taxonomy_homonym_produces_two_distinct_catalog_rows(conn):
     assert len(annotation_ids) == 2, "the two Bosea rows must have distinct annotation_id"
     assert len(parents) == 2, "the two Bosea rows must have distinct parent (different families)"
     assert all(row[2] == 6 for row in rows), "both are genus-level (depth=6)"
+
+
+def test_partial_ec_two_level_walkup_never_synthesizes_a_fake_node(conn):
+    """E18 (docs/AUDIT-2026-09-22.md): a gene whose only EC annotation is
+    partial/wildcard (e.g. "3.6.3.-") is resolved to its deepest REAL
+    ko01000.keg ancestor (resolve_partial_ec(), Notebooks/enzyme_ec_utils.py)
+    by walking up as many levels as needed -- confirmed directly against
+    the real ko01000.keg file that these 3 specific ids need TWO levels,
+    because even their immediate parent isn't a real node: "3.6.3",
+    "1.10.2" and "1.16.8" were never in ko01000.keg, only their
+    grandparents "3.6"/"1.10"/"1.16" are (the audit's own cited example,
+    K03924 moxR [EC:3.6.3.-], is the first of these).
+
+    This is a real-data regression guard specifically for a NAIVE
+    alternative implementation mistake: treating a partial id's own
+    literal (post-dash-strip) string as if it were automatically a real
+    node, instead of continuing to walk up when it isn't one. If that
+    ever regresses, "3.6.3"/"1.10.2"/"1.16.8" would start appearing as
+    their own annotation_catalog rows -- entries for EC nodes that do not
+    exist in KEGG's real EC hierarchy at all.
+
+    Deliberately NOT asserting the real ancestors' mean_egc here: "3.6",
+    "1.10" and "1.16" all had some real signal even before this fix
+    (from unrelated, fully-resolved child ECs), so a bare "EGC > 0" check
+    wouldn't actually distinguish the fix being applied from it being
+    reverted -- and the real per-id gene-observation counts driving the
+    fix's own contribution vary by four orders of magnitude (33,455 for
+    "3.6.3.-" down to just 3 for "1.16.8.-", counted directly against all
+    128 real .a.ec.txt files), too wide a range for one fixed numeric
+    threshold to be meaningful for all three without being fragile to
+    unrelated future data changes.
+    """
+    never_real_ids = ["3.6.3", "1.10.2", "1.16.8"]
+    for never_real_id in never_real_ids:
+        absent = conn.execute(
+            "SELECT 1 FROM annotation_catalog WHERE source='enzyme' AND annotation_id=?",
+            (never_real_id,),
+        ).fetchone()
+        assert absent is None, (
+            f"{never_real_id!r} exists as its own annotation_catalog row, but it was "
+            f"never a real ko01000.keg node -- a partial EC id resolving through it "
+            f"should walk up one more level instead of stopping here"
+        )

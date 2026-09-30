@@ -5,38 +5,39 @@ E18 (docs/AUDIT-2026-09-22.md): a partial/wildcard EC id (e.g. "3.6.1.-")
 is never a key in `brite` (EGC_ENZYME_TREE.ipynb's flat dict of real
 ko01000.keg nodes), so it used to be dropped entirely -- the gene it
 labels never counted toward ANY of its real ancestor categories, even
-though those ancestors ARE real BRITE nodes. The notebook's own
-`resolve_partial_ec()` (cell id fb768e5f) fixes this by progressively
-stripping trailing components until finding one that IS in brite, then
-starting the upward-registration walk there instead of dropping the gene.
+though those ancestors ARE real BRITE nodes. resolve_partial_ec()
+(Notebooks/enzyme_ec_utils.py, imported by the notebook the same way it
+already imports weighted_totals.py/All_Coverages.py -- not defined
+inline) fixes this by progressively stripping trailing components until
+finding one that IS in brite, then starting the upward-registration walk
+there instead of dropping the gene.
 
-This mirrors that function's logic (it lives inside the notebook, not an
-importable script -- same accepted duplication pattern already used
-between EGC_ENZYME_TREE.ipynb's own BRITE-parsing cell and
-migrate_enzyme_paths_to_sql.py's iter_enzyme_path_rows, per that script's
-own docstring) so the WALK-UP ALGORITHM itself has a fast, permanent,
-synthetic regression test -- independent of the real-data verification
-already done when the fix landed (re-ran the notebook for real: printed
-"Resolved 135 distinct partial/wildcard EC ids" and "Dropped 20", exactly
-matching an independent investigation against the real dataset; verified
-specific real EGC increases in annotation_catalog afterward, including
-the audit's own cited K03924 moxR [EC:3.6.3.-] case, which needs TWO
-levels of stripping since "3.6.3" itself was never a real ko01000.keg
-node -- only "3.6" is).
+Imports the REAL function (not a hand-copied mirror -- an earlier version
+of this file did that and it's exactly the kind of drift risk this
+project has been burned by before, see test_correlation_output.py's
+removal in project memory) so the WALK-UP ALGORITHM has a fast, permanent
+regression test on the actual implementation the notebook runs.
+Independent of the real-data verification already done when the fix
+landed (re-ran the notebook for real: printed "Resolved 135 distinct
+partial/wildcard EC ids" and "Dropped 20", exactly matching an
+independent investigation against the real dataset; verified specific
+real EGC increases in annotation_catalog afterward, including the
+audit's own cited K03924 moxR [EC:3.6.3.-] case, which needs TWO levels
+of stripping since "3.6.3" itself was never a real ko01000.keg node --
+only "3.6" is).
 
 Run:
     pytest tests/test_enzyme_ec_resolution.py -v
 """
 
+import os
+import sys
+from pathlib import Path
 
-def resolve_partial_ec(ec_id: str, brite: dict) -> str | None:
-    """Mirrors EGC_ENZYME_TREE.ipynb's resolve_partial_ec() exactly."""
-    parts = ec_id.split('.')
-    for n in range(len(parts), 0, -1):
-        candidate = '.'.join(parts[:n])
-        if candidate in brite:
-            return candidate
-    return None
+DATA_ROOT = Path(os.environ.get("HAB_DATA_ROOT", Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(DATA_ROOT / "Notebooks"))
+
+from enzyme_ec_utils import resolve_partial_ec  # noqa: E402
 
 
 # A small synthetic BRITE dict -- deliberately includes a gap at "3.6.3"
