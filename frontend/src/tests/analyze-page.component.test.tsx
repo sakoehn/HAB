@@ -1942,6 +1942,46 @@ describe('AnnotationInfoDrawer', () => {
       expect(screen.queryByText('ID')).not.toBeInTheDocument()
     })
   })
+
+  // W32 (docs/AUDIT-2026-09-22.md): the drawer's own `name` prop must reach
+  // ExternalLinks so a taxonomy card's NCBI Taxonomy link is built from the
+  // bare leaf name, not the full `;`-joined lineage (which returns "No
+  // items found" on the real site) -- this exercises that plumbing through
+  // the real card -> drawer -> ExternalLinks chain, not just ExternalLinks
+  // in isolation. `name` deliberately differs from the id's own last
+  // `;`-segment ("Proteobacteria (beta)" vs "Proteobacteria") so this test
+  // can actually tell whether `name` reached ExternalLinks or not --
+  // taxonomyAwarePrimaryLabel's id-derived fallback would otherwise produce
+  // the same value either way and the test would pass for the wrong reason.
+  it('taxonomy card\'s External Databases link uses the real name prop, not just the id-derived fallback', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({
+            data: [{
+              annotation_id: 'Bacteria;Proteobacteria', source: 'taxonomy', name: 'Proteobacteria (beta)',
+              parent: 'Bacteria', mean_egc: 100, max_egc: 200, sample_count: 128,
+              value: null, timepoint: null, sample: '',
+            }],
+            total: 1,
+          }),
+        })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    render(<App />)
+    const resultRow = await searchAndGetResult('Proteobacteria')
+    await userEvent.click(resultRow)
+    await waitFor(() => screen.getAllByText(/↓ PNG/i).length > 0)
+    await userEvent.click(screen.getByTitle(/Show annotation details/i))
+    await waitFor(() => screen.getByText('ID'))
+
+    expect(screen.getByRole('link', { name: 'NCBI Taxonomy' })).toHaveAttribute(
+      'href', 'https://www.ncbi.nlm.nih.gov/taxonomy/?term=Proteobacteria%20(beta)',
+    )
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

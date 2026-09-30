@@ -21,6 +21,8 @@
  *     source -- the `.tag` element and the Depth field's per-source rank
  *     label (kegg/cog/enzyme/taxonomy each have a different depth->label
  *     map) both read what was actually searched
+ *   Lookup: a taxonomy result's External Databases link uses the bare
+ *     leaf name, not the full lineage (W32, docs/AUDIT-2026-09-22.md)
  *
  * Run: npx vitest run src/tests/explore-page.component.test.tsx
  */
@@ -168,6 +170,42 @@ describe('ExplorePage — Annotation Lookup source race (W29)', () => {
     // would fall back to a bare "4").
     await waitFor(() => {
       expect(document.querySelector('.lookup-meta-value.mono')?.textContent).toContain('leaf (KO)')
+    })
+  })
+})
+
+// W32 (docs/AUDIT-2026-09-22.md): the lookup card's `name={r.name}` prop on
+// ExternalLinks must actually reach the NCBI Taxonomy link -- exercised
+// through the real lookup card, not ExternalLinks in isolation (which
+// already has its own direct unit coverage in external-links.component.test.tsx).
+// `name` deliberately differs from the id's own last `;`-segment so this
+// test can tell whether `name` really reached ExternalLinks -- otherwise
+// taxonomyAwarePrimaryLabel's id-derived fallback produces the same value
+// either way and the test would pass without proving the wiring works.
+describe('ExplorePage — Lookup External Databases link (W32)', () => {
+  it('a taxonomy result\'s NCBI Taxonomy link uses the real name prop, not just the id-derived fallback', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations') && url.includes('sources=taxonomy')) {
+        return Promise.resolve(jsonResponse({
+          data: [{
+            annotation_id: 'Bacteria;Proteobacteria', name: 'Proteobacteria (beta)', parent: 'Bacteria',
+            mean_egc: 100, max_egc: 200, sample_count: 128,
+          }],
+          total: 1,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'taxonomy' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'Proteobacteria')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: 'NCBI Taxonomy' })).toHaveAttribute(
+        'href', 'https://www.ncbi.nlm.nih.gov/taxonomy/?term=Proteobacteria%20(beta)',
+      )
     })
   })
 })

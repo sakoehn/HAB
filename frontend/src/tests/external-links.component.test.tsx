@@ -163,10 +163,15 @@ describe('ExternalLinks — taxonomy', () => {
     )
   })
 
+  // `name` deliberately differs from the id's own last `;`-segment
+  // ("Alphaproteobacteria (new)" vs "Alphaproteobacteria") -- otherwise the
+  // id-derived fallback produces the same value either way and this
+  // wouldn't actually prove `name` is preferred, just that the URL happens
+  // to come out right.
   it('prefers a real `name` prop over the id-derived leaf segment when given', () => {
-    render(<ExternalLinks annotationId="Bacteria;Proteobacteria;Alphaproteobacteria" source="taxonomy" name="Alphaproteobacteria" />)
+    render(<ExternalLinks annotationId="Bacteria;Proteobacteria;Alphaproteobacteria" source="taxonomy" name="Alphaproteobacteria (new)" />)
     expect(screen.getByRole('link', { name: 'NCBI Taxonomy' })).toHaveAttribute(
-      'href', 'https://www.ncbi.nlm.nih.gov/taxonomy/?term=Alphaproteobacteria',
+      'href', 'https://www.ncbi.nlm.nih.gov/taxonomy/?term=Alphaproteobacteria%20(new)',
     )
   })
 })
@@ -192,10 +197,14 @@ describe('ExternalLink — inline variant', () => {
   // W32: ExternalLink already computes a taxonomy `name` for its own visible
   // label -- confirms that same value is threaded into ExternalLinks' NCBI
   // Taxonomy URL too, not just used for display.
+  // Same fixture-design note as the ExternalLinks test above: `name`
+  // deliberately differs from the id's own last segment so this proves
+  // ExternalLink actually threads its `name` prop down, not just that the
+  // id-derived fallback happens to match.
   it('passes its taxonomy name prop through to the NCBI Taxonomy link', () => {
-    render(<ExternalLink annotationId="Bacteria;Proteobacteria" source="taxonomy" name="Proteobacteria" />)
+    render(<ExternalLink annotationId="Bacteria;Proteobacteria" source="taxonomy" name="Proteobacteria (new)" />)
     expect(screen.getByRole('link', { name: 'NCBI Taxonomy' })).toHaveAttribute(
-      'href', 'https://www.ncbi.nlm.nih.gov/taxonomy/?term=Proteobacteria',
+      'href', 'https://www.ncbi.nlm.nih.gov/taxonomy/?term=Proteobacteria%20(new)',
     )
   })
 })

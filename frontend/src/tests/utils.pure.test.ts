@@ -81,6 +81,7 @@ import {
   resetSourceCounters,
   SOURCE_SHADES,
   CHART_COLORS,
+  KEGG_BRITE_CODES,
 } from '../constants'
 
 import { LOWESS_BANDWIDTH_MIN } from '../components/charts/ChartControls'
@@ -1309,6 +1310,33 @@ describe('buildCsvString', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // expandParentLabel
 // ─────────────────────────────────────────────────────────────────────────────
+
+// W30 (docs/AUDIT-2026-09-22.md): KEGG_BRITE_CODES was regenerated as a
+// 449-entry table (every real bare-code kegg `parent` value in the local
+// db, cross-checked against kegg_paths) replacing a 41-entry hand-typed
+// one. The `expandParentLabel` tests below only spot-check 4 individual
+// codes -- none of them would catch a future edit that silently dropped or
+// duplicated OTHER entries (e.g. a bad merge, a copy-paste truncation).
+// These guard the table's own shape instead of any one value.
+describe('KEGG_BRITE_CODES table shape', () => {
+  it('has exactly 449 entries (the real count of distinct kegg parent codes in the local db)', () => {
+    expect(Object.keys(KEGG_BRITE_CODES).length).toBe(449)
+  })
+
+  it('every key is a bare 5-digit numeric code', () => {
+    for (const key of Object.keys(KEGG_BRITE_CODES)) {
+      expect(key).toMatch(/^\d{5}$/)
+    }
+  })
+
+  it('every value is a non-empty string with no leftover PATH/BR bracket suffix', () => {
+    for (const value of Object.values(KEGG_BRITE_CODES)) {
+      expect(typeof value).toBe('string')
+      expect(value.length).toBeGreaterThan(0)
+      expect(value).not.toMatch(/\[(PATH|BR):ko\d+\]/)
+    }
+  })
+})
 
 describe('expandParentLabel', () => {
   it('expands COG letter C to full label without the letter prefix', () => {
