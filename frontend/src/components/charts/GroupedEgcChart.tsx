@@ -5,7 +5,7 @@ import { useState, useRef, useMemo } from 'react'
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
-import { applyZScore, applyLowess } from '../../utils/signal'
+import { applyZScore, applyLowess, canApplyZScore } from '../../utils/signal'
 import {
   parseDateTime, fmtDate, isoDate, computeDayBands, toPlotlyDate,
   formatRelativeAbundancePercent,
@@ -120,6 +120,11 @@ export function GroupedEgcChart({
     return pts
   }, [summedPoints, standardize])
 
+  // W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op with
+  // fewer than 2 real points -- this is whether it ACTUALLY standardized,
+  // not just whether the toggle is on.
+  const standardizeApplied = standardize && canApplyZScore(unsmoothedPointsRaw.map(p => p.egc))
+
   const processedPointsRaw = useMemo(() => {
     return smoothed
       ? applyLowess(unsmoothedPointsRaw, smoothBandwidth) as typeof unsmoothedPointsRaw
@@ -166,8 +171,8 @@ export function GroupedEgcChart({
   )
 
   const yLabel = metric === 'norm_egc'
-    ? (standardize ? 'Summed Relative Abundance (Z-score)' : 'Summed Relative Abundance')
-    : (standardize ? 'Summed EGC (Z-score)' : 'Summed EGC')
+    ? (standardizeApplied ? 'Summed Relative Abundance (Z-score)' : 'Summed Relative Abundance')
+    : (standardizeApplied ? 'Summed EGC (Z-score)' : 'Summed EGC')
   // W27: tooltip-only label -- discloses when the hovered value is a fitted
   // LOWESS curve, not the real summed sample value. Deliberately NOT used
   // for the axis/StatsPanel yLabel above, since those now always describe
@@ -209,7 +214,7 @@ export function GroupedEgcChart({
   const plotData = useMemo(() => {
     const fmtVal = (v: number | null) => {
       if (v === null) return '--'
-      if (standardize)          return v.toFixed(3) + 'σ'
+      if (standardizeApplied)   return v.toFixed(3) + 'σ'
       if (metric === 'norm_egc') return formatRelativeAbundancePercent(v)
       return v.toExponential(3)
     }
@@ -242,7 +247,7 @@ export function GroupedEgcChart({
       })
     }
     return traces
-  }, [processedPoints, lineColor, groupLabel, hoverYLabel, showTide, metric, standardize, nativeTide])
+  }, [processedPoints, lineColor, groupLabel, hoverYLabel, showTide, metric, standardizeApplied, nativeTide])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {
@@ -302,7 +307,7 @@ export function GroupedEgcChart({
   }
 
   const handleExportCsv = () => downloadCsv(
-    buildGroupedEgcCsvRows(processedPoints, groupLabel, metric, standardize, smoothed, showTide),
+    buildGroupedEgcCsvRows(processedPoints, groupLabel, metric, standardizeApplied, smoothed, showTide),
     `${groupLabel}_grouped_egc.csv`,
   )
 
@@ -327,7 +332,7 @@ export function GroupedEgcChart({
         </div>
       </div>
 
-      <StatsPanel vals={egcVals} yLabel={yLabel} standardize={standardize} />
+      <StatsPanel vals={egcVals} yLabel={yLabel} standardize={standardizeApplied} />
 
       <div style={{ marginBottom: 10 }}>
         <DateRangePicker

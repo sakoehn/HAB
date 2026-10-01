@@ -492,7 +492,7 @@ export function ComparePage({
         <div className="page-header-left">
           <h1>Compare Annotations</h1>
           <p className="subtitle">
-            Overlay up to 4 annotations · L1 normalize · LOWESS smooth ·
+            Overlay up to 4 annotations · Relative Abundance · LOWESS smooth ·
             4 max keeps the chart readable
           </p>
         </div>
@@ -707,16 +707,36 @@ export function ComparePage({
                       {e.isGrouped ? e.annotationId : taxonomyAwarePrimaryLabel(e.source, e.annotationId, e.name)}
                     </span>
                     {e.isGrouped ? (
-                      <span style={{
-                        font:        '400 10px var(--mono)',
-                        color:       'var(--teal)',
-                        background:  'var(--teal-dim)',
-                        border:      '1px solid rgba(61,217,184,.22)',
-                        borderRadius: 3,
-                        padding:     '1px 5px',
-                      }}>
-                        {e.members?.length ?? 0} annotations summed
-                      </span>
+                      <>
+                        <span style={{
+                          font:        '400 10px var(--mono)',
+                          color:       'var(--teal)',
+                          background:  'var(--teal-dim)',
+                          border:      '1px solid rgba(61,217,184,.22)',
+                          borderRadius: 3,
+                          padding:     '1px 5px',
+                        }}>
+                          {e.members?.length ?? 0} annotations summed
+                        </span>
+                        {/*
+                          W (2.6, docs/AUDIT-2026-09-22.md): this entry's
+                          top-level status stays 'ok' as long as ONE member
+                          succeeded (summedData.length > 0 further up), so a
+                          partial failure was otherwise only visible after
+                          expanding "▼ members" -- the always-visible chip
+                          badge claimed the full member count summed with no
+                          hint some of it silently failed.
+                        */}
+                        {e.status === 'ok' && e.members?.some(m => m.status === 'error') && (
+                          <span
+                            data-testid="compare-entry-partial-failure"
+                            style={{ font: '400 10px var(--mono)', color: 'var(--coral)' }}
+                            title={`${e.members.filter(m => m.status === 'error').length} of ${e.members.length} members failed to load`}
+                          >
+                            ⚠ {e.members.filter(m => m.status === 'error').length} of {e.members.length} failed
+                          </span>
+                        )}
+                      </>
                     ) : (
                       <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>
                         {e.source}

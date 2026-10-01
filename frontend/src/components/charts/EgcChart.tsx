@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle }
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
-import { applyZScore, applyLowess } from '../../utils/signal'
+import { applyZScore, applyLowess, canApplyZScore } from '../../utils/signal'
 import {
   parseDateTime, fmtDate, isoDate, computeDayBands, toPlotlyDate,
   formatRelativeAbundancePercent,
@@ -241,6 +241,12 @@ export const EgcChart = forwardRef<EgcChartHandle, {
     return pts
   }, [filteredPoints, metric, standardize])
 
+  // W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op with
+  // fewer than 2 real points -- this is whether it ACTUALLY standardized,
+  // not just whether the toggle is on, so the axis/tooltip can stop
+  // claiming "σ from mean" units for a value that's still raw EGC.
+  const standardizeApplied = standardize && canApplyZScore(unsmoothedPoints.map(p => p.egc))
+
   const processedPoints = useMemo(() => {
     return smoothed
       ? applyLowess(unsmoothedPoints, smoothBandwidth) as typeof unsmoothedPoints
@@ -288,10 +294,10 @@ export const EgcChart = forwardRef<EgcChartHandle, {
     [unsmoothedPoints],
   )
 
-  const yLabel      = getEgcYLabel(metric, standardize)
+  const yLabel      = getEgcYLabel(metric, standardizeApplied)
   // W27: disclose in the tooltip itself when the shown value is a fitted
   // LOWESS curve, not the real sample value -- previously indistinguishable.
-  const hoverYLabel = getEgcHoverYLabel(metric, standardize) + (smoothed ? ' (smoothed)' : '')
+  const hoverYLabel = getEgcHoverYLabel(metric, standardizeApplied) + (smoothed ? ' (smoothed)' : '')
 
   // ── Shapes: night/day bands positioned by real timestamps ─────────────────
   // x0/x1 are ISO datetime strings on Plotly's date axis, so a band from
@@ -328,7 +334,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   const plotData = useMemo(() => {
     const fmtVal = (v: number | null) => {
       if (v === null) return '--'
-      if (standardize)          return v.toFixed(3) + 'σ'
+      if (standardizeApplied)   return v.toFixed(3) + 'σ'
       if (metric === 'norm_egc') return formatRelativeAbundancePercent(v)
       return v.toExponential(3)
     }
@@ -368,7 +374,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
       })
     }
     return traces
-  }, [pointsWithTide, resolvedColor, annotationId, hoverYLabel, yLabel, showTide, metric, standardize, showNightShading, showDayBands, sunTimes, nativeTide])
+  }, [pointsWithTide, resolvedColor, annotationId, hoverYLabel, yLabel, showTide, metric, standardizeApplied, showNightShading, showDayBands, sunTimes, nativeTide])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {
@@ -436,7 +442,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   }
 
   const handleExportCsv = () => downloadCsv(
-    buildEgcTimeseriesCsvRows(pointsWithTide, annotationId, metric, standardize, smoothed, showTide),
+    buildEgcTimeseriesCsvRows(pointsWithTide, annotationId, metric, standardizeApplied, smoothed, showTide),
     `${annotationId}_egc_timeseries.csv`,
   )
 
@@ -527,7 +533,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
       </div>
 
       {/* ── Stats panel ── */}
-      {showStats && <StatsPanel vals={egcVals} yLabel={yLabel} standardize={standardize} />}
+      {showStats && <StatsPanel vals={egcVals} yLabel={yLabel} standardize={standardizeApplied} />}
 
       {/* ── Filter dates ── */}
       <div className="chart-filter-box" style={{ borderColor: sourceColor }}>

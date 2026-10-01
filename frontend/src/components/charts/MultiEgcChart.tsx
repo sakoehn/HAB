@@ -5,7 +5,7 @@ import { useState, useRef, useMemo } from 'react'
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
-import { applyZScore, applyLowess } from '../../utils/signal'
+import { applyZScore, applyLowess, canApplyZScore } from '../../utils/signal'
 import {
   isoDate, fmtDate, parseDateTime, computeDayBands, toPlotlyDate,
   formatRelativeAbundancePercent,
@@ -171,6 +171,19 @@ export function MultiEgcChart({
     return rows
   }, [baseRows, metric, standardize, series])
 
+  // W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op for a
+  // series with fewer than 2 real points -- per series here, since each
+  // series is standardized independently (W25) and can have a different
+  // real point count (e.g. comparing a well-sampled annotation against a
+  // 1-sample one). canStandardizeSeries(id) is whether THAT series'
+  // Z-score actually took effect, for its own tooltip formatting;
+  // standardizeApplied (chart-wide, for the shared axis label) is true
+  // when at least one series qualifies -- same shared-label limitation
+  // the axis title already has for mixed per-series metrics elsewhere.
+  const canStandardizeSeries = (id: string) =>
+    canApplyZScore(unsmoothedRows.map(r => (r[id] as number | null) ?? null))
+  const standardizeApplied = standardize && series.some(s => canStandardizeSeries(s.id))
+
   const chartDataRaw = useMemo<ChartRow[]>(() => {
     if (!smoothed) return unsmoothedRows
     let rows = unsmoothedRows
@@ -241,7 +254,17 @@ export function MultiEgcChart({
     // ~92x apart in raw EGC and ~108x apart in Relative Abundance) -- only
     // Z-score actually resolves it, by re-centering each series on its own
     // mean/SD independently.
-    if (standardize) return false
+    //
+    // W (2.6, docs/AUDIT-2026-09-22.md): that resolution only genuinely
+    // happens when EVERY compared series was actually standardized --
+    // applyZScore silently no-ops for a series with fewer than 2 real
+    // points, so if even one series in the comparison is still raw EGC,
+    // the mismatch this warning exists to catch hasn't actually been
+    // resolved for it. Requires `every`, not `some` (unlike the shared
+    // axis label above, which only needs one series to justify the "Z-score"
+    // wording at all) -- suppression here is a claim that the WHOLE
+    // comparison is now safe, so it needs the stricter check.
+    if (standardize && series.every(s => canStandardizeSeries(s.id))) return false
     const means = series
       .map(s => {
         const vals = s.data
@@ -252,11 +275,11 @@ export function MultiEgcChart({
       .filter(m => m > 0)
     if (means.length < 2) return false
     return Math.max(...means) / Math.min(...means) > 10
-  }, [series, standardize])
+  }, [series, standardize, unsmoothedRows])
 
   const yLabel = metric === 'norm_egc'
-    ? (standardize ? 'Relative Abundance (Z-score, σ from mean)' : 'Relative Abundance')
-    : (standardize ? 'Z-score (σ from mean)' : 'EGC')
+    ? (standardizeApplied ? 'Relative Abundance (Z-score, σ from mean)' : 'Relative Abundance')
+    : (standardizeApplied ? 'Z-score (σ from mean)' : 'EGC')
 
   // ── Shapes: night/day bands positioned by real timestamps ─────────────────
   const shapes = useMemo(() => {
@@ -319,10 +342,15 @@ export function MultiEgcChart({
 
   // ── Traces ────────────────────────────────────────────────────────────────
   const plotData = useMemo(() => {
-    const fmtVal = (v: number | null) => {
+    // W (2.6, docs/AUDIT-2026-09-22.md): per-series, not the chart-wide
+    // standardizeApplied above -- each series' own Z-score can silently
+    // no-op independently (e.g. a 1-sample series next to a well-sampled
+    // one), so its own tooltip must stop claiming "σ" units when its own
+    // values are still raw EGC.
+    const fmtVal = (v: number | null, seriesStandardizeApplied: boolean) => {
       if (v === null) return '--'
-      if (standardize)          return v.toFixed(3) + 'σ'
-      if (metric === 'norm_egc') return formatRelativeAbundancePercent(v)
+      if (seriesStandardizeApplied) return v.toFixed(3) + 'σ'
+      if (metric === 'norm_egc')    return formatRelativeAbundancePercent(v)
       return v.toExponential(3)
     }
 
@@ -333,6 +361,7 @@ export function MultiEgcChart({
       const sw      = hasGroup ? (s.isGrouped ? 3.5 : 1.5) : 2
       const opacity = hasGroup ? (s.isGrouped ? 1   : 0.45) : 1
       const ys      = chartData.map(r => (r[s.id] as number | null) ?? null)
+      const seriesStandardizeApplied = standardize && canStandardizeSeries(s.id)
       const traceColor = resolvedColors.get(s.id)!
 
       return {
@@ -345,7 +374,7 @@ export function MultiEgcChart({
         name: s.annotationId,
         yaxis: 'y',
         connectgaps: true,
-        customdata: chartData.map((r, i) => [fmtVal(ys[i]), r._dt]),
+        customdata: chartData.map((r, i) => [fmtVal(ys[i], seriesStandardizeApplied), r._dt]),
         hovertemplate:
           '<b>%{customdata[1]}</b><br>' +
           // W27: discloses when the hovered value is a fitted LOWESS
@@ -369,7 +398,7 @@ export function MultiEgcChart({
     }
 
     return traces
-  }, [chartData, series, showTide, metric, standardize, resolvedColors, smoothed, nativeTide])
+  }, [chartData, series, showTide, metric, standardize, unsmoothedRows, resolvedColors, smoothed, nativeTide])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {
@@ -429,8 +458,8 @@ export function MultiEgcChart({
   }
 
   const handleExportCsv = () => downloadCsv(
-    buildMultiEgcCsvRows(chartData, series, metric, standardize, smoothed, showTide),
-    `compare_egc_${metric}${standardize ? '_zscore' : ''}.csv`,
+    buildMultiEgcCsvRows(chartData, series, metric, standardizeApplied, smoothed, showTide),
+    `compare_egc_${metric}${standardizeApplied ? '_zscore' : ''}.csv`,
   )
 
   if (chartData.length === 0) {
@@ -489,7 +518,7 @@ export function MultiEgcChart({
         </div>
       </div>
 
-      {showStats && <StatsPanel series={perSeriesVals} yLabel={yLabel} standardize={standardize} />}
+      {showStats && <StatsPanel series={perSeriesVals} yLabel={yLabel} standardize={standardizeApplied} />}
 
       {scaleMismatch && (
         <div className="scale-mismatch-warning" style={{

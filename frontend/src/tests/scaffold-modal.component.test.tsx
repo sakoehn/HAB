@@ -930,6 +930,42 @@ describe('GroupScaffoldModal', () => {
     expect(screen.queryByTestId('group-retry-btn')).toBeNull()
   })
 
+  // W (2.6, docs/AUDIT-2026-09-22.md): "peak scaffolds"/"peak genes" must be
+  // the peak of the summed-per-date series the chart actually plots, not
+  // the single largest per-member row -- two members each contributing a
+  // smaller count on the SAME date sum to something bigger than either one
+  // alone.
+  it('peak scaffolds/genes reflect the summed-per-date total across members, not the largest single member row', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('annotation_id=COG0055')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ data: [{ sample: 's1', date: '2021-05-10 08:00', scaffold_count: 5, gene_count: 10 }] }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ data: [{ sample: 's2', date: '2021-05-10 08:00', scaffold_count: 7, gene_count: 20 }] }),
+      })
+    })
+    render(
+      <GroupScaffoldModal
+        members={[
+          { annotationId: 'COG0055', source: 'cog', name: 'foo' },
+          { annotationId: 'K00001', source: 'kegg', name: 'bar' },
+        ]}
+        groupLabel="Grouped terms"
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() => screen.getByText(/Group totals/))
+
+    // Largest single member row is 7 scaffolds / 20 genes -- the real peak,
+    // once both members' same-date rows are summed, is 5+7=12 / 10+20=30.
+    expect(screen.getByText('peak scaffolds').previousElementSibling?.textContent).toBe('12')
+    expect(screen.getByText('peak genes').previousElementSibling?.textContent).toBe('30')
+  })
+
   it('clicking retry re-fetches only the failed member and merges it in on success', async () => {
     mockPartialFailure()
     render(

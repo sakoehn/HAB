@@ -170,7 +170,7 @@ export function AboutPage() {
                 Locally Weighted Scatterplot Smoothing. At each timepoint, a weighted
                 linear model is fit using the nearest fraction (bandwidth) of data points.
                 Closer points receive higher weight. Lower bandwidth = tighter fit to local
-                fluctuations; higher = smoother global trend. Range: 0.05 (tight) → 0.75
+                fluctuations; higher = smoother global trend. Range: 0.1 (tight) → 0.8
                 (near-linear).
               </span>
             </p>

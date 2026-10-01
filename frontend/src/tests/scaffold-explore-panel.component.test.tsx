@@ -172,6 +172,30 @@ describe('ScaffoldExplorePanel — empty state & suggestions', () => {
     expect(screen.getAllByText('K00001').length).toBeGreaterThan(0)
   })
 
+  it('banner keeps reporting the suggested terms\' real source after the user changes the dropdown (which no longer refreshes them)', async () => {
+    // W (2.6, docs/AUDIT-2026-09-22.md): suggestions load for the default
+    // source (taxonomy) -- each suggested term's own `.source` is set from
+    // the live searchSrc AT FETCH TIME (addTerm(ann.annotation_id,
+    // searchSrc, true)), so it stays "taxonomy" even after the dropdown
+    // moves on, because adding a manual term freezes the suggested list
+    // (the refresh effect only replaces suggestions when the list is
+    // empty/all-suggested). The banner must keep reading the suggested
+    // term's own stored source, not the live (now-stale-relative-to-it)
+    // dropdown value.
+    setupMocks({ topData: TOP_SUGGESTIONS, searchData: SEARCH_RESULTS })
+    render(<ScaffoldExplorePanel />)
+    await waitFor(() => screen.getByText(/Showing top 1 taxonomy annotations by mean EGC/i))
+
+    // Add a manual term -- this freezes the suggested list.
+    await addTermFromSearch()
+
+    // Now switch the live dropdown to a different source. The suggested
+    // term itself never changed, so the banner must still say "taxonomy",
+    // not the now-current dropdown value.
+    await userEvent.selectOptions(screen.getByRole('combobox'), 'cog')
+    expect(screen.getByText(/Showing top 1 taxonomy annotations by mean EGC/i)).toBeInTheDocument()
+  })
+
   it('"Clear suggestions" removes only suggested terms', async () => {
     setupMocks({ topData: TOP_SUGGESTIONS })
     render(<ScaffoldExplorePanel />)

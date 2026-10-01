@@ -140,11 +140,17 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
 
   it('is suppressed once Z-score standardization is on, even with a >10x raw gap', async () => {
     const user = userEvent.setup()
+    // 2 points per series -- Z-score is a no-op below 2 real points (W
+    // 2.6, docs/AUDIT-2026-09-22.md), so this needs enough for
+    // standardization to actually take effect on BOTH series for
+    // suppression to correctly apply; a 1-point fixture would (correctly)
+    // leave the warning visible instead of exercising the case this test
+    // is actually about.
     render(
       <MultiEgcChart
         series={[
-          { id: 'Small', annotationId: 'Small', name: 'Small', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10)] },
-          { id: 'Big', annotationId: 'Big', name: 'Big', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200)] },
+          { id: 'Small', annotationId: 'Small', name: 'Small', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10), makePoint('5/27/21 12:00', 12)] },
+          { id: 'Big', annotationId: 'Big', name: 'Big', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200), makePoint('5/27/21 12:00', 220)] },
         ]}
         dateFrom="" dateTo=""
       />,
@@ -153,6 +159,28 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
     expect(screen.getByText(/very different EGC scales/i)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Z-score/i }))
     expect(screen.queryByText(/very different EGC scales/i)).not.toBeInTheDocument()
+  })
+
+  // W (2.6, docs/AUDIT-2026-09-22.md): applyZScore silently no-ops for a
+  // series with fewer than 2 real points -- if that leaves even ONE
+  // compared series still on its raw EGC scale, the mismatch this warning
+  // exists to catch hasn't actually been resolved, so it must stay visible
+  // even with the Z-score toggle on.
+  it('stays visible with Z-score on if a compared series has too few points to actually be standardized', async () => {
+    const user = userEvent.setup()
+    render(
+      <MultiEgcChart
+        series={[
+          // Only 1 point -- Z-score can't apply to this one.
+          { id: 'Small', annotationId: 'Small', name: 'Small', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 10)] },
+          { id: 'Big', annotationId: 'Big', name: 'Big', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200), makePoint('5/27/21 12:00', 220)] },
+        ]}
+        dateFrom="" dateTo=""
+      />,
+    )
+    await selectRawEgc(user)
+    await user.click(screen.getByRole('button', { name: /Z-score/i }))
+    expect(screen.getByText(/very different EGC scales/i)).toBeInTheDocument()
   })
 
   // W33 (docs/AUDIT-2026-09-22.md): Relative Abundance divides every series
@@ -401,5 +429,43 @@ describe('MultiEgcChart — statistics are unaffected by the Smooth toggle (W27)
     const after = statValueForSeries('A', 'Std Dev s')
 
     expect(after).toBe(before)
+  })
+})
+
+// W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op with
+// fewer than 2 real points, but the chart-wide yLabel (and tooltip, via
+// fmtVal) kept claiming "Z-score (σ from mean)" regardless -- same
+// underlying bug as EgcChart/GroupedEgcChart, checked here against
+// MultiEgcChart's own per-series canStandardizeSeries/standardizeApplied
+// ("any series qualifies" chart-wide semantics).
+describe('MultiEgcChart — Z-score is a no-op with fewer than 2 real points', () => {
+  it('does not claim "Z-score" units when the one series has only 1 real point', async () => {
+    const user = userEvent.setup()
+    render(
+      <MultiEgcChart
+        series={[{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]}
+        dateFrom="" dateTo=""
+      />,
+    )
+    await selectRawEgc(user)
+    await user.click(screen.getByRole('button', { name: /Z-score/i }))
+    expect(screen.queryByText(/Z-score \(σ from mean\)/)).not.toBeInTheDocument()
+    expect(screen.getByText(/EGC — 1 Annotations/)).toBeInTheDocument()
+  })
+
+  it('does claim "Z-score" units once the series has 2 or more real points', async () => {
+    const user = userEvent.setup()
+    render(
+      <MultiEgcChart
+        series={[{
+          id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog',
+          data: [makePoint('5/27/21 8:00', 100), makePoint('5/28/21 8:00', 110)],
+        }]}
+        dateFrom="" dateTo=""
+      />,
+    )
+    await selectRawEgc(user)
+    await user.click(screen.getByRole('button', { name: /Z-score/i }))
+    expect(screen.getAllByText(/Z-score \(σ from mean\)/).length).toBeGreaterThan(0)
   })
 })

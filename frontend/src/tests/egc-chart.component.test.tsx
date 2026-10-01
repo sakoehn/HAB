@@ -115,6 +115,44 @@ describe('EgcChart — basic rendering', () => {
   })
 })
 
+// W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op with
+// fewer than 2 real points, but the axis/tooltip kept showing "Z-score, σ
+// from mean" regardless -- confirmed live: nifH (K02588, 1 sample) plotted
+// its raw 1.13e-7 EGC value with the tooltip "0.000σ", a real number
+// presented as a standardized one it never actually was.
+describe('EgcChart — Z-score is a no-op with fewer than 2 real points', () => {
+  it('does not claim "Z-score" units when the chart has only 1 real EGC value', async () => {
+    const user = userEvent.setup()
+    render(
+      <EgcChart
+        data={[makePoint('5/27/21 8:00', 100)]}
+        annotationId="K02588"
+        annotationName="nifH"
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /Z-score/i }))
+
+    // The axis/summary line must still read plain "Relative Abundance", not
+    // "Relative Abundance (Z-score, σ from mean)" -- applyZScore had
+    // nothing to standardize.
+    expect(screen.queryByText(/σ from mean/i)).not.toBeInTheDocument()
+  })
+
+  it('does claim "Z-score" units once there are 2 or more real points', async () => {
+    const user = userEvent.setup()
+    render(
+      <EgcChart
+        data={[makePoint('5/27/21 8:00', 100, 's1'), makePoint('5/27/21 12:00', 110, 's2')]}
+        annotationId="COG0001"
+        annotationName="GroEL"
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /Z-score/i }))
+
+    expect(screen.getAllByText(/σ from mean/i).length).toBeGreaterThan(0)
+  })
+})
+
 describe('EgcChart — stats panel toggle', () => {
   it('hides the stats panel by default and shows it after clicking Σ Stats', async () => {
     const user = userEvent.setup()

@@ -43,6 +43,23 @@ export function applyZScore(
   }))
 }
 
+// ── canApplyZScore ─────────────────────────────────────────────────────────
+// W (2.6, docs/AUDIT-2026-09-22.md): applyZScore silently returns its input
+// UNCHANGED (real, raw values) when fewer than 2 real points exist -- but
+// callers kept showing the axis title/tooltip as if standardization had
+// happened regardless ("Z-score, σ from mean", a bare value + "σ" in the
+// tooltip). Confirmed live: nifH (K02588, 1 sample) plotted its raw
+// 1.13e-7 EGC value with the tooltip "0.000σ" -- a real number presented
+// as a standardized one it never actually was. Callers should check this
+// (using the SAME array applyZScore was/would be given -- point count is
+// unaffected by whether standardization actually ran) and fall back to the
+// un-standardized label/tooltip format when it returns false, instead of
+// trusting the raw `standardize` toggle state alone.
+
+export function canApplyZScore(vals: (number | null)[]): boolean {
+  return vals.filter((v): v is number => v !== null).length >= 2
+}
+
 // ── applyLowess ────────────────────────────────────────────────────────────
 // Locally Weighted Scatterplot Smoothing (LOWESS).
 //

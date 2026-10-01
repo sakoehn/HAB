@@ -204,8 +204,14 @@ export function GroupScaffoldModal({
   const totalSamples   = useMemo(() => new Set(rows.map(r => r.sample)).size, [rows])
   const totalScaffolds = useMemo(() => rows.reduce((s, r) => s + r.scaffold_count, 0), [rows])
   const totalGenes     = useMemo(() => rows.reduce((s, r) => s + r.gene_count, 0), [rows])
-  const maxScaffolds   = useMemo(() => Math.max(0, ...rows.map(r => r.scaffold_count)), [rows])
-  const maxGenes       = useMemo(() => Math.max(0, ...rows.map(r => r.gene_count)), [rows])
+  // W (2.6, docs/AUDIT-2026-09-22.md): "peak scaffolds"/"peak genes" must be
+  // the peak of the SUMMED-per-date series (chartData, what the chart above
+  // actually plots), not the single largest per-member row in `rows` --
+  // those are two different numbers once a group has >1 member, and the
+  // per-member max understates the real peak (e.g. two members each with
+  // 50 scaffolds on the same date sum to 100, but the old code reported 50).
+  const maxScaffolds   = useMemo(() => Math.max(0, ...chartData.map(r => r.scaffold_count)), [chartData])
+  const maxGenes       = useMemo(() => Math.max(0, ...chartData.map(r => r.gene_count)), [chartData])
 
   // ── Detail drill-down ─────────────────────────────────────────────────
   // Cached by `${annotationId}::${sample}` — O(1) cache hit after first

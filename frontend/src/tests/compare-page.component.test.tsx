@@ -912,6 +912,44 @@ describe('ComparePage — group entry from Analyze handoff', () => {
     await waitFor(() => {
       expect(screen.getByTestId('compare-entry-failed')).toBeInTheDocument()
     })
+    // The two failure indicators are mutually exclusive by construction
+    // (the partial-failure badge is gated on status === 'ok') -- assert
+    // that directly so a future change to that guard can't silently show
+    // both at once.
+    expect(screen.queryByTestId('compare-entry-partial-failure')).toBeNull()
+  })
+
+  // W (2.6, docs/AUDIT-2026-09-22.md): the entry's top-level status only
+  // flips to 'error' when EVERY member fails (summedData.length > 0 still
+  // counts as 'ok') -- so a real partial failure (one member down, one up)
+  // used to be invisible unless the user manually expanded "▼ members".
+  it('one member failing while another succeeds discloses the partial failure on the always-visible chip', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('annotation_id=K00002')) return Promise.reject(new Error('fail'))
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<ManagedComparePage initialAnnotations={GROUP_ANN} />)
+    await waitFor(() => {
+      expect(screen.getByText('2 annotations summed')).toBeInTheDocument()
+    })
+    // Entry status is 'ok' (K00001 succeeded) -- the partial-failure badge
+    // must still be visible without expanding the member list.
+    expect(screen.queryByTestId('compare-entry-failed')).toBeNull()
+    expect(screen.getByTestId('compare-entry-partial-failure')).toBeInTheDocument()
+    expect(screen.getByTestId('compare-entry-partial-failure').textContent).toContain('1 of 2')
+  })
+
+  it('no partial-failure badge shown when all group members succeed', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<ManagedComparePage initialAnnotations={GROUP_ANN} />)
+    await waitFor(() => screen.getByText('2 annotations summed'))
+    expect(screen.queryByTestId('compare-entry-partial-failure')).toBeNull()
   })
 
   it('clicking retry on a failed group entry re-fetches and succeeds', async () => {

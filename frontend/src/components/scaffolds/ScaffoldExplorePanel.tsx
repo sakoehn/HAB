@@ -700,7 +700,16 @@ export function ScaffoldExplorePanel({
               background:   'var(--surface3)',
             }}>
               <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
-                Showing top {terms.filter(t => t.suggested).length} {searchSrc} annotations by mean EGC
+                {/*
+                  W (2.6, docs/AUDIT-2026-09-22.md): a user who has added
+                  manual terms keeps suggested terms from a PRIOR source
+                  (the refresh effect above skips re-fetching once any
+                  manual term exists), so the live searchSrc dropdown can
+                  disagree with what source these suggested terms actually
+                  came from. Read it off the terms themselves instead.
+                */}
+                Showing top {terms.filter(t => t.suggested).length}{' '}
+                {terms.find(t => t.suggested)?.source ?? searchSrc} annotations by mean EGC
               </span>
               <HelpTooltip text="Auto-filled with the top 10 EGC annotations for the selected source. Replaced automatically if you change the source, unless you've added your own terms." />
               <button

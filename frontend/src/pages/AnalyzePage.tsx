@@ -170,7 +170,7 @@ function RightSingleCard({
               font:  '600 11px var(--mono)',
               color: 'var(--text-dim)',
             }}>
-              mean {quickStats.mean.toExponential(2)} · {quickStats.n} samples
+              mean EGC {quickStats.mean.toExponential(2)} · {quickStats.n} samples
             </span>
           )}
           {cached?.status === 'ok' && (

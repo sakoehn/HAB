@@ -1072,7 +1072,7 @@ describe('LeftResultList — help tooltips', () => {
     )
     // Scoped to the bulk-action bar specifically -- W21 (docs/AUDIT-2026-09-22.md)
     // added a second, separate "Help" button elsewhere on this same render
-    // (the detection-count caveat next to "sorted by relevance"), so a bare
+    // (the detection-count caveat next to "sorted by mean EGC"), so a bare
     // screen.getByTitle('Help') is now ambiguous between the two.
     const bulkBar = container.querySelector('.al-bulk-bar') as HTMLElement
     await userEvent.click(within(bulkBar).getByTitle('Help'))

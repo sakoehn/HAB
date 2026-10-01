@@ -272,7 +272,7 @@ export function LeftResultList({
             )}
           </span>
           <span className="al-result-hint">
-            sorted by relevance · then EGC
+            sorted by mean EGC
             <HelpTooltip text="EGC here is the mean across samples where the annotation was actually detected, not all 128 -- an annotation detected in only a few samples can rank above one detected everywhere. Check the (N/128) next to a row's number, when shown, before comparing two rows' rank." />
             {total > rows.length && ' · refine to narrow'}
           </span>

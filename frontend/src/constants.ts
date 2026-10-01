@@ -573,6 +573,18 @@ export const KEGG_BRITE_CODES: Record<string, string> = {
 export function expandParentLabel(parent: string, source: string): string {
   if (!parent) return parent
 
+  // W (2.6, docs/AUDIT-2026-09-22.md): 'Ungrouped' is a shared cross-source
+  // sentinel (ExplorePage.tsx's `r.parent ?? 'Ungrouped'` fallback for a
+  // root annotation with no real parent), not a real lineage/category
+  // value from any source -- must be handled uniformly BEFORE any
+  // source-specific branch below, or a branch that treats its input as a
+  // real value (e.g. taxonomy's rank-suffix logic) can mangle it. Real
+  // bug this caused: taxonomy's branch treated 'Ungrouped' as a 1-segment
+  // lineage and appended a fake rank suffix, showing domain roots
+  // (Bacteria, Archaea, ...) as literally "Ungrouped (Domain)" instead of
+  // their real domain name.
+  if (parent === 'Ungrouped') return parent
+
   if (source === 'cog') {
     const key = parent.trim().toUpperCase()
     return COG_CATEGORY_LABELS[key] ?? parent

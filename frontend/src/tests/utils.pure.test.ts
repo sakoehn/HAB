@@ -63,6 +63,7 @@ import {
 import {
   applyZScore,
   applyLowess,
+  canApplyZScore,
 } from '../utils/signal'
 
 import {
@@ -546,6 +547,38 @@ describe('applyZScore', () => {
     const once  = applyZScore(data)
     const twice = applyZScore(once)
     once.forEach((d, i) => expect(d.egc).toBeCloseTo(twice[i].egc as number, 4))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// canApplyZScore -- W (2.6, docs/AUDIT-2026-09-22.md): applyZScore's own
+// <2-points no-op was previously invisible to callers, which kept showing
+// "Z-score, σ from mean" axis titles/tooltips over still-raw EGC values
+// (confirmed live: nifH, K02588, 1 sample, tooltip read "0.000σ" on a real
+// 1.13e-7 EGC value). This is the check callers now use to know whether
+// standardization will actually take effect before claiming it did.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('canApplyZScore', () => {
+  it('false for 0 real values', () => {
+    expect(canApplyZScore([null, null])).toBe(false)
+  })
+
+  it('false for exactly 1 real value', () => {
+    expect(canApplyZScore([42])).toBe(false)
+    expect(canApplyZScore([null, 42, null])).toBe(false)
+  })
+
+  it('true for exactly 2 real values', () => {
+    expect(canApplyZScore([1, 2])).toBe(true)
+  })
+
+  it('true for more than 2 real values, nulls ignored', () => {
+    expect(canApplyZScore([1, null, 2, null, 3])).toBe(true)
+  })
+
+  it('false for an empty array', () => {
+    expect(canApplyZScore([])).toBe(false)
   })
 })
 
@@ -1492,6 +1525,23 @@ describe('expandParentLabel', () => {
   it('empty string returns empty string for any source', () => {
     expect(expandParentLabel('', 'cog')).toBe('')
     expect(expandParentLabel('', 'kegg')).toBe('')
+  })
+
+  // W (2.6, docs/AUDIT-2026-09-22.md): 'Ungrouped' is ExplorePage.tsx's own
+  // shared cross-source sentinel for "this annotation has no real parent"
+  // (e.g. every taxonomy domain root -- Bacteria/Archaea/Eukaryota/Viruses
+  // -- has parent=NULL in annotation_catalog, confirmed against the real
+  // db). Before this fix, taxonomy's branch treated it as a real 1-segment
+  // lineage and appended a fake rank suffix, merging all 4 real domains
+  // into one group literally labelled "Ungrouped (Domain)".
+  it('the shared "Ungrouped" sentinel is returned as-is for taxonomy, not given a fake rank suffix', () => {
+    expect(expandParentLabel('Ungrouped', 'taxonomy')).toBe('Ungrouped')
+  })
+
+  it('the shared "Ungrouped" sentinel is returned as-is for every other source too', () => {
+    expect(expandParentLabel('Ungrouped', 'cog')).toBe('Ungrouped')
+    expect(expandParentLabel('Ungrouped', 'kegg')).toBe('Ungrouped')
+    expect(expandParentLabel('Ungrouped', 'enzyme')).toBe('Ungrouped')
   })
 })
 

@@ -27,7 +27,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { GroupedEgcChart } from '../components/charts/GroupedEgcChart'
@@ -226,5 +226,51 @@ describe('GroupedEgcChart — statistics are unaffected by the Smooth toggle (W2
     const after = { n: statValue('n'), mean: statValue('Mean'), std: statValue('Std Dev s') }
 
     expect(after).toEqual(before)
+  })
+})
+
+// W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op with
+// fewer than 2 real summed points, but GroupedEgcChart's yLabel kept
+// claiming "(Z-score)" regardless -- same underlying bug as EgcChart (see
+// egc-chart.component.test.tsx), applied here to the SUMMED series
+// (summedPoints), not a single annotation's own points. GroupedEgcChart's
+// own label wording omits "σ from mean" (just "Summed EGC (Z-score)"),
+// so this checks for its own real string, not EgcChart's.
+describe('GroupedEgcChart — Z-score is a no-op with fewer than 2 real summed points', () => {
+  it('does not claim "(Z-score)" when there is only 1 real summed point', async () => {
+    const user = userEvent.setup()
+    render(
+      <GroupedEgcChart
+        groupLabel="Test Group"
+        allSeries={[
+          { annotationId: 'A', name: 'A', color: '#000', data: [makePoint('A', '5/27/21 8:00', 30)] },
+          { annotationId: 'B', name: 'B', color: '#000', data: [makePoint('B', '5/27/21 8:00', 20)] },
+        ]}
+      />,
+    )
+    await selectRawEgc(user)
+    await waitFor(() => screen.getByText(/1 timepoints/))
+    await user.click(screen.getByRole('button', { name: /Z-score/i }))
+    expect(screen.queryByText(/Summed EGC \(Z-score\)/)).not.toBeInTheDocument()
+    expect(screen.getAllByText(/Summed EGC/).length).toBeGreaterThan(0)
+  })
+
+  it('does claim "(Z-score)" once there are 2 or more real summed points', async () => {
+    const user = userEvent.setup()
+    render(
+      <GroupedEgcChart
+        groupLabel="Test Group"
+        allSeries={[
+          {
+            annotationId: 'A', name: 'A', color: '#000',
+            data: [makePoint('A', '5/27/21 8:00', 30), makePoint('A', '5/28/21 8:00', 40)],
+          },
+        ]}
+      />,
+    )
+    await selectRawEgc(user)
+    await waitFor(() => screen.getByText(/2 timepoints/))
+    await user.click(screen.getByRole('button', { name: /Z-score/i }))
+    expect(screen.getAllByText(/Summed EGC \(Z-score\)/).length).toBeGreaterThan(0)
   })
 })
