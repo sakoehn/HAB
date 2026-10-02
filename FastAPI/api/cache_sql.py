@@ -300,6 +300,62 @@ def get_kegg_path_sql(conn: sqlite3.Connection, annotation_id: str) -> dict | No
     return {"annotation_id": annotation_id, "paths": paths, "path_count": len(paths)}
 
 
+def get_kegg_immediate_parents_bulk_sql(conn: sqlite3.Connection, annotation_ids: list[str]) -> dict[str, list[dict]]:
+    """Return every real IMMEDIATE parent (one level up) for each of
+    `annotation_ids`, for bucketing a list of KEGG nodes by parent group
+    (W30a, docs/AUDIT-2026-09-22.md) -- a single id-at-a-time call to
+    get_kegg_path_sql for every row in a 200-row list would be 200 round
+    trips; this does it in at most 3 queries total (one per non-root
+    depth), regardless of how many ids are passed.
+
+    Resolves each id at the DEEPEST column it's found in across depths
+    4->2 (not get_kegg_path_sql's per-id `_kegg_node_depth`, which only
+    checks in 1->4 order) -- a real KEGG id only ever appears at one
+    consistent depth across all its real occurrences (confirmed directly:
+    0 of 547 real C-level nodes and 0 of 55 real B-level nodes are ever
+    multi-parent, i.e. a node's OWN depth never varies even when its
+    ancestors do), so this is equivalent for real ids, but doesn't rely on
+    a separate depth-detection pass per id.
+
+    Args:
+        conn: Open SQLite connection.
+        annotation_ids: KEGG annotation ids to resolve (any depth, mixed
+            depths within the same call are fine).
+
+    Returns:
+        {annotation_id: [{"annotation_id", "name"}, ...]} -- one entry
+        per id passed in (always present, even if real depth is 1 / a
+        root with no parent, or the id isn't a real KEGG node at all --
+        both give an empty list, not a missing key). More than one entry
+        in a list only for a genuinely multi-parent id.
+    """
+    result: dict[str, list[dict]] = {aid: [] for aid in annotation_ids}
+    remaining = set(annotation_ids)
+
+    for depth in (4, 3, 2):
+        if not remaining:
+            break
+        id_col, _ = KEGG_LEVEL_COLUMNS[depth]
+        parent_id_col, parent_name_col = KEGG_LEVEL_COLUMNS[depth - 1]
+        ids_to_check = list(remaining)
+        placeholders = ", ".join("?" * len(ids_to_check))
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT {id_col}, {parent_id_col}, {parent_name_col}
+            FROM kegg_paths
+            WHERE {id_col} IN ({placeholders}) AND {parent_id_col} IS NOT NULL
+            """,
+            ids_to_check,
+        ).fetchall()
+        found_at_this_depth = set()
+        for node_id, parent_id, parent_name in rows:
+            result[node_id].append({"annotation_id": parent_id, "name": parent_name})
+            found_at_this_depth.add(node_id)
+        remaining -= found_at_this_depth
+
+    return result
+
+
 # Depth (1=A..4=D) -> the (id_column, name_column) pair on enzyme_paths that
 # holds that level -- same column shape as kegg_paths (EC hierarchy is also
 # exactly 4 levels: class, subclass, sub-subclass, full EC number).

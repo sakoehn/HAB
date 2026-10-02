@@ -321,6 +321,8 @@ export function AboutPage() {
                'Direct children of a COG node (structure only, no EGC) — parent omitted returns the 26 top-level categories'],
               ['/api/kegg/path?id=…',
                'Every real ancestor path (root to node) for a KEGG node — a node can have multiple real parents (e.g. K00844/hexokinase has 14). Powers the hierarchy popup\'s auto-expand-and-highlight on open (the first real occurrence), plus a picker to switch to any of the others'],
+              ['/api/kegg/parents?ids=…,…',
+               'Every real IMMEDIATE (one-level-up) parent for a comma-separated batch of KEGG node ids, in one request instead of one per id. Powers the Explore lookup card and "Annotations by Parent" grouping — a multi-parent KO is filed under every real parent group it belongs to, not just one'],
               ['/api/enzyme/path?id=…',
                'Ancestor path (root to node) for an Enzyme (EC) node — every EC id has exactly one real parent, so this is always unambiguous'],
               ['/api/cog/path?id=…',

@@ -61,6 +61,7 @@ from .cache_sql import (
     get_enzyme_children_sql,
     get_enzyme_path_sql,
     get_kegg_children_sql,
+    get_kegg_immediate_parents_bulk_sql,
     get_kegg_path_sql,
     get_taxonomy_children_sql,
     get_top_annotations_sql,
@@ -526,6 +527,31 @@ async def kegg_path(request: Request, id: str = Query(...)):
     if result is None:
         raise HTTPException(status_code=404, detail=f"Unknown KEGG node '{id}'")
     return result
+
+
+@router.get("/kegg/parents")
+async def kegg_parents_bulk(request: Request, ids: str = Query(...)):
+    """
+    Every real IMMEDIATE parent (one level up) for each of a comma-separated
+    list of KEGG node ids, in one request -- W30a (docs/AUDIT-2026-09-22.md):
+    "Annotations by Parent" groups up to 200 rows at once, and a KO's
+    stored `parent` is last-occurrence-wins (only one of its possibly-many
+    real parents), so the panel needs every real parent for every row to
+    bucket a multi-parent KO into every group it actually belongs to --
+    one /kegg/path call per row would be 200 round trips; this is one.
+
+    SQL backend only, same reasoning as /kegg/path.
+    """
+    if DATA_BACKEND != 'sql':
+        raise HTTPException(status_code=501, detail="KEGG hierarchy browsing requires DATA_BACKEND=sql")
+
+    id_list = [i for i in ids.split(",") if i]
+    db = connect_to_sql()
+    try:
+        result = get_kegg_immediate_parents_bulk_sql(db, id_list)
+    finally:
+        close_sql_connection(db)
+    return {"parents": result}
 
 
 @router.get("/enzyme/children")

@@ -270,6 +270,10 @@ describe('AnnotationsByParentPanel — re-fetches when the source prop changes',
         return Promise.resolve(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
       if (url.includes('source=kegg'))
         return Promise.resolve(jsonResponse({ data: [makeRow('K00001', 'Metabolism', 50)] }))
+      // W30a: kegg rows are now grouped from /api/kegg/parents' real
+      // immediate-parent data, not the row's own single `parent` field.
+      if (url.includes('/api/kegg/parents'))
+        return Promise.resolve(jsonResponse({ parents: { K00001: [{ annotation_id: '09100', name: 'Metabolism' }] } }))
       return Promise.resolve(jsonResponse({}))
     })
     const { rerender } = render(<AnnotationsByParentPanel source="cog" />)
@@ -308,5 +312,72 @@ describe('AnnotationsByParentPanel — re-fetches when the source prop changes',
     // overwritten it, and must not be shown labelled as "cog" either.
     expect(screen.getByText('Custom Group')).toBeInTheDocument()
     expect(screen.queryByText('Metabolism')).not.toBeInTheDocument()
+  })
+})
+
+// W30a (docs/AUDIT-2026-09-22.md): the actual point of this fix -- a KEGG
+// row with more than one real immediate parent must be filed under EVERY
+// one of them, not just the single last-occurrence-wins `parent` field
+// the row itself carries.
+describe('AnnotationsByParentPanel — files a multi-parent KO under every real parent group (W30a)', () => {
+  it('a multi-parent row appears in both of its real groups; a single-parent row appears in only one', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) {
+        return Promise.resolve(jsonResponse({
+          data: [
+            makeRow('K01', 'irrelevant-stale-value', 100), // real parents: Group A and Group B
+            makeRow('K02', 'irrelevant-stale-value', 30),  // real parent: Group A only
+          ],
+        }))
+      }
+      if (url.includes('/api/kegg/parents')) {
+        return Promise.resolve(jsonResponse({
+          parents: {
+            K01: [{ annotation_id: 'A', name: 'Group A' }, { annotation_id: 'B', name: 'Group B' }],
+            K02: [{ annotation_id: 'A', name: 'Group A' }],
+          },
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<AnnotationsByParentPanel source="kegg" />)
+
+    await waitFor(() => expect(screen.getByText('Group A')).toBeInTheDocument())
+    expect(screen.getByText('Group B')).toBeInTheDocument()
+
+    // Group A: both K01 (100) and K02 (30) -- count=2, sum=130.
+    const groupARow = screen.getByText('Group A').closest('.mappings-toggle')!
+    expect(groupARow.textContent).toContain('2 annotations')
+    expect(groupARow.textContent).toContain('1.30e+2')
+
+    // Group B: K01 only -- count=1, sum=100. The SAME K01 EGC (100) is
+    // counted in both groups' totals (130 + 100 = 230, more than K01+K02's
+    // real combined 130) -- the same already-accepted cross-group
+    // non-additivity E17 introduced for COG's multi-category fix, not a
+    // bug to "fix" by splitting/dividing K01's value between groups.
+    const groupBRow = screen.getByText('Group B').closest('.mappings-toggle')!
+    expect(groupBRow.textContent).toContain('1 annotations')
+    expect(groupBRow.textContent).toContain('1.00e+2')
+  })
+
+  it('a kegg row with no real parent at all (an A-level root) falls back to Ungrouped', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve(jsonResponse({ data: [makeRow('09100', 'irrelevant', 50)] }))
+      if (url.includes('/api/kegg/parents'))
+        return Promise.resolve(jsonResponse({ parents: { '09100': [] } }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<AnnotationsByParentPanel source="kegg" />)
+
+    await waitFor(() => expect(screen.getByText('Ungrouped')).toBeInTheDocument())
+  })
+
+  it('/api/kegg/parents is never called for a non-kegg source', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
+    render(<AnnotationsByParentPanel source="cog" />)
+
+    await waitFor(() => expect(screen.getByText('Custom Group')).toBeInTheDocument())
+    expect(mockFetch.mock.calls.some(([u]) => String(u).includes('/api/kegg/parents'))).toBe(false)
   })
 })

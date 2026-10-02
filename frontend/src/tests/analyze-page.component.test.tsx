@@ -2387,6 +2387,22 @@ describe('ExplorePage — Annotation Lookup happy path', () => {
         return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
       if (url.includes('/api/status'))
         return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      // W30a (docs/AUDIT-2026-09-22.md): the lookup card's kegg Parent
+      // row now comes from the real /api/kegg/path data, not the row's
+      // own single `parent` field.
+      if (url.includes('/api/kegg/path'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({
+            annotation_id: 'K02014',
+            path_count:    1,
+            paths: [[
+              { annotation_id: '09100', name: 'Metabolism',           depth: 1 },
+              { annotation_id: '02010', name: 'Membrane transport',   depth: 2 },
+              { annotation_id: 'K02014', name: 'TonB-dependent receptor', depth: 3 },
+            ]],
+          }),
+        })
       return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
     })
     render(<App />)
@@ -2405,9 +2421,11 @@ describe('ExplorePage — Annotation Lookup happy path', () => {
       expect(document.querySelector('.lookup-id')?.textContent).toBe('K02014')
     })
     expect(document.querySelector('.lookup-name')?.textContent).toBe('TonB-dependent receptor')
-    // Parent label is derived via expandParentLabel — "02010 Membrane transport"
-    // has a 5-digit code prefix, so it should be stripped to just the label.
-    expect(document.querySelector('.lookup-meta-grid')?.textContent).toContain('Membrane transport')
+    // Parent label comes from the real /api/kegg/path data (W30a), not
+    // the row's own single `parent` field / expandParentLabel anymore.
+    await waitFor(() => {
+      expect(document.querySelector('.lookup-meta-grid')?.textContent).toContain('Membrane transport')
+    })
   })
 
   it('multi-result search shows a result list without auto-selecting a detail card', async () => {

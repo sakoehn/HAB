@@ -29,7 +29,7 @@
 
 import { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { ExplorePage, makeDefaultExploreState, type ExploreState } from '../pages/ExplorePage'
@@ -171,6 +171,127 @@ describe('ExplorePage — Annotation Lookup source race (W29)', () => {
     await waitFor(() => {
       expect(document.querySelector('.lookup-meta-value.mono')?.textContent).toContain('leaf (KO)')
     })
+  })
+})
+
+// W30(a) (docs/AUDIT-2026-09-22.md): a KEGG KO's stored `parent` is
+// last-occurrence-wins -- only ONE of its possibly-many real immediate
+// parents. The lookup card now fetches /api/kegg/path directly (the same
+// real ancestor data the hierarchy popup uses) instead of trusting the
+// single stored value.
+describe('ExplorePage — Annotation Lookup shows every real KEGG parent (W30a)', () => {
+  function mockSearchAndPath(searchRow: object, pathResponse: object | null) {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations') && url.includes('sources=kegg')) {
+        return Promise.resolve(jsonResponse({ data: [searchRow], total: 1 }))
+      }
+      if (url.includes('/api/kegg/path')) {
+        return pathResponse
+          ? Promise.resolve(jsonResponse(pathResponse))
+          : Promise.reject(new Error('network error'))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+  }
+
+  it('shows every real parent for a multi-parent KO, not just the one stored on the row', async () => {
+    const user = userEvent.setup()
+    mockSearchAndPath(
+      { annotation_id: 'K00844', name: 'HK, hexokinase', parent: '04131', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
+      {
+        annotation_id: 'K00844',
+        path_count: 2,
+        paths: [
+          [
+            { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 1 },
+            { annotation_id: '09101', name: 'Carbohydrate metabolism', depth: 2 },
+            { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 3 },
+            { annotation_id: 'K00844', name: 'HK, hexokinase', depth: 4 },
+          ],
+          [
+            { annotation_id: '04131', name: 'Membrane trafficking', depth: 1 },
+            { annotation_id: '09180', name: 'Brite Hierarchies', depth: 2 },
+            { annotation_id: '04131', name: 'Membrane trafficking', depth: 3 },
+            { annotation_id: 'K00844', name: 'HK, hexokinase', depth: 4 },
+          ],
+        ],
+      },
+    )
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'kegg' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'K00844')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    const parentsRow = await screen.findByTestId('lookup-kegg-parents')
+    expect(parentsRow).toHaveTextContent('Glycolysis / Gluconeogenesis')
+    expect(parentsRow).toHaveTextContent('Membrane trafficking')
+    expect(within(parentsRow).getByText('Parents')).toBeInTheDocument() // plural label when there's more than one
+  })
+
+  it('shows a single parent without the plural label for a genuinely single-parent KO', async () => {
+    const user = userEvent.setup()
+    mockSearchAndPath(
+      { annotation_id: 'K00001', name: 'alcohol dehydrogenase', parent: '00010', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
+      {
+        annotation_id: 'K00001',
+        path_count: 1,
+        paths: [[
+          { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 1 },
+          { annotation_id: '09101', name: 'Carbohydrate metabolism', depth: 2 },
+          { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 3 },
+          { annotation_id: 'K00001', name: 'alcohol dehydrogenase', depth: 4 },
+        ]],
+      },
+    )
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'kegg' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'K00001')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    const parentsRow = await screen.findByTestId('lookup-kegg-parents')
+    expect(parentsRow).toHaveTextContent('Glycolysis / Gluconeogenesis')
+    expect(within(parentsRow).getByText('Parent')).toBeInTheDocument() // singular, no "s"
+  })
+
+  it('shows nothing (not a stale/wrong value) when the real-path fetch fails', async () => {
+    const user = userEvent.setup()
+    mockSearchAndPath(
+      { annotation_id: 'K00844', name: 'HK, hexokinase', parent: '04131', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
+      null,
+    )
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'kegg' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'K00844')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    await waitFor(() => expect(document.querySelector('.lookup-result')).toBeTruthy())
+    expect(screen.queryByTestId('lookup-kegg-parents')).toBeNull()
+    // The old single-value "Parent" row (driven by r.parent) must also
+    // stay suppressed for kegg -- showing it here would be exactly the
+    // last-occurrence-wins value this fix exists to stop trusting.
+    expect(screen.queryByText('Membrane trafficking')).toBeNull()
+  })
+
+  it('a non-kegg source is unaffected -- still shows the single stored parent directly', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations') && url.includes('sources=cog')) {
+        return Promise.resolve(jsonResponse({
+          data: [{ annotation_id: 'COG0055', name: 'ATP synthase', parent: 'C', category: 'Energy production and conversion', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 }],
+          total: 1,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'cog' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'COG0055')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    await waitFor(() => expect(document.querySelector('.lookup-result')).toBeTruthy())
+    // /api/kegg/path must never be called for a cog lookup.
+    expect(mockFetch.mock.calls.some(([u]) => String(u).includes('/api/kegg/path'))).toBe(false)
+    expect(screen.queryByTestId('lookup-kegg-parents')).toBeNull()
   })
 })
 

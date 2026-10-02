@@ -62,6 +62,45 @@ def test_kegg_path_unknown_id_returns_404(client):
     assert resp.status_code == 404
 
 
+# W30a (docs/AUDIT-2026-09-22.md): /kegg/parents, the bulk sibling of
+# /kegg/path -- "Annotations by Parent" needs every real immediate parent
+# for up to 200 rows at once, not one id-at-a-time call per row.
+
+def test_kegg_parents_bulk_resolves_multiparent_node_to_all_its_real_immediate_parents(client):
+    """K00844's 14 real paths (see test above) share only 10 distinct
+    immediate (C-level) parents -- some of those 14 pathways nest under
+    the same C-level node via different B/A ancestors. This confirms the
+    bulk endpoint returns every DISTINCT immediate parent, matching the
+    set of 3rd-from-last nodes across get_kegg_path_sql's own 14 paths,
+    not a re-derived or hardcoded count."""
+    path_resp = client.get("/kegg/path", params={"id": "K00844"})
+    assert path_resp.status_code == 200
+    expected_immediate_parents = {path[-2]["annotation_id"] for path in path_resp.json()["paths"]}
+    assert len(expected_immediate_parents) > 1  # genuinely multi-parent, not a coincidental single value
+
+    resp = client.get("/kegg/parents", params={"ids": "K00844"})
+    assert resp.status_code == 200
+    body = resp.json()
+    got_parents = {p["annotation_id"] for p in body["parents"]["K00844"]}
+    assert got_parents == expected_immediate_parents
+
+
+def test_kegg_parents_bulk_resolves_multiple_ids_in_one_request(client):
+    resp = client.get("/kegg/parents", params={"ids": "K00844,COG0001_NOT_KEGG,00010"})
+    assert resp.status_code == 200
+    body = resp.json()["parents"]
+    assert "K00844" in body and len(body["K00844"]) > 1
+    assert body["COG0001_NOT_KEGG"] == []  # not a real kegg id -- empty, not missing or an error
+    assert "00010" in body  # a real C-level pathway, resolves to its own B-level parent
+
+
+def test_kegg_parents_bulk_every_requested_id_is_present_in_the_response(client):
+    resp = client.get("/kegg/parents", params={"ids": "NOT_REAL_1,NOT_REAL_2"})
+    assert resp.status_code == 200
+    body = resp.json()["parents"]
+    assert body == {"NOT_REAL_1": [], "NOT_REAL_2": []}
+
+
 def test_enzyme_path_returns_full_chain_with_path_count_one(client):
     resp = client.get("/enzyme/path", params={"id": "1.1.1.1"})
     assert resp.status_code == 200
