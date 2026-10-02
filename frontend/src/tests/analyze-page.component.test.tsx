@@ -1857,11 +1857,21 @@ describe('CorrelatesPanel', () => {
   })
 
   it('Retry button refetches after the first request fails', async () => {
+    // CR2 (docs/AUDIT-2026-09-22.md): the panel now defaults to
+    // method=circular_shift, which has its OWN automatic-retry-on-timeout
+    // behavior (tested separately in correlates-panel.component.test.tsx)
+    // -- a single rejection there doesn't surface "Correlation failed"
+    // immediately. Let that initial default-method fetch succeed, then
+    // switch to spearman (a plain, non-permutation method) before
+    // exercising the generic error+manual-retry-button UX this test is
+    // actually about.
     let correlateCalls = 0
+    let rejectNextCorrelateCall = false
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/correlations/family')) {
         correlateCalls += 1
-        if (correlateCalls === 1) {
+        if (rejectNextCorrelateCall) {
+          rejectNextCorrelateCall = false
           return Promise.reject(new Error('network'))
         }
         return Promise.resolve({
@@ -1889,6 +1899,12 @@ describe('CorrelatesPanel', () => {
     await waitFor(() => screen.getByText(/Find Correlates/i))
     await userEvent.click(screen.getByText(/Find Correlates/i))
 
+    // Default-method (circular_shift) fetch on open succeeds.
+    await waitFor(() => expect(correlateCalls).toBe(1))
+
+    rejectNextCorrelateCall = true
+    await userEvent.click(screen.getByRole('button', { name: 'spearman' }))
+
     await waitFor(() => {
       expect(screen.getByText(/Correlation failed/i)).toBeInTheDocument()
     })
@@ -1898,7 +1914,7 @@ describe('CorrelatesPanel', () => {
     await waitFor(() => {
       expect(
         mockFetch.mock.calls.filter(([rawUrl]) => String(rawUrl).includes('/api/correlations/family')),
-      ).toHaveLength(2)
+      ).toHaveLength(3)
       const panel = document.querySelector('.corr-panel') as HTMLElement
       expect(within(panel).getAllByText(/Bacteria/).length).toBeGreaterThan(0)
     })

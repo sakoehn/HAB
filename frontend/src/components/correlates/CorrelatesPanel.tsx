@@ -69,7 +69,16 @@ export function CorrelatesPanel({
   // pre-selected when the panel first opens.
   const defaultTarget = source === 'enzyme' ? 'cog' : 'enzyme'
   const [targetSource, setTargetSource] = useState<string>(defaultTarget)
-  const [method, setMethod] = useState<CorrMethod>('spearman')
+  // CR2 (docs/AUDIT-2026-09-22.md): spearman's parametric p-value ignores
+  // autocorrelation -- real EGC series have lag-1 autocorrelation of
+  // 0.60-0.72, which let 22-51% of genuinely unrelated pairs pass q<0.05
+  // under the old default. circular_shift's own defects (CR8) are now
+  // fixed -- confirmed by simulation to hold <=5% false positives while
+  // still detecting >=80% of real relationships -- so it's the default
+  // now, not just an opt-in for users who know to switch to it. User can
+  // still pick spearman/log_pearson/raw_pearson for a faster, less
+  // rigorous look.
+  const [method, setMethod] = useState<CorrMethod>('circular_shift')
   const [metric, setMetric] = useState<ChartMetric>('norm_egc')
   const requestSeqRef = useRef(0)
   const [retryAttempt, setRetryAttempt] = useState(0)
@@ -86,9 +95,9 @@ export function CorrelatesPanel({
   // docs/AUDIT-2026-09-22.md: exhaustively over every valid shift beyond
   // the lag window, ~115 of them at the real n=128 x 9 lags each, not a
   // tunable sample count) instead of one parametric pass -- measured
-  // directly against the real db at ~120x slower per candidate than the
-  // default method (spearman: ~3ms/pair, circular_shift: ~0.38s/pair --
-  // down from ~3.6s/pair pre-CR8, since enumerating only the real valid
+  // directly against the real db at ~120x slower per candidate than a
+  // fast parametric method (spearman: ~3ms/pair, circular_shift: ~0.38s/pair
+  // -- down from ~3.6s/pair pre-CR8, since enumerating only the real valid
   // shifts is both more correct and cheaper than the old 1000-draw random
   // sample). With prescreening capping this to the strongest 200
   // candidates, a worst-case family now finishes in well under 2 minutes,

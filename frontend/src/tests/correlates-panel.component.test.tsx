@@ -40,17 +40,27 @@ beforeEach(() => {
   mockFetch.mockReset()
 })
 
-// Opening the panel fetches once with the default method (spearman),
-// before circular_shift is ever selected -- consumed here with a
-// harmless resolved response and then cleared from mock call history, so
-// a caller's own mockFetch queue (configured AFTER calling this, then
-// followed by selecting circular_shift) counts only the circular_shift
-// attempts it actually cares about, not this unrelated setup fetch.
+// CR2 (docs/AUDIT-2026-09-22.md): the panel now defaults to
+// method=circular_shift itself (not spearman) -- opening it fetches once
+// immediately under whatever the default is. This helper then explicitly
+// clicks 'spearman' to force a KNOWN, non-circular_shift baseline
+// regardless of what that default happens to be, so selectCircularShift
+// below always produces a genuine method transition (and therefore a
+// real new fetch -- the panel's useEffect depends on `method`, and
+// clicking a method pill that's already selected is a same-value setState
+// no-op React won't re-render/re-fetch for). Both setup fetches are
+// consumed here with harmless resolved responses and cleared from mock
+// call history, so a caller's own mockFetch queue (configured AFTER
+// calling this, then followed by selecting circular_shift) counts only
+// the circular_shift attempts it actually cares about.
 async function openPanel() {
   const user = userEvent.setup()
   mockFetch.mockResolvedValueOnce(jsonResponse([]))
   await user.click(screen.getByRole('button', { name: /Find Correlates/i }))
   await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+  mockFetch.mockResolvedValueOnce(jsonResponse([]))
+  await user.click(screen.getByRole('button', { name: 'spearman' }))
+  await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
   mockFetch.mockClear()
   return user
 }
@@ -59,8 +69,38 @@ async function selectCircularShift(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'circular_shift' }))
 }
 
+// CR2 (docs/AUDIT-2026-09-22.md): the default method flipped from
+// spearman (parametric, ignores autocorrelation) to circular_shift
+// (CR8-fixed permutation test) -- confirmed <=5% false positives and
+// >=80% power by direct simulation (test_correlation_math.py), so every
+// user gets a statistically valid p-value by default now, not just the
+// ones who know to switch methods.
+describe('CorrelatesPanel — defaults to circular_shift (CR2)', () => {
+  it('fetches with method=circular_shift the first time the panel opens, before any method is explicitly selected', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse([]))
+    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
+
+    await userEvent.setup().click(screen.getByRole('button', { name: /Find Correlates/i }))
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+    const [url] = mockFetch.mock.calls[0]
+    expect(String(url)).toContain('method=circular_shift')
+  })
+
+  it('the circular_shift pill is visibly selected on open, not spearman', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse([]))
+    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
+
+    await userEvent.setup().click(screen.getByRole('button', { name: /Find Correlates/i }))
+    await waitFor(() => screen.getByRole('button', { name: 'circular_shift' }))
+
+    expect(screen.getByRole('button', { name: 'circular_shift' }).className).toContain('on')
+    expect(screen.getByRole('button', { name: 'spearman' }).className).not.toContain('on')
+  })
+})
+
 describe('CorrelatesPanel — circular_shift keeps retrying instead of failing on timeout', () => {
-  it('shows a first-attempt loading message, not shown for the default method', async () => {
+  it('shows a first-attempt loading message, not shown for a non-permutation method', async () => {
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
     const user = await openPanel()
 
@@ -119,12 +159,23 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     expect(screen.getByText(/try spearman/i)).toBeInTheDocument()
   }, 15000)
 
-  it('still fails immediately (no retry) for the default, non-permutation method', async () => {
-    mockFetch.mockRejectedValue(new Error('network error'))
+  it('still fails immediately (no retry) for a non-permutation method', async () => {
+    // CR2 (docs/AUDIT-2026-09-22.md): the panel now defaults to
+    // circular_shift itself, so this no-longer picks that behavior up
+    // "for free" by just opening the panel -- explicitly selects a
+    // fast/parametric method first to exercise the real thing under test
+    // (retry is circular_shift-specific, not a property of whichever
+    // method happens to be the default).
+    mockFetch.mockResolvedValueOnce(jsonResponse([]))
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
 
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /Find Correlates/i }))
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+
+    mockFetch.mockReset()
+    mockFetch.mockRejectedValue(new Error('network error'))
+    await user.click(screen.getByRole('button', { name: 'spearman' }))
 
     expect(await screen.findByText(/check server connection/i)).toBeInTheDocument()
     expect(mockFetch).toHaveBeenCalledTimes(1)
