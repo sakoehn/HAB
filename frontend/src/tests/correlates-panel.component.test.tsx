@@ -4,10 +4,12 @@
  * Component tests for CorrelatesPanel (components/correlates/CorrelatesPanel.tsx)
  * -- covers the circular_shift "keep going" behavior added this session.
  *
- * circular_shift runs a full permutation test (1,000 reshuffles per
- * candidate) and can take minutes to hours on a large family -- long
- * enough that the panel's 10-minute client-side request timeout routinely
- * fires while the server is still legitimately computing in the
+ * circular_shift runs a full permutation test (CR8, docs/AUDIT-2026-09-22.md:
+ * exhaustively over every valid shift beyond the lag window, ~115 of them
+ * at the real n=128, not a tunable sample count) and can still take real
+ * time on a large family -- long enough that the panel's 10-minute
+ * client-side request timeout can fire while the server is still
+ * legitimately computing in the
  * background (correlation_family_endpoint is a synchronous route, run in
  * a thread pool that keeps going even after the client gives up, caching
  * each candidate individually as it's scored). Before this fix, a single

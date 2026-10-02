@@ -149,14 +149,14 @@ class TestSpearmanAtLags:
         assert (best_r, best_lag, best_p, best_n) == (None, None, None, None)
 
 
-# ── _circular_shift_pvalue (CR2, docs/AUDIT.md) ─────────────────────────────
-# Mirrors the established test shapes from the old (still-live but
-# deliberately biased -- see its own docstring) JSON-backend equivalent in
-# tests/test_correlation_output.py, adapted to this version's signature:
-# no `lag` argument, since re-searching the full lag window on every shift
-# (instead of fixing it at the observed best) IS the bias fix CR2 asks for.
+# ── _circular_shift_pvalue (CR2/CR8, docs/AUDIT-2026-09-22.md) ──────────────
+# CR8 replaced random sampling (n_perm draws, a seed) with exhaustive
+# enumeration of the valid shift range -- there is no longer a sample
+# count or seed to pass in, and the function is fully deterministic.
 
-from api.config import CORRELATION_LAGS, PERMUTATION_N  # noqa: E402  (grouped with the math tests, not the top-level imports)
+from api.config import CORRELATION_LAGS  # noqa: E402  (grouped with the math tests, not the top-level imports)
+
+MAX_LAG = max(abs(lag) for lag in CORRELATION_LAGS)  # 6, with the real CORRELATION_LAGS
 
 
 def _best_spearman(ref, cand):
@@ -164,113 +164,178 @@ def _best_spearman(ref, cand):
     return best_r, best_lag
 
 
+def _valid_shift_count(n):
+    """Mirrors _circular_shift_pvalue's own lo/hi math, so tests can predict
+    the exact evaluable count (and therefore the exact minimum p) without
+    reaching into the function's internals."""
+    lo, hi = MAX_LAG + 1, n - MAX_LAG - 1
+    return max(0, hi - lo + 1)
+
+
 class TestCircularShiftPvalue:
-    def test_returns_one_for_fewer_than_three_points(self):
-        assert _circular_shift_pvalue([1.0, 2.0], [1.0, 2.0], observed_r=1.0, n_perm=100, seed=1) == 1.0
+    def test_returns_one_when_series_too_short_for_any_valid_shift(self):
+        # n=12: lo=7, hi=12-7=5 -- lo > hi, no valid shift exists at all.
+        # This used to silently run a statistically meaningless permutation
+        # test on whatever shifts rng.randint(1, n-1) happened to draw
+        # (some of them within the lag buffer); now it correctly refuses.
+        assert _valid_shift_count(12) == 0
+        assert _circular_shift_pvalue(list(range(1, 13)), list(range(1, 13)), observed_r=1.0) == 1.0
 
     def test_pvalue_is_between_zero_and_one(self):
         rng = random.Random(10)
-        ref = [rng.uniform(0, 1) for _ in range(20)]
-        cand = [rng.uniform(0, 1) for _ in range(20)]
+        ref = [rng.uniform(0, 1) for _ in range(40)]
+        cand = [rng.uniform(0, 1) for _ in range(40)]
         r, _lag = _best_spearman(ref, cand)
-        p = _circular_shift_pvalue(ref, cand, r, n_perm=200, seed=42)
+        p = _circular_shift_pvalue(ref, cand, r)
         assert 0.0 <= p <= 1.0
 
-    def test_pvalue_is_reproducible_with_fixed_seed(self):
-        """Same seed, same inputs -> bit-identical p-value -- reproducibility
-        is the documented justification for PERMUTATION_SEED's fixed default."""
+    def test_is_deterministic_same_inputs_always_give_the_same_pvalue(self):
+        """No RNG/seed anymore -- exhaustive enumeration means the same
+        (ref, cand, observed_r) must always produce bit-identical output,
+        not just "reproducible given the same seed" like the old sampling
+        approach was."""
         rng = random.Random(11)
-        ref = [rng.uniform(0, 1) for _ in range(20)]
-        cand = [rng.uniform(0, 1) for _ in range(20)]
+        ref = [rng.uniform(0, 1) for _ in range(40)]
+        cand = [rng.uniform(0, 1) for _ in range(40)]
         r, _lag = _best_spearman(ref, cand)
-        p1 = _circular_shift_pvalue(ref, cand, r, n_perm=200, seed=42)
-        p2 = _circular_shift_pvalue(ref, cand, r, n_perm=200, seed=42)
+        p1 = _circular_shift_pvalue(ref, cand, r)
+        p2 = _circular_shift_pvalue(ref, cand, r)
         assert p1 == p2
 
-    def test_different_seeds_can_give_different_pvalues(self):
-        """Sanity check that the permutation is actually doing something
-        seed-dependent, not silently short-circuiting to a constant."""
-        rng = random.Random(12)
-        ref = [rng.uniform(0, 1) for _ in range(20)]
-        cand = [rng.uniform(0, 1) for _ in range(20)]
-        r, _lag = _best_spearman(ref, cand)
-        pvalues = {_circular_shift_pvalue(ref, cand, r, n_perm=200, seed=s) for s in range(5)}
-        assert len(pvalues) > 1
-
-    def test_perfect_correlation_gives_low_pvalue(self):
-        """A strong, genuine relationship should almost always be
-        significant under permutation -- the observed r should rarely be
-        beaten by a circularly-shifted null.
-
-        Deliberately NOT a self-comparison of any strictly monotonic
-        sequence (a linear ramp, or -- confirmed by direct experiment --
-        even a squared sequence, since Spearman is rank-based and squaring
-        a monotonic sequence preserves its rank order exactly). A
-        circularly-shifted monotonic sequence is still nearly monotonic
-        over most of its length, so re-searching all 9 lags keeps finding
-        high-|r| shifted-null matches far more often than a real "how
-        often does chance alignment this good happen" test should allow
-        (measured p~0.37-0.41 for both, nowhere near low). Real EGC data
-        isn't monotonic -- it fluctuates -- so this is a synthetic-data
-        pitfall, not a real-world validity concern; using a genuinely
-        non-monotonic base series with a tight noisy copy (n=80, so the
-        ~350 shift*lag combinations checked don't have too high a chance
-        of a lucky spurious match at this length -- also confirmed by
-        direct experiment: n=40 gave p as high as 0.09, right at this
-        test's own threshold, purely from that multiple-comparisons luck)
-        sidesteps the self-similarity issue entirely."""
-        rng = random.Random(1)
-        n = 80
-        ref = [rng.uniform(0, 100) for _ in range(n)]
-        cand = [v + rng.uniform(-1, 1) for v in ref]
-        r, _lag = _best_spearman(ref, cand)
-        assert r > 0.99
-        p = _circular_shift_pvalue(ref, cand, r, n_perm=500, seed=42)
-        assert p < 0.1, f"expected a near-perfect correlation to be significant, got p={p}"
+    def test_minimum_possible_pvalue_at_the_real_dataset_size_matches_the_audits_own_1_in_116(self):
+        """CR8's own explicit verify line: 'the smallest possible p is then
+        about 1/116' for a real n=128 series (max|lag|=6 -> 115 evaluable
+        shifts, p=(1+0)/(1+115)). A near-perfect, non-monotonic real
+        relationship should hit exactly that floor, not just 'some small
+        number' -- this pins the EXACT formula, not an approximation of it."""
+        assert _valid_shift_count(128) == 115
+        rng = random.Random(2)
+        ref = [rng.gauss(0, 1) for _ in range(128)]
+        cand = [v + rng.gauss(0, 0.01) for v in ref]  # tight noisy copy, lag 0
+        r, lag = _best_spearman(ref, cand)
+        assert lag == 0
+        assert r > 0.999
+        p = _circular_shift_pvalue(ref, cand, r)
+        assert p == pytest.approx(1 / 116)
 
     def test_pure_noise_gives_high_pvalue_typically(self):
         """Two independent random series should typically NOT be judged
-        significant -- not a hard guarantee for any single seed/sample,
-        but true often enough that a consistently-low p here would
-        indicate the permutation test is broken (e.g. always returning 0)."""
+        significant -- not a hard guarantee for any single draw, but true
+        often enough that a consistently-low p here would indicate the
+        permutation test is broken (e.g. always returning the floor)."""
         rng = random.Random(99)
         ref = [rng.uniform(0, 1) for _ in range(40)]
         cand = [rng.uniform(0, 1) for _ in range(40)]
         r, _lag = _best_spearman(ref, cand)
         if r is None:
             pytest.skip("no valid correlation found for this random draw")
-        p = _circular_shift_pvalue(ref, cand, r, n_perm=500, seed=42)
-        assert p > 0.01, f"expected weak/no correlation between independent noise, got p={p}"
+        p = _circular_shift_pvalue(ref, cand, r)
+        assert p > 0.1, f"expected weak/no correlation between independent noise, got p={p}"
 
-    def test_shift_is_never_zero(self):
-        """A shift of 0 would compare the reference against itself,
-        trivially matching the observed correlation every time and
-        corrupting the null distribution -- rng.randint(1, n-1) inside
-        _circular_shift_pvalue must never draw 0."""
-        rng = random.Random(42)
-        n = 10
-        for _ in range(50):
-            shift = rng.randint(1, n - 1)
-            assert 1 <= shift <= n - 1
+    def test_never_evaluates_a_shift_within_the_lag_search_window(self, monkeypatch):
+        """CR8 issue #1: a shift that small lets the lag search re-create
+        part of the ORIGINAL alignment, so the null it feeds isn't fully
+        destroyed. Spies on every shifted_ref actually passed to the
+        lag-search and decodes which shift amount produced it (ref's
+        values are all distinct, so this is unambiguous) -- proves the
+        exclusion structurally, not just "the result looked plausible"."""
+        import api.correlation_sql as correlation_sql_module
+
+        rng = random.Random(5)
+        n = 30
+        ref = [rng.uniform(0, 1000) for _ in range(n)]  # all distinct w.h.p.
+        cand = [rng.uniform(0, 1) for _ in range(n)]
+
+        real_spearman_at_lags = correlation_sql_module._spearman_at_lags
+        seen_shifts = []
+
+        def spy(a, b, lags, method):
+            if a is not ref and a is not cand:  # a shifted_ref call, not the caller's own best-r lookup
+                for shift in range(n):
+                    if a == ref[shift:] + ref[:shift]:
+                        seen_shifts.append(shift)
+                        break
+            return real_spearman_at_lags(a, b, lags, method)
+
+        monkeypatch.setattr(correlation_sql_module, "_spearman_at_lags", spy)
+        r, _lag = _best_spearman(ref, cand)
+        correlation_sql_module._circular_shift_pvalue(ref, cand, r)
+
+        assert len(seen_shifts) == _valid_shift_count(n)
+        for shift in seen_shifts:
+            assert MAX_LAG < shift < n - MAX_LAG, (
+                f"shift={shift} is within {MAX_LAG} samples of 0 or n={n} -- "
+                f"this shift can re-create part of the real alignment at one "
+                f"of the searched lags and must never be evaluated"
+            )
+
+    def test_pvalue_is_never_exactly_zero(self):
+        """CR8 issue #2: p=(1+extreme)/(1+evaluable) can never be 0, no
+        matter how strong the real correlation is -- confirmed via the
+        same near-perfect fixture that hits the theoretical floor above."""
+        rng = random.Random(2)
+        ref = [rng.gauss(0, 1) for _ in range(128)]
+        cand = [v + rng.gauss(0, 0.01) for v in ref]
+        r, _lag = _best_spearman(ref, cand)
+        p = _circular_shift_pvalue(ref, cand, r)
+        assert p > 0.0
+
+    def test_unscorable_shifts_are_excluded_from_the_denominator_not_counted_as_non_extreme(self, monkeypatch):
+        """CR8 issue #3: a shift where no lag could be scored (perm_r is
+        None) used to still occupy one of the n_perm denominator slots,
+        silently shrinking p for sparse series as if that shift had been a
+        real, scored, non-extreme draw. Stubs _spearman_at_lags to make a
+        known subset of the valid shifts unscorable, and confirms the
+        returned p matches hand-computed (1+extreme)/(1+evaluable) over
+        only the REMAINING (scorable) shifts -- not the full valid range."""
+        import api.correlation_sql as correlation_sql_module
+
+        n = 30
+        valid_count = _valid_shift_count(n)
+        assert valid_count == 17  # lo=7, hi=23 inclusive -> 17 integers
+        ref = list(range(n))
+        cand = list(range(n))
+        real_spearman_at_lags = correlation_sql_module._spearman_at_lags
+
+        call_index = {"i": -1}
+
+        def stub(a, b, lags, method):
+            if a is ref or a is cand:  # the caller's own best-r/lag lookup -- let it through for real
+                return real_spearman_at_lags(a, b, lags, method)
+            call_index["i"] += 1
+            # Every 3rd shift (by iteration order) is "unscorable"; the
+            # rest score as a fixed, known r so the exact count is provable.
+            if call_index["i"] % 3 == 0:
+                return (None, None, None, None)
+            return (0.5, 0, 0.1, 20)  # never >= observed_r=0.9 below -> never "extreme"
+
+        monkeypatch.setattr(correlation_sql_module, "_spearman_at_lags", stub)
+        p = correlation_sql_module._circular_shift_pvalue(ref, cand, observed_r=0.9)
+
+        unscorable = sum(1 for i in range(valid_count) if i % 3 == 0)
+        expected_evaluable = valid_count - unscorable
+        expected_p = (1 + 0) / (1 + expected_evaluable)  # 0.5 never counts as extreme
+        assert p == pytest.approx(expected_p)
+        # Sanity: if the bug were still present (unscorable kept in the
+        # denominator), p would instead equal 1/(1+valid_count), a
+        # different, smaller number for this fixture.
+        assert p != pytest.approx((1 + 0) / (1 + valid_count))
 
     def test_re_searches_all_lags_per_shift_not_fixed_at_observed_best(self):
-        """The actual CR2 bias fix, proven directly by comparison rather
-        than just checking the output is "a valid probability" (which
-        would pass even if the bug were still present). Reconstructs what
-        the OLD, biased approach would have found -- fixing the lag at
-        the observed best on every shift, the exact behavior of the
-        still-live JSON-backend's corrected_pvalue, and the bug the SQL
-        rewrite introduced by dropping it entirely (docs/AUDIT.md CR2) --
-        using the SAME random shifts (same seed) as the real
-        _circular_shift_pvalue call, so the only variable is whether the
-        null re-searches all 9 lags or is fixed at 1.
+        """The CR2 bias fix this function has always had, proven directly
+        by comparison rather than just checking the output is "a valid
+        probability" (which would pass even if the bug were still
+        present). Reconstructs what a fixed-at-observed-lag approach would
+        have found over the SAME exhaustively-enumerated shift range, so
+        the only variable is whether the null re-searches all 9 lags or is
+        fixed at 1.
 
-        This is a provable inequality, not just a typical-case tendency:
-        a per-shift "best of 9 lags" score can never be less extreme than
-        a fixed single lag's score, so full-search's count of
-        as-extreme-as-observed shifts can only be >= the fixed-lag
-        count -- meaning full-search's p-value can never be LOWER
-        (falsely more significant) than the biased version's."""
+        This is a provable inequality, not just a typical-case tendency: a
+        per-shift "best of 9 lags" score can never be less extreme than a
+        fixed single lag's score, so full-search's count of
+        as-extreme-as-observed shifts can only be >= the fixed-lag count
+        -- meaning full-search's p-value can never be LOWER (falsely more
+        significant) than the fixed-lag version's."""
         n = 20
         ref = [(j + 1) ** 2 for j in range(n)]
         cand = [(j + 3) ** 2 for j in range(n)]  # true lag = 2
@@ -278,24 +343,21 @@ class TestCircularShiftPvalue:
         assert observed_lag == 2
         assert observed_r == pytest.approx(1.0)
 
-        n_perm, seed = 500, 42
-        full_search_p = _circular_shift_pvalue(ref, cand, observed_r, n_perm=n_perm, seed=seed)
+        full_search_p = _circular_shift_pvalue(ref, cand, observed_r)
 
-        # Same shift sequence (fresh Random(seed), same single randint
-        # call per iteration), but only ever scored at the one observed
-        # lag -- reuses _spearman_at_lags with a one-element lags list so
-        # the windowing/filtering logic isn't duplicated here.
-        rng = random.Random(seed)
-        fixed_lag_extreme = 0
-        for _ in range(n_perm):
-            shift = rng.randint(1, n - 1)
+        lo, hi = MAX_LAG + 1, n - MAX_LAG - 1
+        fixed_lag_extreme, fixed_lag_evaluable = 0, 0
+        for shift in range(lo, hi + 1):
             shifted_ref = ref[shift:] + ref[:shift]
             fixed_r, _fixed_lag, _fixed_p, _fixed_n = _spearman_at_lags(
                 shifted_ref, cand, [observed_lag], "spearman"
             )
-            if fixed_r is not None and abs(fixed_r) >= abs(observed_r):
+            if fixed_r is None:
+                continue
+            fixed_lag_evaluable += 1
+            if abs(fixed_r) >= abs(observed_r):
                 fixed_lag_extreme += 1
-        fixed_lag_p = fixed_lag_extreme / n_perm
+        fixed_lag_p = (1 + fixed_lag_extreme) / (1 + fixed_lag_evaluable)
 
         assert full_search_p >= fixed_lag_p, (
             f"full re-search p ({full_search_p}) is lower than the "
@@ -313,22 +375,36 @@ class TestScorePairCircularShift:
         cand = list(range(1, 9))
         assert score_pair(ref, cand, "circular_shift") is None
 
-    def test_p_is_not_bonferroni_scaled(self):
+    def test_p_is_not_bonferroni_scaled(self, monkeypatch):
         """The whole point of CR2: circular_shift's returned p must be the
-        raw permutation fraction, not run through _bonferroni_correct like
-        every other method -- a permutation p-value is always a multiple
-        of 1/PERMUTATION_N (see api/config.py), which a
-        Bonferroni-multiplied parametric p-value essentially never is."""
+        raw permutation fraction, never run through _bonferroni_correct
+        like every other method -- confirmed directly by spying on
+        _bonferroni_correct itself, rather than inferring it from the
+        shape of the number (CR8 made evaluable-count, and therefore the
+        p-value's granularity, data-dependent, so "not a clean fraction"
+        is no longer a reliable signal on its own)."""
+        import api.correlation_sql as correlation_sql_module
+
+        calls = []
+        real_bonferroni = correlation_sql_module._bonferroni_correct
+        monkeypatch.setattr(
+            correlation_sql_module, "_bonferroni_correct",
+            lambda p, n: calls.append((p, n)) or real_bonferroni(p, n),
+        )
+
         rng = random.Random(7)
-        ref = [rng.uniform(1, 100) for _ in range(20)]
-        cand = [rng.uniform(1, 100) for _ in range(20)]
+        ref = [rng.uniform(1, 100) for _ in range(40)]
+        cand = [rng.uniform(1, 100) for _ in range(40)]
 
         result = score_pair(ref, cand, "circular_shift")
         assert result is not None
-        _r, p, _lag, _n = result
+        assert calls == [], f"_bonferroni_correct was called for circular_shift: {calls}"
 
-        scaled = p * PERMUTATION_N
-        assert abs(scaled - round(scaled)) < 1e-9, f"p={p} isn't a clean multiple of 1/{PERMUTATION_N}"
+        # Confirm the spy itself actually fires for a non-circular_shift
+        # method, so an empty `calls` above means "correctly skipped", not
+        # "the spy never gets exercised at all".
+        score_pair(ref, cand, "spearman")
+        assert len(calls) == 1
 
     def test_returns_valid_shape(self):
         ref = list(range(1, 21))
@@ -351,8 +427,8 @@ class TestCR2FalsePositiveRateSimulation:
     simulation measured ~51% under the OLD parametric significance gate at
     phi=0.85, n=128 -- this reproduces that exact scenario (independent
     AR(1) series, same autocorrelation strength, same sample count) against
-    circular_shift instead, to give a real measured answer rather than
-    assume the fix works because the mechanism sounds right.
+    the CR8-fixed circular_shift, to give a real measured answer rather
+    than assume the fix works because the mechanism sounds right.
     """
 
     @pytest.mark.slow
@@ -364,11 +440,12 @@ class TestCR2FalsePositiveRateSimulation:
                 x.append(phi * x[-1] + rng.gauss(0, 1))
             return x
 
-        # n_perm=200 here (not PERMUTATION_N=1000, the real default) to
-        # keep this runnable in well under a minute -- confirmed by timing
-        # one pair first (n=128, n_perm=200 ~0.37s; ~150 pairs ~55s total).
-        # Still gives p-values with 1/200 resolution, plenty to tell
-        # "far below 5%" apart from "not."
+        # Exhaustive enumeration over 115 real valid shifts (n=128) per
+        # pair, not a tunable sample count -- measured directly: 150 pairs
+        # ~53s total (~0.36s/pair), about the same wall-clock cost as the
+        # old n_perm=200 sampling it replaces (fewer shifts, but each one
+        # still runs the full 9-lag search, so the per-shift cost is what
+        # dominates, not the shift count).
         n_pairs = 150
         pvalues = []
         for i in range(n_pairs):
@@ -377,7 +454,7 @@ class TestCR2FalsePositiveRateSimulation:
             r, _lag, _p, _n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, "spearman")
             if r is None:
                 continue
-            pvalues.append(_circular_shift_pvalue(ref, cand, r, n_perm=200, seed=42))
+            pvalues.append(_circular_shift_pvalue(ref, cand, r))
 
         from statsmodels.stats.multitest import multipletests
         _reject, qvalues, _, _ = multipletests(pvalues, alpha=0.05, method="fdr_bh")
@@ -389,4 +466,56 @@ class TestCR2FalsePositiveRateSimulation:
             f"simulation measured ~51% under the old parametric gate at these "
             f"exact same parameters, so this is the real scenario CR2 describes, "
             f"not a synthetic stand-in for it."
+        )
+
+    @pytest.mark.slow
+    def test_ar1_pairs_also_measures_power_not_just_the_false_positive_rate(self):
+        """Re-audit checklist (docs/AUDIT-2026-09-22.md, 'Tests' section):
+        'The CR2 simulation also measures power (the fraction of true
+        correlates detected)' -- the false-positive test above only proves
+        the gate isn't too loose; this proves it isn't so strict it also
+        throws away real signal.
+
+        cand = ref + scaled independent AR(1) noise (both autocorrelated,
+        same phi, matching the false-positive test's own noise structure)
+        -- a real, moderate relationship, not a trivial r=1.0 self-copy.
+        noise_scale=0.2 was picked by direct measurement (not guessed): 30
+        draws at this scale gave r in [0.65, 0.98], mean 0.89, never
+        negative -- a consistently real, but not perfect, signal. (An
+        earlier version of this test built cand via its OWN separate AR(1)
+        recursion driven by ref, which could numerically blow up or
+        decorrelate entirely depending on seed -- measured 0% power from
+        that construction, not because circular_shift was broken, but
+        because the fixture itself sometimes had no real relationship to
+        detect. This additive-noise construction was verified not to have
+        that problem.)"""
+        def ar1(n, phi, seed):
+            rng = random.Random(seed)
+            x = [rng.gauss(0, 1)]
+            for _ in range(n - 1):
+                x.append(phi * x[-1] + rng.gauss(0, 1))
+            return x
+
+        n_pairs = 150
+        pvalues = []
+        for i in range(n_pairs):
+            ref = ar1(128, 0.85, seed=3000 + 2 * i)
+            noise = ar1(128, 0.85, seed=3000 + 2 * i + 1)
+            cand = [r + 0.2 * nz for r, nz in zip(ref, noise)]
+            r, _lag, _p, _n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, "spearman")
+            if r is None:
+                continue
+            pvalues.append(_circular_shift_pvalue(ref, cand, r))
+
+        from statsmodels.stats.multitest import multipletests
+        _reject, qvalues, _, _ = multipletests(pvalues, alpha=0.05, method="fdr_bh")
+        power = sum(q < 0.05 for q in qvalues) / len(qvalues)
+
+        assert power >= 0.8, (
+            f"only {power:.1%} of {len(qvalues)} genuinely-related AR(1) pairs "
+            f"(phi=0.85, cand=ref+0.2*independent AR(1) noise) passed q<0.05 -- "
+            f"a correctly-calibrated gate must still detect most real "
+            f"relationships, not just reject unrelated noise. A gate that "
+            f"rejects everything would trivially pass the false-positive test "
+            f"above while being useless."
         )

@@ -215,9 +215,10 @@ export type CorrelationFamilyResult = {
 // prescreened=true means method=circular_shift was run only against the
 // prescreen_top_n strongest candidates (by a fast method) out of
 // prescreen_pool_size real candidates in the family, not the whole
-// family -- circular_shift is ~900x slower per candidate than a
-// parametric method (measured against the real db), so scoring a
-// multi-thousand-candidate family in full is hours of work. When false,
+// family -- circular_shift is ~120x slower per candidate than a
+// parametric method (measured against the real db, post-CR8 fix -- see
+// docs/AUDIT-2026-09-22.md), so scoring a multi-thousand-candidate family
+// in full is still real work, not an instant pass. When false,
 // prescreen_pool_size/prescreen_top_n are both null.
 export type CorrelationFamilyResponse = {
   results:           CorrelationFamilyResult[]

@@ -82,12 +82,19 @@ export function CorrelatesPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetSource, method, metric])
 
-  // circular_shift runs a real permutation test per candidate (1,000
-  // reshuffles x 9 lags each) instead of one parametric pass -- measured
-  // directly against the real db at ~900x slower per candidate than the
-  // default method (spearman: 4ms/pair, circular_shift: 3.6s/pair). A
-  // large family can take hours, not minutes, to fully populate its
-  // cache. correlation_family_endpoint is a synchronous route, which
+  // circular_shift runs a real permutation test per candidate (CR8,
+  // docs/AUDIT-2026-09-22.md: exhaustively over every valid shift beyond
+  // the lag window, ~115 of them at the real n=128 x 9 lags each, not a
+  // tunable sample count) instead of one parametric pass -- measured
+  // directly against the real db at ~120x slower per candidate than the
+  // default method (spearman: ~3ms/pair, circular_shift: ~0.38s/pair --
+  // down from ~3.6s/pair pre-CR8, since enumerating only the real valid
+  // shifts is both more correct and cheaper than the old 1000-draw random
+  // sample). With prescreening capping this to the strongest 200
+  // candidates, a worst-case family now finishes in well under 2 minutes,
+  // not hours -- the retry affordance below still exists as a safety net
+  // for a slow cold cache, not because this is routinely multi-hour work
+  // anymore. correlation_family_endpoint is a synchronous route, which
   // FastAPI runs in a background thread -- so even after this request's
   // own timeout fires, the server keeps scoring candidates and caching
   // each one individually. A client-side timeout here is therefore not a

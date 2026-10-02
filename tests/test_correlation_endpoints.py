@@ -163,7 +163,13 @@ def circular_shift_client(tmp_path, monkeypatch):
     # id 6: real, strongly-correlated data -- the positive-path case.
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (6, 'kegg', 'K00006')")
 
-    samples = [f"s{i:02d}" for i in range(1, 13)]  # 12 samples, above the 10-point floor
+    # CR8 (docs/AUDIT-2026-09-22.md): 30, not 12 -- max|lag|=6 leaves no
+    # valid interior shift at n=12 post-fix (see test_correlation_math.py's
+    # TestCircularShiftPvalue), which would make every p-value in this
+    # fixture a trivial, uninformative 1.0 regardless of how strong the
+    # real relationship is. 30 gives 17 valid shifts, enough for this
+    # fixture's near-noiseless copy to demonstrate a real low p.
+    samples = [f"s{i:02d}" for i in range(1, 31)]
     for i, sample in enumerate(samples):
         wobble = 3.0 * ((i % 3) - 1)  # non-monotonic, avoids the shift/re-lag self-similarity pitfall
         conn.execute(
@@ -214,8 +220,13 @@ class TestCorrelationEndpointCircularShift:
         body = response.json()
         assert body is not None
         assert body["r"] > 0.9  # near-noiseless copy, ids 1 and 6 -- see fixture
-        assert 0.0 <= body["p"] <= 1.0
-        assert body["n_pairs"] == 12
+        # CR8 (docs/AUDIT-2026-09-22.md): with 30 samples (17 valid shifts),
+        # a near-noiseless copy should hit the real permutation floor,
+        # (1+0)/(1+17) = 1/18 -- not just "some value between 0 and 1",
+        # which would also trivially pass if p were always the unfixed
+        # 1.0 default this fixture used to be too small to tell apart from.
+        assert body["p"] == pytest.approx(1 / 18)
+        assert body["n_pairs"] == 24  # best lag=6 trims the 30-sample window to 24
 
     def test_result_is_cached_and_a_repeat_request_is_a_hit(self, circular_shift_client):
         first = circular_shift_client.get(
@@ -461,7 +472,16 @@ def prescreen_client(tmp_path, monkeypatch):
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (2, 'kegg', 'K00002')")  # strong
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (3, 'kegg', 'K00003')")  # weak/none
 
-    samples = [f"s{i:02d}" for i in range(1, 13)]
+    # CR8 (docs/AUDIT-2026-09-22.md): 40, not 12 -- same reasoning as
+    # circular_shift_client above, but these prescreen tests additionally
+    # gate on the q<0.05 SIGNIFICANCE of the surviving candidate after
+    # circular_shift scores it, not just on which candidate the fast
+    # pre-screen keeps. At n=12 (no valid shift) or even n=30 (17 valid
+    # shifts, floor p=1/18=0.056) K00002 would be correctly prescreened-in
+    # but could never clear q<0.05 regardless -- measured directly: n=40
+    # gives this fixture's near-noiseless copy a real p=0.036, the
+    # smallest n (in steps of 10) that actually clears the gate.
+    samples = [f"s{i:02d}" for i in range(1, 41)]
     for i, sample in enumerate(samples):
         wobble = 3.0 * ((i % 3) - 1)
         conn.execute(
@@ -488,10 +508,11 @@ def prescreen_client(tmp_path, monkeypatch):
 
 
 class TestCorrelationFamilyPrescreen:
-    # circular_shift is ~900x slower per candidate than a parametric
-    # method (measured directly against the real db), so a real family
-    # (thousands of candidates) is hours of work if scored in full.
-    # correlation_family_endpoint pre-filters to the strongest
+    # circular_shift is ~120x slower per candidate than a parametric
+    # method (measured directly against the real db, post-CR8 -- was
+    # ~900x pre-fix), so a real family (thousands of candidates) is still
+    # real work if scored in full, just not the hours-scale cost it used
+    # to be. correlation_family_endpoint pre-filters to the strongest
     # CIRCULAR_SHIFT_SCREEN_TOP_N candidates by a fast method first, then
     # only runs the expensive permutation test on those -- monkeypatched
     # down to 1 here so a 2-real-candidate fixture can exercise the real

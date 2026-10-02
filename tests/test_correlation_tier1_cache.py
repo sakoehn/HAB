@@ -405,6 +405,15 @@ class TestCircularShiftMethod:
     # fraction (never Bonferroni-scaled, unlike every other method -- see
     # score_pair), and that it shares the cache table safely alongside
     # the other 3 methods without ever colliding on the same row.
+    #
+    # CR8 (docs/AUDIT-2026-09-22.md): the module-level SAMPLES (12 points)
+    # that every other test class in this file uses is deliberately too
+    # short for circular_shift's fixed null post-fix -- max|lag|=6 leaves
+    # NO valid interior shift at n=12 (see test_correlation_math.py's
+    # TestCircularShiftPvalue for the exact boundary), so a meaningful
+    # permutation p-value needs its own larger sample set here.
+
+    BIG_SAMPLES = [f"s{i:02d}" for i in range(1, 31)]  # 30 -- 17 valid shifts
 
     def test_computes_and_caches_a_real_result(self, conn):
         insert_catalog(conn, 1, "kegg", "K00001")
@@ -414,7 +423,7 @@ class TestCircularShiftMethod:
         # test_correlation_math.py's test_perfect_correlation_gives_low_pvalue
         # for the full explanation); a near-noiseless copy still gives a
         # very strong real relationship to detect.
-        base = {s: 10.0 + i + 3.0 * ((i % 3) - 1) for i, s in enumerate(SAMPLES)}
+        base = {s: 10.0 + i + 3.0 * ((i % 3) - 1) for i, s in enumerate(self.BIG_SAMPLES)}
         copy = {s: v + 0.05 for s, v in base.items()}
         insert_series(conn, "kegg", "K00001", base)
         insert_series(conn, "kegg", "K00002", copy)
@@ -430,12 +439,31 @@ class TestCircularShiftMethod:
         ).fetchone()
         assert row is not None
         assert row[2] == "circular_shift"
-        # The actual point of CR2: this p-value must be a clean multiple
-        # of 1/PERMUTATION_N (1000, see api/config.py) -- a Bonferroni-
-        # multiplied parametric p-value essentially never lands exactly
-        # on one of those 1000 possible fractions.
-        scaled = row[1] * 1000
-        assert abs(scaled - round(scaled)) < 1e-9, f"p_value={row[1]} isn't a clean multiple of 1/1000"
+        # CR8's exact formula at this fixture's real size (30 samples, 17
+        # valid shifts): a near-perfect, non-monotonic relationship should
+        # hit the floor, (1+0)/(1+17) = 1/18 -- not just "some small p".
+        assert row[1] == pytest.approx(1 / 18)
+
+    def test_too_few_samples_for_any_valid_shift_returns_p_one_not_a_bogus_fraction(self, conn):
+        """CR8's other edge, exercised through the real cache layer this
+        time: with the module-level 12-sample fixture every other test
+        class in this file relies on, there is no valid interior shift at
+        all (lo=7 > hi=5) -- the pre-fix code would have still drawn 1000
+        random shifts from [1, 11] (some of them inside the lag buffer)
+        and reported a misleadingly precise-looking fraction. Post-fix,
+        this must come back as exactly 1.0, not some arbitrary number."""
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        base = {s: 10.0 + i + 3.0 * ((i % 3) - 1) for i, s in enumerate(SAMPLES)}
+        copy = {s: v + 0.05 for s, v in base.items()}
+        insert_series(conn, "kegg", "K00001", base)
+        insert_series(conn, "kegg", "K00002", copy)
+
+        result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="circular_shift")
+
+        assert result is not None
+        assert result["r"] > 0.9  # the r statistic itself is unaffected -- only p defaults to 1.0
+        assert result["p"] == 1.0
 
     def test_constant_candidate_returns_none_not_crash(self, conn):
         """CR4 x CR2 composition, at the cache layer: the same

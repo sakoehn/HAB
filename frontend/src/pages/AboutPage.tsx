@@ -185,7 +185,7 @@ export function AboutPage() {
                 padding:     '2px 6px',
                 borderRadius: 4,
               }}>
-                4 methods: raw Pearson · log-Pearson · Spearman · Spearman with a circular-shift permutation p-value (n=1000, seed=42) · Benjamini-Hochberg across the family, q &lt; 0.05
+                4 methods: raw Pearson · log-Pearson · Spearman · Spearman with a circular-shift permutation p-value (exhaustive over every valid shift beyond the lag window, deterministic, no sample count or seed) · Benjamini-Hochberg across the family, q &lt; 0.05
               </code>
               <br />
               <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>

@@ -582,7 +582,7 @@ const ABOUT_CALC_TEXT = `
   LOWESS Smoothing
   local weighted linear regression span = ceil(bandwidth × n) tricube kernel
   Spearman CLR Correlation
-  CLR-transformed EGC circular-shift permutation n=1000 seed=42
+  CLR-transformed EGC circular-shift permutation exhaustive over every valid shift, deterministic
   Descriptive Statistics
   Q1 Q3 Type 7 linear interpolation n−1 Bessel-corrected scaffold coverage
 `
@@ -620,9 +620,15 @@ describe('About page — calculations section content', () => {
     expect(ABOUT_CALC_TEXT).toContain('CLR')
   })
 
-  it('permutation test parameters are cited (reproducibility)', () => {
-    expect(ABOUT_CALC_TEXT).toContain('n=1000')
-    expect(ABOUT_CALC_TEXT).toContain('seed=42')
+  // CR8 (docs/AUDIT-2026-09-22.md): the permutation test is now exhaustive
+  // over every valid shift (no sample count or seed to configure/cite --
+  // see FastAPI/api/correlation_sql.py::_circular_shift_pvalue), replacing
+  // the old n=1000/seed=42 random-sampling scheme this test used to pin.
+  it('the permutation test is described as deterministic/exhaustive, not as a tunable sample+seed', () => {
+    expect(ABOUT_CALC_TEXT).toContain('exhaustive')
+    expect(ABOUT_CALC_TEXT).toContain('deterministic')
+    expect(ABOUT_CALC_TEXT).not.toContain('n=1000')
+    expect(ABOUT_CALC_TEXT).not.toContain('seed=42')
   })
 
   it('Bessel correction is mentioned for sample std dev', () => {

@@ -1,6 +1,5 @@
 import math
 import numpy as np
-import random
 import threading
 from scipy import stats
 import os
@@ -15,7 +14,7 @@ from api.config import SQLITE_DB_PATH
 
 from .cache import AnnotationSource
 from .cache_sql import _kegg_node_depth, KEGG_LEVEL_COLUMNS
-from .config import CORRELATION_LAGS, LAG_HOURS_PER_SAMPLE, PERMUTATION_N, PERMUTATION_SEED
+from .config import CORRELATION_LAGS, LAG_HOURS_PER_SAMPLE
 from .correlation_loaders import (
     load_vector,
     load_sample_order,
@@ -341,7 +340,7 @@ def core_scoring(vec_a: list[float], vec_b: list[float], method: str):
         return None
     return (r, pval, len(a))
 
-def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], observed_r: float, n_perm: int, seed: int) -> float:
+def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], observed_r: float) -> float:
     """
     Circular block-shift permutation p-value for CR2 (docs/AUDIT.md): the
     parametric p-value from scipy.stats.pearsonr assumes every timepoint
@@ -353,14 +352,40 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
     while destroying any real cross-series relationship, which is exactly
     the null this test needs.
 
-    Re-searches the FULL CORRELATION_LAGS window on every one of n_perm
-    shifts, instead of fixing the lag at the observed best -- comparing a
-    best-of-9-lags observed statistic against a not-best-of-9 null
-    understates the true p-value (the same lag-search bias the old,
-    since-removed migrate_correlations_to_sql.py's corrected_pvalue was
-    built to avoid). This also means the multi-lag multiplicity is
-    already accounted for in the null itself -- the caller must NOT
+    Re-searches the FULL CORRELATION_LAGS window on every shift, instead
+    of fixing the lag at the observed best -- comparing a best-of-9-lags
+    observed statistic against a not-best-of-9 null understates the true
+    p-value (the same lag-search bias the old, since-removed
+    migrate_correlations_to_sql.py's corrected_pvalue was built to
+    avoid). This also means the multi-lag multiplicity is already
+    accounted for in the null itself -- the caller must NOT
     Bonferroni-correct this p-value afterward (see score_pair).
+
+    CR8 (docs/AUDIT-2026-09-22.md) fix -- this used to draw n_perm=1000
+    RANDOM shifts from the full [1, n-1] range, which had four compounding
+    problems, all fixed by enumerating the valid range exhaustively
+    instead of sampling it:
+      1. A random draw could land on (or within) one of CORRELATION_LAGS'
+         own lags (max|lag|=6) -- a shift that small re-creates part of
+         the original alignment at the lag search's own window, so the
+         null it feeds isn't fully destroyed. Now only shifts strictly
+         beyond every searched lag at BOTH ends are ever considered.
+      2. `count / n_perm` could be exactly 0 -- a p-value of exactly 0
+         isn't defensible from any finite permutation test. Smoothed to
+         (1 + extreme) / (1 + evaluable), per the audit's own formula --
+         never zero, and the denominator reflects what was actually
+         evaluable, not a hardcoded target count.
+      3. A shift where no lag could be scored (e.g. too few co-observed
+         points after a circular shift exposes a gap run) still counted
+         toward the denominator as if it were a normal non-extreme draw
+         -- silently shrinking the effective p for sparse series. Now
+         excluded from both the numerator and denominator.
+      4. With a real n=128 series there are only 127 *possible* shifts
+         (115 after excluding the lag buffer at both ends) -- sampling
+         1000 draws WITH replacement implied far more precision than the
+         test actually has, and most of those 1000 draws were redundant.
+         Enumerating the valid range exactly once is both more correct
+         and (115 vs 1000 lag-searches) substantially cheaper.
 
     Args:
         ref: Full aligned reference vector (raw values, None gaps
@@ -374,26 +399,34 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
             convention).
         observed_r: The real (unshifted) best-lag Spearman r, already
             computed by the caller.
-        n_perm: Number of random circular shifts to try.
-        seed: RNG seed, for reproducible p-values.
 
     Returns:
-        Fraction of shifts whose best-of-9-lags |r| >= |observed_r|.
+        (1 + #shifts at least as extreme as observed_r) / (1 + #evaluable
+        shifts), where "evaluable" excludes any shift where no lag had
+        enough co-observed points to score. 1.0 if no shift in the valid
+        range was evaluable at all (series too short for this null to
+        mean anything, e.g. n <= 2*max_lag + 1).
     """
     n = len(ref)
-    if n < 3:
+    max_lag = max(abs(lag) for lag in CORRELATION_LAGS)
+    lo, hi = max_lag + 1, n - max_lag - 1  # inclusive bounds on a valid shift
+    if lo > hi:
         return 1.0
 
-    rng = random.Random(seed)
     count_as_extreme = 0
-    for _ in range(n_perm):
-        shift = rng.randint(1, n - 1)
+    evaluable = 0
+    for shift in range(lo, hi + 1):
         shifted_ref = ref[shift:] + ref[:shift]
         perm_r, _perm_lag, _perm_p, _perm_n = _spearman_at_lags(shifted_ref, cand, CORRELATION_LAGS, "spearman")
-        if perm_r is not None and abs(perm_r) >= abs(observed_r):
+        if perm_r is None:
+            continue
+        evaluable += 1
+        if abs(perm_r) >= abs(observed_r):
             count_as_extreme += 1
 
-    return count_as_extreme / n_perm
+    if evaluable == 0:
+        return 1.0
+    return (1 + count_as_extreme) / (1 + evaluable)
 
 
 def score_pair(ref: list[float], cand: list[float], method):
@@ -405,7 +438,7 @@ def score_pair(ref: list[float], cand: list[float], method):
         best_r, best_lag, _best_p, best_n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, "spearman")
         if best_r is None or best_lag is None:
             return None
-        perm_p = _circular_shift_pvalue(ref, cand, best_r, PERMUTATION_N, PERMUTATION_SEED)
+        perm_p = _circular_shift_pvalue(ref, cand, best_r)
         return best_r, perm_p, best_lag, best_n
 
     best_r, best_lag, best_p, best_n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, method)
@@ -513,12 +546,14 @@ def correlate_endpoint(catalog_id_a: int, catalog_id_b: int, metric: str, method
 
 # ── Endpoint: Tier 2, family + FDR ────────────────────────────────
 
-# circular_shift is ~900x slower per candidate than a parametric method
-# (measured: spearman 4ms/pair, circular_shift 3.6s/pair against the real
-# db) -- a real family (measured against this database, COG0055 as
-# reference) is 3,500-13,000 candidates, so running the full permutation
-# test on every one of them is 3.5-13 hours even fully cold, longer than
-# is practical to wait for even with retries. Pre-filtering to the
+# circular_shift is ~120x slower per candidate than a parametric method
+# (measured: spearman ~3ms/pair, circular_shift ~0.38s/pair against the
+# real db, post-CR8 fix -- docs/AUDIT-2026-09-22.md; was ~900x/3.6s/pair
+# pre-fix, since enumerating only the real valid shifts replaced 1000
+# random draws) -- a real family (measured against this database, COG0055
+# as reference) is 3,500-13,000 candidates, so running the full
+# permutation test on every one of them is still ~22-82 minutes even
+# fully cold, not instant. Pre-filtering to the
 # strongest candidates by the fast method first, then running the
 # expensive permutation test only on those, cuts that to minutes while
 # only formally (permutation-)testing the candidates most likely to be

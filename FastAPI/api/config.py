@@ -71,8 +71,11 @@ TIDE_SHIFT_HOURS = 1
 CORRELATION_LAGS    = [0, 1, -1, 2, -2, 3, -3, 6, -6]
 LAG_HOURS_PER_SAMPLE = 4
 
-PERMUTATION_N    = 1000
-PERMUTATION_SEED = 42
+# CR8 (docs/AUDIT-2026-09-22.md): circular_shift's null used to be built
+# from PERMUTATION_N=1000 randomly-drawn shifts -- replaced by enumerating
+# the valid shift range exhaustively (see _circular_shift_pvalue in
+# correlation_sql.py), so there is no longer a sample count or seed to
+# configure here.
 
 # ── Data backend selection ────────────────────────────────────────────────────
 #
