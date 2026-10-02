@@ -67,12 +67,13 @@ def test_kegg_path_unknown_id_returns_404(client):
 # for up to 200 rows at once, not one id-at-a-time call per row.
 
 def test_kegg_parents_bulk_resolves_multiparent_node_to_all_its_real_immediate_parents(client):
-    """K00844's 14 real paths (see test above) share only 10 distinct
-    immediate (C-level) parents -- some of those 14 pathways nest under
-    the same C-level node via different B/A ancestors. This confirms the
-    bulk endpoint returns every DISTINCT immediate parent, matching the
-    set of 3rd-from-last nodes across get_kegg_path_sql's own 14 paths,
-    not a re-derived or hardcoded count."""
+    """K00844's 14 real paths (see test above) each have their own
+    distinct C-level immediate parent (14 of 14, confirmed directly
+    against the real db -- no two of those 14 pathways happen to nest
+    under the same C-level node here). This confirms the bulk endpoint
+    returns every one of them, matching the set of 3rd-from-last nodes
+    across get_kegg_path_sql's own 14 paths, not a re-derived or
+    hardcoded count."""
     path_resp = client.get("/kegg/path", params={"id": "K00844"})
     assert path_resp.status_code == 200
     expected_immediate_parents = {path[-2]["annotation_id"] for path in path_resp.json()["paths"]}
@@ -91,7 +92,7 @@ def test_kegg_parents_bulk_resolves_multiple_ids_in_one_request(client):
     body = resp.json()["parents"]
     assert "K00844" in body and len(body["K00844"]) > 1
     assert body["COG0001_NOT_KEGG"] == []  # not a real kegg id -- empty, not missing or an error
-    assert "00010" in body  # a real C-level pathway, resolves to its own B-level parent
+    assert len(body["00010"]) > 0  # a real C-level pathway -- genuinely resolves to its own B-level parent, not just present-but-empty
 
 
 def test_kegg_parents_bulk_every_requested_id_is_present_in_the_response(client):

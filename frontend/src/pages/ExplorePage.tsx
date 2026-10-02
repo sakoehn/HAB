@@ -1060,10 +1060,18 @@ export function ExplorePage({
 
   useEffect(() => {
     const sel = state.lookupSelected
+    // Bumped unconditionally (not just on the branch that actually
+    // fetches) so a fetch started while this effect last ran for kegg
+    // can never be mistaken for current after a later run bails out
+    // early (switched away from kegg, or no selection) -- without this,
+    // that early return would leave the ref exactly where the in-flight
+    // fetch left it, so its eventual resolution would still pass the
+    // "is this still current" check below even though the state it was
+    // for is no longer active.
+    const requestId = ++lookupParentsSeqRef.current
     setLookupKeggParents(null)
     if (!sel || effectiveLookupSource !== 'kegg') return
 
-    const requestId = ++lookupParentsSeqRef.current
     apiFetch<HierarchyPathResponse>(`/api/kegg/path?id=${encodeURIComponent(sel.annotation_id)}`)
       .then(r => {
         if (requestId !== lookupParentsSeqRef.current) return // superseded by a newer selection

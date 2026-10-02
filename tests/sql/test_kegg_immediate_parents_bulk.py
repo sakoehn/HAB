@@ -85,6 +85,17 @@ def test_c_level_node_resolves_to_its_own_b_level_parent(conn):
 
 
 def test_a_level_root_has_no_parent(conn):
+    # Confirm "09100" is genuinely a real A-level id in this fixture (not
+    # just absent from the table entirely, which would trivially also
+    # return [] via test_unknown_id_returns_empty_list_not_a_missing_key's
+    # same code path) -- the function has no depth=1 iteration because an
+    # A-level root has nothing above it, so this is the one id value this
+    # fixture asserts is real without ever appearing in a d_id/c_id/b_id
+    # column.
+    assert conn.execute("SELECT 1 FROM kegg_paths WHERE a_id = '09100'").fetchone() is not None
+    for col in ("d_id", "c_id", "b_id"):
+        assert conn.execute(f"SELECT 1 FROM kegg_paths WHERE {col} = '09100'").fetchone() is None
+
     result = get_kegg_immediate_parents_bulk_sql(conn, ["09100"])
     assert result["09100"] == []
 

@@ -380,4 +380,73 @@ describe('AnnotationsByParentPanel — files a multi-parent KO under every real 
     await waitFor(() => expect(screen.getByText('Custom Group')).toBeInTheDocument())
     expect(mockFetch.mock.calls.some(([u]) => String(u).includes('/api/kegg/parents'))).toBe(false)
   })
+
+  // The existing W29 race test (above) covers a stale response superseded
+  // at the FIRST fetch (/api/annotations/top). This covers the other new
+  // await this fix introduced: a kegg request that already committed its
+  // allRows/loadedSource, then gets superseded WHILE still awaiting its
+  // own /api/kegg/parents call. The panel's `status` stays 'loading'
+  // across that whole await specifically so nothing stale can render in
+  // between -- this proves the late-resolving kegg parents response can't
+  // corrupt or overwrite the newer (cog) request's already-shown result.
+  // The existing W29 race test (above) and the cross-source variant below
+  // both supersede with a DIFFERENT source -- loadedSource ends up !=
+  // 'kegg', so the grouping logic's own `if (loadedSource === 'kegg')`
+  // branch never even reads multiParents, masking a missing requestId
+  // check there regardless of whether it's present. This variant keeps
+  // the source the SAME (kegg) across both requests specifically so a
+  // missing check would be directly visible: setMultiParents replaces
+  // the whole object (not a merge), so a late, stale K01-only response
+  // landing after the real K02-only response would wipe out K02's entry
+  // entirely, and K02 would incorrectly fall back to "Ungrouped".
+  it('a stale kegg request\'s LATE /api/kegg/parents response cannot overwrite a later kegg request\'s own result', async () => {
+    let resolveStaleParents!: (v: unknown) => void
+    const staleParentsPending = new Promise(resolve => { resolveStaleParents = resolve })
+    let keggTopCall = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top') && url.includes('source=kegg')) {
+        keggTopCall += 1
+        // 1st kegg load -> K01 (whose /kegg/parents call is parked below).
+        // 2nd kegg load (after bouncing through cog) -> K02, a different row.
+        return Promise.resolve(jsonResponse({
+          data: [keggTopCall === 1 ? makeRow('K01', 'irrelevant', 100) : makeRow('K02', 'irrelevant', 50)],
+        }))
+      }
+      if (url.includes('/api/kegg/parents')) {
+        return url.includes('ids=K01') ? staleParentsPending
+          : Promise.resolve(jsonResponse({ parents: { K02: [{ annotation_id: 'B', name: 'Group B' }] } }))
+      }
+      if (url.includes('/api/annotations/top') && url.includes('source=cog'))
+        return Promise.resolve(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    const { rerender } = render(<AnnotationsByParentPanel source="kegg" />)
+    // Wait for K01's /api/annotations/top to actually resolve and its own
+    // /api/kegg/parents call to actually START (parked pending) BEFORE
+    // switching source -- otherwise K01's request can go stale before it
+    // even reaches its own kegg/parents call, never exercising the race
+    // this test exists to catch at all.
+    await waitFor(() => {
+      expect(mockFetch.mock.calls.some(([u]) => String(u).includes('ids=K01'))).toBe(true)
+    })
+
+    // Bounce through cog and back to kegg -- a brand new kegg request
+    // (K02) starts and fully completes (real Group B grouping shown)
+    // while K01's parents call is still stuck.
+    rerender(<AnnotationsByParentPanel source="cog" />)
+    await waitFor(() => expect(screen.getByText('Custom Group')).toBeInTheDocument())
+    rerender(<AnnotationsByParentPanel source="kegg" />)
+    await waitFor(() => expect(screen.getByText('Group B')).toBeInTheDocument())
+
+    // Now let the stale K01 request's /api/kegg/parents finally land.
+    resolveStaleParents(jsonResponse({ parents: { K01: [{ annotation_id: 'A', name: 'Group A (STALE)' }] } }))
+    await new Promise(r => setTimeout(r, 20))
+
+    // K02's real grouping must still be shown -- the stale K01-only
+    // response must not have replaced it (which would leave K02 with no
+    // entry in multiParents at all, falling back to "Ungrouped").
+    expect(screen.getByText('Group B')).toBeInTheDocument()
+    expect(screen.queryByText('Group A (STALE)')).not.toBeInTheDocument()
+    expect(screen.queryByText('Ungrouped')).not.toBeInTheDocument()
+  })
 })
