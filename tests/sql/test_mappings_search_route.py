@@ -292,14 +292,23 @@ def test_bypass_cap_actually_changes_the_real_data_not_just_the_metadata(client)
     5 samples regardless of bypass_cap, so the metadata could claim
     "bypassed, sample_count=10" while the actual query silently still only
     scanned 5. This compares the real row data/total between the two calls
-    directly -- they must differ, not just the self-reported metadata."""
+    directly -- they must differ, not just the self-reported metadata.
+
+    Category A (leaf_count=22, just over _MANY_LEAVES_THRESHOLD), not H --
+    H's own real row count is broad enough to hit _MAPPINGS_ROW_LIMIT at
+    BOTH 5 and 10 samples once A3's DISTINCT fix (below) is also in place,
+    which would make capped/bypassed totals identical for an unrelated
+    reason (both legitimately truncated to the same limit) and mask the
+    very difference this test exists to catch. A's real counts (measured
+    directly: 4,000 rows at 5 samples, 8,397 at 10) stay comfortably under
+    the row limit at both sizes, so only the sample-cap mechanism is live."""
     capped = client.get(
         "/mappings/search",
-        params={"annotation_id": "H", "source": "cog", "sample_count": 10, "bypass_cap": False, "page_size": 100000},
+        params={"annotation_id": "A", "source": "cog", "sample_count": 10, "bypass_cap": False, "page_size": 100000},
     ).json()
     bypassed = client.get(
         "/mappings/search",
-        params={"annotation_id": "H", "source": "cog", "sample_count": 10, "bypass_cap": True, "page_size": 100000},
+        params={"annotation_id": "A", "source": "cog", "sample_count": 10, "bypass_cap": True, "page_size": 100000},
     ).json()
 
     assert bypassed["total"] > capped["total"], (
@@ -434,6 +443,45 @@ def test_single_abundant_leaf_taxon_is_row_limited_even_though_never_capped(clie
     assert body["leaf_count"] == 1
     assert body["samples_were_capped"] is False
     assert body["sample_count"] == 128
+    assert body["results_were_truncated"] is True
+
+
+def test_cog_broad_category_truncation_is_correctly_flagged(client):
+    """A3 (docs/AUDIT-2026-10-05.md): cog/enzyme's junction-table subquery
+    used to select a bare (non-DISTINCT) mapping_id -- a gene matching
+    more than one of the leaf ids a broad category expands to (a real
+    case for a multi-category search) produced duplicate raw ids inside
+    the LIMIT, so the post-GROUP-BY distinct count could land under
+    _MAPPINGS_ROW_LIMIT even though real data was dropped.
+    results_were_truncated read False while the response was, measured
+    live before this fix: cog category H at 5 samples, true answer
+    100,275 distinct genes; the API returned only 49,969 (49.8%). kegg/
+    taxonomy's per-row subqueries never had this gap (mappings.id is
+    already unique per row) -- see test_broad_taxonomy_node_is_capped_too
+    above for that sibling case, already correct before this fix."""
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "H", "source": "cog", "sample_count": 5, "page_size": 1},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sample_count"] == 5
+    assert body["results_were_truncated"] is True
+
+
+def test_enzyme_broad_category_truncation_is_correctly_flagged(client):
+    """Same A3 fix, enzyme side -- gene_enzyme's junction-table subquery
+    had the identical non-DISTINCT gap as gene_cog's above. Enzyme class 1
+    (Oxidoreductases) is real and broad enough to exceed
+    _MAPPINGS_ROW_LIMIT at a capped 5 samples (measured directly against
+    the real db before writing this test)."""
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "1", "source": "enzyme", "sample_count": 5, "page_size": 1},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sample_count"] == 5
     assert body["results_were_truncated"] is True
 
 

@@ -1140,8 +1140,19 @@ def get_mappings_sql(
         where_params = tuple(kegg_ids) + sample_filter_params
     elif source == "cog":
         placeholders = ", ".join("?" * len(leaf_ids))
+        # A3 (docs/AUDIT-2026-10-05.md): DISTINCT, not a bare SELECT -- a
+        # gene matching more than one of several searched cog_ids (a real
+        # case for a multi-category search) produces duplicate mapping_ids
+        # in this junction-table subquery. Without DISTINCT, LIMIT counts
+        # those raw duplicate rows, not real genes, so the subquery can hit
+        # the limit while still returning fewer than _MAPPINGS_ROW_LIMIT
+        # DISTINCT ids once the outer GROUP BY collapses them -- the exact
+        # mechanism that let real truncation go undetected (routes.py's
+        # `len(mappings) >= _MAPPINGS_ROW_LIMIT` check reads false). kegg/
+        # taxonomy's subqueries select mappings.id directly (already
+        # unique per row), so they never had this gap.
         where_sql = f"""
-            SELECT gene_cog.mapping_id AS id
+            SELECT DISTINCT gene_cog.mapping_id AS id
             FROM gene_cog
             WHERE gene_cog.cog_id IN ({placeholders}){_sample_filter('gene_cog.sample')}
             LIMIT {_MAPPINGS_ROW_LIMIT}
@@ -1150,8 +1161,9 @@ def get_mappings_sql(
     elif source == "enzyme":
         ec_ids = [f"EC:{leaf}" for leaf in leaf_ids]
         placeholders = ", ".join("?" * len(ec_ids))
+        # A3: same DISTINCT fix as cog above.
         where_sql = f"""
-                SELECT gene_enzyme.mapping_id AS id
+                SELECT DISTINCT gene_enzyme.mapping_id AS id
                 FROM gene_enzyme
                 WHERE gene_enzyme.ec_id IN ({placeholders}){_sample_filter('gene_enzyme.sample')}
                 LIMIT {_MAPPINGS_ROW_LIMIT}

@@ -340,14 +340,17 @@ def search_mappings(
         # triggered at all -- found live in production, 2026-09-25, a
         # single real leaf-level organism (leaf_count=1, not a broad
         # category) has 2,235,509 rows across all 128 samples on its
-        # own. len(mappings) is a close-enough proxy for "the raw
-        # subquery hit the limit" (mappings.id is the table's primary
-        # key, so kegg/taxonomy's per-row subqueries can never produce
-        # duplicates the later GROUP BY would collapse; only cog/enzyme's
-        # junction-table subquery theoretically could, if the same gene
-        # matches more than one of several searched leaf ids -- a case
-        # that's already sample-count-capped down to low volume before
-        # this could matter).
+        # own. len(mappings) is a reliable proxy for "the raw subquery hit
+        # the limit" for all four sources: mappings.id is the table's
+        # primary key, so kegg/taxonomy's per-row subqueries can never
+        # produce duplicates the later GROUP BY would collapse, and
+        # cog/enzyme's junction-table subqueries now select DISTINCT
+        # mapping ids (A3, docs/AUDIT-2026-10-05.md) -- previously a bare
+        # SELECT, which let a gene matching more than one of several
+        # searched leaf ids produce duplicate ids inside the LIMIT, so the
+        # post-GROUP-BY count could land under _MAPPINGS_ROW_LIMIT even
+        # though real data was dropped (measured live: 100,275 real genes,
+        # 49,969 (49.8%) returned, flagged results_were_truncated=False).
         results_were_truncated = len(mappings) >= _MAPPINGS_ROW_LIMIT
     finally:
         close_sql_connection(conn)
