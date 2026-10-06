@@ -332,7 +332,7 @@ def search_mappings(
         seen_keys: set[str] = set()
 
         mappings = get_mappings_sql(
-            conn, source.value, annotation_id, samples=allowed_samples
+            conn, source.value, annotation_id, samples=allowed_samples, bypass_cap=bypass_cap,
         )
         # A DIFFERENT failure mode from samples_were_capped, disclosed
         # separately: get_mappings_sql's hard _MAPPINGS_ROW_LIMIT can

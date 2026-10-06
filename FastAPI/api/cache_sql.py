@@ -1040,7 +1040,7 @@ def _expand_to_leaf_ids(conn: sqlite3.Connection, source: str, annotation_id: st
 
 def get_mappings_sql(
     conn: sqlite3.Connection, source: str, annotation_id: str,
-    samples: list[str] | None = None,
+    samples: list[str] | None = None, bypass_cap: bool = False,
 ) -> list[dict]:
     """Return every mapping row (gene/sample/scaffold, plus its
     annotations across all four sources) reachable from `annotation_id`.
@@ -1071,6 +1071,15 @@ def get_mappings_sql(
             is additionally clamped to at most _MAX_SAMPLES_FOR_MANY_LEAVES
             entries regardless of how many were passed in -- see the
             module-level comment above _MANY_LEAVES_THRESHOLD.
+        bypass_cap: A2 (docs/AUDIT-2026-10-05.md): skip the clamp just
+            above. Before this flag existed, routes.py already computed an
+            uncapped `samples` list when its own bypass_cap query param was
+            set, but this function re-clamped it anyway -- the route's
+            response metadata (sample_count, samples_were_capped) reflected
+            the route's untouched list while the actual query silently used
+            only 5 samples, so a "bypass_cap=true" CSV export was quietly
+            25x smaller than its own label claimed. Defaults to False so
+            every other caller keeps the existing safety net.
 
     Returns:
         List of dicts keyed sample, gene_id, contig_id, kegg_id, cog_id,
@@ -1098,7 +1107,7 @@ def get_mappings_sql(
         leaf_ids = _expand_to_leaf_ids(conn, source, expand_id)
         if not leaf_ids:
             return []
-        if samples is not None and len(leaf_ids) > _MANY_LEAVES_THRESHOLD:
+        if samples is not None and len(leaf_ids) > _MANY_LEAVES_THRESHOLD and not bypass_cap:
             samples = samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
 
     # Pushed into the subquery itself (not just the outer WHERE) so it

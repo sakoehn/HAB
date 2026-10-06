@@ -284,6 +284,35 @@ def test_bypass_cap_honors_the_full_requested_sample_count(client):
     assert body["leaf_count"] is not None and body["leaf_count"] > 20
 
 
+def test_bypass_cap_actually_changes_the_real_data_not_just_the_metadata(client):
+    """A2 (docs/AUDIT-2026-10-05.md): the metadata-only assertions above
+    (samples_were_capped/sample_count) are computed from routes.py's own
+    allowed_samples list, which was already correct before this fix --
+    get_mappings_sql had its own SEPARATE internal clamp that re-capped to
+    5 samples regardless of bypass_cap, so the metadata could claim
+    "bypassed, sample_count=10" while the actual query silently still only
+    scanned 5. This compares the real row data/total between the two calls
+    directly -- they must differ, not just the self-reported metadata."""
+    capped = client.get(
+        "/mappings/search",
+        params={"annotation_id": "H", "source": "cog", "sample_count": 10, "bypass_cap": False, "page_size": 100000},
+    ).json()
+    bypassed = client.get(
+        "/mappings/search",
+        params={"annotation_id": "H", "source": "cog", "sample_count": 10, "bypass_cap": True, "page_size": 100000},
+    ).json()
+
+    assert bypassed["total"] > capped["total"], (
+        "bypass_cap=true returned the same (or fewer) real rows as "
+        "bypass_cap=false -- the internal clamp is still silently "
+        "capping to 5 samples regardless of the flag"
+    )
+    capped_samples   = {row["sample"] for row in capped["data"]}
+    bypassed_samples = {row["sample"] for row in bypassed["data"]}
+    assert len(capped_samples) <= 5
+    assert len(bypassed_samples) > 5
+
+
 def test_low_volume_leaf_id_is_never_capped(client):
     """A leaf id that's both narrow (leaf_count=1) AND low-volume must
     always get its full requested sample_count. K00001 is a real,
