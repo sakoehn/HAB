@@ -41,6 +41,13 @@ CREATE TABLE kegg_paths(
     d_id TEXT, d_name TEXT,
     full_path TEXT NOT NULL UNIQUE
 );
+
+CREATE TABLE cog_paths(
+    id INTEGER PRIMARY KEY,
+    a_id TEXT, a_name TEXT,
+    b_id TEXT, b_name TEXT,
+    full_path TEXT NOT NULL UNIQUE
+);
 """
 
 
@@ -75,6 +82,21 @@ def insert_kegg_path(conn, a_id=None, b_id=None, c_id=None, d_id=None):
     conn.commit()
 
 
+def insert_cog_path(conn, a_id=None, b_id=None):
+    """One real category-membership row for cog_paths -- P4's fix
+    (_cog_family_exclusions in correlation_sql.py) reads this table
+    instead of annotation_catalog.parent for same-source cog families,
+    since a COG id can have multiple real categories (annotation_catalog's
+    single `parent` column can't represent that -- see E17/P4,
+    docs/AUDIT-2026-10-05.md)."""
+    full_path = "|".join(v for v in (a_id, b_id) if v is not None)
+    conn.execute(
+        "INSERT INTO cog_paths (a_id, b_id, full_path) VALUES (?, ?, ?)",
+        (a_id, b_id, full_path),
+    )
+    conn.commit()
+
+
 # ── Section 1: basic enumeration (item #1) ─────────────────────────────────
 
 class TestFamilyEnumeration:
@@ -91,14 +113,17 @@ class TestFamilyEnumeration:
         assert {c["id"] for c in family} == {2, 3, 4}
 
     def test_ref_excluded_from_its_own_same_source_family(self, conn):
-        # Distinct parents -- post-CR3, cog participates in the same
-        # sibling-exclusion rule as every other source (see
-        # TestExclusionRules.test_cog_hierarchy_siblings_and_ancestors_excluded
-        # for that specific behavior); giving these three different
-        # parents keeps this test focused on plain self-exclusion only.
-        insert(conn, 1, "cog", "COG0001", parent="C")
-        insert(conn, 2, "cog", "COG0002", parent="D")
-        insert(conn, 3, "cog", "COG0003", parent="E")
+        # Distinct categories -- post-P4, cog's exclusion walk reads
+        # cog_paths (see TestExclusionRules.test_cog_hierarchy_siblings_and_ancestors_excluded
+        # for the specific sibling/ancestor behavior); giving these three
+        # different categories keeps this test focused on plain
+        # self-exclusion only.
+        insert(conn, 1, "cog", "COG0001")
+        insert(conn, 2, "cog", "COG0002")
+        insert(conn, 3, "cog", "COG0003")
+        insert_cog_path(conn, a_id="C", b_id="COG0001")
+        insert_cog_path(conn, a_id="D", b_id="COG0002")
+        insert_cog_path(conn, a_id="E", b_id="COG0003")
 
         family = get_family_candidates(conn, ref_catalog_id=1, target_source="cog")
 
@@ -120,16 +145,21 @@ class TestFamilyEnumeration:
 
 class TestExclusionRules:
     def test_cog_hierarchy_siblings_and_ancestors_excluded(self, conn):
-        # CR3 (docs/AUDIT.md): cog used to be exempted from exclusions
-        # entirely, back when it really was flat with no parent field at
-        # all. Post-E15, cog has a real 2-level hierarchy (category ->
-        # specific COG id) and now participates in the same exclusion
-        # walk as every other source -- no more special-cased pass-through.
-        insert(conn, 1, "cog", "C", parent=None, depth=1)       # category (ancestor of ref)
-        insert(conn, 2, "cog", "COG0055", parent="C", depth=2)  # ref
-        insert(conn, 3, "cog", "COG1028", parent="C", depth=2)  # sibling (same category)
-        insert(conn, 4, "cog", "D", parent=None, depth=1)       # unrelated category
-        insert(conn, 5, "cog", "COG9999", parent="D", depth=2)  # cousin (different category)
+        # P4 (docs/AUDIT-2026-10-05.md): cog's same-source exclusion now
+        # reads cog_paths (_cog_family_exclusions), not
+        # annotation_catalog.parent -- a COG id can have multiple real
+        # categories (E17; e.g. COG0028 is real under both E and H), which
+        # the single `parent` column can never represent. This case has
+        # only single-category ids, confirming the simple case still
+        # works via the new path, not just the multi-category case below.
+        insert(conn, 1, "cog", "C", depth=1)       # category (ancestor of ref)
+        insert(conn, 2, "cog", "COG0055", depth=2)  # ref
+        insert(conn, 3, "cog", "COG1028", depth=2)  # sibling (same category)
+        insert(conn, 4, "cog", "D", depth=1)       # unrelated category
+        insert(conn, 5, "cog", "COG9999", depth=2)  # cousin (different category)
+        insert_cog_path(conn, a_id="C", b_id="COG0055")
+        insert_cog_path(conn, a_id="C", b_id="COG1028")
+        insert_cog_path(conn, a_id="D", b_id="COG9999")
 
         family = get_family_candidates(conn, ref_catalog_id=2, target_source="cog")
 
@@ -139,20 +169,85 @@ class TestExclusionRules:
         # The more consequential direction for cog, not covered above: a
         # category's EGC is literally the sum of its own members' EGC, so
         # "category correlates with its own member" is exactly the
-        # containment artifact CR3 exists to prevent -- for EVERY cog
-        # category, with no exceptions, since cog is always exactly 2
-        # levels. Descendant exclusion has to reach down from a
+        # containment artifact this exclusion exists to prevent -- for
+        # EVERY cog category, with no exceptions, since cog is always
+        # exactly 2 levels. Descendant exclusion has to reach down from a
         # category-level ref, not just work in the leaf-as-ref direction
         # the test above covers.
-        insert(conn, 1, "cog", "C", parent=None, depth=1)       # ref (category)
-        insert(conn, 2, "cog", "COG0055", parent="C", depth=2)  # member (descendant of ref)
-        insert(conn, 3, "cog", "COG1028", parent="C", depth=2)  # member (descendant of ref)
-        insert(conn, 4, "cog", "D", parent=None, depth=1)       # sibling category (shares NULL parent)
-        insert(conn, 5, "cog", "COG9999", parent="D", depth=2)  # unrelated leaf, different category
+        insert(conn, 1, "cog", "C", depth=1)       # ref (category)
+        insert(conn, 2, "cog", "COG0055", depth=2)  # member (descendant of ref)
+        insert(conn, 3, "cog", "COG1028", depth=2)  # member (descendant of ref)
+        insert(conn, 4, "cog", "D", depth=1)       # sibling category
+        insert(conn, 5, "cog", "COG9999", depth=2)  # unrelated leaf, different category
+        insert_cog_path(conn, a_id="C", b_id="COG0055")
+        insert_cog_path(conn, a_id="C", b_id="COG1028")
+        insert_cog_path(conn, a_id="D", b_id="COG9999")
 
         family = get_family_candidates(conn, ref_catalog_id=1, target_source="cog")
 
         assert {c["id"] for c in family} == {5}
+
+    def test_cog_multi_category_excluded_from_every_real_categorys_family(self, conn):
+        # P4's actual fix target: annotation_catalog.parent can only ever
+        # hold ONE of a multi-category COG's real categories --
+        # specifically the alphabetically-first one
+        # (EGC_COG_TREE.ipynb's `primary_cat_letter = categories[0]`,
+        # confirmed 340 real multi-category COGs affected, e.g. COG0028
+        # really in both E and H but stored with parent="E" only) -- but
+        # cog_paths records every real membership. COG0028's `parent`
+        # below is deliberately set to "E" (matching the real migrated
+        # shape) to prove this isn't fixed by accident: under the OLD
+        # by_id/children_of walk (keyed on this very `parent` column),
+        # COG0028 is only ever findable as a descendant of E, so it would
+        # have silently stayed IN H's family -- the real bug.
+        insert(conn, 20, "cog", "E", depth=1)                           # category E
+        insert(conn, 21, "cog", "H", depth=1)                           # category H -- unrelated to E
+        insert(conn, 22, "cog", "COG0028", parent="E", depth=2)         # real member of BOTH E and H
+        insert(conn, 23, "cog", "COG_OnlyE", parent="E", depth=2)       # real member of only E
+        insert(conn, 24, "cog", "COG_Unrelated", parent="Z", depth=2)   # real member of neither
+
+        insert_cog_path(conn, a_id="E", b_id="COG0028")
+        insert_cog_path(conn, a_id="H", b_id="COG0028")  # same COG, 2nd real category
+        insert_cog_path(conn, a_id="E", b_id="COG_OnlyE")
+        insert_cog_path(conn, a_id="Z", b_id="COG_Unrelated")
+
+        family_e_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=20, target_source="cog")}
+        assert 22 not in family_e_ids  # COG0028 excluded from E's family
+        assert 23 not in family_e_ids  # COG_OnlyE excluded too (regular single-category case)
+        assert 24 in family_e_ids      # COG_Unrelated stays -- real member of neither
+
+        family_h_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=21, target_source="cog")}
+        assert 22 not in family_h_ids  # COG0028 excluded from H's family too -- the actual bug this fixes
+
+    def test_cog_multi_category_as_ref_excludes_all_its_real_categories(self, conn):
+        # The reverse direction: when the multi-category COG itself is
+        # ref, ALL of its real categories must be excluded, not just one.
+        # `parent="E"` again mirrors the real migrated shape -- under the
+        # old by_id walk, only E (the stored parent) would be excluded,
+        # leaving H (COG0028's other real category) unexcluded.
+        insert(conn, 20, "cog", "E", depth=1)
+        insert(conn, 21, "cog", "H", depth=1)
+        insert(conn, 22, "cog", "COG0028", parent="E", depth=2)  # ref -- real member of both E and H
+
+        insert_cog_path(conn, a_id="E", b_id="COG0028")
+        insert_cog_path(conn, a_id="H", b_id="COG0028")
+
+        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=22, target_source="cog")}
+        assert 20 not in family_ids  # E excluded (a real category)
+        assert 21 not in family_ids  # H excluded too -- its OTHER real category
+
+    def test_cog_unknown_ref_id_returns_self_exclusion_only_not_a_crash(self, conn):
+        # ref exists in annotation_catalog but was never real enough to
+        # make it into cog_paths (e.g. filtered out at migration time) --
+        # _cog_node_depth returns None; must degrade to self-exclusion
+        # only, not raise.
+        insert(conn, 30, "cog", "GhostId", depth=2)
+        insert(conn, 31, "cog", "Real", depth=2)
+        insert_cog_path(conn, a_id="SomeCat", b_id="Real")
+
+        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=30, target_source="cog")}
+        assert 30 not in family_ids  # ref always excludes itself
+        assert 31 in family_ids      # no real relationship data -- nothing else excluded
 
     def test_cross_source_never_excludes_even_if_names_overlap(self, conn):
         # Same annotation_id string can legitimately exist in two sources;

@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from api.config import SQLITE_DB_PATH
 
 from .cache import AnnotationSource
-from .cache_sql import _kegg_node_depth, KEGG_LEVEL_COLUMNS
+from .cache_sql import _kegg_node_depth, KEGG_LEVEL_COLUMNS, _cog_node_depth, COG_LEVEL_COLUMNS
 from .config import CORRELATION_LAGS, LAG_HOURS_PER_SAMPLE
 from .correlation_loaders import (
     load_vector,
@@ -172,20 +172,94 @@ def _kegg_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
     return excluded
 
 
+def _cog_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
+    """
+    P4 (docs/AUDIT-2026-10-05.md): the generic by_id/children_of walk in
+    get_family_candidates below assumes one parent per node, which this
+    function's own earlier docstring claimed was safe for COG ("verified
+    ... every COG id ... [has no] more than one real parent"). That
+    "verification" only ever checked annotation_catalog's own `parent`
+    column -- which migrate_annotations_to_sql.py populates from
+    EGC_COG_TREE.ipynb's `primary_cat_letter = categories[0]` (P4),
+    i.e. it can only ever hold ONE category by construction, regardless
+    of how many a COG id is REALLY in. get_cog_path_sql's docstring
+    already documents the real answer: COG0028 is genuinely in both
+    E and H (E17, docs/AUDIT-2026-09-22.md) -- 340 real multi-category
+    COGs confirmed. Without this, a multi-category COG's same-source
+    correlation family only ever excluded it from ONE category's
+    siblings, never the other, silently returning candidates that were
+    really its own siblings as if they were independent.
+
+    `cog_paths` (built for the hierarchy popup, see
+    migrate_cog_paths_to_sql.py) doesn't have this limitation -- it
+    stores every real category a COG id belongs to, not just one. Same
+    approach as _kegg_family_exclusions above, just over COG's 2-level
+    (category, COG id) hierarchy instead of KEGG's 4.
+
+    Args:
+        conn: Open SQLite connection.
+        ref_annotation_id: The COG node to build the exclusion set for.
+
+    Returns:
+        Set of annotation_ids to exclude: ref itself, every real
+        ancestor/descendant across every real category ref belongs to,
+        and every real sibling (shares at least one of ref's real
+        categories -- or, for a category-letter ref, every other real
+        category).
+    """
+    excluded = {ref_annotation_id}
+    depth = _cog_node_depth(conn, ref_annotation_id)
+    if depth is None:
+        return excluded  # not a real cog_paths node -- no relationships to exclude
+
+    level_col, _ = COG_LEVEL_COLUMNS[depth]
+    rows = conn.execute(
+        f"SELECT a_id, b_id FROM cog_paths WHERE {level_col} = ?", (ref_annotation_id,)
+    ).fetchall()
+
+    # Ancestors + descendants: every real id in ANY column of ANY
+    # occurrence-path ref appears in -- correct regardless of how many
+    # real categories ref belongs to, since each row is already a full
+    # category->COG-id path, not a single parent pointer.
+    for row in rows:
+        excluded.update(value for value in row if value is not None)
+
+    if depth == 1:
+        top_level_ids = conn.execute("SELECT DISTINCT a_id FROM cog_paths WHERE a_id IS NOT NULL").fetchall()
+        excluded.update(r[0] for r in top_level_ids)
+    else:
+        parent_col_index = depth - 2  # (a_id, b_id) index of the column one level shallower
+        real_parents = {row[parent_col_index] for row in rows if row[parent_col_index] is not None}
+        if real_parents:
+            parent_col, _ = COG_LEVEL_COLUMNS[depth - 1]
+            placeholders = ",".join("?" * len(real_parents))
+            siblings = conn.execute(
+                f"SELECT DISTINCT {level_col} FROM cog_paths WHERE {parent_col} IN ({placeholders})",
+                tuple(real_parents),
+            ).fetchall()
+            excluded.update(r[0] for r in siblings if r[0] is not None)
+
+    return excluded
+
+
 def get_family_candidates(conn, ref_catalog_id, target_source):
     """
     Return every row in `target_source` eligible to be correlated against
     `ref_catalog_id`. Cross-source: everything, no exclusions. Same-source:
     excludes ref itself, its siblings (share ref's exact parent, NULL
-    included), and its ancestors/descendants at any depth -- cog included
-    (CR3, docs/AUDIT.md): E15 gave cog a real 2-level hierarchy, and
-    migrate_annotations_to_sql.py now stores parent_id (not parent_name)
-    for cog same as kegg/enzyme, so the same by_id/children_of tree-walk
-    below works for it without a special case. kegg gets its own,
-    different exclusion path (_kegg_family_exclusions above) since it's
-    the one source where a node can have MULTIPLE real parents. Taxonomy
-    gets its own ancestor-exclusion path too (CR9, docs/AUDIT-2026-09-22.md):
-    the by_id tree-walk only sees ancestors shallower than
+    included), and its ancestors/descendants at any depth, via the generic
+    by_id/children_of tree-walk below -- enzyme only now (single-parent by
+    construction: 0 of 7,333 real EC nodes have more than one real
+    parent). kegg and cog each get their own dedicated exclusion path
+    (_kegg_family_exclusions / _cog_family_exclusions above) since both
+    can have MULTIPLE real parents per node -- cog's generic-walk branch
+    was removed by P4 (docs/AUDIT-2026-10-05.md): it looked safe ("every
+    COG id has no more than one real parent") but that was only ever
+    true of the lossy single-value `parent` column the walk reads, not
+    of COG's real category membership (confirmed via cog_paths: 340 real
+    multi-category COGs, e.g. COG0028 in both E and H). Taxonomy gets its
+    own ancestor-exclusion path too (CR9, docs/AUDIT-2026-09-22.md): the
+    by_id tree-walk only sees ancestors shallower than
     TAXONOMY_DEPTH_CUTOFF, so it silently stopped short for a species/strain
     reference -- see the comment at the taxonomy branch below.
 
@@ -236,6 +310,10 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
 
     if target_source == AnnotationSource.kegg.value:
         excluded = _kegg_family_exclusions(conn, ref_annotation_id)
+        return _shape(row for row in target_rows if row[1] not in excluded)
+
+    if target_source == AnnotationSource.cog.value:
+        excluded = _cog_family_exclusions(conn, ref_annotation_id)
         return _shape(row for row in target_rows if row[1] not in excluded)
 
     excluded = {ref_annotation_id}
