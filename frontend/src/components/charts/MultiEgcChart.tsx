@@ -12,6 +12,7 @@ import {
 } from '../../utils/format'
 import { computeNightBands, alignTideToChartPoints, nativeTideTrace } from '../../utils/solar'
 import { useSolarTideData } from '../../utils/useSolarTideData'
+import { useAllSamples } from '../../utils/useAllSamples'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { taxonomyAwarePrimaryLabel } from '../../constants'
@@ -123,12 +124,30 @@ export function MultiEgcChart({
 
   const { sunTimes, tides, tidesLoading, tidesError } =
     useSolarTideData(showNightShading || showTide)
+  const { allSamples } = useAllSamples()
 
   // Wide-format row: one row per datetime, each series has its own column.
   type ChartRow = { date: string; _dt: string; _ts: number } & Record<string, number | null | string>
 
+  // F1 (docs/AUDIT-2026-10-05.md): a timepoint where no displayed series was
+  // detected used to not exist in dtMap at all, and an undetected series at
+  // a timepoint that DID exist (because some other series had data there)
+  // was left as an absent key rather than an explicit null -- combined with
+  // connectgaps:true below, the line ran straight across any stretch of
+  // non-detection, silently implying steady presence (same W21 failure mode
+  // EgcChart already fixed). Unions in the full real sample timeline first
+  // (a UNION with each series' own detected samples, not a swap -- same
+  // reasoning as EgcChart's own allPoints), then explicit-nulls every
+  // series not detected at a timepoint that ends up in dtMap.
   const baseRows = useMemo<ChartRow[]>(() => {
     const dtMap: Record<string, ChartRow> = {}
+    for (const entry of allSamples ?? []) {
+      const iso = isoDate(entry.datetime)
+      if (dateFrom && iso < dateFrom) continue
+      if (dateTo   && iso > dateTo)   continue
+      const dt = entry.datetime
+      if (!dtMap[dt]) dtMap[dt] = { date: fmtDate(dt), _dt: dt, _ts: parseDateTime(dt) }
+    }
     for (const s of series) {
       for (const d of s.data) {
         const iso = isoDate(d.timepoint?.datetime ?? '')
@@ -140,8 +159,16 @@ export function MultiEgcChart({
         dtMap[dt][s.id + '__norm'] = extractNormEgc(d.value)
       }
     }
+    for (const row of Object.values(dtMap)) {
+      for (const s of series) {
+        if (!(s.id in row)) {
+          row[s.id]            = null
+          row[s.id + '__norm'] = null
+        }
+      }
+    }
     return Object.values(dtMap).sort((a, b) => a._ts - b._ts)
-  }, [series, dateFrom, dateTo])
+  }, [series, dateFrom, dateTo, allSamples])
 
   // W27 (docs/AUDIT-2026-09-22.md): unsmoothed is the metric/standardize
   // pipeline WITHOUT LOWESS -- stats (perSeriesVals below) read this, so
@@ -373,7 +400,11 @@ export function MultiEgcChart({
         opacity,
         name: s.annotationId,
         yaxis: 'y',
-        connectgaps: true,
+        // F1 (docs/AUDIT-2026-10-05.md): must not connect across a real
+        // non-detection -- see baseRows' union-with-the-full-timeline
+        // comment above, which is what gives this an explicit null to
+        // break at instead of nothing to act on.
+        connectgaps: false,
         customdata: chartData.map((r, i) => [fmtVal(ys[i], seriesStandardizeApplied), r._dt]),
         hovertemplate:
           '<b>%{customdata[1]}</b><br>' +
