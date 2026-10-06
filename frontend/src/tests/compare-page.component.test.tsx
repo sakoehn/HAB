@@ -74,7 +74,7 @@
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { makeDefaultCompareState, ComparePage } from '../pages/ComparePage'
@@ -543,6 +543,91 @@ describe('ComparePage — entries panel', () => {
     await waitFor(() => {
       expect(document.querySelector('.first-run-hint')).toBeInTheDocument()
     })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ComparePage — entry id collision after a removal (G1, docs/AUDIT-2026-10-05.md)
+//
+// entry ids used to be derived from state.entries.length at the moment of
+// add -- after removing an entry, the next add's length-derived id could
+// exactly match a surviving entry's id. `.id` is the only field the remove
+// button's own filter (`entries.filter(x => x.id !== e.id)`) uses, so a
+// collision meant clicking × on the NEW entry silently removed the OLD
+// surviving one too (both matched the same id). Reproduces the exact
+// sequence: add 2 (K02014=slot 0, K00001=slot 1), remove slot 0, re-add
+// K02014 (its length-derived id would have been slot 1 again under the old
+// scheme -- colliding with K00001, still sitting in that same slot).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// The comparison chart renders its own real-DOM legend (.legend-item) once
+// 2+ entries are ready, which repeats each entry's annotationId as plain
+// text alongside the chip's own copy -- these helpers scope every query to
+// the chip list specifically so that duplicate never produces an ambiguous
+// match.
+function findChip(label: string): HTMLElement | null {
+  return screen.getAllByText(label)
+    .map(el => el.closest('.compare-chip'))
+    .find((el): el is HTMLElement => el !== null) ?? null
+}
+
+function queryChip(label: string): HTMLElement | null {
+  return screen.queryAllByText(label)
+    .map(el => el.closest('.compare-chip'))
+    .find((el): el is HTMLElement => el !== null) ?? null
+}
+
+describe('ComparePage — entry id collision after a removal (G1)', () => {
+  it('removing a newly re-added entry does not also remove an unrelated surviving one', async () => {
+    render(<ManagedComparePage />)
+    const input = await screen.findByPlaceholderText(/search annotation id or name/i)
+
+    // Add both K02014 and K00001.
+    await userEvent.type(input, 'K0')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+    await waitFor(() => screen.getByText('K02014'))
+    const checkboxes = screen.getAllByRole('checkbox').slice(1) // [0] is "select all"
+    await userEvent.click(checkboxes[0])
+    await userEvent.click(checkboxes[1])
+    await userEvent.click(screen.getByText(/add 2 selected/i))
+    await waitFor(() => {
+      expect(findChip('K02014')).not.toBeNull()
+      expect(findChip('K00001')).not.toBeNull()
+    })
+
+    // Remove K02014 (the first-added slot) -- K00001 is now the sole
+    // survivor, still carrying whatever id it was assigned.
+    await userEvent.click(within(findChip('K02014')!).getByText('×'))
+    await waitFor(() => {
+      expect(queryChip('K02014')).toBeNull()
+    })
+    expect(findChip('K00001')).not.toBeNull()
+
+    // Re-add K02014 -- this is the exact vulnerable call (addSelectedAnnotations
+    // after a removal). Under the old entries.length-derived scheme this
+    // would land on the same id K00001 already holds.
+    await userEvent.type(input, 'K0')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+    await waitFor(() => screen.getByText('K02014'))
+    const checkboxesAgain = screen.getAllByRole('checkbox').slice(1)
+    await userEvent.click(checkboxesAgain[0]) // K02014's row
+    await userEvent.click(screen.getByText(/add 1 selected/i))
+    await waitFor(() => {
+      expect(findChip('K02014')).not.toBeNull()
+    })
+    // Both present -- K00001 (survivor) and the freshly re-added K02014.
+    expect(findChip('K00001')).not.toBeNull()
+
+    // Remove the NEWLY re-added K02014 chip specifically.
+    await userEvent.click(within(findChip('K02014')!).getByText('×'))
+
+    // K02014 is gone, but K00001 -- an entirely different entry the user
+    // never asked to remove -- must still be there. Pre-fix, a shared id
+    // meant this removal silently took K00001 out too.
+    await waitFor(() => {
+      expect(queryChip('K02014')).toBeNull()
+    })
+    expect(findChip('K00001')).not.toBeNull()
   })
 })
 

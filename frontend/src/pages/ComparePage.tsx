@@ -175,18 +175,27 @@ export function ComparePage({
         ? nextColorForSource(ann.source)
         : nextColorForSource('kegg'), // group gets a fresh color slot
     )
+    // G1 (docs/AUDIT-2026-10-05.md): must be genuinely unique against
+    // whatever's already in state.entries (manually added before this
+    // load, or surviving a previous load+removal), not just unique WITHIN
+    // this one batch -- entry-${i} collided with an existing entry-${i}
+    // after a removal elsewhere shifted what "position i" meant. Generated
+    // once per slot here (not re-derived in the resolved-entry construction
+    // below) so the optimistic and resolved versions of the same slot
+    // still carry the identical id.
+    const ids: string[] = toLoad.map(() => crypto.randomUUID())
 
     // Optimistic loading state — one entry per incoming annotation/group.
-    // id is the fixed compare-slot index (W26) -- stable identity for
-    // series-keying purposes regardless of what two entries' labels
-    // happen to be, assigned once here and carried through unchanged by
-    // the resolved-entry construction below.
+    // id is the fixed compare-slot identity for series-keying purposes
+    // regardless of what two entries' labels happen to be, assigned once
+    // here and carried through unchanged by the resolved-entry
+    // construction below.
     setState(prev => ({
       ...prev,
       entries: toLoad.map((ann, i) =>
         ann.kind === 'single'
           ? {
-              id:           `entry-${i}`,
+              id:           ids[i],
               annotationId: ann.annotationId,
               source:       ann.source,
               name:         ann.name,
@@ -195,7 +204,7 @@ export function ComparePage({
               color:        colors[i],
             }
           : {
-              id:              `entry-${i}`,
+              id:              ids[i],
               annotationId:    ann.label,
               source:          ann.members[0]?.source ?? 'kegg',
               name:            ann.label,
@@ -226,7 +235,7 @@ export function ComparePage({
             return {
               i,
               entry: {
-                id:           `entry-${i}`,
+                id:           ids[i],
                 annotationId: ann.annotationId,
                 source:       ann.source,
                 name:         ann.name,
@@ -239,7 +248,7 @@ export function ComparePage({
             return {
               i,
               entry: {
-                id:           `entry-${i}`,
+                id:           ids[i],
                 annotationId: ann.annotationId,
                 source:       ann.source,
                 name:         ann.name,
@@ -260,7 +269,7 @@ export function ComparePage({
         return {
           i,
           entry: {
-            id:              `entry-${i}`,
+            id:              ids[i],
             annotationId:    ann.label,
             source:          ann.members[0]?.source ?? 'kegg',
             name:            ann.label,
@@ -332,10 +341,15 @@ export function ComparePage({
     const toAdd  = state.searchResults.filter(r => bulkSelected.has(`${r.annotation_id}::${r.source}`))
     if (!toAdd.length) return
 
-    const colors      = toAdd.map(ann => nextColorForSource(ann.source))
-    const startIndex  = state.entries.length
+    const colors = toAdd.map(ann => nextColorForSource(ann.source))
+    // G1 (docs/AUDIT-2026-10-05.md): startIndex (state.entries.length) is
+    // not collision-safe -- after removing an entry, the next add's
+    // length-derived id can match a surviving entry's id exactly, and
+    // since `.id` is the only field used for internal lookups (CSV rows,
+    // chart keying, state updates), that collision silently mutates the
+    // wrong entry rather than just mislabeling one.
     const newEntries: CompareEntry[] = toAdd.map((ann, i) => ({
-      id:           `entry-${startIndex + i}`,
+      id:           crypto.randomUUID(),
       annotationId: ann.annotation_id,
       source:       ann.source,
       name:         ann.name,
@@ -386,7 +400,9 @@ export function ComparePage({
     )) return
 
     const color = nextColorForSource(ann.source)
-    const id    = `entry-${state.entries.length}`
+    // G1 (docs/AUDIT-2026-10-05.md): same length-derived-id collision as
+    // addSelectedAnnotations above.
+    const id    = crypto.randomUUID()
     setState(prev => ({
       ...prev,
       entries: [...prev.entries, {
