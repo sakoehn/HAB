@@ -220,12 +220,15 @@ class TestCorrelationEndpointCircularShift:
         body = response.json()
         assert body is not None
         assert body["r"] > 0.9  # near-noiseless copy, ids 1 and 6 -- see fixture
-        # CR8 (docs/AUDIT-2026-09-22.md): with 30 samples (17 valid shifts),
-        # a near-noiseless copy should hit the real permutation floor,
-        # (1+0)/(1+17) = 1/18 -- not just "some value between 0 and 1",
-        # which would also trivially pass if p were always the unfixed
-        # 1.0 default this fixture used to be too small to tell apart from.
-        assert body["p"] == pytest.approx(1 / 18)
+        # CR8 (docs/AUDIT-2026-09-22.md), floor corrected by the C1 re-audit
+        # (docs/AUDIT-2026-10-05.md -- the exclusion margin is 2*max_lag, not
+        # max_lag, see _circular_shift_pvalue): with 30 samples (5 valid
+        # shifts under the corrected margin), a near-noiseless copy should
+        # hit the real permutation floor, (1+0)/(1+5) = 1/6 -- not just "some
+        # value between 0 and 1", which would also trivially pass if p were
+        # always the unfixed 1.0 default this fixture used to be too small
+        # to tell apart from.
+        assert body["p"] == pytest.approx(1 / 6)
         assert body["n_pairs"] == 24  # best lag=6 trims the 30-sample window to 24
 
     def test_result_is_cached_and_a_repeat_request_is_a_hit(self, circular_shift_client):
@@ -472,16 +475,20 @@ def prescreen_client(tmp_path, monkeypatch):
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (2, 'kegg', 'K00002')")  # strong
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (3, 'kegg', 'K00003')")  # weak/none
 
-    # CR8 (docs/AUDIT-2026-09-22.md): 40, not 12 -- same reasoning as
+    # CR8 (docs/AUDIT-2026-09-22.md): 50, not 12 -- same reasoning as
     # circular_shift_client above, but these prescreen tests additionally
     # gate on the q<0.05 SIGNIFICANCE of the surviving candidate after
     # circular_shift scores it, not just on which candidate the fast
-    # pre-screen keeps. At n=12 (no valid shift) or even n=30 (17 valid
-    # shifts, floor p=1/18=0.056) K00002 would be correctly prescreened-in
-    # but could never clear q<0.05 regardless -- measured directly: n=40
-    # gives this fixture's near-noiseless copy a real p=0.036, the
-    # smallest n (in steps of 10) that actually clears the gate.
-    samples = [f"s{i:02d}" for i in range(1, 41)]
+    # pre-screen keeps. At n=12 (no valid shift) or even n=30 K00002 would
+    # be correctly prescreened-in but could never clear q<0.05 regardless.
+    # Re-audit (docs/AUDIT-2026-10-05.md, C1): the corrected, coarser
+    # 2*max_lag exclusion margin raised the floor at any given n (fewer
+    # evaluable shifts), so n=40 -- which cleared the gate at p=0.036 under
+    # the old margin -- now only reaches p=0.0625 and no longer clears it.
+    # Measured directly: n=50 gives this fixture's near-noiseless copy a
+    # real p=0.038, the smallest n (in steps of 10) that still clears the
+    # gate under the corrected margin.
+    samples = [f"s{i:02d}" for i in range(1, 51)]
     for i, sample in enumerate(samples):
         wobble = 3.0 * ((i % 3) - 1)
         conn.execute(

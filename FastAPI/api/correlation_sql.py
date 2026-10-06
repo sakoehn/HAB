@@ -370,6 +370,15 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
          the original alignment at the lag search's own window, so the
          null it feeds isn't fully destroyed. Now only shifts strictly
          beyond every searched lag at BOTH ends are ever considered.
+         Re-audit (docs/AUDIT-2026-10-05.md, C1/CR8): "beyond every
+         searched lag" must be measured on the EFFECTIVE lag the inner
+         re-search can land on, not the raw shift amount -- the inner
+         _spearman_at_lags call below re-searches all of CORRELATION_LAGS
+         on top of the shift, so a shift of `max_lag+1` combined with an
+         inner lag of `-max_lag` reconstructs an effective offset of just
+         1, almost exactly the real alignment. Excluding by `2*max_lag+1`
+         instead of `max_lag+1` is what actually guarantees every
+         evaluated shift's effective offset is beyond every real lag.
       2. `count / n_perm` could be exactly 0 -- a p-value of exactly 0
          isn't defensible from any finite permutation test. Smoothed to
          (1 + extreme) / (1 + evaluable), per the audit's own formula --
@@ -405,11 +414,16 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
         shifts), where "evaluable" excludes any shift where no lag had
         enough co-observed points to score. 1.0 if no shift in the valid
         range was evaluable at all (series too short for this null to
-        mean anything, e.g. n <= 2*max_lag + 1).
+        mean anything, e.g. n <= 4*max_lag + 1).
     """
     n = len(ref)
     max_lag = max(abs(lag) for lag in CORRELATION_LAGS)
-    lo, hi = max_lag + 1, n - max_lag - 1  # inclusive bounds on a valid shift
+    # inclusive bounds on a valid shift: 2*max_lag, not max_lag, because the
+    # inner lag-search below can itself move the effective offset by up to
+    # max_lag in either direction -- a shift of only max_lag+1 combined with
+    # an inner lag of -max_lag reconstructs an effective offset of just 1.
+    # See the C1/CR8 note in the docstring above.
+    lo, hi = 2 * max_lag + 1, n - 2 * max_lag - 1
     if lo > hi:
         return 1.0
 

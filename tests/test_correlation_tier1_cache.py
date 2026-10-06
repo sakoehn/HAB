@@ -413,7 +413,7 @@ class TestCircularShiftMethod:
     # TestCircularShiftPvalue for the exact boundary), so a meaningful
     # permutation p-value needs its own larger sample set here.
 
-    BIG_SAMPLES = [f"s{i:02d}" for i in range(1, 31)]  # 30 -- 17 valid shifts
+    BIG_SAMPLES = [f"s{i:02d}" for i in range(1, 31)]  # 30 -- 5 valid shifts (corrected 2*max_lag margin, C1)
 
     def test_computes_and_caches_a_real_result(self, conn):
         insert_catalog(conn, 1, "kegg", "K00001")
@@ -439,10 +439,12 @@ class TestCircularShiftMethod:
         ).fetchone()
         assert row is not None
         assert row[2] == "circular_shift"
-        # CR8's exact formula at this fixture's real size (30 samples, 17
-        # valid shifts): a near-perfect, non-monotonic relationship should
-        # hit the floor, (1+0)/(1+17) = 1/18 -- not just "some small p".
-        assert row[1] == pytest.approx(1 / 18)
+        # CR8's exact formula at this fixture's real size (30 samples, 5
+        # valid shifts under the corrected 2*max_lag margin -- C1,
+        # docs/AUDIT-2026-10-05.md): a near-perfect, non-monotonic
+        # relationship should hit the floor, (1+0)/(1+5) = 1/6 -- not just
+        # "some small p".
+        assert row[1] == pytest.approx(1 / 6)
 
     def test_too_few_samples_for_any_valid_shift_returns_p_one_not_a_bogus_fraction(self, conn):
         """CR8's other edge, exercised through the real cache layer this

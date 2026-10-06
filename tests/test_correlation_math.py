@@ -167,14 +167,22 @@ def _best_spearman(ref, cand):
 def _valid_shift_count(n):
     """Mirrors _circular_shift_pvalue's own lo/hi math, so tests can predict
     the exact evaluable count (and therefore the exact minimum p) without
-    reaching into the function's internals."""
-    lo, hi = MAX_LAG + 1, n - MAX_LAG - 1
+    reaching into the function's internals.
+
+    Re-audit (docs/AUDIT-2026-10-05.md, C1/CR8): the exclusion margin is
+    2*MAX_LAG, not MAX_LAG -- the inner lag-search _circular_shift_pvalue
+    runs on every shifted series can itself move the effective offset by up
+    to MAX_LAG in either direction, so a shift only MAX_LAG+1 away from a
+    boundary could still combine with an inner lag to land back on (or very
+    near) the real alignment. Only excluding by MAX_LAG left that window
+    open; this used to be the actual, exploitable bug."""
+    lo, hi = 2 * MAX_LAG + 1, n - 2 * MAX_LAG - 1
     return max(0, hi - lo + 1)
 
 
 class TestCircularShiftPvalue:
     def test_returns_one_when_series_too_short_for_any_valid_shift(self):
-        # n=12: lo=7, hi=12-7=5 -- lo > hi, no valid shift exists at all.
+        # n=12: lo=13, hi=12-13=-1 -- lo > hi, no valid shift exists at all.
         # This used to silently run a statistically meaningless permutation
         # test on whatever shifts rng.randint(1, n-1) happened to draw
         # (some of them within the lag buffer); now it correctly refuses.
@@ -202,13 +210,17 @@ class TestCircularShiftPvalue:
         p2 = _circular_shift_pvalue(ref, cand, r)
         assert p1 == p2
 
-    def test_minimum_possible_pvalue_at_the_real_dataset_size_matches_the_audits_own_1_in_116(self):
-        """CR8's own explicit verify line: 'the smallest possible p is then
-        about 1/116' for a real n=128 series (max|lag|=6 -> 115 evaluable
-        shifts, p=(1+0)/(1+115)). A near-perfect, non-monotonic real
-        relationship should hit exactly that floor, not just 'some small
-        number' -- this pins the EXACT formula, not an approximation of it."""
-        assert _valid_shift_count(128) == 115
+    def test_minimum_possible_pvalue_at_the_real_dataset_size_matches_the_re_audits_own_1_in_104(self):
+        """Re-audit (docs/AUDIT-2026-10-05.md, C1/CR8): CR8's original verify
+        line claimed 'the smallest possible p is then about 1/116' for a real
+        n=128 series, but that number came from the buggy MAX_LAG (not
+        2*MAX_LAG) exclusion margin -- see _valid_shift_count's docstring.
+        With the margin corrected, n=128 gives 103 evaluable shifts (lo=13,
+        hi=115), so the true floor is 1/104, not 1/116 -- and, unlike the old
+        formula, this floor no longer varies by which lag the real
+        correlation sits at (the audit measured the old floor ranging
+        0.0086-0.0345 depending on lag)."""
+        assert _valid_shift_count(128) == 103
         rng = random.Random(2)
         ref = [rng.gauss(0, 1) for _ in range(128)]
         cand = [v + rng.gauss(0, 0.01) for v in ref]  # tight noisy copy, lag 0
@@ -216,16 +228,22 @@ class TestCircularShiftPvalue:
         assert lag == 0
         assert r > 0.999
         p = _circular_shift_pvalue(ref, cand, r)
-        assert p == pytest.approx(1 / 116)
+        assert p == pytest.approx(1 / 104)
 
     def test_pure_noise_gives_high_pvalue_typically(self):
         """Two independent random series should typically NOT be judged
         significant -- not a hard guarantee for any single draw, but true
         often enough that a consistently-low p here would indicate the
-        permutation test is broken (e.g. always returning the floor)."""
+        permutation test is broken (e.g. always returning the floor).
+
+        n=128 (not a shorter series): the corrected, coarser 2*MAX_LAG
+        exclusion margin (C1, docs/AUDIT-2026-10-05.md) leaves too few
+        evaluable shifts at small n for this test's 0.1 threshold to be
+        meaningful -- at n=40 the floor itself is 1/16=0.0625, already
+        below 0.1 regardless of whether the test series are related."""
         rng = random.Random(99)
-        ref = [rng.uniform(0, 1) for _ in range(40)]
-        cand = [rng.uniform(0, 1) for _ in range(40)]
+        ref = [rng.uniform(0, 1) for _ in range(128)]
+        cand = [rng.uniform(0, 1) for _ in range(128)]
         r, _lag = _best_spearman(ref, cand)
         if r is None:
             pytest.skip("no valid correlation found for this random draw")
@@ -233,9 +251,18 @@ class TestCircularShiftPvalue:
         assert p > 0.1, f"expected weak/no correlation between independent noise, got p={p}"
 
     def test_never_evaluates_a_shift_within_the_lag_search_window(self, monkeypatch):
-        """CR8 issue #1: a shift that small lets the lag search re-create
-        part of the ORIGINAL alignment, so the null it feeds isn't fully
-        destroyed. Spies on every shifted_ref actually passed to the
+        """CR8 issue #1, corrected by the C1 re-audit (docs/AUDIT-2026-10-05.md):
+        a shift that small lets the lag search re-create part of the
+        ORIGINAL alignment, so the null it feeds isn't fully destroyed. The
+        margin that matters is 2*MAX_LAG, not MAX_LAG: the inner lag-search
+        run on every shifted series can itself move the effective offset by
+        up to MAX_LAG in either direction, so a shift only MAX_LAG+1 away
+        from a boundary (previously allowed) could combine with an inner
+        lag to land back on, or very near, the real alignment. This
+        assertion used to check only `MAX_LAG < shift < n - MAX_LAG`, which
+        is exactly why the bug shipped unnoticed -- it is now
+        `2*MAX_LAG < shift < n - 2*MAX_LAG`, matching the fixed production
+        exclusion range. Spies on every shifted_ref actually passed to the
         lag-search and decodes which shift amount produced it (ref's
         values are all distinct, so this is unambiguous) -- proves the
         exclusion structurally, not just "the result looked plausible"."""
@@ -263,10 +290,12 @@ class TestCircularShiftPvalue:
 
         assert len(seen_shifts) == _valid_shift_count(n)
         for shift in seen_shifts:
-            assert MAX_LAG < shift < n - MAX_LAG, (
-                f"shift={shift} is within {MAX_LAG} samples of 0 or n={n} -- "
-                f"this shift can re-create part of the real alignment at one "
-                f"of the searched lags and must never be evaluated"
+            assert 2 * MAX_LAG < shift < n - 2 * MAX_LAG, (
+                f"shift={shift} is within {2 * MAX_LAG} samples of 0 or n={n} -- "
+                f"combined with the inner lag-search, this shift can "
+                f"reconstruct an effective offset inside the real lag "
+                f"window and must never be evaluated (C1, "
+                f"docs/AUDIT-2026-10-05.md)"
             )
 
     def test_pvalue_is_never_exactly_zero(self):
@@ -292,7 +321,7 @@ class TestCircularShiftPvalue:
 
         n = 30
         valid_count = _valid_shift_count(n)
-        assert valid_count == 17  # lo=7, hi=23 inclusive -> 17 integers
+        assert valid_count == 5  # lo=13, hi=17 inclusive -> 5 integers
         ref = list(range(n))
         cand = list(range(n))
         real_spearman_at_lags = correlation_sql_module._spearman_at_lags
@@ -336,7 +365,16 @@ class TestCircularShiftPvalue:
         as-extreme-as-observed shifts can only be >= the fixed-lag count
         -- meaning full-search's p-value can never be LOWER (falsely more
         significant) than the fixed-lag version's."""
-        n = 20
+        # n must clear 4*MAX_LAG+2 (=26) for the corrected 2*MAX_LAG exclusion
+        # margin to leave any valid shift at all -- see _valid_shift_count.
+        # n=38 specifically (not just any value above 26): every lag in
+        # CORRELATION_LAGS ties at Spearman r=1.0 for this monotonic-in-index
+        # construction (rank order is identical regardless of lag), so which
+        # lag _spearman_at_lags reports as "best" among the tie comes down to
+        # floating-point noise in scipy's tied-rank computation -- n=38 is
+        # one of the values where that noise happens to land on the true
+        # lag=2 at an exact r=1.0 (not a near-miss like 0.9999999999999999).
+        n = 38
         ref = [(j + 1) ** 2 for j in range(n)]
         cand = [(j + 3) ** 2 for j in range(n)]  # true lag = 2
         observed_r, observed_lag = _best_spearman(ref, cand)
@@ -345,7 +383,7 @@ class TestCircularShiftPvalue:
 
         full_search_p = _circular_shift_pvalue(ref, cand, observed_r)
 
-        lo, hi = MAX_LAG + 1, n - MAX_LAG - 1
+        lo, hi = 2 * MAX_LAG + 1, n - 2 * MAX_LAG - 1
         fixed_lag_extreme, fixed_lag_evaluable = 0, 0
         for shift in range(lo, hi + 1):
             shifted_ref = ref[shift:] + ref[:shift]
