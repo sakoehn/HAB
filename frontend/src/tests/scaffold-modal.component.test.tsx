@@ -995,6 +995,97 @@ describe('GroupScaffoldModal', () => {
     // scaffold total should double from 9 (one member) to 18 (both).
     expect(screen.getByText('18', { selector: '.scaffold-stat-val' })).toBeTruthy()
   })
+
+  // G2 (docs/AUDIT-2026-10-05.md): same overcounting bug W22 already fixed
+  // in ScaffoldExplorePanel -- a group containing both a taxonomy node and
+  // its own descendant double-counted every scaffold/gene already inside
+  // the ancestor's own total. Taxonomy's redundancy check is a free
+  // string-prefix test (utils/annotationHierarchy.ts) -- no extra fetch to
+  // mock, so this also proves the descendant is never even requested, not
+  // just excluded from the sum after the fact.
+  describe('GroupScaffoldModal — nested (redundant) members are excluded, not double-counted (G2)', () => {
+    function mockAncestorOnly() {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('annotation_id=Bacteria%3BProteobacteria')) {
+          return Promise.reject(new Error('descendant must never be fetched -- it is redundant'))
+        }
+        if (url.includes('annotation_id=Bacteria')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ data: [{ sample: 's1', date: '2021-05-10 08:00', scaffold_count: 100, gene_count: 200 }] }),
+          })
+        }
+        return Promise.reject(new Error('unexpected fetch'))
+      })
+    }
+
+    it('sums only the ancestor, excludes its own descendant from the group totals', async () => {
+      mockAncestorOnly()
+      render(
+        <GroupScaffoldModal
+          members={[
+            { annotationId: 'Bacteria', source: 'taxonomy', name: 'Bacteria' },
+            { annotationId: 'Bacteria;Proteobacteria', source: 'taxonomy', name: 'Proteobacteria' },
+          ]}
+          groupLabel="Grouped terms"
+          onClose={vi.fn()}
+        />,
+      )
+
+      await waitFor(() => screen.getByText(/Group totals/))
+
+      // 100/200, not 100+100=200 / 200+200=400 (what a naive sum of two
+      // identical-shaped member rows would give if both contributed).
+      expect(screen.getByText('Σ scaffolds').previousElementSibling?.textContent).toBe('100')
+      expect(screen.getByText('Σ genes').previousElementSibling?.textContent).toBe('200')
+      // "terms" reflects the one real contributor, not the group's
+      // pre-filter size of 2.
+      expect(screen.getByText('terms').previousElementSibling?.textContent).toBe('1')
+    })
+
+    it('discloses the dropped descendant and which ancestor already contains it', async () => {
+      mockAncestorOnly()
+      render(
+        <GroupScaffoldModal
+          members={[
+            { annotationId: 'Bacteria', source: 'taxonomy', name: 'Bacteria' },
+            { annotationId: 'Bacteria;Proteobacteria', source: 'taxonomy', name: 'Proteobacteria' },
+          ]}
+          groupLabel="Grouped terms"
+          onClose={vi.fn()}
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByTestId('group-redundancy-warning')).toBeTruthy()
+      })
+      const warning = screen.getByTestId('group-redundancy-warning').textContent!
+      expect(warning).toContain('Bacteria;Proteobacteria')
+      expect(warning).toContain('Bacteria')
+    })
+
+    it('never requests the redundant descendant at all', async () => {
+      mockAncestorOnly()
+      render(
+        <GroupScaffoldModal
+          members={[
+            { annotationId: 'Bacteria', source: 'taxonomy', name: 'Bacteria' },
+            { annotationId: 'Bacteria;Proteobacteria', source: 'taxonomy', name: 'Proteobacteria' },
+          ]}
+          groupLabel="Grouped terms"
+          onClose={vi.fn()}
+        />,
+      )
+
+      await waitFor(() => screen.getByText(/Group totals/))
+      // The mock itself rejects on the descendant's URL -- reaching 'ok'
+      // status at all proves that branch was never hit, but assert the
+      // call log directly too, for an unambiguous failure message if this
+      // regresses.
+      const urls = mockFetch.mock.calls.map(c => c[0] as string)
+      expect(urls.some(u => u.includes('annotation_id=Bacteria%3BProteobacteria'))).toBe(false)
+    })
+  })
 })
 
 describe('ScaffoldBtn', () => {

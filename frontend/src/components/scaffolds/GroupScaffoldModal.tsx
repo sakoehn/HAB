@@ -40,6 +40,7 @@ function resolveCssVar(value: string, fallback: string): string {
 import type { ApiStatus, ScaffoldSummaryRow, ScaffoldDetailRow, SortDir } from '../../types'
 import type { Data as PlotlyData, Layout as PlotlyLayout } from 'plotly.js'
 import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel } from '../../constants'
+import { filterRedundantAnnotations, type DroppedRedundancy } from '../../utils/annotationHierarchy'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime, toPlotlyDate } from '../../utils/format'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
@@ -91,6 +92,14 @@ export function GroupScaffoldModal({
   const [rows, setRows]           = useState<MergedRow[]>([])
   const [status, setStatus]       = useState<ApiStatus>('loading')
   const [failedMembers, setFailedMembers] = useState<Member[]>([])
+  // G2 (docs/AUDIT-2026-10-05.md): same overcounting bug W22 already fixed
+  // in ScaffoldExplorePanel -- a group can contain nested (ancestor/
+  // descendant) annotations (e.g. a taxonomy genus and its own parent
+  // phylum, both picked as separate "members"), and summing both
+  // double-counts every scaffold/gene that was already inside the
+  // ancestor's own total. droppedMembers holds the ones excluded from the
+  // fetch/sum below (and therefore from `rows`), for the disclosure banner.
+  const [droppedMembers, setDroppedMembers] = useState<DroppedRedundancy[]>([])
   const [sortCol, setSortCol]     = useState<SortCol>('date')
   const [sortDir, setSortDir]     = useState<SortDir>('asc')
   const [showChart, setShowChart] = useState(true)
@@ -130,18 +139,32 @@ export function GroupScaffoldModal({
     }))
   }
 
-  // ── Fetch all member summaries in parallel ────────────────────────────
-  // O(members) parallel round-trips, O(members × samples) merge.
+  // ── Resolve redundancy, then fetch only the non-redundant members ─────
+  // O(members) parallel round-trips, O(members × samples) merge. The
+  // redundancy check must resolve BEFORE fetching -- fetching every member
+  // first and filtering afterward would still have summed the redundant
+  // ones into `rows` in the meantime.
   useEffect(() => {
-    if (!members.length) { setStatus('ok'); return }
+    if (!members.length) { setStatus('ok'); setRows([]); setDroppedMembers([]); return }
 
     setStatus('loading')
-    Promise.all(members.map(fetchMember)).then(results => {
-      const merged = results.flatMap(({ member, data }) => toMergedRows(member, data))
-      setRows(merged)
-      setFailedMembers(results.filter(r => r.failed).map(r => r.member))
-      setStatus('ok')
-    })
+    let cancelled = false
+    filterRedundantAnnotations(members.map(m => ({ annotationId: m.annotationId, source: m.source })))
+      .then(({ kept, dropped }) => {
+        if (cancelled) return
+        setDroppedMembers(dropped)
+        const keptKeys = new Set(kept.map(k => `${k.source}::${k.annotationId}`))
+        const effectiveMembers = members.filter(m => keptKeys.has(`${m.source}::${m.annotationId}`))
+        return Promise.all(effectiveMembers.map(fetchMember))
+      })
+      .then(results => {
+        if (cancelled || !results) return
+        const merged = results.flatMap(({ member, data }) => toMergedRows(member, data))
+        setRows(merged)
+        setFailedMembers(results.filter(r => r.failed).map(r => r.member))
+        setStatus('ok')
+      })
+    return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [members])
 
@@ -199,6 +222,13 @@ export function GroupScaffoldModal({
     }
     return Object.values(dateMap).sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date))
   }, [rows])
+
+  // G2: how many of the group's original members actually contributed to
+  // the sums below -- the ones dropped as redundant were deliberately never
+  // fetched, so they must not count toward "terms summed" or the
+  // failed-to-load denominator (which only covers members that were
+  // actually attempted).
+  const effectiveMemberCount = members.length - droppedMembers.length
 
   // ── Summary stats across all rows ────────────────────────────────────
   const totalSamples   = useMemo(() => new Set(rows.map(r => r.sample)).size, [rows])
@@ -398,7 +428,10 @@ export function GroupScaffoldModal({
                   data-testid="group-fetch-warning"
                 >
                   <span style={{ flex: 1 }}>
-                    {failedMembers.length} of {members.length} terms failed to
+                    {/* G2: denominator is effectiveMemberCount, not members.length --
+                        a member dropped as redundant was never attempted, so it
+                        can't be counted alongside the ones that genuinely failed. */}
+                    {failedMembers.length} of {effectiveMemberCount} terms failed to
                     load ({failedMembers.map(m => m.annotationId).join(', ')})
                     — totals below exclude them.
                   </span>
@@ -408,12 +441,38 @@ export function GroupScaffoldModal({
                 </div>
               )}
 
+              {/* G2 (docs/AUDIT-2026-10-05.md): same disclosure
+                  ScaffoldExplorePanel already shows for the identical
+                  overcounting case -- a nested (ancestor/descendant) member
+                  is excluded from every sum below, not silently double-
+                  counted. */}
+              {droppedMembers.length > 0 && (
+                <div
+                  className="state-box"
+                  style={{ padding: '8px 12px', marginBottom: 10 }}
+                  data-testid="group-redundancy-warning"
+                >
+                  <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
+                    {droppedMembers.length} term{droppedMembers.length === 1 ? '' : 's'} left
+                    out of this group's totals -- already counted inside another
+                    tracked term, so including both would double-count it:{' '}
+                    {droppedMembers.map((d, i) => (
+                      <span key={`${d.candidate.source}::${d.candidate.annotationId}`}>
+                        {i > 0 && ', '}
+                        <strong>{d.candidate.annotationId}</strong> (inside {d.containedBy.annotationId})
+                      </span>
+                    ))}
+                    .
+                  </span>
+                </div>
+              )}
+
               {/* ── Stat strip ── */}
               <div className="scaffold-stat-grid">
                 <div className="scaffold-stat-row">
                   <span className="scaffold-stat-row-label">Group totals</span>
                   <div className="scaffold-stat">
-                    <span className="scaffold-stat-val">{members.length}</span>
+                    <span className="scaffold-stat-val">{effectiveMemberCount}</span>
                     <span className="scaffold-stat-label">terms</span>
                   </div>
                   <div className="scaffold-stat">
@@ -486,7 +545,10 @@ export function GroupScaffoldModal({
                     </button>
                     {showChart && (
                       <span style={{ font: '10px var(--mono)', color: 'var(--text-dim)' }}>
-                        summed across all {members.length} terms
+                        {/* G2: must match what's actually in the sum, not the
+                            pre-filter group size (G3's exact bug shape in
+                            ScaffoldExplorePanel, deliberately not repeated here). */}
+                        summed across all {effectiveMemberCount} terms
                       </span>
                     )}
                   </div>
