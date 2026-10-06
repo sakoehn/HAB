@@ -121,3 +121,33 @@ def test_sample_count_reflects_the_active_filter_not_the_whole_dataset(client):
     # Independently verified against raw TIMEPOINTS: exactly 9 of the 128
     # samples fall within 2021-05-27..2021-05-28 inclusive.
     assert body["sample_count"] == 9
+
+
+# A8 (docs/AUDIT-2026-10-05.md): depth was missing from this route's response
+# entirely for kegg/cog/enzyme, so the frontend had no way to rank-filter
+# down to real leaf annotations -- the top-25 by mean_egc is otherwise 100%
+# branch/rollup nodes, since a parent's EGC is the sum of its descendants.
+# Covers both response code paths: the unfiltered fast path (reads
+# annotation_catalog) and the date-filtered live-aggregation path (reads
+# annotation_series) -- they're different functions and must both carry it.
+
+def test_depth_is_present_on_every_row_unfiltered_fast_path(client):
+    resp = client.get("/annotations/top", params={"source": "kegg", "limit": 25})
+    resp.raise_for_status()
+    rows = resp.json()["data"]
+    assert len(rows) == 25
+    assert all(row.get("depth") is not None for row in rows)
+    # The real bug this unlocks fixing: without a depth filter applied,
+    # the top 25 kegg rows by mean_egc are entirely non-leaf nodes.
+    assert all(row["depth"] < 4 for row in rows)
+
+
+def test_depth_is_present_on_every_row_date_filtered_path(client):
+    resp = client.get(
+        "/annotations/top",
+        params={"source": "cog", "limit": 10, "date_from": "2021-06-15"},
+    )
+    resp.raise_for_status()
+    rows = resp.json()["data"]
+    assert rows
+    assert all(row.get("depth") is not None for row in rows)

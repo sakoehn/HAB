@@ -718,18 +718,21 @@ def get_top_annotations_sql(conn: sqlite3.Connection, source: str, sample_names:
         sample_names: Samples to include in the aggregation.
 
     Returns:
-        List of dicts keyed annotation_id, name, parent, mean_egc,
+        List of dicts keyed annotation_id, name, parent, depth, mean_egc,
         max_egc, mean_norm_egc, max_norm_egc, sample_count.
     """
     placeholders = ",".join("?" for _ in sample_names)
-    # MIN() used instead of bare columns: name/parent are constant per
+    # MIN() used instead of bare columns: name/parent/depth are constant per
     # (source, annotation_id), but SQLite only guarantees a bare column's
     # value is deterministic in GROUP BY when the query has exactly one
     # MIN()/MAX() -- this one has four (two AVG, two MAX on egc/norm_egc).
+    # depth included for the same reason as get_top_annotations_from_catalog_sql
+    # (A8, docs/AUDIT-2026-10-05.md) -- this is the date-filtered sibling path.
     query = f"""
         SELECT annotation_id,
                MIN(name) AS name,
                MIN(parent) AS parent,
+               MIN(depth) AS depth,
                AVG(egc) AS mean_egc,
                MAX(egc) AS max_egc,
                AVG(norm_egc) AS mean_norm_egc,
@@ -748,19 +751,27 @@ def get_top_annotations_sql(conn: sqlite3.Connection, source: str, sample_names:
             "annotation_id": row[0],
             "name": row[1],
             "parent": row[2],
-            "mean_egc": row[3],
-            "max_egc": row[4],
-            "mean_norm_egc": row[5],
-            "max_norm_egc": row[6],
-            "sample_count": row[7],
+            "depth": row[3],
+            "mean_egc": row[4],
+            "max_egc": row[5],
+            "mean_norm_egc": row[6],
+            "max_norm_egc": row[7],
+            "sample_count": row[8],
         }
         for row in rows
     ]
 
 def get_top_annotations_from_catalog_sql(conn: sqlite3.Connection, source: str) -> list[dict]:
+    # A8 (docs/AUDIT-2026-10-05.md): depth must be included -- a parent's
+    # EGC is the sum of its descendants, so parents always outrank leaves by
+    # mean_egc. Without depth, the frontend has no way to rank-filter down
+    # to real leaf annotations for kegg/cog/enzyme (it already does this for
+    # taxonomy, where depth is derivable client-side from the lineage-prefix
+    # id itself -- see get_search_annotations, which already selects depth
+    # for the same reason).
     query = f"""
         SELECT annotation_id,
-               name, parent, mean_egc, max_egc,
+               name, parent, depth, mean_egc, max_egc,
                mean_norm_egc, max_norm_egc,
                sample_count
         FROM annotation_catalog
@@ -774,11 +785,12 @@ def get_top_annotations_from_catalog_sql(conn: sqlite3.Connection, source: str) 
             "annotation_id": row[0],
             "name": row[1],
             "parent": row[2],
-            "mean_egc": row[3],
-            "max_egc": row[4],
-            "mean_norm_egc": row[5],
-            "max_norm_egc": row[6],
-            "sample_count": row[7],
+            "depth": row[3],
+            "mean_egc": row[4],
+            "max_egc": row[5],
+            "mean_norm_egc": row[6],
+            "max_norm_egc": row[7],
+            "sample_count": row[8],
         }
         for row in rows
     ]

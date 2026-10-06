@@ -1193,7 +1193,7 @@ def test_only_counts_the_requested_samples_not_every_sample(conn):
 # ═══════════════════════════════════════════════════════════════════════════
 
 EXPECTED_ROW_KEYS = {
-    "annotation_id", "name", "parent",
+    "annotation_id", "name", "parent", "depth",
     "mean_egc", "max_egc", "mean_norm_egc", "max_norm_egc", "sample_count",
 }
 
@@ -1218,6 +1218,38 @@ def test_row_shape_matches_get_top_annotations_sql(conn):
     would surface as a broken response only for the fast-path branch."""
     rows = get_top_annotations_from_catalog_sql(conn, "cog")
     assert set(rows[0].keys()) == EXPECTED_ROW_KEYS
+
+
+# A8 (docs/AUDIT-2026-10-05.md): depth was previously omitted from this
+# SELECT entirely. Since a parent's EGC is the sum of its descendants, the
+# real top-25 by mean_egc for kegg/cog/enzyme is 100% branch/rollup nodes --
+# with no depth in the response, the frontend had no way to rank-filter
+# those out, unlike taxonomy (where depth is derivable client-side from the
+# lineage-prefix id itself).
+def test_depth_is_present_and_matches_annotation_catalog(conn):
+    rows = get_top_annotations_from_catalog_sql(conn, "cog")
+    by_id = {r["annotation_id"]: r["depth"] for r in rows}
+    real = dict(conn.execute(
+        "SELECT annotation_id, depth FROM annotation_catalog WHERE source = 'cog'"
+    ).fetchall())
+    assert by_id == real
+    assert any(d is not None for d in by_id.values())
+
+
+def test_without_depth_filtering_the_real_top_25_is_entirely_non_leaf_kegg_nodes(conn):
+    """Reproduces the exact bug A8 describes, as a measured fact about the
+    real catalog, not an assumption: kegg's top 25 rows by mean_egc are
+    every one a depth-1/2/3 branch node, never a real depth-4 leaf KO --
+    confirming depth is the right (and only) signal available to fix this,
+    and that the fix must be applied by a caller, not by re-sorting here
+    (branch nodes genuinely do have the largest real mean_egc)."""
+    rows = get_top_annotations_from_catalog_sql(conn, "kegg")
+    top_25_depths = [r["depth"] for r in rows[:25]]
+    assert all(d is not None and d < 4 for d in top_25_depths)
+    # And real depth-4 leaves do exist further down -- proving a depth
+    # filter (now possible with this field present) is what would surface
+    # them, not that they're simply absent from the source data.
+    assert any(r["depth"] == 4 for r in rows)
 
 
 @pytest.mark.slow

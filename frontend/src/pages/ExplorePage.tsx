@@ -28,7 +28,6 @@ import {
   extractEgc, computeTrend, sumMembersByTimestamp,
   resolveLookupCategory, resolveLookupScaffoldCount, resolveLookupDepth,
 } from '../utils/stats'
-import { taxonomyDepthFromId } from '../utils/taxonomy'
 import { useCopyId } from '../hooks/useCopyId'
 import { CopyBtn, ResetBtn } from '../components/ui/controls'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
@@ -67,11 +66,10 @@ export type ExploreState = {
   sortDir:      SortDir
   parentSource: string
   topFilter:    string
-  // Taxonomy rank multi-select filter for the Top EGC Annotations table —
-  // only meaningful (and only shown) when source === 'taxonomy'. Depth
-  // isn't in TopAnnotation's /annotations/top rows (only annotation_catalog/
-  // search results carry it), so rank is derived client-side from the
-  // lineage-prefix id itself via taxonomyDepthFromId — no backend change needed.
+  // Rank/depth multi-select filter for the Top EGC Annotations table, for
+  // any source — reads the row's real `depth` directly (A8,
+  // docs/AUDIT-2026-10-05.md: /annotations/top now returns it for
+  // kegg/cog/enzyme too, not just taxonomy).
   topRankFilter: Set<number>
   // Lookup section
   lookupId:       string
@@ -84,9 +82,8 @@ export type ExploreState = {
   // source -- switching lookupSource before a search resolves used to show
   // the returned annotation tagged/linked under the NEW source.
   lookupLoadedSource: string | null
-  // Same taxonomy rank filter, applied to the lookup result list. Unlike
-  // topRankFilter, lookupResults DOES carry real `depth` (it's fetched from
-  // /api/search/annotations), so this reads row.depth directly.
+  // Same rank/depth filter, applied to the Lookup result list — reads
+  // row.depth directly (from /api/search/annotations, real for every source).
   lookupRankFilter: Set<number>
   // Scaffold section
   scaffoldInitialTerms?: { annotationId: string; source: string }[]
@@ -1147,22 +1144,24 @@ export function ExplorePage({
     setState(prev => ({ ...prev, lookupRankFilter: new Set() }))
   }
 
+  // A8 (docs/AUDIT-2026-10-05.md): depth is now real for every source, not
+  // just taxonomy (annotation_catalog/annotation_series both carry it for
+  // kegg/cog/enzyme too) -- rank-filtering no longer needs to be restricted
+  // to taxonomy.
   const availableLookupRanks = useMemo(
-    () => effectiveLookupSource !== 'taxonomy'
-      ? []
-      : [...new Set(
-          state.lookupResults
-            .map(r => r.depth)
-            .filter((d): d is number => d != null),
-        )].sort((a, b) => a - b),
-    [state.lookupResults, effectiveLookupSource],
+    () => [...new Set(
+        state.lookupResults
+          .map(r => r.depth)
+          .filter((d): d is number => d != null),
+      )].sort((a, b) => a - b),
+    [state.lookupResults],
   )
 
   const visibleLookupResults = useMemo(
-    () => state.lookupRankFilter.size === 0 || effectiveLookupSource !== 'taxonomy'
+    () => state.lookupRankFilter.size === 0
       ? state.lookupResults
       : state.lookupResults.filter(r => r.depth != null && state.lookupRankFilter.has(r.depth)),
-    [state.lookupResults, state.lookupRankFilter, effectiveLookupSource],
+    [state.lookupResults, state.lookupRankFilter],
   )
 
   // A failed request and a genuinely empty result must stay distinguishable
@@ -1193,15 +1192,28 @@ export function ExplorePage({
     }
   }
 
+  // taxonomyRankLabel's named rungs (Domain/Phylum/.../Strain) only apply to
+  // taxonomy's own ladder -- reusing it unconditionally for e.g. a kegg
+  // depth=1 node would mislabel it "Domain". Falls back to the same
+  // generic "Level N" taxonomyRankLabel already uses for an out-of-range
+  // taxonomy depth.
+  function rankPillLabel(depth: number, source: string): string {
+    return source === 'taxonomy' ? taxonomyRankLabel(depth) : `Level ${depth}`
+  }
+
   // Ranks actually present among the loaded rows — mirrors LeftResultList's
-  // availableSources/availableRanks pattern on the Analyze page. Only
-  // meaningful for source: 'taxonomy'; empty (and the pill row hidden)
-  // otherwise, same as when the source is switched away on Analyze.
+  // availableSources/availableRanks pattern on the Analyze page. A8
+  // (docs/AUDIT-2026-10-05.md): depth is now real for every source (see
+  // get_top_annotations_from_catalog_sql/get_top_annotations_sql), so this
+  // reads r.depth directly instead of being restricted to taxonomy — a
+  // parent's EGC is the sum of its descendants, so without this,
+  // kegg/cog/enzyme top lists could never be rank-filtered down to real
+  // leaf annotations and were 100% branch/rollup nodes by default.
   const availableTopRanks = useMemo(
-    () => effectiveTopSource !== 'taxonomy'
-      ? []
-      : [...new Set(state.rows.map(r => taxonomyDepthFromId(r.annotation_id)))].sort((a, b) => a - b),
-    [state.rows, effectiveTopSource],
+    () => [...new Set(
+        state.rows.map(r => r.depth).filter((d): d is number => d != null),
+      )].sort((a, b) => a - b),
+    [state.rows],
   )
 
   const sorted = useMemo(() => {
@@ -1213,8 +1225,7 @@ export function ExplorePage({
         || (r.parent ?? '').toLowerCase().includes(q),
       )
       .filter(r => state.topRankFilter.size === 0
-        || effectiveTopSource !== 'taxonomy'
-        || state.topRankFilter.has(taxonomyDepthFromId(r.annotation_id)),
+        || (r.depth != null && state.topRankFilter.has(r.depth)),
       )
       .sort((a, b) => {
         const av = a[state.sortCol] as number | string
@@ -1226,7 +1237,7 @@ export function ExplorePage({
           ? String(av).localeCompare(String(bv))
           : String(bv).localeCompare(String(av))
       })
-  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter, effectiveTopSource])
+  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter])
 
   const maxMean = Math.max(...state.rows.map(r => r.mean_egc), 1)
 
@@ -1413,7 +1424,7 @@ export function ExplorePage({
                       className={`al-source-pill ${state.topRankFilter.has(depth) ? 'al-source-pill-active' : ''}`}
                       onClick={() => toggleTopRank(depth)}
                     >
-                      {taxonomyRankLabel(depth)}
+                      {rankPillLabel(depth, effectiveTopSource)}
                     </button>
                   ))}
                 </div>
@@ -1737,7 +1748,7 @@ export function ExplorePage({
                           className={`al-source-pill ${state.lookupRankFilter.has(depth) ? 'al-source-pill-active' : ''}`}
                           onClick={() => toggleLookupRank(depth)}
                         >
-                          {taxonomyRankLabel(depth)}
+                          {rankPillLabel(depth, effectiveLookupSource)}
                         </button>
                       ))}
                     </div>

@@ -128,9 +128,14 @@ export type TopAnnotation = {
   max_norm_egc?:  number | null
   sample_count:   number
   value?:         AnnotationValue | null
-  // Only present on rows from /api/search/annotations (annotation_catalog
-  // carries it; /api/annotations/top's aggregation does not) — taxonomic
-  // rank, 1=domain..8=strain. Null/undefined for cog (see create_sql_schema.py).
+  // Taxonomic rank, 1=domain..8=strain for taxonomy; hierarchy-tree depth
+  // (real for every source, including cog -- confirmed directly against
+  // the live db, despite a stale create_sql_schema.py comment claiming
+  // otherwise) for kegg/cog/enzyme. A8 (docs/AUDIT-2026-10-05.md): now
+  // present on /api/annotations/top rows too, not just
+  // /api/search/annotations — without it, non-taxonomy sources had no way
+  // to rank-filter down to real leaf annotations (a parent's EGC is the
+  // sum of its descendants, so parents always outranked leaves by mean_egc).
   depth?:         number | null
   // Also only on /api/search/annotations rows — a single-source
   // /annotations/top request has no need to repeat its own source per row.

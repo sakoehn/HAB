@@ -330,3 +330,46 @@ describe('ExplorePage — Lookup External Databases link (W32)', () => {
     })
   })
 })
+
+// A8 (docs/AUDIT-2026-10-05.md): /api/annotations/top previously omitted
+// `depth` for kegg/cog/enzyme entirely, so the Top EGC table had no way to
+// rank-filter down to real leaf annotations -- since a parent's EGC is the
+// sum of its descendants, the unfiltered top list is otherwise dominated by
+// branch/rollup nodes. Confirms the rank-filter pills now appear for a
+// non-taxonomy source and actually narrow the table by the row's real depth.
+describe('ExplorePage — Top EGC rank filter works for non-taxonomy sources (A8)', () => {
+  it('filters kegg rows by real depth once it is present on the response', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top') && url.includes('source=kegg')) {
+        return Promise.resolve(jsonResponse({
+          data: [
+            { annotation_id: '09180', name: 'Brite Hierarchies', parent: null, depth: 1, mean_egc: 900, max_egc: 1000, sample_count: 128 },
+            { annotation_id: 'K00001', name: 'alcohol dehydrogenase', parent: '00010', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
+          ],
+          sample_count: 128,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'top-egc', source: 'kegg' }} />)
+
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('09180')).toBeInTheDocument()
+    })
+    expect(screen.getByText('K00001')).toBeInTheDocument()
+
+    // Rank pills exist (previously impossible for kegg -- no depth in the
+    // response at all) and use a generic "Level N" label, never a
+    // taxonomy-specific rung name like "Domain" for a non-taxonomy source.
+    expect(screen.getByText('Level 1')).toBeInTheDocument()
+    expect(screen.getByText('Level 4')).toBeInTheDocument()
+
+    await user.click(screen.getByText('Level 4'))
+
+    expect(screen.queryByText('09180')).not.toBeInTheDocument()
+    expect(screen.getByText('K00001')).toBeInTheDocument()
+  })
+})
