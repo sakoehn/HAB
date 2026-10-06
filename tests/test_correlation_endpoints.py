@@ -61,6 +61,7 @@ CREATE TABLE correlations_cache(
     lag_samples INTEGER NOT NULL,
     p_value REAL NOT NULL,
     n_pairs INTEGER NOT NULL,
+    at_p_floor INTEGER,
     UNIQUE (catalog_id_a, catalog_id_b, metric, method)
 );
 """
@@ -230,6 +231,22 @@ class TestCorrelationEndpointCircularShift:
         # to tell apart from.
         assert body["p"] == pytest.approx(1 / 6)
         assert body["n_pairs"] == 24  # best lag=6 trims the 30-sample window to 24
+        # C2 (docs/AUDIT-2026-10-05.md): this p IS the resolution limit --
+        # end-to-end confirmation the flag reaches the HTTP response, not
+        # just the internal dict _get_or_compute_correlation returns.
+        assert body["at_p_floor"] is True
+
+    def test_non_circular_shift_result_reports_floor_as_not_applicable(self, client):
+        # at_p_floor only ever means something for circular_shift's
+        # permutation test -- every other method must report None
+        # (not False, which would wrongly imply "checked, and no"),
+        # through the real HTTP response.
+        response = client.get(
+            "/correlation",
+            params={"catalog_id_a": 1, "catalog_id_b": 2, "metric": "egc", "method": "raw_pearson"},
+        )
+
+        assert response.json()["at_p_floor"] is None
 
     def test_result_is_cached_and_a_repeat_request_is_a_hit(self, circular_shift_client):
         first = circular_shift_client.get(

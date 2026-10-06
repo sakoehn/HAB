@@ -187,14 +187,14 @@ class TestCircularShiftPvalue:
         # test on whatever shifts rng.randint(1, n-1) happened to draw
         # (some of them within the lag buffer); now it correctly refuses.
         assert _valid_shift_count(12) == 0
-        assert _circular_shift_pvalue(list(range(1, 13)), list(range(1, 13)), observed_r=1.0) == 1.0
+        assert _circular_shift_pvalue(list(range(1, 13)), list(range(1, 13)), observed_r=1.0) == (1.0, False)
 
     def test_pvalue_is_between_zero_and_one(self):
         rng = random.Random(10)
         ref = [rng.uniform(0, 1) for _ in range(40)]
         cand = [rng.uniform(0, 1) for _ in range(40)]
         r, _lag = _best_spearman(ref, cand)
-        p = _circular_shift_pvalue(ref, cand, r)
+        p, _at_floor = _circular_shift_pvalue(ref, cand, r)
         assert 0.0 <= p <= 1.0
 
     def test_is_deterministic_same_inputs_always_give_the_same_pvalue(self):
@@ -206,9 +206,9 @@ class TestCircularShiftPvalue:
         ref = [rng.uniform(0, 1) for _ in range(40)]
         cand = [rng.uniform(0, 1) for _ in range(40)]
         r, _lag = _best_spearman(ref, cand)
-        p1 = _circular_shift_pvalue(ref, cand, r)
-        p2 = _circular_shift_pvalue(ref, cand, r)
-        assert p1 == p2
+        result1 = _circular_shift_pvalue(ref, cand, r)
+        result2 = _circular_shift_pvalue(ref, cand, r)
+        assert result1 == result2  # both p AND at_p_floor must match
 
     def test_minimum_possible_pvalue_at_the_real_dataset_size_matches_the_re_audits_own_1_in_104(self):
         """Re-audit (docs/AUDIT-2026-10-05.md, C1/CR8): CR8's original verify
@@ -227,8 +227,13 @@ class TestCircularShiftPvalue:
         r, lag = _best_spearman(ref, cand)
         assert lag == 0
         assert r > 0.999
-        p = _circular_shift_pvalue(ref, cand, r)
+        p, at_p_floor = _circular_shift_pvalue(ref, cand, r)
         assert p == pytest.approx(1 / 104)
+        # C2 (docs/AUDIT-2026-10-05.md): this IS the floor -- no shift in
+        # a near-perfect pair's permutation null should score as extreme
+        # as the real alignment, so at_p_floor must be True here, the
+        # exact case the disclosure exists for.
+        assert at_p_floor is True
 
     def test_pure_noise_gives_high_pvalue_typically(self):
         """Two independent random series should typically NOT be judged
@@ -247,7 +252,7 @@ class TestCircularShiftPvalue:
         r, _lag = _best_spearman(ref, cand)
         if r is None:
             pytest.skip("no valid correlation found for this random draw")
-        p = _circular_shift_pvalue(ref, cand, r)
+        p, _at_floor = _circular_shift_pvalue(ref, cand, r)
         assert p > 0.1, f"expected weak/no correlation between independent noise, got p={p}"
 
     def test_never_evaluates_a_shift_within_the_lag_search_window(self, monkeypatch):
@@ -306,7 +311,7 @@ class TestCircularShiftPvalue:
         ref = [rng.gauss(0, 1) for _ in range(128)]
         cand = [v + rng.gauss(0, 0.01) for v in ref]
         r, _lag = _best_spearman(ref, cand)
-        p = _circular_shift_pvalue(ref, cand, r)
+        p, _at_floor = _circular_shift_pvalue(ref, cand, r)
         assert p > 0.0
 
     def test_unscorable_shifts_are_excluded_from_the_denominator_not_counted_as_non_extreme(self, monkeypatch):
@@ -339,7 +344,7 @@ class TestCircularShiftPvalue:
             return (0.5, 0, 0.1, 20)  # never >= observed_r=0.9 below -> never "extreme"
 
         monkeypatch.setattr(correlation_sql_module, "_spearman_at_lags", stub)
-        p = correlation_sql_module._circular_shift_pvalue(ref, cand, observed_r=0.9)
+        p, at_p_floor = correlation_sql_module._circular_shift_pvalue(ref, cand, observed_r=0.9)
 
         unscorable = sum(1 for i in range(valid_count) if i % 3 == 0)
         expected_evaluable = valid_count - unscorable
@@ -349,6 +354,9 @@ class TestCircularShiftPvalue:
         # denominator), p would instead equal 1/(1+valid_count), a
         # different, smaller number for this fixture.
         assert p != pytest.approx((1 + 0) / (1 + valid_count))
+        # C2: 0.5 (the stub's fixed r) never >= observed_r=0.9, so every
+        # evaluable shift counts as non-extreme -- this also hits the floor.
+        assert at_p_floor is True
 
     def test_re_searches_all_lags_per_shift_not_fixed_at_observed_best(self):
         """The CR2 bias fix this function has always had, proven directly
@@ -381,7 +389,7 @@ class TestCircularShiftPvalue:
         assert observed_lag == 2
         assert observed_r == pytest.approx(1.0)
 
-        full_search_p = _circular_shift_pvalue(ref, cand, observed_r)
+        full_search_p, _at_floor = _circular_shift_pvalue(ref, cand, observed_r)
 
         lo, hi = 2 * MAX_LAG + 1, n - 2 * MAX_LAG - 1
         fixed_lag_extreme, fixed_lag_evaluable = 0, 0
@@ -449,11 +457,24 @@ class TestScorePairCircularShift:
         cand = list(range(1, 21))
         result = score_pair(ref, cand, "circular_shift")
         assert result is not None
-        r, p, lag, n = result
+        r, p, lag, n, at_p_floor = result
         assert r == pytest.approx(1.0)
         assert 0.0 <= p <= 1.0
         assert lag in CORRELATION_LAGS
         assert n >= 10
+        assert at_p_floor in (True, False)  # C2: always a real bool for circular_shift
+
+    def test_parametric_methods_report_at_p_floor_as_none(self):
+        # C2 (docs/AUDIT-2026-10-05.md): the floor concept only applies to
+        # circular_shift's permutation test -- every other method must
+        # report None (not False, which would wrongly imply "checked, and
+        # no"), since they have no such floor to hit.
+        ref = list(range(1, 21))
+        cand = list(range(1, 21))
+        result = score_pair(ref, cand, "spearman")
+        assert result is not None
+        *_rest, at_p_floor = result
+        assert at_p_floor is None
 
 
 # ── CR2's own explicit verification bar ─────────────────────────────────────
@@ -492,7 +513,8 @@ class TestCR2FalsePositiveRateSimulation:
             r, _lag, _p, _n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, "spearman")
             if r is None:
                 continue
-            pvalues.append(_circular_shift_pvalue(ref, cand, r))
+            p, _at_floor = _circular_shift_pvalue(ref, cand, r)
+            pvalues.append(p)
 
         from statsmodels.stats.multitest import multipletests
         _reject, qvalues, _, _ = multipletests(pvalues, alpha=0.05, method="fdr_bh")
@@ -543,7 +565,8 @@ class TestCR2FalsePositiveRateSimulation:
             r, _lag, _p, _n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, "spearman")
             if r is None:
                 continue
-            pvalues.append(_circular_shift_pvalue(ref, cand, r))
+            p, _at_floor = _circular_shift_pvalue(ref, cand, r)
+            pvalues.append(p)
 
         from statsmodels.stats.multitest import multipletests
         _reject, qvalues, _, _ = multipletests(pvalues, alpha=0.05, method="fdr_bh")

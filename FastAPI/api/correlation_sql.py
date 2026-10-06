@@ -488,11 +488,21 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
             computed by the caller.
 
     Returns:
-        (1 + #shifts at least as extreme as observed_r) / (1 + #evaluable
-        shifts), where "evaluable" excludes any shift where no lag had
-        enough co-observed points to score. 1.0 if no shift in the valid
-        range was evaluable at all (series too short for this null to
-        mean anything, e.g. n <= 4*max_lag + 1).
+        (p, at_floor) where p is (1 + #shifts at least as extreme as
+        observed_r) / (1 + #evaluable shifts) -- "evaluable" excludes any
+        shift where no lag had enough co-observed points to score -- and
+        at_floor is True iff NO evaluated shift was as extreme as
+        observed_r, meaning p is already the smallest value THIS PAIR's
+        permutation test could possibly report (not a precise measurement
+        close to zero -- see C2, docs/AUDIT-2026-10-05.md). This floor is
+        pair-specific, not a single dataset-wide constant: a sparse
+        candidate (real EGC data ranges from ~1 to 128 of 128 samples
+        detected, confirmed directly across all four annotation sources)
+        has fewer evaluable shifts and therefore a COARSER (larger) floor
+        than a fully-detected one, so this can't be approximated from n
+        alone -- it has to be reported per pair. (p=1.0, at_floor=False)
+        if no shift in the valid range was evaluable at all (series too
+        short for this null to mean anything, e.g. n <= 4*max_lag + 1).
     """
     n = len(ref)
     max_lag = max(abs(lag) for lag in CORRELATION_LAGS)
@@ -503,7 +513,7 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
     # See the C1/CR8 note in the docstring above.
     lo, hi = 2 * max_lag + 1, n - 2 * max_lag - 1
     if lo > hi:
-        return 1.0
+        return 1.0, False
 
     count_as_extreme = 0
     evaluable = 0
@@ -517,11 +527,16 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
             count_as_extreme += 1
 
     if evaluable == 0:
-        return 1.0
-    return (1 + count_as_extreme) / (1 + evaluable)
+        return 1.0, False
+    return (1 + count_as_extreme) / (1 + evaluable), count_as_extreme == 0
 
 
 def score_pair(ref: list[float], cand: list[float], method):
+    """Returns (r, p, lag, n_pairs, at_p_floor). at_p_floor is only ever
+    meaningful for method='circular_shift' (C2, docs/AUDIT-2026-10-05.md:
+    whether p was forced to this pair's permutation-test resolution
+    limit, not a precise measurement) -- always None for every
+    parametric method, which has no such floor."""
     if method == "circular_shift":
         # Underlying r/lag statistic is always Spearman (rank-based,
         # robust to monotonic-but-nonlinear EGC relationships, matches
@@ -530,13 +545,13 @@ def score_pair(ref: list[float], cand: list[float], method):
         best_r, best_lag, _best_p, best_n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, "spearman")
         if best_r is None or best_lag is None:
             return None
-        perm_p = _circular_shift_pvalue(ref, cand, best_r)
-        return best_r, perm_p, best_lag, best_n
+        perm_p, at_p_floor = _circular_shift_pvalue(ref, cand, best_r)
+        return best_r, perm_p, best_lag, best_n, at_p_floor
 
     best_r, best_lag, best_p, best_n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, method)
     if best_r is None or best_lag is None or best_p is None: return None
     bonf_p = _bonferroni_correct(best_p, len(CORRELATION_LAGS))
-    return best_r, bonf_p, best_lag, best_n
+    return best_r, bonf_p, best_lag, best_n, None
 
 # ── Internal: Tier 1 read-through cache ─────────────────────────
 def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method, get_sample_order=None, get_vector=None):
@@ -560,7 +575,12 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
     if row:
 
         lag = row[6]
-        return {'r': row[3], 'p': row[7], 'lag_samples': -lag if reference_is_high else lag, 'n_pairs': row[8] }
+        # row[9] (at_p_floor) is NULL for every non-circular_shift row and
+        # for any circular_shift row cached before this column existed
+        # (C2, docs/AUDIT-2026-10-05.md) -- genuinely unknown in both
+        # cases, kept as None rather than guessed at either way.
+        at_p_floor = bool(row[9]) if row[9] is not None else None
+        return {'r': row[3], 'p': row[7], 'lag_samples': -lag if reference_is_high else lag, 'n_pairs': row[8], 'at_p_floor': at_p_floor}
     else:
         query_can = "SELECT source, annotation_id FROM annotation_catalog WHERE id = ?"
         cursor_low = conn.execute(query_can, (low,))
@@ -577,13 +597,13 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
         result = score_pair(vec_low, vec_high, method)
 
         if result is None: return None # idk what is best to return here
-        r, bonf_p, lag, n_pairs = result[0], result[1], result[2], result[3]
+        r, bonf_p, lag, n_pairs, at_p_floor = result[0], result[1], result[2], result[3], result[4]
         try:
             conn.execute(f"""
                 INSERT INTO correlations_cache (catalog_id_a, catalog_id_b, r, metric,
-                method, lag_samples, p_value, n_pairs)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (low, high, r, metric, method, lag, bonf_p, n_pairs))
+                method, lag_samples, p_value, n_pairs, at_p_floor)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (low, high, r, metric, method, lag, bonf_p, n_pairs, at_p_floor))
             conn.commit()
         except sqlite3.IntegrityError:
             conn.rollback()
@@ -595,8 +615,9 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
             if row is None:
                 return None
             winner_lag = row[6]
-            return {'r': row[3], 'p': row[7], 'lag_samples': -winner_lag if reference_is_high else winner_lag, 'n_pairs': row[8]}
-        return {'r': r, 'p': bonf_p, 'lag_samples': -lag if reference_is_high else lag, 'n_pairs': n_pairs}
+            winner_at_p_floor = bool(row[9]) if row[9] is not None else None
+            return {'r': row[3], 'p': row[7], 'lag_samples': -winner_lag if reference_is_high else winner_lag, 'n_pairs': row[8], 'at_p_floor': winner_at_p_floor}
+        return {'r': r, 'p': bonf_p, 'lag_samples': -lag if reference_is_high else lag, 'n_pairs': n_pairs, 'at_p_floor': at_p_floor}
 
 
 
@@ -747,6 +768,12 @@ def correlation_family_endpoint(
                     "lag_samples":   result["lag_samples"],
                     "lag_hours":     result["lag_samples"] * LAG_HOURS_PER_SAMPLE,
                     "n_pairs":       result["n_pairs"],
+                    # C2 (docs/AUDIT-2026-10-05.md): True means `p` above
+                    # is this pair's permutation-test resolution limit,
+                    # not a precise measurement -- None means unknown
+                    # (non-circular_shift method, or cached before this
+                    # disclosure existed). See _circular_shift_pvalue.
+                    "at_p_floor":    result.get("at_p_floor"),
                 })
 
         scored = _apply_fdr(scored)

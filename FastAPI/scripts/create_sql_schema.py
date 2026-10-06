@@ -171,12 +171,24 @@ CREATE TABLE IF NOT EXISTS correlations_cache(
     id     INTEGER PRIMARY KEY,
     catalog_id_a    INTEGER NOT NULL REFERENCES annotation_catalog(id),
     catalog_id_b    INTEGER NOT NULL REFERENCES annotation_catalog(id),
-    r               REAL NOT NULL,  
+    r               REAL NOT NULL,
     metric          TEXT NOT NULL, -- 'egc' | 'norm_egc',
     method          TEXT NOT NULL, -- 'spearman' | 'log_pearson' | 'raw_pearson',
     lag_samples     INTEGER NOT NULL,
     p_value     REAL NOT NULL,
     n_pairs     INTEGER NOT NULL,
+    -- C2 (docs/AUDIT-2026-10-05.md): for method='circular_shift' only,
+    -- whether p_value was forced to this specific pair's resolution limit
+    -- (no permuted shift was ever as extreme as the real alignment, so
+    -- p is already the smallest value that pair's permutation test could
+    -- possibly report, NOT a precise measurement near zero). NULL for
+    -- every non-circular_shift row (not applicable), and also NULL for
+    -- any circular_shift row cached before this column existed -- those
+    -- are genuinely unknown, not backfilled, since recomputing them means
+    -- re-running the permutation test itself. See
+    -- scripts/add_at_p_floor_column.py for the one-time ALTER TABLE this
+    -- needed on an existing database.
+    at_p_floor  INTEGER,
     UNIQUE (catalog_id_a, catalog_id_b, metric, method)
 );
 CREATE INDEX IF NOT EXISTS idx_correlations_cache_catalog_id_b ON correlations_cache(catalog_id_b);

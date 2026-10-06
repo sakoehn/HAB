@@ -51,6 +51,7 @@ CREATE TABLE correlations_cache(
     lag_samples INTEGER NOT NULL,
     p_value REAL NOT NULL,
     n_pairs INTEGER NOT NULL,
+    at_p_floor INTEGER,
     UNIQUE (catalog_id_a, catalog_id_b, metric, method)
 );
 """
@@ -85,12 +86,12 @@ def insert_series(conn, source, annotation_id, values_by_sample, metric="egc"):
 
 
 def insert_cache_row(conn, catalog_id_a, catalog_id_b, r=0.5, metric="egc", method="raw_pearson",
-                      lag_samples=0, p_value=0.01, n_pairs=12):
+                      lag_samples=0, p_value=0.01, n_pairs=12, at_p_floor=None):
     conn.execute(
         "INSERT INTO correlations_cache "
-        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs),
+        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, at_p_floor) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, at_p_floor),
     )
     conn.commit()
 
@@ -109,7 +110,7 @@ class TestCacheHit:
 
         result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="raw_pearson")
 
-        assert result == {"r": 0.77, "p": 0.02, "lag_samples": 3, "n_pairs": 11}
+        assert result == {"r": 0.77, "p": 0.02, "lag_samples": 3, "n_pairs": 11, "at_p_floor": None}
 
     def test_hits_regardless_of_argument_order(self, conn):
         insert_catalog(conn, 5, "kegg", "K00005")
@@ -325,7 +326,7 @@ class TestConcurrentInsertRace:
         insert_series(conn, "kegg", "K00001", identical_values)
         insert_series(conn, "kegg", "K00002", identical_values)
 
-        winner_row = {"r": 0.4242, "p": 0.01, "lag_samples": -1, "n_pairs": 20}
+        winner_row = {"r": 0.4242, "p": 0.01, "lag_samples": -1, "n_pairs": 20, "at_p_floor": None}
 
         class RacingConnProxy:
             """Wraps the real sqlite3.Connection (whose .execute attribute
@@ -445,6 +446,10 @@ class TestCircularShiftMethod:
         # relationship should hit the floor, (1+0)/(1+5) = 1/6 -- not just
         # "some small p".
         assert row[1] == pytest.approx(1 / 6)
+        # C2 (docs/AUDIT-2026-10-05.md): this p IS the floor (no shift
+        # scored as extreme as the real alignment) -- at_p_floor must say
+        # so, through the cache-write path, not just the fresh-compute one.
+        assert result["at_p_floor"] is True
 
     def test_too_few_samples_for_any_valid_shift_returns_p_one_not_a_bogus_fraction(self, conn):
         """CR8's other edge, exercised through the real cache layer this
@@ -466,6 +471,9 @@ class TestCircularShiftMethod:
         assert result is not None
         assert result["r"] > 0.9  # the r statistic itself is unaffected -- only p defaults to 1.0
         assert result["p"] == 1.0
+        # C2: this 1.0 means "no valid shift to test against," not "hit
+        # the floor" -- at_p_floor must stay False here, not True.
+        assert result["at_p_floor"] is False
 
     def test_constant_candidate_returns_none_not_crash(self, conn):
         """CR4 x CR2 composition, at the cache layer: the same
