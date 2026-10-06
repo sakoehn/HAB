@@ -12,6 +12,7 @@ import {
 } from '../../utils/format'
 import { computeNightBands, alignTideToChartPoints, nativeTideTrace } from '../../utils/solar'
 import { useSolarTideData } from '../../utils/useSolarTideData'
+import { useAllSamples } from '../../utils/useAllSamples'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { StatsPanel }    from '../ui/StatsPanel'
@@ -81,12 +82,33 @@ export function GroupedEgcChart({
 
   const { sunTimes, tides, tidesLoading, tidesError } =
     useSolarTideData(showNightShading || showTide)
+  const { allSamples } = useAllSamples()
 
+  // F2 (docs/AUDIT-2026-10-05.md): a timepoint with zero detected members
+  // used to not exist in dtMap at all -- so the rendered trace silently
+  // skipped straight to the next detected timepoint (connectgaps:false
+  // below had nothing to break at, since there was no null point there to
+  // begin with), AND a surviving timepoint's "sum" was actually over
+  // whichever SUBSET of members happened to be detected there, presented
+  // identically to a timepoint where every member was detected -- the same
+  // W21 failure mode EgcChart/MultiEgcChart already fix, plus a second,
+  // distinct problem (the shifting member set) unique to a chart that sums.
+  // Unions in the full real sample timeline first (a UNION with the
+  // series' own detected samples, not a swap, same reasoning as
+  // EgcChart/MultiEgcChart), tracks how many members actually contributed
+  // at each timepoint, and leaves egc explicitly null when that count is 0.
   const summedPoints = useMemo(() => {
     // When metric is norm_egc, sum norm_egc (egc / total_sample_depth) per
     // datetime for true depth-normalised group abundance. Otherwise sum raw egc.
     const useNormEgc = metric === 'norm_egc'
-    const dtMap: Record<string, { egc: number; datetime: string; iso: string }> = {}
+    const dtMap: Record<string, { egc: number | null; datetime: string; iso: string; membersDetected: number }> = {}
+    for (const entry of allSamples ?? []) {
+      const iso = isoDate(entry.datetime)
+      if (dateFrom && iso < dateFrom) continue
+      if (dateTo   && iso > dateTo)   continue
+      const dt = entry.datetime
+      if (!dtMap[dt]) dtMap[dt] = { egc: null, datetime: dt, iso, membersDetected: 0 }
+    }
     for (const s of allSeries) {
       for (const d of s.data) {
         if (!d.timepoint?.datetime) continue
@@ -96,26 +118,28 @@ export function GroupedEgcChart({
         const val = useNormEgc ? extractNormEgc(d.value) : extractEgc(d.value)
         if (val === null) continue
         const dt = d.timepoint.datetime
-        if (!dtMap[dt]) dtMap[dt] = { egc: 0, datetime: dt, iso }
-        dtMap[dt].egc += val
+        if (!dtMap[dt]) dtMap[dt] = { egc: null, datetime: dt, iso, membersDetected: 0 }
+        dtMap[dt].egc = (dtMap[dt].egc ?? 0) + val
+        dtMap[dt].membersDetected += 1
       }
     }
     return Object.values(dtMap)
       .sort((a, b) => parseDateTime(a.datetime) - parseDateTime(b.datetime))
-      .map(({ egc, datetime }) => ({
+      .map(({ egc, datetime, membersDetected }) => ({
         date:     fmtDate(datetime),
         egc,
         datetime,
         ts:       parseDateTime(datetime),
+        membersDetected,
       }))
-  }, [allSeries, dateFrom, dateTo, metric])
+  }, [allSeries, dateFrom, dateTo, metric, allSamples])
 
   // W27 (docs/AUDIT-2026-09-22.md): unsmoothed is the metric/standardize
   // pipeline WITHOUT LOWESS -- stats read this, so toggling Smooth never
   // changes the reported numbers, only the drawn curve.
   const unsmoothedPointsRaw = useMemo(() => {
     // The metric swap is handled upstream in summedPoints so it is absent here.
-    let pts = summedPoints as { egc: number | null; datetime: string; ts: number; date: string }[]
+    let pts = summedPoints as { egc: number | null; datetime: string; ts: number; date: string; membersDetected: number }[]
     if (standardize) pts = applyZScore(pts) as typeof pts
     return pts
   }, [summedPoints, standardize])
@@ -141,6 +165,11 @@ export function GroupedEgcChart({
       tide_wl: aligned.get(p.datetime) ?? null,
     }))
   }, [processedPointsRaw, showTide, tides])
+
+  const detectedTimepointCount = useMemo(
+    () => processedPoints.filter(p => p.membersDetected > 0).length,
+    [processedPoints],
+  )
 
   // Tides (docs/AUDIT-2026-09-22.md): the VISUAL tide trace plots at its own
   // native resolution -- see nativeTideTrace's doc comment in
@@ -228,10 +257,15 @@ export function GroupedEgcChart({
       name: groupLabel,
       yaxis: 'y',
       connectgaps: false,
-      customdata: processedPoints.map(p => [fmtVal(p.egc), p.datetime]),
+      customdata: processedPoints.map(p => [fmtVal(p.egc), p.datetime, p.membersDetected]),
       hovertemplate:
         '<b>%{customdata[1]}</b><br>' +
-        hoverYLabel + ': %{customdata[0]}' +
+        hoverYLabel + ': %{customdata[0]}<br>' +
+        // F2 (docs/AUDIT-2026-10-05.md): discloses how many of the group's
+        // members actually contributed to this point's sum -- a point
+        // where only 1 of 3 members was detected used to look identical to
+        // one where all 3 were.
+        '%{customdata[2]} of ' + allSeries.length + ' members detected' +
         '<extra></extra>',
     }]
     if (showTide) {
@@ -247,7 +281,7 @@ export function GroupedEgcChart({
       })
     }
     return traces
-  }, [processedPoints, lineColor, groupLabel, hoverYLabel, showTide, metric, standardizeApplied, nativeTide])
+  }, [processedPoints, lineColor, groupLabel, hoverYLabel, showTide, metric, standardizeApplied, nativeTide, allSeries.length])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {
@@ -322,7 +356,13 @@ export function GroupedEgcChart({
             fontSize: 12, fontFamily: 'var(--mono)',
             color: 'var(--text-dim)', marginTop: 2,
           }}>
+            {/* F2 (docs/AUDIT-2026-10-05.md): processedPoints.length is now
+                the full real sample timeline in range, not just timepoints
+                where some member was detected -- disclose how many of
+                those actually had at least one real detection, the same
+                "(detected in N)" shape EgcChart's own header already uses. */}
             {yLabel} · {processedPoints.length} timepoints
+            {detectedTimepointCount < processedPoints.length && ` (detected in ${detectedTimepointCount})`}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
