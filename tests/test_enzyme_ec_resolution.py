@@ -37,12 +37,15 @@ from pathlib import Path
 DATA_ROOT = Path(os.environ.get("HAB_DATA_ROOT", Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(DATA_ROOT / "Notebooks"))
 
-from enzyme_ec_utils import resolve_partial_ec  # noqa: E402
+from enzyme_ec_utils import resolve_partial_ec, resolve_or_drop_ec  # noqa: E402
 
 
 # A small synthetic BRITE dict -- deliberately includes a gap at "3.6.3"
 # (present at depth 1 and 2, but NOT depth 3) to exercise the real
 # multi-level-strip case the audit's own K03924 moxR example needs.
+# Also includes "3.6.4" with no "3.6.4.*" children, to exercise P1
+# (docs/AUDIT-2026-10-05.md): a FULLY-specified EC absent from brite
+# (no dash, not a wildcard) that still has a resolvable real ancestor.
 BRITE = {
     "1":       {"depth": 1},
     "1.1":     {"depth": 2},
@@ -52,6 +55,7 @@ BRITE = {
     "3.6":     {"depth": 2},
     "3.6.1":   {"depth": 3},
     "3.6.1.23": {"depth": 4},
+    "3.6.4":   {"depth": 3},
     # "3.6.3" deliberately absent -- real gap in ko01000.keg (e.g. an
     # obsoleted/reclassified sub-subclass), confirmed directly against the
     # real file for 3 of the 135 real partial ids seen in the dataset.
@@ -87,3 +91,28 @@ def test_needs_two_strips_when_the_immediate_parent_is_itself_missing_from_brite
 
 def test_returns_none_when_nothing_resolves_at_any_level():
     assert resolve_partial_ec("9.9.9.-", BRITE) is None
+
+
+# resolve_or_drop_ec -- P1 (docs/AUDIT-2026-10-05.md): the notebook used
+# to only call resolve_partial_ec for ids containing a literal "-",
+# dropping any FULLY-specified id missing from brite even when its
+# ancestor is a real node. resolve_or_drop_ec wraps all three cases
+# (already real / partial / fully-specified-but-missing) in one place
+# so the notebook can't re-introduce that dash-only gate by accident.
+
+def test_already_real_node_is_returned_as_is():
+    assert resolve_or_drop_ec("1.1.1.1", BRITE) == "1.1.1.1"
+
+
+def test_partial_id_still_resolves_via_or_drop():
+    assert resolve_or_drop_ec("3.6.1.-", BRITE) == "3.6.1"
+
+
+def test_fully_specified_id_missing_from_brite_resolves_like_a_partial_id():
+    # The actual P1 bug: "3.6.4.99" has no "-" in it, so the old notebook
+    # gate dropped it outright even though "3.6.4" IS a real ancestor.
+    assert resolve_or_drop_ec("3.6.4.99", BRITE) == "3.6.4"
+
+
+def test_fully_specified_id_with_no_resolvable_ancestor_is_dropped():
+    assert resolve_or_drop_ec("9.9.9.9", BRITE) is None

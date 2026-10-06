@@ -39,3 +39,31 @@ def resolve_partial_ec(ec_id: str, brite: dict) -> str | None:
         if candidate in brite:
             return candidate
     return None
+
+
+def resolve_or_drop_ec(ec_id: str, brite: dict) -> str | None:
+    """Decide which real `brite` node a gene's EC id should register under.
+
+    P1 (docs/AUDIT-2026-10-05.md): `resolve_partial_ec` used to only be
+    called for ids containing a literal "-" (a partial/wildcard EC like
+    "1.1.1.-"). But a FULLY-specified EC that's simply absent from this
+    ko01000.keg download (e.g. "3.6.4.99") has a real, structural parent
+    too -- an EC number's position in the hierarchy is fixed by its own
+    digits, not something to infer -- so it deserves the exact same
+    walk-up instead of being dropped outright. This wraps both cases
+    (and the "already a real node" case) in one place so the notebook
+    doesn't hand-roll the branching inline, where E18's original fix
+    nearly missed this exact case.
+
+    Args:
+        ec_id: A bare EC id (no "EC:" prefix), fully-specified or partial.
+        brite: Flat dict of real ko01000.keg nodes, keyed by id string.
+
+    Returns:
+        `ec_id` itself if already a real `brite` key, its deepest real
+        ancestor if not, or None if nothing resolves at any level (the id
+        should be dropped).
+    """
+    if ec_id in brite:
+        return ec_id
+    return resolve_partial_ec(ec_id, brite)
