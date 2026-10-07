@@ -615,6 +615,75 @@ class TestPaginate:
         assert result["page_size"] == 2
 
 
+class TestTopAnnotationsCache:
+    """A4 (docs/AUDIT-2026-10-05.md): routes._top_ann_cache_get/_set --
+    the in-process /annotations/top cache used to be a plain unbounded
+    dict with no size cap and no expiry. Each test gets its own isolated,
+    empty OrderedDict (monkeypatched in place of the real module-level
+    one) so these don't interfere with each other or with a real server
+    process's actual cached entries."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_cache(self, monkeypatch):
+        import api.routes as routes_mod
+        from collections import OrderedDict
+        monkeypatch.setattr(routes_mod, "_TOP_ANN_CACHE_SQL", OrderedDict())
+        self.routes_mod = routes_mod
+
+    def test_miss_returns_none(self):
+        assert self.routes_mod._top_ann_cache_get(("cog", "", "")) is None
+
+    def test_set_then_get_roundtrips(self):
+        self.routes_mod._top_ann_cache_set(("cog", "", ""), ["row1", "row2"])
+        assert self.routes_mod._top_ann_cache_get(("cog", "", "")) == ["row1", "row2"]
+
+    def test_expired_entry_returns_none_and_is_evicted(self, monkeypatch):
+        monkeypatch.setattr(self.routes_mod, "_TOP_ANN_CACHE_TTL_SECONDS", 1800)
+        key = ("cog", "", "")
+        self.routes_mod._top_ann_cache_set(key, ["row1"])
+        # Directly backdate the stored timestamp rather than monkeypatching
+        # time.time -- simpler and just as deterministic for this fixture.
+        _inserted_at, value = self.routes_mod._TOP_ANN_CACHE_SQL[key]
+        self.routes_mod._TOP_ANN_CACHE_SQL[key] = (_inserted_at - 1801, value)
+
+        assert self.routes_mod._top_ann_cache_get(key) is None
+        assert key not in self.routes_mod._TOP_ANN_CACHE_SQL  # evicted, not just ignored
+
+    def test_entry_within_ttl_still_hits(self, monkeypatch):
+        monkeypatch.setattr(self.routes_mod, "_TOP_ANN_CACHE_TTL_SECONDS", 1800)
+        key = ("cog", "", "")
+        self.routes_mod._top_ann_cache_set(key, ["row1"])
+        _inserted_at, value = self.routes_mod._TOP_ANN_CACHE_SQL[key]
+        self.routes_mod._TOP_ANN_CACHE_SQL[key] = (_inserted_at - 1799, value)  # just under the TTL
+
+        assert self.routes_mod._top_ann_cache_get(key) == ["row1"]
+
+    def test_lru_evicts_the_oldest_entry_once_over_capacity(self, monkeypatch):
+        monkeypatch.setattr(self.routes_mod, "_TOP_ANN_CACHE_MAX_ENTRIES", 2)
+        self.routes_mod._top_ann_cache_set(("cog", "", ""), ["a"])
+        self.routes_mod._top_ann_cache_set(("kegg", "", ""), ["b"])
+        self.routes_mod._top_ann_cache_set(("enzyme", "", ""), ["c"])  # pushes cog out
+
+        assert self.routes_mod._top_ann_cache_get(("cog", "", "")) is None
+        assert self.routes_mod._top_ann_cache_get(("kegg", "", "")) == ["b"]
+        assert self.routes_mod._top_ann_cache_get(("enzyme", "", "")) == ["c"]
+
+    def test_reading_an_entry_protects_it_from_the_next_eviction(self, monkeypatch):
+        # The actual point of LRU over plain insertion-order: touching an
+        # old entry via a real cache HIT must move it to the back of the
+        # eviction queue, not leave it as the next thing dropped just
+        # because it was inserted first.
+        monkeypatch.setattr(self.routes_mod, "_TOP_ANN_CACHE_MAX_ENTRIES", 2)
+        self.routes_mod._top_ann_cache_set(("cog", "", ""), ["a"])
+        self.routes_mod._top_ann_cache_set(("kegg", "", ""), ["b"])
+        self.routes_mod._top_ann_cache_get(("cog", "", ""))  # touch -- cog is now the most-recently-used
+        self.routes_mod._top_ann_cache_set(("enzyme", "", ""), ["c"])  # must evict kegg, not cog
+
+        assert self.routes_mod._top_ann_cache_get(("kegg", "", "")) is None
+        assert self.routes_mod._top_ann_cache_get(("cog", "", "")) == ["a"]
+        assert self.routes_mod._top_ann_cache_get(("enzyme", "", "")) == ["c"]
+
+
 # TestNormalizeAnnotationDict, TestSearchDictAnnotations, and
 # TestFilterMappingRows tested routes._normalize_annotation_dict,
 # _search_dict_annotations, and _filter_mapping_rows -- all JSON-only

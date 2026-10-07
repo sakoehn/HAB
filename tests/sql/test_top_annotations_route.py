@@ -151,3 +151,42 @@ def test_depth_is_present_on_every_row_date_filtered_path(client):
     rows = resp.json()["data"]
     assert rows
     assert all(row.get("depth") is not None for row in rows)
+
+
+# A5 (docs/AUDIT-2026-10-05.md): an unparseable date_from/date_to used to be
+# silently ignored -- falling through to the FULL unfiltered dataset while
+# still being echoed back in the response as if it had been applied. Each
+# example below is the audit's own cited case: a plausible hand-typed value
+# that isn't the one supported "YYYY-MM-DD" shape.
+
+@pytest.mark.parametrize("bad_date_from", [
+    "06/10/2021",   # US format
+    "6/10/21",
+    "June 10 2021",
+    "2021-13-99",   # not even a real date
+])
+def test_unparseable_date_from_is_rejected_not_silently_ignored(client, bad_date_from):
+    resp = client.get(
+        "/annotations/top",
+        params={"source": "cog", "limit": 10, "date_from": bad_date_from},
+    )
+    assert resp.status_code == 400
+
+
+def test_unparseable_date_to_is_rejected_not_silently_ignored(client):
+    resp = client.get(
+        "/annotations/top",
+        params={"source": "cog", "limit": 10, "date_to": "June 10 2021"},
+    )
+    assert resp.status_code == 400
+
+
+def test_a_valid_date_still_works_after_the_validation_added(client):
+    # Regression safety: A5's new check must not reject the real,
+    # already-supported "YYYY-MM-DD" shape every other test here relies on.
+    resp = client.get(
+        "/annotations/top",
+        params={"source": "cog", "limit": 10, "date_from": "2021-06-10"},
+    )
+    resp.raise_for_status()
+    assert resp.json()["data"]

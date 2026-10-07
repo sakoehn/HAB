@@ -39,6 +39,8 @@ already used successfully.
 """
 
 import os
+import time
+from collections import OrderedDict
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -97,6 +99,7 @@ from .index import (
     timepoint_sort_key,
     timepoint_dt_sort_key,
     is_within_date_range,
+    _parse_any_datetime,
 )
 
 router = APIRouter()
@@ -121,7 +124,55 @@ def paginate(data: list, page: int, page_size: int) -> dict:
 
 # ── Top-annotations cache ─────────────────────────────────────────────────────
 
-_TOP_ANN_CACHE_SQL: dict[tuple, list] = {}
+# A4 (docs/AUDIT-2026-10-05.md): this cache used to be a plain unbounded
+# dict -- no size cap, no expiry, no way to clear it short of restarting
+# the process. One real taxonomy entry measured 51.7 MB, and (before A5's
+# fix, below) an unparseable date_from/date_to string was silently
+# ignored but still used as the cache key, so every distinct junk string
+# minted a fresh multi-MB entry. A5 already closes off the junk-string
+# growth vector by rejecting bad dates before a cache key is ever built,
+# but the cache still needs its own bound: a legitimate server lifetime
+# can accumulate one entry per (source, date_from, date_to) combination
+# a user has ever actually requested, and this process has no hook to
+# learn a catalog rebuild happened (the in-process analog of CR11,
+# docs/AUDIT-2026-09-22.md, which solved the equivalent problem for the
+# SQL-table-backed correlations_cache by invalidating rows directly --
+# not an option here, since this cache lives in THIS process's memory,
+# not a table a separate migration script's process can reach into).
+# An LRU size cap (an OrderedDict, oldest-accessed evicted first) bounds
+# memory; a TTL bounds how long a pre-rebuild result can keep being
+# served -- 30 minutes is long enough that a user paging through results
+# never pays for the same (source, date range) aggregation twice in one
+# sitting, short enough that a catalog rebuild (a manual, infrequent
+# operator action, not a hot path) is never stale for more than half an
+# hour without anyone needing to restart the process.
+_TOP_ANN_CACHE_MAX_ENTRIES = 64
+_TOP_ANN_CACHE_TTL_SECONDS = 30 * 60
+
+_TOP_ANN_CACHE_SQL: "OrderedDict[tuple, tuple[float, list]]" = OrderedDict()
+
+
+def _top_ann_cache_get(key: tuple):
+    """Return the cached (data, sample_count) for `key`, or None on a
+    miss/expired entry. Touches the entry's LRU position on a hit."""
+    entry = _TOP_ANN_CACHE_SQL.get(key)
+    if entry is None:
+        return None
+    inserted_at, value = entry
+    if time.time() - inserted_at > _TOP_ANN_CACHE_TTL_SECONDS:
+        del _TOP_ANN_CACHE_SQL[key]
+        return None
+    _TOP_ANN_CACHE_SQL.move_to_end(key)
+    return value
+
+
+def _top_ann_cache_set(key: tuple, value) -> None:
+    """Insert/update `key`, evicting the least-recently-used entry first
+    if this would push the cache past its size cap."""
+    _TOP_ANN_CACHE_SQL[key] = (time.time(), value)
+    _TOP_ANN_CACHE_SQL.move_to_end(key)
+    while len(_TOP_ANN_CACHE_SQL) > _TOP_ANN_CACHE_MAX_ENTRIES:
+        _TOP_ANN_CACHE_SQL.popitem(last=False)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -672,8 +723,23 @@ async def top_annotations_by_egc(
     Return the top N annotations by mean EGC, optionally filtered by date range.
     Each result includes mean_egc, max_egc, mean_norm_egc, max_norm_egc.
 
-    Cached per (source, date_from, date_to).
+    Cached per (source, date_from, date_to). date_from/date_to, if given,
+    must parse as a real date (see _parse_any_datetime) -- a bound that
+    doesn't parse is rejected with 400 rather than silently ignored (A5,
+    docs/AUDIT-2026-10-05.md): it used to fall through to the FULL
+    unfiltered dataset while still being echoed back in the response as
+    if it had been applied, so e.g. a US-format "06/10/2021" or a typo'd
+    "2021-13-99" looked like a successful filter that just happened to
+    match everything.
     """
+    # A5: validate before anything else -- a bad bound must never reach
+    # the cache key (that was A4's own worst symptom: a fresh junk string
+    # minting a fresh multi-MB cache entry) or the per-sample scan below.
+    if date_from is not None and _parse_any_datetime(date_from) is None:
+        raise HTTPException(status_code=400, detail=f"date_from is not a recognized date: {date_from!r}")
+    if date_to is not None and _parse_any_datetime(date_to) is None:
+        raise HTTPException(status_code=400, detail=f"date_to is not a recognized date: {date_to!r}")
+
     db = connect_to_sql()
     try:
         samples = get_all_sample_names_sql(db)
@@ -682,28 +748,28 @@ async def top_annotations_by_egc(
 
         cache_key = (source.value, date_from or "", date_to or "")
 
-        if cache_key not in _TOP_ANN_CACHE_SQL:
+        cached_entry = _top_ann_cache_get(cache_key)
+        if cached_entry is None:
             if not date_from and not date_to:
                 # Unfiltered requests are the common case -- go straight to the
                 # precomputed annotation_catalog table instead of the per-sample
                 # timepoint scan below, which exists only to resolve date-range
                 # filters and would otherwise run needlessly on every request.
-                _TOP_ANN_CACHE_SQL[cache_key] = (
-                    get_top_annotations_from_catalog_sql(db, source.value), len(samples)
-                )
+                cached_entry = (get_top_annotations_from_catalog_sql(db, source.value), len(samples))
             else:
                 active_samples = [
                     s for s in samples
                     if is_within_date_range((get_timepoint(s) or {}).get("datetime"), date_from, date_to)
                 ]
-                _TOP_ANN_CACHE_SQL[cache_key] = (
+                cached_entry = (
                     (get_top_annotations_sql(db, source.value, active_samples), len(active_samples))
                     if active_samples else ([], 0)
                 )
+            _top_ann_cache_set(cache_key, cached_entry)
     finally:
         close_sql_connection(db)
 
-    cached, filtered_sample_count = _TOP_ANN_CACHE_SQL[cache_key]
+    cached, filtered_sample_count = cached_entry
     return {
         "source":       source.value,
         "sample_count": filtered_sample_count,
