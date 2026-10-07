@@ -1098,10 +1098,16 @@ export function ExplorePage({
   // enolase are also real multi-parent nodes). kegg_paths already has
   // every real path (built for the hierarchy popup, /api/kegg/path), so
   // the lookup card fetches it directly instead of trusting the single
-  // stored value -- COG/Enzyme/Taxonomy are never multi-parent (confirmed
-  // directly against the real db: 0 of 547 KEGG C-level nodes and 0 of 55
-  // B-level nodes are multi-parent either -- this is purely a leaf-KO
-  // phenomenon, 5,755 of 12,253), so this only runs for kegg.
+  // stored value -- Enzyme/Taxonomy are never multi-parent (confirmed
+  // directly against the real db: 0 of 7,333 real EC nodes are
+  // multi-parent; taxonomy's `parent` is a full lineage-prefix, never
+  // ambiguous), so only kegg and cog need this treatment. COG's version
+  // (below) reads /api/cog/path the same way -- P4 (docs/AUDIT-2026-10-05.md)
+  // confirmed 340 real multi-category COGs (e.g. COG0028 is real under
+  // both category E and H), the exact same shape of bug, already
+  // correctly recorded in cog_paths (same table the hierarchy popup
+  // already uses) despite the single stored `parent`/`category` column
+  // only ever holding one (the earlier-published entry) of them.
   const [lookupKeggParents, setLookupKeggParents] = useState<
     { annotation_id: string; name: string }[] | null
   >(null)
@@ -1115,22 +1121,50 @@ export function ExplorePage({
   const [lookupKeggCategories, setLookupKeggCategories] = useState<
     { annotation_id: string; name: string }[] | null
   >(null)
+  // E5 (cog parity): a COG id's real categories (depth-1 is the ONLY level
+  // above a leaf COG id, so "category" and "immediate parent" are the same
+  // single real value here -- unlike kegg's 4-level hierarchy, there's no
+  // separate "parent" concept to also show).
+  const [lookupCogCategories, setLookupCogCategories] = useState<
+    { annotation_id: string; name: string }[] | null
+  >(null)
   const lookupParentsSeqRef = useRef(0)
 
   useEffect(() => {
     const sel = state.lookupSelected
     // Bumped unconditionally (not just on the branch that actually
-    // fetches) so a fetch started while this effect last ran for kegg
+    // fetches) so a fetch started while this effect last ran for kegg/cog
     // can never be mistaken for current after a later run bails out
-    // early (switched away from kegg, or no selection) -- without this,
-    // that early return would leave the ref exactly where the in-flight
-    // fetch left it, so its eventual resolution would still pass the
-    // "is this still current" check below even though the state it was
-    // for is no longer active.
+    // early (switched away, or no selection) -- without this, that early
+    // return would leave the ref exactly where the in-flight fetch left
+    // it, so its eventual resolution would still pass the "is this still
+    // current" check below even though the state it was for is no longer
+    // active.
     const requestId = ++lookupParentsSeqRef.current
     setLookupKeggParents(null)
     setLookupKeggCategories(null)
-    if (!sel || effectiveLookupSource !== 'kegg') return
+    setLookupCogCategories(null)
+    if (!sel) return
+
+    if (effectiveLookupSource === 'cog') {
+      apiFetch<HierarchyPathResponse>(`/api/cog/path?id=${encodeURIComponent(sel.annotation_id)}`)
+        .then(r => {
+          if (requestId !== lookupParentsSeqRef.current) return // superseded by a newer selection
+          const byId = new Map<string, { annotation_id: string; name: string }>()
+          for (const path of r.paths) {
+            const category = path[0]
+            if (category) byId.set(category.annotation_id, category)
+          }
+          setLookupCogCategories(Array.from(byId.values()))
+        })
+        .catch(() => {
+          if (requestId !== lookupParentsSeqRef.current) return
+          setLookupCogCategories([]) // fetch failed -- fall back to showing nothing rather than a stale/wrong single value
+        })
+      return
+    }
+
+    if (effectiveLookupSource !== 'kegg') return
 
     apiFetch<HierarchyPathResponse>(`/api/kegg/path?id=${encodeURIComponent(sel.annotation_id)}`)
       .then(r => {
@@ -1983,10 +2017,12 @@ export function ExplorePage({
                       // from lookupKeggParents (fetched from /api/kegg/path,
                       // the real ancestor data), not r.parent -- the single
                       // stored value is last-occurrence-wins and often wrong
-                      // for a multi-parent KO. Every other source has at
-                      // most one real parent, so r.parent is still correct
-                      // there.
-                      const parent = effectiveLookupSource === 'kegg'
+                      // for a multi-parent KO. Enzyme/taxonomy have at most
+                      // one real parent, so r.parent is still correct there.
+                      // cog is suppressed too (see keggCategoryNames's own
+                      // comment below) -- it has no separate "parent" vs.
+                      // "category" distinction to begin with.
+                      const parent = (effectiveLookupSource === 'kegg' || effectiveLookupSource === 'cog')
                         ? null
                         : (r.parent ? expandParentLabel(r.parent, effectiveLookupSource) : null)
                       const keggParentNames = effectiveLookupSource === 'kegg' && lookupKeggParents
@@ -1998,12 +2034,20 @@ export function ExplorePage({
                       // the single stored `category` field (also
                       // last-occurrence-wins, P3). Suppressed here exactly
                       // like `parent` is, so the generic row below never
-                      // shows the stale value for kegg.
+                      // shows the stale value for kegg OR cog -- P4
+                      // (docs/AUDIT-2026-10-05.md) confirmed the identical
+                      // bug shape for cog (340 real multi-category COGs,
+                      // e.g. COG0028 real under both E and H), and
+                      // cogCategoryNames below reads the same cog_paths
+                      // data the hierarchy popup already uses instead.
                       const keggCategoryNames = effectiveLookupSource === 'kegg' && lookupKeggCategories
                         ? lookupKeggCategories.map(c => c.name)
                         : null
+                      const cogCategoryNames = effectiveLookupSource === 'cog' && lookupCogCategories
+                        ? lookupCogCategories.map(c => c.name)
+                        : null
                       const rawCategory = resolveLookupCategory(r)
-                      const category    = effectiveLookupSource === 'kegg'
+                      const category    = (effectiveLookupSource === 'kegg' || effectiveLookupSource === 'cog')
                         ? null
                         : (rawCategory ? expandParentLabel(rawCategory, effectiveLookupSource) : null)
                       const scaffoldCount = resolveLookupScaffoldCount(r)
@@ -2050,6 +2094,17 @@ export function ExplorePage({
                                   )}
                                 </span>
                                 <span className="lookup-meta-value">{keggCategoryNames.join(', ')}</span>
+                              </div>
+                            )}
+                            {cogCategoryNames && cogCategoryNames.length > 0 && (
+                              <div className="lookup-meta-row" data-testid="lookup-cog-categories">
+                                <span className="lookup-meta-label">
+                                  Categor{cogCategoryNames.length > 1 ? 'ies' : 'y'}
+                                  {cogCategoryNames.length > 1 && (
+                                    <HelpTooltip text={`This COG has ${cogCategoryNames.length} real categories -- every one is shown here, not just one.`} />
+                                  )}
+                                </span>
+                                <span className="lookup-meta-value">{cogCategoryNames.join(', ')}</span>
                               </div>
                             )}
                             {parent && (

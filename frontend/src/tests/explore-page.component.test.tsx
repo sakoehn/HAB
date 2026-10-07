@@ -410,28 +410,120 @@ describe('ExplorePage — Annotation Lookup shows every real KEGG category (E5)'
     expect(screen.queryByText('Brite Hierarchies')).toBeNull()
   })
 
-  it('a non-kegg source is unaffected -- still shows its own stored category directly', async () => {
+  it('a genuinely single-parent source (enzyme) is unaffected -- still shows its own stored category directly', async () => {
     const user = userEvent.setup()
     mockFetch.mockImplementation((url: string) => {
-      if (url.includes('/api/search/annotations') && url.includes('sources=cog')) {
+      if (url.includes('/api/search/annotations') && url.includes('sources=enzyme')) {
         return Promise.resolve(jsonResponse({
-          data: [{ annotation_id: 'COG0055', name: 'ATP synthase', parent: 'C', category: 'Energy production and conversion', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 }],
+          data: [{ annotation_id: '1.1.1.1', name: 'alcohol dehydrogenase', parent: '1.1.1', category: 'Oxidoreductases', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 }],
           total: 1,
         }))
       }
       return Promise.resolve(jsonResponse({}))
     })
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'enzyme' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), '1.1.1.1')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    await waitFor(() => expect(document.querySelector('.lookup-result')).toBeTruthy())
+    expect(screen.getByText('Oxidoreductases')).toBeInTheDocument()
+    expect(screen.queryByTestId('lookup-kegg-categories')).toBeNull()
+    expect(screen.queryByTestId('lookup-cog-categories')).toBeNull()
+  })
+})
+
+// E5 (cog parity, docs/AUDIT-2026-10-05.md): P4 confirmed the identical bug
+// shape for cog -- a COG id's single stored `parent`/`category` field can
+// only ever hold ONE of its possibly-many real categories (340 real
+// multi-category COGs, e.g. COG0028 real under both E and H). Unlike kegg,
+// cog has no separate "parent" vs. "category" distinction (only 2 real
+// levels total), so this fixes both rows at once via a single new
+// cogCategoryNames row, reading the same /api/cog/path data the hierarchy
+// popup already uses -- no new backend endpoint needed, it already existed.
+describe('ExplorePage — Annotation Lookup shows every real COG category (E5, cog parity)', () => {
+  function mockSearchAndPath(searchRow: object, pathResponse: object | null) {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations') && url.includes('sources=cog')) {
+        return Promise.resolve(jsonResponse({ data: [searchRow], total: 1 }))
+      }
+      if (url.includes('/api/cog/path')) {
+        return pathResponse
+          ? Promise.resolve(jsonResponse(pathResponse))
+          : Promise.reject(new Error('network error'))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+  }
+
+  it('shows every real category for a multi-category COG, and never the stale stored value', async () => {
+    const user = userEvent.setup()
+    mockSearchAndPath(
+      {
+        annotation_id: 'COG0028', name: 'Multifunctional...', parent: 'E', // alphabetically-first, the stale stored value
+        category: 'E', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128,
+      },
+      {
+        annotation_id: 'COG0028',
+        path_count: 2,
+        paths: [
+          [{ annotation_id: 'E', name: 'Amino acid transport and metabolism', depth: 1 }, { annotation_id: 'COG0028', name: 'Multifunctional...', depth: 2 }],
+          [{ annotation_id: 'H', name: 'Coenzyme transport and metabolism', depth: 1 }, { annotation_id: 'COG0028', name: 'Multifunctional...', depth: 2 }],
+        ],
+      },
+    )
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'cog' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'COG0028')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    const categoriesRow = await screen.findByTestId('lookup-cog-categories')
+    expect(categoriesRow).toHaveTextContent('Amino acid transport and metabolism')
+    expect(categoriesRow).toHaveTextContent('Coenzyme transport and metabolism')
+    expect(within(categoriesRow).getByText('Categories')).toBeInTheDocument() // plural when there's more than one
+
+    // The generic single-value Category/Parent rows must both stay
+    // suppressed for cog -- showing either would be exactly the
+    // last-occurrence-wins value this fix exists to stop trusting.
+    expect(screen.queryByText('Category')).toBeNull()
+    expect(screen.queryByText('Parent')).toBeNull()
+  })
+
+  it('shows a single category without the plural label for a genuinely single-category COG', async () => {
+    const user = userEvent.setup()
+    mockSearchAndPath(
+      { annotation_id: 'COG0055', name: 'ATP synthase', parent: 'C', category: 'C', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 },
+      {
+        annotation_id: 'COG0055',
+        path_count: 1,
+        paths: [[{ annotation_id: 'C', name: 'Energy production and conversion', depth: 1 }, { annotation_id: 'COG0055', name: 'ATP synthase', depth: 2 }]],
+      },
+    )
     render(<Harness initial={{ openSection: 'lookup', lookupSource: 'cog' }} />)
 
     await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'COG0055')
     await user.click(screen.getByRole('button', { name: /^Search$/i }))
 
+    const categoriesRow = await screen.findByTestId('lookup-cog-categories')
+    expect(categoriesRow).toHaveTextContent('Energy production and conversion')
+    expect(within(categoriesRow).getByText('Category')).toBeInTheDocument() // singular, no "ies"
+  })
+
+  it('shows nothing (not a stale/wrong value) when the real-path fetch fails', async () => {
+    const user = userEvent.setup()
+    mockSearchAndPath(
+      { annotation_id: 'COG0028', name: 'Multifunctional...', parent: 'E', category: 'E', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 },
+      null,
+    )
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'cog' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'COG0028')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
     await waitFor(() => expect(document.querySelector('.lookup-result')).toBeTruthy())
-    // COG's category and parent are the same single real level by
-    // construction, so this legitimately renders twice (Category row +
-    // Parent row) -- both untouched by this kegg-only fix.
-    expect(screen.getAllByText('Energy production and conversion').length).toBeGreaterThan(0)
-    expect(screen.queryByTestId('lookup-kegg-categories')).toBeNull()
+    expect(screen.queryByTestId('lookup-cog-categories')).toBeNull()
+    expect(screen.queryByText('Category')).toBeNull()
+    expect(screen.queryByText('Parent')).toBeNull()
   })
 })
 
