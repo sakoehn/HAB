@@ -1082,6 +1082,16 @@ export function ExplorePage({
   // that still needs the live `state.source`.
   const effectiveTopSource = state.loadedParams?.source ?? state.source
 
+  // E6 (docs/AUDIT-2026-10-05.md): same W30a-style real-multi-parent bulk
+  // lookup AnnotationsByParentPanel already does (/api/kegg/parents), now
+  // for this table's own "Group" column -- it used to show only
+  // row.parent, the single last-occurrence-wins stored value (P3), e.g.
+  // K00134/GAPDH showing "Exosome" (one of its rarest real categories)
+  // while the Lookup card for the same KO (fixed) correctly lists
+  // Glycolysis among 9 real parents.
+  const [topKeggParents, setTopKeggParents]             = useState<Record<string, { annotation_id: string; name: string }[]>>({})
+  const [topKeggParentsFailed, setTopKeggParentsFailed] = useState(false)
+
   // W30(a) (docs/AUDIT-2026-09-22.md): a KEGG KO's stored `parent` is
   // last-occurrence-wins -- only ONE of its possibly-many real immediate
   // parents (e.g. K00844/hexokinase has 14; GAPDH, pyruvate kinase and
@@ -1093,6 +1103,16 @@ export function ExplorePage({
   // B-level nodes are multi-parent either -- this is purely a leaf-KO
   // phenomenon, 5,755 of 12,253), so this only runs for kegg.
   const [lookupKeggParents, setLookupKeggParents] = useState<
+    { annotation_id: string; name: string }[] | null
+  >(null)
+  // E5 (docs/AUDIT-2026-10-05.md): same real-path data as lookupKeggParents
+  // above, just the OTHER end of each path (depth-1, the real top-level
+  // category) instead of the immediate parent -- the Category row used to
+  // show the single stored (last-occurrence-wins, P3) value, contradicting
+  // the Parent row directly beneath it. Live example the audit cited:
+  // K00134/GAPDH's Category read "Brite Hierarchies" while Parents
+  // correctly listed Glycolysis among its real pathways.
+  const [lookupKeggCategories, setLookupKeggCategories] = useState<
     { annotation_id: string; name: string }[] | null
   >(null)
   const lookupParentsSeqRef = useRef(0)
@@ -1109,23 +1129,36 @@ export function ExplorePage({
     // for is no longer active.
     const requestId = ++lookupParentsSeqRef.current
     setLookupKeggParents(null)
+    setLookupKeggCategories(null)
     if (!sel || effectiveLookupSource !== 'kegg') return
 
     apiFetch<HierarchyPathResponse>(`/api/kegg/path?id=${encodeURIComponent(sel.annotation_id)}`)
       .then(r => {
         if (requestId !== lookupParentsSeqRef.current) return // superseded by a newer selection
         const depth = r.paths[0]?.length ?? 0
-        if (depth < 2) { setLookupKeggParents([]); return } // A-level root -- no parent above it
-        const byId = new Map<string, { annotation_id: string; name: string }>()
+        if (depth < 2) {
+          // A-level root -- no parent above it, and no distinct category
+          // above it either (it IS the category).
+          setLookupKeggParents([])
+          setLookupKeggCategories([])
+          return
+        }
+        const parentsById = new Map<string, { annotation_id: string; name: string }>()
+        const categoriesById = new Map<string, { annotation_id: string; name: string }>()
         for (const path of r.paths) {
           const immediate = path[depth - 2]
-          if (immediate) byId.set(immediate.annotation_id, immediate)
+          if (immediate) parentsById.set(immediate.annotation_id, immediate)
+          const category = path[0]
+          if (category) categoriesById.set(category.annotation_id, category)
         }
-        setLookupKeggParents(Array.from(byId.values()))
+        setLookupKeggParents(Array.from(parentsById.values()))
+        setLookupKeggCategories(Array.from(categoriesById.values()))
       })
       .catch(() => {
         if (requestId !== lookupParentsSeqRef.current) return
-        setLookupKeggParents([]) // fetch failed -- fall back to showing nothing rather than a stale/wrong single parent
+        // fetch failed -- fall back to showing nothing rather than a stale/wrong single value
+        setLookupKeggParents([])
+        setLookupKeggCategories([])
       })
   }, [state.lookupSelected, effectiveLookupSource])
 
@@ -1133,15 +1166,36 @@ export function ExplorePage({
     const requestId = ++topRequestSeqRef.current
     const params = { source: state.source, dateFrom: state.dateFrom, dateTo: state.dateTo }
     setState(prev => ({ ...prev, status: 'loading' }))
+    setTopKeggParents({})
+    setTopKeggParentsFailed(false)
     try {
       let url = `/api/annotations/top?source=${params.source}&limit=${state.limit}`
       if (params.dateFrom) url += `&date_from=${params.dateFrom}`
       if (params.dateTo)   url += `&date_to=${params.dateTo}`
       const r = await apiFetch<{ data: TopAnnotation[]; sample_count: number }>(url)
       if (requestId !== topRequestSeqRef.current) return // superseded
+      const rows = r.data ?? []
+
+      // E6: stays 'loading' until this resolves too (same reasoning as
+      // AnnotationsByParentPanel.loadTop) -- never flash the single wrong
+      // stored parent before the real multi-parent data is known.
+      if (params.source === 'kegg' && rows.length > 0) {
+        try {
+          const ids = rows.map(row => row.annotation_id).join(',')
+          const pr = await apiFetch<{ parents: Record<string, { annotation_id: string; name: string }[]> }>(
+            `/api/kegg/parents?ids=${encodeURIComponent(ids)}`,
+          )
+          if (requestId !== topRequestSeqRef.current) return
+          setTopKeggParents(pr.parents ?? {})
+        } catch {
+          if (requestId !== topRequestSeqRef.current) return
+          setTopKeggParentsFailed(true) // Group column below falls back to the single stored parent
+        }
+      }
+
       setState(prev => ({
         ...prev,
-        rows:        r.data ?? [],
+        rows,
         sampleCount: r.sample_count,
         loadedParams: params,
         status:      'ok',
@@ -1241,6 +1295,25 @@ export function ExplorePage({
   // taxonomy depth.
   function rankPillLabel(depth: number, source: string): string {
     return source === 'taxonomy' ? taxonomyRankLabel(depth) : `Level ${depth}`
+  }
+
+  // E6 (docs/AUDIT-2026-10-05.md): the Group column's display -- real
+  // multi-parent data (topKeggParents) when it's available for this row,
+  // falling back to the single stored `parent` field otherwise (a
+  // non-kegg source, a kegg root with no real parent above it, or
+  // topKeggParentsFailed). label is what's shown in the cell; title is
+  // the full real parent list for the tooltip when there's more than one.
+  function topGroupDisplay(row: TopAnnotation): { label: string; title: string | undefined } {
+    const parents = effectiveTopSource === 'kegg' ? topKeggParents[row.annotation_id] : undefined
+    if (parents && parents.length > 0) {
+      const names = parents.map(p => p.name)
+      return {
+        label: names.length > 1 ? `${names[0]} (+${names.length - 1} more)` : names[0],
+        title: names.join(', '),
+      }
+    }
+    const expanded = row.parent ? expandParentLabel(row.parent, effectiveTopSource) : '—'
+    return { label: expanded, title: expanded === '—' ? undefined : expanded }
   }
 
   // Ranks actually present among the loaded rows — mirrors LeftResultList's
@@ -1536,6 +1609,23 @@ export function ExplorePage({
               </div>
             )}
 
+            {state.status === 'ok' && effectiveTopSource === 'kegg' && topKeggParentsFailed && (
+              <div
+                className="state-box error"
+                style={{ padding: '10px 16px', flexDirection: 'row', gap: 10, textAlign: 'left', margin: '0 0 12px' }}
+                data-testid="top-kegg-parents-fetch-failure-warning"
+              >
+                <span style={{ flex: 1 }}>
+                  Couldn't load full parent info for these KEGG annotations — the Group
+                  column below shows each one's single stored parent instead, which may
+                  not be a multi-parent KO's most meaningful real category.
+                </span>
+                <button className="btn sm" data-testid="top-kegg-parents-retry-btn" onClick={load}>
+                  Retry
+                </button>
+              </div>
+            )}
+
             {state.status === 'ok' && sorted.length > 0 && (
               <div style={{ padding: '0 0 20px' }}>
                 <table className="ann-table" style={{
@@ -1557,7 +1647,9 @@ export function ExplorePage({
                     </tr>
                   </thead>
                   <tbody>
-                    {sorted.map((row, i) => (
+                    {sorted.map((row, i) => {
+                      const group = topGroupDisplay(row)
+                      return (
                       <tr key={row.annotation_id}>
                         <td style={{
                           color:      'var(--text-dim)',
@@ -1586,15 +1678,9 @@ export function ExplorePage({
                           textOverflow: 'ellipsis',
                           whiteSpace:   'nowrap',
                         }}
-                          title={
-                            row.parent
-                              ? expandParentLabel(row.parent, effectiveTopSource)
-                              : undefined
-                          }
+                          title={group.title}
                         >
-                          {row.parent
-                            ? expandParentLabel(row.parent, effectiveTopSource)
-                            : '—'}
+                          {group.label}
                         </td>
                         <td style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>
                           {row.mean_egc.toExponential(2)}
@@ -1626,7 +1712,8 @@ export function ExplorePage({
                           }} />
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1905,10 +1992,20 @@ export function ExplorePage({
                       const keggParentNames = effectiveLookupSource === 'kegg' && lookupKeggParents
                         ? lookupKeggParents.map(p => p.name)
                         : null
-                      const rawCategory = resolveLookupCategory(r)
-                      const category    = rawCategory
-                        ? expandParentLabel(rawCategory, effectiveLookupSource)
+                      // E5 (docs/AUDIT-2026-10-05.md): same reasoning as
+                      // `parent` above -- kegg's real category is the SAME
+                      // kegg_paths data lookupKeggParents already uses, not
+                      // the single stored `category` field (also
+                      // last-occurrence-wins, P3). Suppressed here exactly
+                      // like `parent` is, so the generic row below never
+                      // shows the stale value for kegg.
+                      const keggCategoryNames = effectiveLookupSource === 'kegg' && lookupKeggCategories
+                        ? lookupKeggCategories.map(c => c.name)
                         : null
+                      const rawCategory = resolveLookupCategory(r)
+                      const category    = effectiveLookupSource === 'kegg'
+                        ? null
+                        : (rawCategory ? expandParentLabel(rawCategory, effectiveLookupSource) : null)
                       const scaffoldCount = resolveLookupScaffoldCount(r)
                       const depth         = resolveLookupDepth(r)
 
@@ -1942,6 +2039,17 @@ export function ExplorePage({
                               <div className="lookup-meta-row">
                                 <span className="lookup-meta-label">Category</span>
                                 <span className="lookup-meta-value">{category}</span>
+                              </div>
+                            )}
+                            {keggCategoryNames && keggCategoryNames.length > 0 && (
+                              <div className="lookup-meta-row" data-testid="lookup-kegg-categories">
+                                <span className="lookup-meta-label">
+                                  Categor{keggCategoryNames.length > 1 ? 'ies' : 'y'}
+                                  {keggCategoryNames.length > 1 && (
+                                    <HelpTooltip text={`This KO has real parents in ${keggCategoryNames.length} different top-level KEGG categories -- every one is shown here, not just one.`} />
+                                  )}
+                                </span>
+                                <span className="lookup-meta-value">{keggCategoryNames.join(', ')}</span>
                               </div>
                             )}
                             {parent && (

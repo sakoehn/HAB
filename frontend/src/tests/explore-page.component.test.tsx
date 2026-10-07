@@ -295,6 +295,146 @@ describe('ExplorePage — Annotation Lookup shows every real KEGG parent (W30a)'
   })
 })
 
+// E5 (docs/AUDIT-2026-10-05.md): the Category row used to show the single
+// stored (last-occurrence-wins, P3) `category` field, directly contradicting
+// the (already-fixed, W30a) Parent row beneath it. Live example the audit
+// cited: K00134/GAPDH's Category read "Brite Hierarchies" while Parents
+// correctly listed Glycolysis among its real pathways. Category now comes
+// from the SAME /api/kegg/path response Parents already uses, reading the
+// depth-1 (top-level category) end of each real path instead of the
+// immediate-parent end.
+describe('ExplorePage — Annotation Lookup shows every real KEGG category (E5)', () => {
+  function mockSearchAndPath(searchRow: object, pathResponse: object | null) {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations') && url.includes('sources=kegg')) {
+        return Promise.resolve(jsonResponse({ data: [searchRow], total: 1 }))
+      }
+      if (url.includes('/api/kegg/path')) {
+        return pathResponse
+          ? Promise.resolve(jsonResponse(pathResponse))
+          : Promise.reject(new Error('network error'))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+  }
+
+  it('shows every real category for a multi-category-path KO, and never the stale stored value', async () => {
+    const user = userEvent.setup()
+    mockSearchAndPath(
+      {
+        annotation_id: 'K00844', name: 'HK, hexokinase', parent: '04131',
+        category: 'Brite Hierarchies', // the stale, last-occurrence-wins stored value
+        depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128,
+      },
+      {
+        annotation_id: 'K00844',
+        path_count: 2,
+        paths: [
+          [
+            { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 1 },
+            { annotation_id: '09101', name: 'Carbohydrate metabolism', depth: 2 },
+            { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 3 },
+            { annotation_id: 'K00844', name: 'HK, hexokinase', depth: 4 },
+          ],
+          [
+            { annotation_id: '04131', name: 'Membrane trafficking', depth: 1 },
+            { annotation_id: '09180', name: 'Brite Hierarchies', depth: 2 },
+            { annotation_id: '04131', name: 'Membrane trafficking', depth: 3 },
+            { annotation_id: 'K00844', name: 'HK, hexokinase', depth: 4 },
+          ],
+        ],
+      },
+    )
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'kegg' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'K00844')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    const categoriesRow = await screen.findByTestId('lookup-kegg-categories')
+    expect(categoriesRow).toHaveTextContent('Glycolysis / Gluconeogenesis')
+    expect(categoriesRow).toHaveTextContent('Membrane trafficking')
+    expect(within(categoriesRow).getByText('Categories')).toBeInTheDocument() // plural when there's more than one
+
+    // The stale stored value must never appear as a Category anywhere on
+    // the card -- it does legitimately appear inside the categories row's
+    // OWN real data at depth 2 ("Brite Hierarchies" is a real depth-2
+    // ancestor on path 2), so this checks the generic single-value
+    // Category row specifically stayed suppressed, not that the string
+    // never appears at all.
+    expect(screen.queryByText('Category')).toBeNull()
+  })
+
+  it('shows a single category without the plural label for a genuinely single-category KO', async () => {
+    const user = userEvent.setup()
+    mockSearchAndPath(
+      { annotation_id: 'K00001', name: 'alcohol dehydrogenase', parent: '00010', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
+      {
+        annotation_id: 'K00001',
+        path_count: 1,
+        paths: [[
+          { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 1 },
+          { annotation_id: '09101', name: 'Carbohydrate metabolism', depth: 2 },
+          { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 3 },
+          { annotation_id: 'K00001', name: 'alcohol dehydrogenase', depth: 4 },
+        ]],
+      },
+    )
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'kegg' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'K00001')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    const categoriesRow = await screen.findByTestId('lookup-kegg-categories')
+    expect(categoriesRow).toHaveTextContent('Glycolysis / Gluconeogenesis')
+    expect(within(categoriesRow).getByText('Category')).toBeInTheDocument() // singular, no "ies"
+  })
+
+  it('shows nothing (not a stale/wrong value) when the real-path fetch fails', async () => {
+    const user = userEvent.setup()
+    mockSearchAndPath(
+      {
+        annotation_id: 'K00844', name: 'HK, hexokinase', parent: '04131',
+        category: 'Brite Hierarchies', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128,
+      },
+      null,
+    )
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'kegg' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'K00844')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    await waitFor(() => expect(document.querySelector('.lookup-result')).toBeTruthy())
+    expect(screen.queryByTestId('lookup-kegg-categories')).toBeNull()
+    // The old single-value "Category" row (driven by the stale stored
+    // field) must also stay suppressed for kegg on a fetch failure.
+    expect(screen.queryByText('Brite Hierarchies')).toBeNull()
+  })
+
+  it('a non-kegg source is unaffected -- still shows its own stored category directly', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations') && url.includes('sources=cog')) {
+        return Promise.resolve(jsonResponse({
+          data: [{ annotation_id: 'COG0055', name: 'ATP synthase', parent: 'C', category: 'Energy production and conversion', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 }],
+          total: 1,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'cog' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'COG0055')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    await waitFor(() => expect(document.querySelector('.lookup-result')).toBeTruthy())
+    // COG's category and parent are the same single real level by
+    // construction, so this legitimately renders twice (Category row +
+    // Parent row) -- both untouched by this kegg-only fix.
+    expect(screen.getAllByText('Energy production and conversion').length).toBeGreaterThan(0)
+    expect(screen.queryByTestId('lookup-kegg-categories')).toBeNull()
+  })
+})
+
 // W32 (docs/AUDIT-2026-09-22.md): the lookup card's `name={r.name}` prop on
 // ExternalLinks must actually reach the NCBI Taxonomy link -- exercised
 // through the real lookup card, not ExternalLinks in isolation (which
@@ -371,5 +511,134 @@ describe('ExplorePage — Top EGC rank filter works for non-taxonomy sources (A8
 
     expect(screen.queryByText('09180')).not.toBeInTheDocument()
     expect(screen.getByText('K00001')).toBeInTheDocument()
+  })
+})
+
+// E6 (docs/AUDIT-2026-10-05.md): the Group column used to show only
+// row.parent, the single stored (last-occurrence-wins, P3) value -- live
+// example the audit cited: K00134/GAPDH filed under "Exosome" (a rare real
+// category) in this table while the (already-fixed, W30a) Lookup card for
+// the same KO correctly lists Glycolysis among 9 real parents. Now reuses
+// the same bulk /api/kegg/parents lookup AnnotationsByParentPanel already
+// calls.
+describe('ExplorePage — Top EGC Group column shows every real KEGG parent (E6)', () => {
+  function mockTopAndParents(rows: object[], parentsResponse: object | null) {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top') && url.includes('source=kegg')) {
+        return Promise.resolve(jsonResponse({ data: rows, sample_count: 128 }))
+      }
+      if (url.includes('/api/kegg/parents')) {
+        return parentsResponse
+          ? Promise.resolve(jsonResponse(parentsResponse))
+          : Promise.reject(new Error('network error'))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+  }
+
+  it('discloses "+N more" for a multi-parent KO instead of its single stale stored parent', async () => {
+    const user = userEvent.setup()
+    mockTopAndParents(
+      [{ annotation_id: 'K00134', name: 'GAPDH', parent: '09180', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 }],
+      {
+        parents: {
+          K00134: [
+            { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis' },
+            { annotation_id: '09180', name: 'Exosome' },
+          ],
+        },
+      },
+    )
+    render(<Harness initial={{ openSection: 'top-egc', source: 'kegg' }} />)
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+
+    await waitFor(() => expect(screen.getByText('K00134')).toBeInTheDocument())
+    expect(screen.getByText('Glycolysis / Gluconeogenesis (+1 more)')).toBeInTheDocument()
+    // The single stale stored parent must not be shown as if it were the
+    // KO's whole story.
+    expect(screen.queryByText('Exosome')).not.toBeInTheDocument()
+  })
+
+  it('shows the plain name with no "+more" suffix for a genuinely single-parent KO', async () => {
+    const user = userEvent.setup()
+    mockTopAndParents(
+      [{ annotation_id: 'K00001', name: 'alcohol dehydrogenase', parent: '00010', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 }],
+      { parents: { K00001: [{ annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis' }] } },
+    )
+    render(<Harness initial={{ openSection: 'top-egc', source: 'kegg' }} />)
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+
+    await waitFor(() => expect(screen.getByText('K00001')).toBeInTheDocument())
+    expect(screen.getByText('Glycolysis / Gluconeogenesis')).toBeInTheDocument()
+  })
+
+  it('falls back to the single stored parent and shows a visible warning when /kegg/parents fails', async () => {
+    const user = userEvent.setup()
+    mockTopAndParents(
+      [{ annotation_id: 'K00134', name: 'GAPDH', parent: '09180', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 }],
+      null,
+    )
+    render(<Harness initial={{ openSection: 'top-egc', source: 'kegg' }} />)
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('top-kegg-parents-fetch-failure-warning')).toBeInTheDocument()
+    })
+    // Fallback: its own stored parent code (09180), resolved the normal way
+    // via expandParentLabel/KEGG_BRITE_CODES -- not blank, and not a crash.
+    expect(screen.getByText('Brite Hierarchies')).toBeInTheDocument()
+  })
+
+  it('retrying after a /kegg/parents failure can recover the real multi-parent disclosure', async () => {
+    const user = userEvent.setup()
+    let parentsCallCount = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top') && url.includes('source=kegg')) {
+        return Promise.resolve(jsonResponse({
+          data: [{ annotation_id: 'K00134', name: 'GAPDH', parent: '09180', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 }],
+          sample_count: 128,
+        }))
+      }
+      if (url.includes('/api/kegg/parents')) {
+        parentsCallCount++
+        if (parentsCallCount === 1) return Promise.reject(new Error('network error'))
+        return Promise.resolve(jsonResponse({
+          parents: { K00134: [
+            { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis' },
+            { annotation_id: '09180', name: 'Exosome' },
+          ] },
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'top-egc', source: 'kegg' }} />)
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('top-kegg-parents-fetch-failure-warning')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByTestId('top-kegg-parents-retry-btn'))
+
+    await waitFor(() => expect(screen.getByText('Glycolysis / Gluconeogenesis (+1 more)')).toBeInTheDocument())
+    expect(screen.queryByTestId('top-kegg-parents-fetch-failure-warning')).not.toBeInTheDocument()
+  })
+
+  it('a non-kegg source is unaffected -- still shows the single stored parent directly', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top') && url.includes('source=cog')) {
+        return Promise.resolve(jsonResponse({
+          data: [{ annotation_id: 'COG0055', name: 'ATP synthase', parent: 'C', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 }],
+          sample_count: 128,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'top-egc', source: 'cog' }} />)
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+
+    await waitFor(() => expect(screen.getByText('COG0055')).toBeInTheDocument())
+    expect(mockFetch.mock.calls.some(([u]) => String(u).includes('/api/kegg/parents'))).toBe(false)
   })
 })
