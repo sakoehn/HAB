@@ -373,6 +373,61 @@ describe('AnnotationsByParentPanel — files a multi-parent KO under every real 
     await waitFor(() => expect(screen.getByText('Ungrouped')).toBeInTheDocument())
   })
 
+  // E2 (docs/AUDIT-2026-10-05.md): the catch block's old comment claimed a
+  // single-parent fallback already existed on a /kegg/parents failure, but
+  // nothing actually consulted r.parent -- every row silently landed in one
+  // undifferentiated "Ungrouped" bucket with no error shown to the user.
+  it('falls back to single-parent grouping and shows a visible warning when /kegg/parents fails', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) {
+        return Promise.resolve(jsonResponse({
+          data: [makeRow('K01', 'GroupOne', 100), makeRow('K02', 'GroupTwo', 50)],
+        }))
+      }
+      if (url.includes('/api/kegg/parents')) {
+        return Promise.reject(new Error('404'))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<AnnotationsByParentPanel source="kegg" />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('kegg-parents-fetch-failure-warning')).toBeInTheDocument()
+    })
+    // Each row grouped under its OWN stored parent, not one shared
+    // "Ungrouped" bucket for everything.
+    expect(screen.getByText('GroupOne')).toBeInTheDocument()
+    expect(screen.getByText('GroupTwo')).toBeInTheDocument()
+    expect(screen.queryByText('Ungrouped')).not.toBeInTheDocument()
+  })
+
+  it('retrying after a /kegg/parents failure can recover the real multi-parent grouping', async () => {
+    let parentsCallCount = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) {
+        return Promise.resolve(jsonResponse({ data: [makeRow('K01', 'GroupOne', 100)] }))
+      }
+      if (url.includes('/api/kegg/parents')) {
+        parentsCallCount++
+        if (parentsCallCount === 1) return Promise.reject(new Error('404'))
+        return Promise.resolve(jsonResponse({ parents: { K01: [{ annotation_id: 'A', name: 'Real Group A' }] } }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<AnnotationsByParentPanel source="kegg" />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('kegg-parents-fetch-failure-warning')).toBeInTheDocument()
+    })
+    expect(screen.getByText('GroupOne')).toBeInTheDocument() // single-parent fallback label
+
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('kegg-parents-retry-btn'))
+
+    await waitFor(() => expect(screen.getByText('Real Group A')).toBeInTheDocument())
+    expect(screen.queryByTestId('kegg-parents-fetch-failure-warning')).not.toBeInTheDocument()
+  })
+
   it('/api/kegg/parents is never called for a non-kegg source', async () => {
     mockFetch.mockResolvedValue(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
     render(<AnnotationsByParentPanel source="cog" />)

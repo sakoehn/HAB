@@ -603,6 +603,16 @@ export function AnnotationsByParentPanel({
   // individual lookups) via /api/kegg/parents, keyed by annotation_id.
   // Never populated for non-kegg sources, which are never multi-parent.
   const [multiParents, setMultiParents] = useState<Record<string, { annotation_id: string; name: string }[]>>({})
+  // E2 (docs/AUDIT-2026-10-05.md): tracks specifically whether the
+  // /kegg/parents bulk lookup itself failed, as distinct from
+  // multiParents being legitimately empty (e.g. a non-kegg source, or a
+  // kegg source where every row happened to resolve zero real parents).
+  // Drives both the visible warning below and the single-parent
+  // fallback in parentGroups -- the catch block's old comment claimed
+  // that fallback already existed, but nothing actually consulted
+  // r.parent on failure; every row silently landed in one "Ungrouped"
+  // bucket instead, with no error shown to the user.
+  const [multiParentsFetchFailed, setMultiParentsFetchFailed] = useState(false)
 
   function loadTop() {
     const requestId = ++requestSeqRef.current
@@ -610,6 +620,7 @@ export function AnnotationsByParentPanel({
     setStatus('loading')
     setAllRows([])
     setMultiParents({})
+    setMultiParentsFetchFailed(false)
     setExpandedParents(new Set())
     setGroupSeriesData({})
     apiFetch<{ data: TopAnnotation[] }>(
@@ -634,7 +645,8 @@ export function AnnotationsByParentPanel({
             setMultiParents(pr.parents ?? {})
           } catch {
             if (requestId !== requestSeqRef.current) return
-            setMultiParents({}) // falls back to single-parent grouping below
+            setMultiParents({})
+            setMultiParentsFetchFailed(true) // parentGroups below now actually falls back to single-parent grouping
           }
         }
         setStatus('ok')
@@ -655,7 +667,7 @@ export function AnnotationsByParentPanel({
     }
 
     for (const r of allRows) {
-      if (loadedSource === 'kegg') {
+      if (loadedSource === 'kegg' && !multiParentsFetchFailed) {
         const parents = multiParents[r.annotation_id]
         if (parents && parents.length > 0) {
           // W30a: file under EVERY real parent (same precedent as the
@@ -669,6 +681,12 @@ export function AnnotationsByParentPanel({
           addTo('Ungrouped', 'Ungrouped', r)
         }
       } else {
+        // E2 (docs/AUDIT-2026-10-05.md): also the real single-parent
+        // fallback for kegg when /kegg/parents itself failed -- every
+        // row still carries its own (last-occurrence-wins, W30a) single
+        // `parent` field from /annotations/top, which is strictly better
+        // than dumping everything into one undifferentiated "Ungrouped"
+        // bucket.
         const key = r.parent ?? 'Ungrouped'
         addTo(key, expandParentLabel(key, loadedSource), r)
       }
@@ -683,7 +701,7 @@ export function AnnotationsByParentPanel({
         count:  items.length,
       }))
       .sort((a, b) => b.sumEgc - a.sumEgc)
-  }, [allRows, loadedSource, multiParents])
+  }, [allRows, loadedSource, multiParents, multiParentsFetchFailed])
 
   function toggleParent(p: string) {
     setExpandedParents(prev => {
@@ -750,10 +768,34 @@ export function AnnotationsByParentPanel({
     </div>
   ) : null
 
+  // E2 (docs/AUDIT-2026-10-05.md): visible now instead of a silent
+  // fallback -- every row below is grouped by its own single stored
+  // parent (expandParentLabel(r.parent, ...), the same as any non-kegg
+  // source) rather than the real, possibly-multiple parents
+  // /kegg/parents would have resolved, so a multi-parent KO only
+  // appears under one of its real groups right now.
+  const multiParentsWarning = loadedSource === 'kegg' && multiParentsFetchFailed ? (
+    <div
+      className="state-box error"
+      style={{ padding: '10px 16px', flexDirection: 'row', gap: 10, textAlign: 'left', marginBottom: 12 }}
+      data-testid="kegg-parents-fetch-failure-warning"
+    >
+      <span style={{ flex: 1 }}>
+        Couldn't load full parent info for these KEGG annotations — grouping by each
+        one's single stored parent instead, so a multi-parent KO may be missing from
+        some of its real groups.
+      </span>
+      <button className="btn sm" data-testid="kegg-parents-retry-btn" onClick={loadTop}>
+        Retry
+      </button>
+    </div>
+  ) : null
+
   const maxSum = parentGroups[0]?.sumEgc ?? 1
 
   return (
     <div>
+      {multiParentsWarning}
       {truncationNote}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
         <span style={{ font: '400 11px var(--mono)', color: 'var(--text-dim)' }}>
