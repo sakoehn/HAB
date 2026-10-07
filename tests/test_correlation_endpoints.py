@@ -11,6 +11,7 @@ a much more direct and deterministic way to test the FDR gate itself than
 reverse-engineering data that produces a particular p-value by chance.
 """
 import os
+import random
 import sqlite3
 import sys
 import threading
@@ -531,6 +532,69 @@ def prescreen_client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
+@pytest.fixture
+def prescreen_n_aware_client(tmp_path, monkeypatch):
+    # C3 (docs/AUDIT-2026-10-05.md): the real failure case -- a SPARSE
+    # candidate at a near-perfect raw |r| must NOT beat a FULLY-SAMPLED
+    # candidate at a real, substantial |r| just because raw |r| ignores
+    # how much data backs each one. Exact construction verified directly
+    # against the real _spearman_at_lags (not hand-derived): candidate 4
+    # (only 10 of 50 samples real, a monotonic copy of ref over just
+    # those 10) scores r=1.0 at n=10; candidate 5 (all 50 samples real, a
+    # 15-swap partial shuffle of ref's own values, seed=0) scores
+    # r=0.4840816... at n=50. Raw |r| ranks 4 > 5 (1.0 vs 0.484); the
+    # Fisher-z-style n-aware key ranks 5 > 4 (0.484*sqrt(47)=3.32 vs
+    # 1.0*sqrt(7)=2.65) -- the exact reversal this fix exists to produce.
+    db_path = str(tmp_path / "test_prescreen_n_aware.db")
+    conn = sqlite3.connect(db_path)
+    conn.executescript(SCHEMA)
+
+    conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (1, 'taxonomy', 'Bacteria')")
+    conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (4, 'kegg', 'K00004')")  # sparse, high raw |r|
+    conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (5, 'kegg', 'K00005')")  # dense, moderate raw |r|
+
+    n = 50
+    ref_values = [10.0 + i for i in range(n)]
+    samples = [f"s{i:02d}" for i in range(1, n + 1)]
+    for i, sample in enumerate(samples):
+        conn.execute(
+            "INSERT INTO annotation_series (source, sample, annotation_id, egc) VALUES ('taxonomy', ?, 'Bacteria', ?)",
+            (sample, ref_values[i]),
+        )
+        if i < 10:
+            # Candidate 4: only the first 10 samples get a row at all --
+            # the rest are genuinely absent (None via load_vector), not
+            # zero (core_scoring treats <=0 the same as missing).
+            conn.execute(
+                "INSERT INTO annotation_series (source, sample, annotation_id, egc) VALUES ('kegg', ?, 'K00004', ?)",
+                (sample, float(i + 1)),  # monotonic over just these 10 -- r=1.0 at n=10
+            )
+
+    # Candidate 5: every sample real, values = a 15-swap partial shuffle
+    # of ref's own value set (deterministic, seed=0) -- a real, moderate
+    # relationship at full n=50, not a hand-picked r.
+    rng = random.Random(0)
+    cand5_values = list(ref_values)
+    idxs = list(range(n))
+    for _ in range(15):
+        swap_i, swap_j = rng.sample(idxs, 2)
+        cand5_values[swap_i], cand5_values[swap_j] = cand5_values[swap_j], cand5_values[swap_i]
+    for i, sample in enumerate(samples):
+        conn.execute(
+            "INSERT INTO annotation_series (source, sample, annotation_id, egc) VALUES ('kegg', ?, 'K00005', ?)",
+            (sample, cand5_values[i]),
+        )
+
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(correlation_sql, "SQLITE_DB_PATH", db_path)
+
+    app = FastAPI()
+    app.include_router(correlation_sql.router)
+    return TestClient(app)
+
+
 class TestCorrelationFamilyPrescreen:
     # circular_shift is ~120x slower per candidate than a parametric
     # method (measured directly against the real db, post-CR8 -- was
@@ -602,3 +666,35 @@ class TestCorrelationFamilyPrescreen:
         catalog_ids = {entry["catalog_id"] for entry in body["results"]}
         assert catalog_ids == {2}
         assert 3 not in catalog_ids
+
+    def test_prescreen_keeps_the_fully_sampled_candidate_over_the_sparse_one(
+        self, prescreen_n_aware_client, monkeypatch,
+    ):
+        # C3 (docs/AUDIT-2026-10-05.md): the actual bug -- candidate 4
+        # (sparse, n=10, raw |r|=1.0) must NOT survive prescreening over
+        # candidate 5 (fully-sampled, n=50, raw |r|=0.48) just because its
+        # raw |r| looks stronger. Spies on which candidates reach the
+        # EXPENSIVE circular_shift scoring step directly, rather than
+        # inferring prescreen selection from final significance (which
+        # depends on downstream BH/floor behavior this test isn't about).
+        monkeypatch.setattr(correlation_sql, "CIRCULAR_SHIFT_SCREEN_TOP_N", 1)
+
+        real_get_or_compute = correlation_sql._get_or_compute_correlation
+        circular_shift_candidate_ids = []
+
+        def spy(conn, ref_id, cand_id, metric, method, **kwargs):
+            if method == "circular_shift":
+                circular_shift_candidate_ids.append(cand_id)
+            return real_get_or_compute(conn, ref_id, cand_id, metric, method, **kwargs)
+
+        monkeypatch.setattr(correlation_sql, "_get_or_compute_correlation", spy)
+
+        prescreen_n_aware_client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "circular_shift",
+            },
+        )
+
+        assert circular_shift_candidate_ids == [5]  # NOT 4, despite 4's higher raw |r|

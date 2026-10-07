@@ -1,8 +1,9 @@
 """
 Tests for the pure math/statistics pieces of correlation_sql.py that don't
 touch the database: _bonferroni_correct, core_scoring, _spearman_at_lags,
-_circular_shift_pvalue, score_pair.
+_circular_shift_pvalue, score_pair, _prescreen_rank_key.
 """
+import math
 import os
 import random
 import sys
@@ -14,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "FastAPI"))
 from api.correlation_sql import (
     _bonferroni_correct,
     _circular_shift_pvalue,
+    _prescreen_rank_key,
     core_scoring,
     score_pair,
     _spearman_at_lags,
@@ -34,6 +36,38 @@ class TestBonferroniCorrect:
 
     def test_exactly_one_at_the_boundary_stays_one(self):
         assert _bonferroni_correct(0.2, 5) == 1.0
+
+
+# ── _prescreen_rank_key (C3, docs/AUDIT-2026-10-05.md) ──────────────────────
+
+class TestPrescreenRankKey:
+    def test_matches_the_fisher_z_style_formula_directly(self):
+        assert _prescreen_rank_key(r=0.5, n_pairs=50) == pytest.approx(0.5 * math.sqrt(47))
+
+    def test_uses_absolute_value_of_r(self):
+        # A strong NEGATIVE correlation must rank the same as an equally
+        # strong positive one -- the shortlist cares about strength, not
+        # direction.
+        assert _prescreen_rank_key(r=-0.8, n_pairs=20) == _prescreen_rank_key(r=0.8, n_pairs=20)
+
+    def test_same_r_ranks_higher_n_above_lower_n(self):
+        # The actual point of C3: at equal |r|, more real data must win.
+        assert _prescreen_rank_key(r=0.6, n_pairs=100) > _prescreen_rank_key(r=0.6, n_pairs=20)
+
+    def test_same_n_ranks_higher_r_above_lower_r(self):
+        # Still a real ranking criterion, not just "biggest n always wins"
+        # -- at equal n, the stronger raw relationship still ranks higher.
+        assert _prescreen_rank_key(r=0.9, n_pairs=50) > _prescreen_rank_key(r=0.3, n_pairs=50)
+
+    def test_a_sparse_high_r_candidate_can_lose_to_a_dense_moderate_r_one(self):
+        # The exact real-world failure case C3 describes: a 10-point
+        # candidate at a near-perfect r=1.0 used to beat a 50-point
+        # candidate at a real, substantial r=0.48 under plain |r| ranking
+        # -- this statistic must reverse that, not just tweak it slightly.
+        sparse_high_r = _prescreen_rank_key(r=1.0, n_pairs=10)
+        dense_moderate_r = _prescreen_rank_key(r=0.4840816326530612, n_pairs=50)
+        assert abs(1.0) > abs(0.4840816326530612)  # confirms raw |r| would have picked the sparse one
+        assert dense_moderate_r > sparse_high_r      # the n-aware key correctly picks the dense one instead
 
 
 # ── core_scoring ─────────────────────────────────────────────────────────────

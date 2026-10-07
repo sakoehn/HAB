@@ -677,6 +677,30 @@ def correlate_endpoint(catalog_id_a: int, catalog_id_b: int, metric: str, method
 CIRCULAR_SHIFT_SCREEN_TOP_N = 200
 
 
+def _prescreen_rank_key(r: float, n_pairs: int) -> float:
+    """C3 (docs/AUDIT-2026-10-05.md): an n-aware ranking statistic for the
+    prescreen shortlist below, so a sparse candidate's raw |r| can't
+    crowd out a fully-sampled candidate's real signal just because raw
+    |r| says nothing about how much data actually produced it.
+
+    Measured on a real 3,197-candidate pool, ranking by raw |r| alone:
+    86 of the 200 shortlisted candidates had fewer than 30 of 128 real
+    data points (one admitted at n=10, |r|=0.661), while 2,037
+    fully-sampled (n>=120) candidates were excluded entirely -- the
+    strongest excluded one at |r|=0.5652, losing its slot by just 0.0016
+    to that 10-point candidate.
+
+    Fisher-z-style |r|*sqrt(n-3), per the audit's own suggested fix:
+    increases with both |r| and n, so two candidates at the same |r|
+    rank by sample size, and two at the same n still rank by |r| --
+    reflecting how much evidence actually backs each candidate's
+    correlation, not just its raw size. n_pairs is always >= 10 here
+    (core_scoring's own floor), so n-3 is always a safe, positive
+    sqrt argument.
+    """
+    return abs(r) * math.sqrt(n_pairs - 3)
+
+
 @router.get("/correlations/family")
 def correlation_family_endpoint(
     ref_source: str, ref_annotation_id: str, target_source: str, metric: str, method: str,
@@ -746,9 +770,9 @@ def correlation_family_endpoint(
                     )
                     if result is None:
                         continue
-                    fast_scored.append((abs(result["r"]), cand))
+                    fast_scored.append((_prescreen_rank_key(result["r"], result["n_pairs"]), cand))
                 fast_scored.sort(key=lambda pair: pair[0], reverse=True)
-                candidates = [cand for _abs_r, cand in fast_scored[:CIRCULAR_SHIFT_SCREEN_TOP_N]]
+                candidates = [cand for _rank_key, cand in fast_scored[:CIRCULAR_SHIFT_SCREEN_TOP_N]]
 
             scored = []
             for cand in candidates:
