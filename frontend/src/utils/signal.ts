@@ -90,6 +90,20 @@ export function canApplyZScore(vals: (number | null)[]): boolean {
 // output array so the chart's x-axis alignment is preserved.
 //
 // Requires at least 3 non-null points; returns data unchanged otherwise.
+//
+// F3 (docs/AUDIT-2026-10-05.md): span used to floor at 2, not 3 -- a
+// weighted linear fit through exactly 2 points, evaluated at either one,
+// reproduces that point's own y-value EXACTLY regardless of the
+// weights, so span=2 is a mathematical no-op, not just "very light
+// smoothing." Measured live: any series with <=20 real points at the
+// minimum bandwidth (and <=15 at either of the two lowest slider
+// settings) changed zero values, while still drawing the "(smoothed)"
+// label. Reachable in ordinary use -- any date-filtered <=20-sample
+// range, or any sparsely-detected annotation. Flooring at 3 (the same
+// floor applyLowess already requires to run at all, see the length
+// check below) means every fit uses at least 3 points, which can only
+// reproduce a point's own value by exact coincidence (real floating-
+// point EGC data lying perfectly collinear), not structurally.
 
 export function applyLowess(
   data: { egc: number | null; ts: number }[],
@@ -102,7 +116,7 @@ export function applyLowess(
   if (pts.length < 3) return data
 
   const n    = pts.length
-  const span = Math.max(2, Math.ceil(bandwidth * n))
+  const span = Math.max(3, Math.ceil(bandwidth * n))
   const smoothed = new Map<number, number>()
 
   for (const pt of pts) {
@@ -145,4 +159,17 @@ export function applyLowess(
     ...d,
     egc: smoothed.has(i) ? smoothed.get(i)! : d.egc,
   }))
+}
+
+// ── canApplyLowess ─────────────────────────────────────────────────────────
+// F3 (docs/AUDIT-2026-10-05.md): same shape as canApplyZScore above --
+// applyLowess is a silent, provable no-op with fewer than 3 real points
+// (its own early-return, mirrored here rather than duplicated), so this
+// is whether it could ACTUALLY smooth anything, not just whether the
+// toggle is on. Callers should check this and suppress "(smoothed)"
+// labelling when it returns false, instead of trusting the raw
+// `smoothed` toggle state alone.
+
+export function canApplyLowess(vals: (number | null)[]): boolean {
+  return vals.filter((v): v is number => v !== null).length >= 3
 }

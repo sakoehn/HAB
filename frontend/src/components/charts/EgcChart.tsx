@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle }
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
-import { applyZScore, applyLowess, canApplyZScore } from '../../utils/signal'
+import { applyZScore, applyLowess, canApplyZScore, canApplyLowess } from '../../utils/signal'
 import {
   parseDateTime, fmtDate, isoDate, computeDayBands, toPlotlyDate,
   formatRelativeAbundancePercent,
@@ -247,6 +247,12 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   // claiming "σ from mean" units for a value that's still raw EGC.
   const standardizeApplied = standardize && canApplyZScore(unsmoothedPoints.map(p => p.egc))
 
+  // F3 (docs/AUDIT-2026-10-05.md): applyLowess is a silent no-op with
+  // fewer than 3 real points -- this is whether it ACTUALLY smoothed,
+  // not just whether the toggle is on, so the tooltip/CSV can stop
+  // claiming "(smoothed)" for a curve that's still the raw sample value.
+  const smoothedApplied = smoothed && canApplyLowess(unsmoothedPoints.map(p => p.egc))
+
   const processedPoints = useMemo(() => {
     return smoothed
       ? applyLowess(unsmoothedPoints, smoothBandwidth) as typeof unsmoothedPoints
@@ -297,7 +303,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   const yLabel      = getEgcYLabel(metric, standardizeApplied)
   // W27: disclose in the tooltip itself when the shown value is a fitted
   // LOWESS curve, not the real sample value -- previously indistinguishable.
-  const hoverYLabel = getEgcHoverYLabel(metric, standardizeApplied) + (smoothed ? ' (smoothed)' : '')
+  const hoverYLabel = getEgcHoverYLabel(metric, standardizeApplied) + (smoothedApplied ? ' (smoothed)' : '')
 
   // ── Shapes: night/day bands positioned by real timestamps ─────────────────
   // x0/x1 are ISO datetime strings on Plotly's date axis, so a band from
@@ -442,7 +448,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   }
 
   const handleExportCsv = () => downloadCsv(
-    buildEgcTimeseriesCsvRows(pointsWithTide, annotationId, metric, standardizeApplied, smoothed, showTide),
+    buildEgcTimeseriesCsvRows(pointsWithTide, annotationId, metric, standardizeApplied, smoothedApplied, showTide),
     `${annotationId}_egc_timeseries.csv`,
   )
 

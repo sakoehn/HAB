@@ -5,7 +5,7 @@ import { useState, useRef, useMemo } from 'react'
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
-import { applyZScore, applyLowess, canApplyZScore } from '../../utils/signal'
+import { applyZScore, applyLowess, canApplyZScore, canApplyLowess } from '../../utils/signal'
 import {
   isoDate, fmtDate, parseDateTime, computeDayBands, toPlotlyDate,
   formatRelativeAbundancePercent,
@@ -211,6 +211,13 @@ export function MultiEgcChart({
     canApplyZScore(unsmoothedRows.map(r => (r[id] as number | null) ?? null))
   const standardizeApplied = standardize && series.some(s => canStandardizeSeries(s.id))
 
+  // F3 (docs/AUDIT-2026-10-05.md): same per-series reasoning as
+  // canStandardizeSeries above -- applyLowess is a silent no-op for a
+  // series with fewer than 3 real points, independently per series.
+  const canSmoothSeries = (id: string) =>
+    canApplyLowess(unsmoothedRows.map(r => (r[id] as number | null) ?? null))
+  const smoothedApplied = smoothed && series.some(s => canSmoothSeries(s.id))
+
   const chartDataRaw = useMemo<ChartRow[]>(() => {
     if (!smoothed) return unsmoothedRows
     let rows = unsmoothedRows
@@ -389,6 +396,7 @@ export function MultiEgcChart({
       const opacity = hasGroup ? (s.isGrouped ? 1   : 0.45) : 1
       const ys      = chartData.map(r => (r[s.id] as number | null) ?? null)
       const seriesStandardizeApplied = standardize && canStandardizeSeries(s.id)
+      const seriesSmoothedApplied = smoothed && canSmoothSeries(s.id)
       const traceColor = resolvedColors.get(s.id)!
 
       return {
@@ -410,7 +418,7 @@ export function MultiEgcChart({
           '<b>%{customdata[1]}</b><br>' +
           // W27: discloses when the hovered value is a fitted LOWESS
           // curve, not the real sample value -- previously indistinguishable.
-          s.annotationId + (smoothed ? ' (smoothed)' : '') + ': %{customdata[0]}' +
+          s.annotationId + (seriesSmoothedApplied ? ' (smoothed)' : '') + ': %{customdata[0]}' +
           '<extra></extra>',
       }
     })
@@ -489,7 +497,7 @@ export function MultiEgcChart({
   }
 
   const handleExportCsv = () => downloadCsv(
-    buildMultiEgcCsvRows(chartData, series, metric, standardizeApplied, smoothed, showTide),
+    buildMultiEgcCsvRows(chartData, series, metric, standardizeApplied, smoothedApplied, showTide),
     `compare_egc_${metric}${standardizeApplied ? '_zscore' : ''}.csv`,
   )
 

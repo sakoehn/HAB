@@ -5,7 +5,7 @@ import { useState, useRef, useMemo } from 'react'
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
-import { applyZScore, applyLowess, canApplyZScore } from '../../utils/signal'
+import { applyZScore, applyLowess, canApplyZScore, canApplyLowess } from '../../utils/signal'
 import {
   parseDateTime, fmtDate, isoDate, computeDayBands, toPlotlyDate,
   formatRelativeAbundancePercent,
@@ -149,6 +149,11 @@ export function GroupedEgcChart({
   // not just whether the toggle is on.
   const standardizeApplied = standardize && canApplyZScore(unsmoothedPointsRaw.map(p => p.egc))
 
+  // F3 (docs/AUDIT-2026-10-05.md): applyLowess is a silent no-op with
+  // fewer than 3 real points -- this is whether it ACTUALLY smoothed,
+  // not just whether the toggle is on.
+  const smoothedApplied = smoothed && canApplyLowess(unsmoothedPointsRaw.map(p => p.egc))
+
   const processedPointsRaw = useMemo(() => {
     return smoothed
       ? applyLowess(unsmoothedPointsRaw, smoothBandwidth) as typeof unsmoothedPointsRaw
@@ -206,7 +211,7 @@ export function GroupedEgcChart({
   // LOWESS curve, not the real summed sample value. Deliberately NOT used
   // for the axis/StatsPanel yLabel above, since those now always describe
   // the unsmoothed data regardless of the Smooth toggle.
-  const hoverYLabel = yLabel + (smoothed ? ' (smoothed)' : '')
+  const hoverYLabel = yLabel + (smoothedApplied ? ' (smoothed)' : '')
 
   // ── Shapes: night/day bands positioned by real timestamps ─────────────────
   const shapes = useMemo(() => {
@@ -341,7 +346,7 @@ export function GroupedEgcChart({
   }
 
   const handleExportCsv = () => downloadCsv(
-    buildGroupedEgcCsvRows(processedPoints, groupLabel, metric, standardizeApplied, smoothed, showTide),
+    buildGroupedEgcCsvRows(processedPoints, groupLabel, metric, standardizeApplied, smoothedApplied, showTide),
     `${groupLabel}_grouped_egc.csv`,
   )
 

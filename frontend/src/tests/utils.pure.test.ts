@@ -64,6 +64,7 @@ import {
   applyZScore,
   applyLowess,
   canApplyZScore,
+  canApplyLowess,
 } from '../utils/signal'
 
 import {
@@ -612,6 +613,26 @@ describe('applyLowess', () => {
     expect(applyLowess(data, LOWESS_BANDWIDTH_MIN)).toHaveLength(20)
   })
 
+  // F3 (docs/AUDIT-2026-10-05.md): the audit's own measured example --
+  // span = Math.max(2, Math.ceil(bandwidth*n)) gave span=2 at n=20,
+  // bandwidth=LOWESS_BANDWIDTH_MIN (0.1*20=2.0, no rounding needed), and
+  // a weighted linear fit through exactly 2 points, evaluated at either
+  // one, reproduces that point's own y-value EXACTLY regardless of the
+  // weights -- 0 of 20 points changed, while the chart still labeled the
+  // curve "(smoothed)". Reachable in ordinary use: any date-filtered
+  // <=20-sample range, or any sparsely-detected annotation. Flooring the
+  // span at 3 means this can no longer happen structurally.
+  it('at least some points change at the minimum slider bandwidth on a 20-point series (the audit\'s own no-op case)', () => {
+    const n = 20
+    const data = Array.from({ length: n }, (_, ts) => ({
+      egc: 5 + 4 * Math.sin(ts / 3) + (ts % 2 === 0 ? 3 : -3),
+      ts,
+    }))
+    const result = applyLowess(data, LOWESS_BANDWIDTH_MIN)
+    const changed = result.filter((d, i) => Math.abs((d.egc as number) - data[i].egc) > 1e-9).length
+    expect(changed).toBeGreaterThan(0)
+  })
+
   // W27 (docs/AUDIT-2026-09-22.md): confirmed live before this fix, on real
   // COG0055 data (128 samples) -- the OLD bandwidth range (0.01-0.05) gave
   // spans of only 2-7 points, and a 2-point window is mathematically
@@ -730,6 +751,37 @@ describe('applyLowess', () => {
     // to cluster A's own values -- not pulled toward cluster B's ~100,
     // because cluster B is 30 days away in real time.
     expect(result[3].egc as number).toBeLessThan(30)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// canApplyLowess
+// ─────────────────────────────────────────────────────────────────────────────
+// F3 (docs/AUDIT-2026-10-05.md): mirrors canApplyZScore above -- callers
+// should use this instead of the raw `smoothed` toggle state when
+// deciding whether to label a curve "(smoothed)", since applyLowess is
+// a silent, provable no-op below its own 3-point floor.
+
+describe('canApplyLowess', () => {
+  it('false for 0 real values', () => {
+    expect(canApplyLowess([null, null])).toBe(false)
+  })
+
+  it('false for exactly 2 real values', () => {
+    expect(canApplyLowess([1, 2])).toBe(false)
+    expect(canApplyLowess([null, 1, null, 2])).toBe(false)
+  })
+
+  it('true for exactly 3 real values', () => {
+    expect(canApplyLowess([1, 2, 3])).toBe(true)
+  })
+
+  it('true for more than 3 real values, nulls ignored', () => {
+    expect(canApplyLowess([1, null, 2, null, 3, 4])).toBe(true)
+  })
+
+  it('false for an empty array', () => {
+    expect(canApplyLowess([])).toBe(false)
   })
 })
 
