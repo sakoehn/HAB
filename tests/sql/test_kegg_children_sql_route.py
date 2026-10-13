@@ -71,3 +71,19 @@ def test_leaf_ko_returns_200_with_empty_data(client):
 def test_unknown_id_returns_404(client):
     resp = client.get("/kegg/children", params={"parent": "NOT_A_REAL_KEGG_ID"})
     assert resp.status_code == 404
+
+
+def test_explicitly_empty_parent_returns_the_same_roots_as_omitting_it(client):
+    """A7 (docs/AUDIT-2026-10-05.md): parent="" (a real, explicitly empty
+    string -- FastAPI only supplies the None default when the query
+    param is omitted entirely) used to fail this route's own `is not
+    None` guard (empty string IS not None) and 404 as "Unknown KEGG node
+    ''" instead of being treated the same as omission. Confirmed live
+    before this fix: omitted gave count=8 (the real top-level branches),
+    parent="" gave a 404."""
+    omitted = client.get("/kegg/children")
+    empty   = client.get("/kegg/children", params={"parent": ""})
+    assert omitted.status_code == 200
+    assert empty.status_code == 200
+    assert empty.json()["count"] == omitted.json()["count"]
+    assert empty.json()["count"] > 0

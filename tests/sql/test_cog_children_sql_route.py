@@ -85,3 +85,17 @@ def test_leaf_cog_id_returns_200_with_empty_data(client):
 def test_unknown_id_returns_404(client):
     resp = client.get("/cog/children", params={"parent": "NOT_A_REAL_COG_ID"})
     assert resp.status_code == 404
+
+
+def test_explicitly_empty_parent_returns_the_same_roots_as_omitting_it(client):
+    """A7 (docs/AUDIT-2026-10-05.md): parent="" (a real, explicitly empty
+    string) used to fail this route's `is not None` guard and 404 as
+    "Unknown COG node ''" instead of being treated the same as omission.
+    Confirmed live before this fix: omitted gave a real root count,
+    parent="" gave a 404."""
+    omitted = client.get("/cog/children")
+    empty   = client.get("/cog/children", params={"parent": ""})
+    assert omitted.status_code == 200
+    assert empty.status_code == 200
+    assert empty.json()["count"] == omitted.json()["count"]
+    assert empty.json()["count"] > 0

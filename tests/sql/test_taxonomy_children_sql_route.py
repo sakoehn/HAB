@@ -117,3 +117,19 @@ def test_homonym_lineages_return_disjoint_children(client):
     assert old_ids, "expected BOSEA_OLD_LINEAGE to have real children"
     assert new_ids, "expected BOSEA_NEW_LINEAGE to have real children"
     assert old_ids.isdisjoint(new_ids)
+
+
+def test_explicitly_empty_parent_returns_the_same_roots_as_omitting_it(client):
+    """A7 (docs/AUDIT-2026-10-05.md): parent="" (a real, explicitly empty
+    string -- FastAPI only supplies the None default when the query
+    param is omitted entirely) used to fall through this route's
+    truthiness check (`if parent and ...`) and hit a lineage-prefix match
+    against "", which matches no real taxon -- 200 + 0 children, not the
+    docstring's promised 4 domain roots. Confirmed live before this fix:
+    omitted gave count=4, parent="" gave count=0."""
+    omitted = client.get("/taxonomy/children")
+    empty   = client.get("/taxonomy/children", params={"parent": ""})
+    assert omitted.status_code == 200
+    assert empty.status_code == 200
+    assert empty.json()["count"] == omitted.json()["count"]
+    assert empty.json()["count"] > 0

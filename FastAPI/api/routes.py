@@ -554,9 +554,20 @@ async def taxonomy_children(request: Request, parent: str | None = Query(None)):
 
     parent omitted/empty -> the 4 domain roots (value['parent'] is None).
     """
+    # A7 (docs/AUDIT-2026-10-05.md): an explicitly empty `parent=` query
+    # value arrives here as "" (a real string), not None -- FastAPI only
+    # supplies the None default when the param is omitted entirely.
+    # Confirmed live: every one of the four hierarchy routes mishandled
+    # this, not just this one -- taxonomy's own truthiness check below
+    # treated "" as falsy and skipped straight to a lineage-prefix match
+    # against it, which matches nothing, so it silently returned 0
+    # children instead of the 4 real domain roots the docstring promises.
+    # Normalizing here, before anything else runs, makes "" behave
+    # exactly like omission for every check and lookup below.
+    parent = parent or None
     db = connect_to_sql()
     try:
-        if parent and not taxon_exists_sql(db, parent):
+        if parent is not None and not taxon_exists_sql(db, parent):
             raise HTTPException(status_code=404, detail=f"Unknown taxon '{parent}'")
         children = get_taxonomy_children_sql(db, parent)
     finally:
@@ -582,6 +593,12 @@ async def kegg_children(request: Request, parent: str | None = Query(None)):
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="KEGG hierarchy browsing requires DATA_BACKEND=sql")
 
+    # A7 (docs/AUDIT-2026-10-05.md): an explicitly empty `parent=` query
+    # value arrives as "" (a real string), not None -- confirmed live,
+    # this `is not None` guard still 404'd on it as "Unknown KEGG node
+    # ''" instead of treating it the same as omission, same root cause
+    # as the other 3 hierarchy routes.
+    parent = parent or None
     db = connect_to_sql()
     try:
         if parent is not None and _kegg_node_depth(db, parent) is None:
@@ -658,6 +675,9 @@ async def enzyme_children(request: Request, parent: str | None = Query(None)):
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="Enzyme hierarchy browsing requires DATA_BACKEND=sql")
 
+    # A7 (docs/AUDIT-2026-10-05.md): see kegg_children's comment -- same
+    # "" vs None mishandling, confirmed live.
+    parent = parent or None
     db = connect_to_sql()
     try:
         if parent is not None and not _enzyme_node_exists(db, parent):
@@ -710,6 +730,9 @@ async def cog_children(request: Request, parent: str | None = Query(None)):
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="COG hierarchy browsing requires DATA_BACKEND=sql")
 
+    # A7 (docs/AUDIT-2026-10-05.md): see kegg_children's comment -- same
+    # "" vs None mishandling, confirmed live.
+    parent = parent or None
     db = connect_to_sql()
     try:
         if parent is not None and _cog_node_depth(db, parent) is None:
