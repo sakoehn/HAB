@@ -644,6 +644,96 @@ def prescreen_n_aware_client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
+# C6 (docs/AUDIT-2026-10-05.md): _family_locks used to grow by one entry
+# per distinct family ever requested, for the life of the process, with
+# no eviction at all. These test _get_family_lock/_evict_idle_family_locks
+# directly (no HTTP/DB needed), isolated from the real module-level dict
+# via monkeypatch so they can't interfere with each other or with
+# TestCorrelationFamilyLock above.
+class TestFamilyLockEviction:
+    @pytest.fixture(autouse=True)
+    def _isolated_locks(self, monkeypatch):
+        monkeypatch.setattr(correlation_sql, "_family_locks", {})
+
+    def test_same_key_returns_the_same_lock_object(self):
+        key = ("taxonomy", "kegg", "egc", "circular_shift")
+        first = correlation_sql._get_family_lock(key)
+        second = correlation_sql._get_family_lock(key)
+        assert first is second
+
+    def test_different_keys_return_different_locks(self):
+        lock_a = correlation_sql._get_family_lock(("taxonomy", "kegg", "egc", "circular_shift"))
+        lock_b = correlation_sql._get_family_lock(("taxonomy", "cog", "egc", "circular_shift"))
+        assert lock_a is not lock_b
+
+    def test_stays_under_the_cap_no_eviction_needed(self, monkeypatch):
+        monkeypatch.setattr(correlation_sql, "_FAMILY_LOCKS_MAX_ENTRIES", 10)
+        for i in range(5):
+            correlation_sql._get_family_lock((f"key{i}",))
+        assert len(correlation_sql._family_locks) == 5
+
+    def test_evicts_idle_unlocked_entries_once_over_the_cap(self, monkeypatch):
+        monkeypatch.setattr(correlation_sql, "_FAMILY_LOCKS_MAX_ENTRIES", 2)
+        monkeypatch.setattr(correlation_sql, "_FAMILY_LOCKS_IDLE_SECONDS", 100)
+        now = time.time()
+        # Two old, idle, unlocked entries, seeded directly (bypassing
+        # _get_family_lock so their timestamp is really old, not "now").
+        correlation_sql._family_locks[("old1",)] = (threading.Lock(), now - 200)
+        correlation_sql._family_locks[("old2",)] = (threading.Lock(), now - 200)
+
+        # A third request pushes the dict over the cap, triggering eviction.
+        correlation_sql._get_family_lock(("new",))
+
+        assert ("old1",) not in correlation_sql._family_locks
+        assert ("old2",) not in correlation_sql._family_locks
+        assert ("new",) in correlation_sql._family_locks
+
+    def test_never_evicts_a_currently_held_lock_even_if_idle(self, monkeypatch):
+        # The actual point of this fix: an idle TIMESTAMP alone must never
+        # be enough to evict a lock a request might still be relying on.
+        # If it were replaced by a second, different Lock object for the
+        # same key, a concurrent request for the same family could
+        # acquire that NEW lock while the first still holds the OLD one --
+        # both running at once, exactly the redundant-work race this lock
+        # exists to prevent.
+        monkeypatch.setattr(correlation_sql, "_FAMILY_LOCKS_MAX_ENTRIES", 1)
+        monkeypatch.setattr(correlation_sql, "_FAMILY_LOCKS_IDLE_SECONDS", 100)
+        now = time.time()
+        held_lock = threading.Lock()
+        held_lock.acquire()
+        correlation_sql._family_locks[("held",)] = (held_lock, now - 200)
+
+        correlation_sql._get_family_lock(("new",))
+
+        assert ("held",) in correlation_sql._family_locks
+        assert correlation_sql._family_locks[("held",)][0] is held_lock
+
+    def test_does_not_evict_an_entry_that_is_idle_but_not_yet_past_the_threshold(self, monkeypatch):
+        monkeypatch.setattr(correlation_sql, "_FAMILY_LOCKS_MAX_ENTRIES", 1)
+        monkeypatch.setattr(correlation_sql, "_FAMILY_LOCKS_IDLE_SECONDS", 100)
+        now = time.time()
+        correlation_sql._family_locks[("recent",)] = (threading.Lock(), now - 10)  # well under the 100s threshold
+
+        correlation_sql._get_family_lock(("new",))
+
+        assert ("recent",) in correlation_sql._family_locks
+
+    def test_requesting_a_lock_refreshes_its_last_used_time(self, monkeypatch):
+        """A family re-requested right before it would otherwise be
+        evicted must not be evicted out from under the request that's
+        about to use it."""
+        monkeypatch.setattr(correlation_sql, "_FAMILY_LOCKS_MAX_ENTRIES", 1)
+        monkeypatch.setattr(correlation_sql, "_FAMILY_LOCKS_IDLE_SECONDS", 100)
+        now = time.time()
+        key = ("almost-stale",)
+        correlation_sql._family_locks[key] = (threading.Lock(), now - 99)  # 1s from eligible
+
+        correlation_sql._get_family_lock(key)  # refreshes last_requested_at to "now"
+        correlation_sql._get_family_lock(("new",))  # pushes over cap, triggers eviction check
+
+        assert key in correlation_sql._family_locks  # just refreshed -- must survive
+
+
 class TestCorrelationFamilyPrescreen:
     # circular_shift is ~120x slower per candidate than a parametric
     # method (measured directly against the real db, post-CR8 -- was

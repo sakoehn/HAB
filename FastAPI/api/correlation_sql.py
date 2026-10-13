@@ -1,6 +1,7 @@
 import math
 import numpy as np
 import threading
+import time
 from scipy import stats
 import os
 import sqlite3
@@ -58,15 +59,48 @@ VALID_METRICS = {"egc", "norm_egc"}
 # reference_aws_deployment) -- would need a cross-process mechanism
 # (e.g. a row in correlations_cache itself) if ever run with multiple
 # worker processes.
-_family_locks: dict[tuple, threading.Lock] = {}
+#
+# C6 (docs/AUDIT-2026-10-05.md): this dict used to grow by one entry per
+# distinct family ever requested, for the life of the process -- never
+# evicted. _evict_idle_family_locks bounds it, but only ever removes an
+# entry that's BOTH idle past the threshold AND not currently held
+# (lock.locked() is False): a family lock already handed out to a
+# waiting/running request must never be replaced by a second, different
+# Lock object for the same key while that's still possible, or two
+# concurrent requests for the same family could each acquire a
+# DIFFERENT lock and run simultaneously -- exactly the redundant-work
+# race this lock exists to prevent in the first place. Checked under
+# the same _family_locks_guard _get_family_lock itself uses, so no
+# request can be in the middle of being handed this exact lock while
+# it's being considered for eviction.
+_family_locks: dict[tuple, tuple[threading.Lock, float]] = {}  # key -> (lock, last_requested_at)
 _family_locks_guard = threading.Lock()
+_FAMILY_LOCKS_MAX_ENTRIES = 256
+_FAMILY_LOCKS_IDLE_SECONDS = 60 * 60  # 1 hour
+
+
+def _evict_idle_family_locks(now: float) -> None:
+    """Must be called while holding _family_locks_guard. Only does
+    anything once the dict has grown past the cap, so a normal-sized
+    process pays nothing for this."""
+    if len(_family_locks) <= _FAMILY_LOCKS_MAX_ENTRIES:
+        return
+    stale_keys = [
+        key for key, (lock, last_requested_at) in _family_locks.items()
+        if now - last_requested_at > _FAMILY_LOCKS_IDLE_SECONDS and not lock.locked()
+    ]
+    for key in stale_keys:
+        del _family_locks[key]
 
 
 def _get_family_lock(key: tuple) -> threading.Lock:
     with _family_locks_guard:
-        if key not in _family_locks:
-            _family_locks[key] = threading.Lock()
-        return _family_locks[key]
+        now = time.time()
+        entry = _family_locks.get(key)
+        lock = entry[0] if entry is not None else threading.Lock()
+        _family_locks[key] = (lock, now)
+        _evict_idle_family_locks(now)
+        return lock
 
 
 # ── Math primitives ───────────────────────────────────────────────────────────
