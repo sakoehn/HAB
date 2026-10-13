@@ -208,6 +208,15 @@ class TestSmokePatched:
             annotation_id="__nonexistent__",
             source=AnnotationSource.kegg,
             sample_count=1,
+            # A6 (docs/AUDIT-2026-10-05.md): page/page_size are now
+            # Query(1, ge=1)/Query(100, ...) defaults -- calling the route
+            # as a plain function (bypassing FastAPI's own request
+            # pipeline, which is what actually resolves a Query default
+            # into a real int) leaves the raw Query marker object as the
+            # default instead, which paginate() then can't do arithmetic
+            # on. Every direct call here must pass real values explicitly,
+            # same as sample_count already does above.
+            page=1, page_size=100,
         )
         assert isinstance(result, dict)
         assert "data" in result
@@ -223,6 +232,7 @@ class TestSmokePatched:
             source=AnnotationSource.kegg,
             sample_count=5,
             unique_pairs=True,
+            page=1, page_size=100,  # A6 -- see test_search_mappings_returns_dict's comment
         )
         assert isinstance(result["data"], list)
 

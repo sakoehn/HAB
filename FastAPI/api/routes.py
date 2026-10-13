@@ -108,6 +108,16 @@ router = APIRouter()
 
 # ── Pagination helpers ────────────────────────────────────────────────────────
 
+# A6 (docs/AUDIT-2026-10-05.md): paginate() itself has no input guards --
+# page_size=0 divides by zero computing total_pages (a real HTTP 500,
+# ZeroDivisionError), and page<1 or page_size<1 produces a negative slice
+# start, which Python silently reinterprets as an index from the END of
+# the list instead of raising -- "page -1" returning a real (wrong)
+# page's worth of data rather than an error. Only /annotations/scaffolds
+# already guarded its own page/page_size with Query(ge=1); the 5 routes
+# below that call this function through FastAPI's own Query(..., ge=1,
+# le=...) now reject an out-of-range value with a 422 before paginate()
+# ever runs, matching that one already-correct route's convention.
 def paginate(data: list, page: int, page_size: int) -> dict:
     """Generic pagination for any list."""
     total = len(data)
@@ -230,7 +240,9 @@ def _filter_timepoints_to_real_samples(timepoints: dict, real_samples) -> list[d
 
 
 @router.get("/timepoints")
-def list_timepoints(request: Request, page: int = 1, page_size: int = 50):
+def list_timepoints(
+    request: Request, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=1000),
+):
     """Return all samples with their readable dates, paginated."""
     if not TIMEPOINTS:
         raise HTTPException(status_code=404, detail="Timepoints data not found")
@@ -244,7 +256,9 @@ def list_timepoints(request: Request, page: int = 1, page_size: int = 50):
 
 
 @router.get("/samples")
-def list_samples(request: Request, page: int = 1, page_size: int = 50):
+def list_samples(
+    request: Request, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=1000),
+):
     """Return all sample names with their readable dates, paginated."""
     conn = connect_to_sql()
     try:
@@ -307,7 +321,11 @@ def search_mappings(
                      "deliberate full export (e.g. CSV download) -- never "
                      "set by the default interactive search/browse path.",
     ),
-    page: int = 1, page_size: int = 100,
+    # le=50_000 matches _MAPPINGS_ROW_LIMIT -- the real ceiling
+    # get_mappings_sql's own hard row limit already imposes, so a
+    # legitimate bypass_cap=true full export can still request everything
+    # in a single page without hitting an artificially lower cap here.
+    page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=50_000),
 ):
     """
     Search mappings for a given annotation ID and source.
@@ -445,7 +463,7 @@ def search_annotations(
     annotation_id: str | None = Query(None),
     name_exact:    str | None = Query(None),
     sources: list[str] = Query(...),
-    page: int = 1, page_size: int = 500,
+    page: int = Query(1, ge=1), page_size: int = Query(500, ge=1, le=2000),
 ):
     """
     Search across all samples for one or more annotation sources.
@@ -481,7 +499,7 @@ async def annotation_time_series(
     request: Request,
     source:        AnnotationSource = Query(...),
     annotation_id: str = Query(...),
-    page: int = 1, page_size: int = 100,
+    page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=500),
 ):
     """Return EGC and norm_egc for one annotation across all samples,
     sorted chronologically."""

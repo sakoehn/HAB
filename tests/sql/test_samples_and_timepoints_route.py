@@ -130,3 +130,37 @@ def test_samples_and_timepoints_report_the_same_sample_set(client):
     sample_ids    = {row["sample"] for row in samples_resp["data"]}
     timepoint_ids = {row["taxon_oid"] for row in timepoints_resp["data"]}
     assert sample_ids == timepoint_ids
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# A6 (docs/AUDIT-2026-10-05.md): page/page_size had no input bounds --
+# page_size=0 divides by zero in paginate() (a real HTTP 500), and a
+# negative page/page_size produces a negative slice start, which Python
+# silently reinterprets as an index from the end of the list rather than
+# raising. Both routes now reject an out-of-range value with FastAPI's
+# own 422, before paginate() ever runs.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_samples_page_size_zero_is_rejected_not_a_500(client):
+    resp = client.get("/samples", params={"page_size": 0})
+    assert resp.status_code == 422
+
+
+def test_samples_negative_page_is_rejected_not_a_silent_wrong_slice(client):
+    resp = client.get("/samples", params={"page": -1, "page_size": 2})
+    assert resp.status_code == 422
+
+
+def test_samples_negative_page_size_is_rejected(client):
+    resp = client.get("/samples", params={"page_size": -5})
+    assert resp.status_code == 422
+
+
+def test_timepoints_page_size_zero_is_rejected_not_a_500(client):
+    resp = client.get("/timepoints", params={"page_size": 0})
+    assert resp.status_code == 422
+
+
+def test_timepoints_negative_page_is_rejected_not_a_silent_wrong_slice(client):
+    resp = client.get("/timepoints", params={"page": -1, "page_size": 2})
+    assert resp.status_code == 422

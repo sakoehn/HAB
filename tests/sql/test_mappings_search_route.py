@@ -302,13 +302,19 @@ def test_bypass_cap_actually_changes_the_real_data_not_just_the_metadata(client)
     very difference this test exists to catch. A's real counts (measured
     directly: 4,000 rows at 5 samples, 8,397 at 10) stay comfortably under
     the row limit at both sizes, so only the sample-cap mechanism is live."""
+    # page_size=20000 (not the old 100000): A6 (docs/AUDIT-2026-10-05.md)
+    # capped page_size at le=50_000 (matching _MAPPINGS_ROW_LIMIT, the
+    # real ceiling get_mappings_sql's own hard row limit already
+    # imposes) -- 20000 still comfortably exceeds this test's real row
+    # counts at both sizes (4,000 / 8,397), so every row still lands on
+    # page 1 either way.
     capped = client.get(
         "/mappings/search",
-        params={"annotation_id": "A", "source": "cog", "sample_count": 10, "bypass_cap": False, "page_size": 100000},
+        params={"annotation_id": "A", "source": "cog", "sample_count": 10, "bypass_cap": False, "page_size": 20000},
     ).json()
     bypassed = client.get(
         "/mappings/search",
-        params={"annotation_id": "A", "source": "cog", "sample_count": 10, "bypass_cap": True, "page_size": 100000},
+        params={"annotation_id": "A", "source": "cog", "sample_count": 10, "bypass_cap": True, "page_size": 20000},
     ).json()
 
     assert bypassed["total"] > capped["total"], (
@@ -548,3 +554,25 @@ def test_concurrent_requests_do_not_hang_or_corrupt_the_shared_connection(client
 
     statuses = [r.status_code for r in responses]
     assert all(s == 200 for s in statuses), f"Expected all 200, got: {statuses}"
+
+
+# A6 (docs/AUDIT-2026-10-05.md): page/page_size had no input bounds --
+# page_size=0 divides by zero in paginate() (a real HTTP 500), and a
+# negative page/page_size produces a negative slice start, which Python
+# silently reinterprets as an index from the end of the list rather than
+# raising.
+
+def test_page_size_zero_is_rejected_not_a_500(client):
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "COG0055", "source": "cog", "page_size": 0},
+    )
+    assert resp.status_code == 422
+
+
+def test_negative_page_is_rejected_not_a_silent_wrong_slice(client):
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "COG0055", "source": "cog", "page": -1, "page_size": 2},
+    )
+    assert resp.status_code == 422

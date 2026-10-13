@@ -144,3 +144,34 @@ def test_results_sorted_by_mean_egc_descending(client):
     body = resp.json()['data']
     is_descending = all(body[i]["mean_egc"] >= body[i + 1]["mean_egc"] for i in range(len(body) - 1))
     assert is_descending
+
+
+# A6 (docs/AUDIT-2026-10-05.md): page/page_size had no input bounds --
+# page_size=0 divides by zero in paginate() (a real HTTP 500), and a
+# negative page/page_size produces a negative slice start, which Python
+# silently reinterprets as an index from the end of the list rather than
+# raising -- measured live: page_size=-5 used to return 200 with the
+# tail silently dropped instead of an error.
+
+def test_page_size_zero_is_rejected_not_a_500(client):
+    resp = client.get(
+        "/search/annotations",
+        params={"q": "iron", "sources": ["cog"], "page_size": 0},
+    )
+    assert resp.status_code == 422
+
+
+def test_negative_page_size_is_rejected_not_a_silent_tail_drop(client):
+    resp = client.get(
+        "/search/annotations",
+        params={"q": "iron", "sources": ["cog"], "page_size": -5},
+    )
+    assert resp.status_code == 422
+
+
+def test_negative_page_is_rejected(client):
+    resp = client.get(
+        "/search/annotations",
+        params={"q": "iron", "sources": ["cog"], "page": -1, "page_size": 5},
+    )
+    assert resp.status_code == 422
