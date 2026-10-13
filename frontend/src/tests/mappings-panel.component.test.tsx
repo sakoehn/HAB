@@ -340,3 +340,49 @@ describe('MappingsPanel — broad-category cap (W24, docs/AUDIT-2026-09-22.md)',
     expect(mockFetch).toHaveBeenCalledTimes(1) // no second fetch
   })
 })
+
+// G6 (docs/AUDIT-2026-10-05.md): the capped-request disclosure banner
+// above the table is gated on `allRows.length > 0`, so a broad category
+// that got capped down to a handful of samples -- and happened to find
+// zero matching rows in that small real scope -- fell through to the
+// plain empty-state message instead, which names requestedSampleCount
+// (the full, un-capped ask) with no mention of the cap at all. A capped
+// 5-of-128 search with 0 hits read "No mappings found... in the
+// selected 128 samples", overstating the real (5-sample) search scope
+// by ~25x.
+describe('MappingsPanel — empty-state discloses the real cap scope (G6)', () => {
+  it('names the real (capped) sample count, not the full request, when a capped search finds zero rows', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({
+      data: [],
+      sample_count: 5,
+      samples_were_capped: true,
+      leaf_count: 25, // "H" is a real, many-member COG category
+    }))
+    render(<MappingsPanel annotationId="H" source="cog" />)
+    await open()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+
+    expect(screen.getByText(/No mappings found/i)).toBeInTheDocument()
+    expect(screen.getByText(/the 5 samples actually searched/i)).toBeInTheDocument()
+    expect(screen.getByText(/broad category/i)).toBeInTheDocument()
+    expect(screen.getByText(/of the requested 128 samples/i)).toBeInTheDocument()
+    // The pre-fix message named only the uncapped ask, with no real
+    // scope disclosed at all -- must not still be present verbatim.
+    expect(screen.queryByText(/in the\s*selected 128 samples/i)).not.toBeInTheDocument()
+  })
+
+  it('keeps the plain empty-state message when the search was never capped', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({
+      data: [],
+      sample_count: 128,
+      samples_were_capped: false,
+    }))
+    render(<MappingsPanel annotationId="COG0055" source="cog" />)
+    await open()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+
+    expect(screen.getByText(/No mappings found for/i)).toBeInTheDocument()
+    expect(screen.getByText(/selected 128 samples/i)).toBeInTheDocument()
+    expect(screen.queryByText(/actually searched/i)).not.toBeInTheDocument()
+  })
+})

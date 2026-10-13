@@ -408,8 +408,31 @@ export function MappingsPanel({
             <div className="state-box" style={{ padding: '20px' }}>
               <div className="state-icon">∅</div>
               <span>
-                No mappings found for <strong>{annotationId}</strong> in the
-                selected {requestedSampleCount} sample{requestedSampleCount === 1 ? '' : 's'}.
+                {samplesCapped ? (
+                  // G6 (docs/AUDIT-2026-10-05.md): the non-empty branch's
+                  // own cap-disclosure banner below is gated on
+                  // `allRows.length > 0`, so a capped request that happens
+                  // to find zero rows in its real (small) scanned scope
+                  // used to fall through to the plain empty-state message
+                  // below instead, which names requestedSampleCount (the
+                  // full ask, e.g. 128) -- silently overstating how much
+                  // was actually searched (e.g. the real 5-sample scope,
+                  // ~25x less) instead of disclosing the cap at all.
+                  <>
+                    No mappings found for <strong>{annotationId}</strong> in
+                    the {usedSampleCount ?? '—'} sample{usedSampleCount === 1 ? '' : 's'} actually
+                    searched — {leafCount !== null && leafCount > 1
+                      ? `${annotationId} is a broad category (${leafCount} member ids)`
+                      : `${annotationId} matches a very large number of gene records`},
+                    so only {usedSampleCount ?? '—'} of the requested {requestedSampleCount} samples were
+                    scanned to keep this fast. Narrow to a specific gene/id for full sample coverage.
+                  </>
+                ) : (
+                  <>
+                    No mappings found for <strong>{annotationId}</strong> in the
+                    selected {requestedSampleCount} sample{requestedSampleCount === 1 ? '' : 's'}.
+                  </>
+                )}
               </span>
             </div>
           )}
