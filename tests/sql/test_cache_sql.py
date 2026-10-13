@@ -319,6 +319,19 @@ def test_root_case_returns_the_four_domains(conn):
     assert all(c["annotation_id"] == c["category"] for c in children)
 
 
+def test_root_case_is_itself_sorted_not_just_sortable(conn):
+    """A9 (docs/AUDIT-2026-10-05.md): the test above pre-sorts before
+    comparing, which would pass even if the function's own real return
+    order were wrong -- that's exactly how this bug went unnoticed.
+    Confirmed live before this fix: the raw order was Bacteria, Archaea,
+    Viruses, Eukaryota (SQLite's table-scan order), not alphabetical,
+    even though every deeper level already returns sorted(). Checks the
+    function's own raw order directly, no pre-sorting."""
+    children = get_taxonomy_children_sql(conn, None)
+    ids = [c["annotation_id"] for c in children]
+    assert ids == sorted(ids)
+
+
 def test_phylum_level_parent_returns_its_real_classes(conn):
     """Bacteroidetes (depth=2) -- real 7 classes underneath it in
     taxon_paths, independently recomputed above, not assumed. `parent`
@@ -415,6 +428,18 @@ def test_kegg_root_case_returns_the_eight_top_level_branches(conn):
     # never equal to its own name/category -- ids and display text are
     # always separate here)
     assert all(c["name"] == c["category"] for c in children)
+
+
+def test_kegg_root_case_is_itself_sorted_not_just_sortable(conn):
+    """A9 (docs/AUDIT-2026-10-05.md): see
+    test_root_case_is_itself_sorted_not_just_sortable's comment --
+    same pre-sorting blind spot, same fix. KEGG's real root ids happen
+    to already come back in ascending order from SQLite's table scan,
+    but that was never a real ORDER BY guarantee -- this pins down the
+    function's own output is actually sorted now, not just coincidence."""
+    children = get_kegg_children_sql(conn, None)
+    ids = [c["annotation_id"] for c in children]
+    assert ids == sorted(ids)
 
 
 def test_kegg_metabolism_branch_returns_its_real_subcategories(conn):
@@ -574,6 +599,15 @@ def test_enzyme_root_case_returns_the_seven_top_level_classes(conn):
     assert sorted(c["annotation_id"] for c in children) == EXPECTED_ENZYME_ROOT_IDS
     assert all(c["depth"] == 1 for c in children)
     assert all(c["name"] == c["category"] for c in children)
+
+
+def test_enzyme_root_case_is_itself_sorted_not_just_sortable(conn):
+    """A9 (docs/AUDIT-2026-10-05.md): see
+    test_root_case_is_itself_sorted_not_just_sortable's comment -- same
+    pre-sorting blind spot, same fix."""
+    children = get_enzyme_children_sql(conn, None)
+    ids = [c["annotation_id"] for c in children]
+    assert ids == sorted(ids)
 
 
 def test_enzyme_oxidoreductases_children_include_known_real_subclasses(conn):
@@ -760,6 +794,17 @@ def test_cog_root_case_returns_the_25_real_categories(conn):
     assert all(c["depth"] == 1 for c in children)
     # a category is its own category name, same convention as KEGG's roots
     assert all(c["name"] == c["category"] for c in children)
+
+
+def test_cog_root_case_is_itself_sorted_not_just_sortable(conn):
+    """A9 (docs/AUDIT-2026-10-05.md): see
+    test_root_case_is_itself_sorted_not_just_sortable's comment -- same
+    pre-sorting blind spot, same fix. Confirmed live before this fix:
+    COG's 25 category roots came back as J, E, H, Q, K, L, ... (apparent
+    insertion order), not alphabetical."""
+    children = get_cog_children_sql(conn, None)
+    ids = [c["annotation_id"] for c in children]
+    assert ids == sorted(ids)
 
 
 def test_cog_category_h_children_include_known_real_cog_ids(conn):

@@ -717,8 +717,9 @@ async def cog_children(request: Request, parent: str | None = Query(None)):
     Direct children of a COG node (structure only — no egc values), for
     the same BRITE-hierarchy-popup feature as /kegg/children.
 
-    parent omitted/empty -> the 26 top-level category letters (Energy
-    production and conversion, etc.).
+    parent omitted/empty -> the 25 top-level category letters (Energy
+    production and conversion, etc.) -- A9 (docs/AUDIT-2026-10-05.md):
+    confirmed live against the real db, not 26.
 
     SQL backend only, same reasoning as /kegg/children -- cog_paths (see
     migrate_cog_paths_to_sql.py) has no JSON-backend equivalent. A COG id

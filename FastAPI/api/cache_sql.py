@@ -125,10 +125,19 @@ def get_taxonomy_children_sql(conn: sqlite3.Connection, parent: str | None, dept
     """
     if parent is None:
         # domain roots, no depth needed
+        # A9 (docs/AUDIT-2026-10-05.md): sorted() here too, matching the
+        # non-root branch below -- this docstring's own "sorted by
+        # annotation_id" claim used to be false for the root case,
+        # which came back in whatever order SQLite's table scan happened
+        # to produce (confirmed live: Bacteria, Archaea, Viruses,
+        # Eukaryota -- not alphabetical).
         query = "SELECT DISTINCT domain AS annotation_id, domain AS name, 1 AS depth, domain AS category FROM taxon_paths"
         cursor = conn.execute(query)
         rows = cursor.fetchall()
-        return [{"annotation_id": row[0], "name": row[1], "depth": row[2], "category": row[3]} for row in rows]
+        return sorted(
+            ({"annotation_id": row[0], "name": row[1], "depth": row[2], "category": row[3]} for row in rows),
+            key=lambda c: c["annotation_id"],
+        )
 
     if depth is None:
         depth = len(parent.split(';'))
@@ -202,12 +211,20 @@ def get_kegg_children_sql(conn: sqlite3.Connection, parent_id: str | None, depth
         an unknown id, or has no children.
     """
     if parent_id is None:
+        # A9 (docs/AUDIT-2026-10-05.md): sorted() here too -- see
+        # get_taxonomy_children_sql's root branch for the full reasoning.
+        # This source's own root ids happen to already come back in
+        # ascending order from SQLite's table scan, but that's never been
+        # a real ORDER BY guarantee, just incidental.
         query = "SELECT DISTINCT a_id AS annotation_id, a_name AS name, 1 AS depth, a_name AS category FROM kegg_paths"
         cursor = conn.execute(query)
-        return [
-            {"annotation_id": row[0], "name": row[1], "depth": row[2], "category": row[3]}
-            for row in cursor.fetchall()
-        ]
+        return sorted(
+            (
+                {"annotation_id": row[0], "name": row[1], "depth": row[2], "category": row[3]}
+                for row in cursor.fetchall()
+            ),
+            key=lambda c: c["annotation_id"],
+        )
 
     if depth is None:
         depth = _kegg_node_depth(conn, parent_id)
@@ -413,12 +430,17 @@ def get_enzyme_children_sql(conn: sqlite3.Connection, parent_id: str | None, dep
         (depth=4), an unknown id, or has no children.
     """
     if parent_id is None:
+        # A9 (docs/AUDIT-2026-10-05.md): sorted() here too -- see
+        # get_taxonomy_children_sql's root branch for the full reasoning.
         query = "SELECT DISTINCT a_id AS annotation_id, a_name AS name, 1 AS depth, a_name AS category FROM enzyme_paths"
         cursor = conn.execute(query)
-        return [
-            {"annotation_id": row[0], "name": row[1], "depth": row[2], "category": row[3]}
-            for row in cursor.fetchall()
-        ]
+        return sorted(
+            (
+                {"annotation_id": row[0], "name": row[1], "depth": row[2], "category": row[3]}
+                for row in cursor.fetchall()
+            ),
+            key=lambda c: c["annotation_id"],
+        )
 
     if depth is None:
         depth = len(parent_id.split('.'))
@@ -537,12 +559,19 @@ def get_cog_children_sql(conn: sqlite3.Connection, parent_id: str | None, depth:
         (depth=2), an unknown id, or has no children.
     """
     if parent_id is None:
+        # A9 (docs/AUDIT-2026-10-05.md): sorted() here too -- confirmed
+        # live, COG's 25 category-letter roots came back in apparent
+        # insertion order (J, E, H, Q, K, L, ...), not alphabetical. See
+        # get_taxonomy_children_sql's root branch for the full reasoning.
         query = "SELECT DISTINCT a_id AS annotation_id, a_name AS name, 1 AS depth, a_name AS category FROM cog_paths"
         cursor = conn.execute(query)
-        return [
-            {"annotation_id": row[0], "name": row[1], "depth": row[2], "category": row[3]}
-            for row in cursor.fetchall()
-        ]
+        return sorted(
+            (
+                {"annotation_id": row[0], "name": row[1], "depth": row[2], "category": row[3]}
+                for row in cursor.fetchall()
+            ),
+            key=lambda c: c["annotation_id"],
+        )
 
     if depth is None:
         depth = _cog_node_depth(conn, parent_id)
