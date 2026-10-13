@@ -36,10 +36,6 @@ router = APIRouter()
 VALID_METHODS = {"raw_pearson", "log_pearson", "spearman", "circular_shift"}
 VALID_METRICS = {"egc", "norm_egc"}
 
-# ── Correlation result cache ──────────────────────────────────────────────────
-
-_CORR_CACHE: dict[tuple, list] = {}
-
 # ── Per-family compute lock ───────────────────────────────────────────────────
 # correlation_family_endpoint is a synchronous route, run in FastAPI's
 # thread pool -- a slow (circular_shift) request that outlives its own
