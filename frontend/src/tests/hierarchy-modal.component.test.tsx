@@ -97,6 +97,36 @@ describe('HierarchyModal — auto-expand to path', () => {
     expect(screen.getByTestId('path-picker')).toBeInTheDocument()
   })
 
+  // G7 (docs/AUDIT-2026-10-05.md): this note used to hardcode "KEGG
+  // pathways" regardless of `source` -- genuinely wrong for a real
+  // multi-category COG like COG0028 (category E and H, per P4/E17).
+  it('names the real source-specific noun, not "KEGG pathways", for a multi-category COG', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/cog/path')) {
+        return Promise.resolve(jsonResponse({
+          annotation_id: 'COG0028',
+          path_count:    2,
+          paths: [
+            [
+              { annotation_id: 'E', name: 'Amino acid transport and metabolism', depth: 1 },
+              { annotation_id: 'COG0028', name: 'Thiamine-related protein', depth: 2 },
+            ],
+            [
+              { annotation_id: 'H', name: 'Coenzyme transport and metabolism', depth: 1 },
+              { annotation_id: 'COG0028', name: 'Thiamine-related protein', depth: 2 },
+            ],
+          ],
+        }))
+      }
+      return Promise.resolve(jsonResponse({ data: [] }))
+    })
+    render(<HierarchyModal annotationId="COG0028" source="cog" onClose={vi.fn()} />)
+
+    const note = await screen.findByTestId('multi-parent-note')
+    expect(note).toHaveTextContent('2 real COG categories')
+    expect(note).not.toHaveTextContent('KEGG')
+  })
+
   it('does not show the path picker for a single-parent node', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/cog/path')) {

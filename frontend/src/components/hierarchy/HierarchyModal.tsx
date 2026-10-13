@@ -19,6 +19,17 @@ import { useHierarchyTree } from '../../hooks/useHierarchyTree'
 import { HierarchyTree } from './HierarchyTree'
 import { SkeletonTreeRows } from '../ui/Skeleton'
 
+// G7 (docs/AUDIT-2026-10-05.md): the multi-parent note below used to
+// hardcode "KEGG pathways" regardless of `source` -- genuinely wrong for
+// a multi-category COG (e.g. COG0028, real member of both category E and
+// H per P4/E17) or a multi-class Enzyme id, which would say "real KEGG
+// pathways" too.
+const HIERARCHY_NODE_NOUN: Record<HierarchySource, string> = {
+  kegg:   'KEGG pathways',
+  cog:    'COG categories',
+  enzyme: 'Enzyme classes',
+}
+
 export function HierarchyModal({
   annotationId,
   source,
@@ -112,7 +123,7 @@ export function HierarchyModal({
               }}
             >
               <span style={{ font: '12px var(--mono)', color: 'var(--text-dim)' }}>
-                {annotationId} appears under {pathCount} real KEGG pathways:
+                {annotationId} appears under {pathCount} real {HIERARCHY_NODE_NOUN[source]}:
               </span>
               <select
                 data-testid="path-picker"
