@@ -171,6 +171,61 @@ describe('ExplorePage — Top EGC date suffix describes what was loaded, not the
   })
 })
 
+// E11 (docs/AUDIT-2026-10-05.md): the "Relative" bar's width used to
+// scale against the UNFILTERED rows' max mean_egc, even when a rank
+// filter narrowed the visible rows to a subset that no longer includes
+// whichever row set that max -- every visible bar then read as far
+// shorter than its real share of what's actually on screen (e.g. every
+// leaf-level bar scaled against an since-hidden category rollup's much
+// larger sum).
+describe('ExplorePage — Top EGC "Relative" bars scale to the filtered rows, not the unfiltered max (E11)', () => {
+  it('rescales every visible bar to the filtered max once a rank filter hides the row that set the unfiltered max', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) {
+        return Promise.resolve(jsonResponse({
+          data: [
+            // Depth 1 (category rollup) -- by far the largest mean_egc,
+            // sets the unfiltered max. Hidden once rank-filtered to leaves.
+            { annotation_id: 'E', name: 'Amino acid metabolism', parent: null, depth: 1, mean_egc: 1000, max_egc: 2000, sample_count: 128 },
+            // Depth 2 (real leaves) -- what's left once filtered to Level 2.
+            { annotation_id: 'COG_LEAF_HIGH', name: 'leaf high', parent: 'E', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 },
+            { annotation_id: 'COG_LEAF_LOW',  name: 'leaf low',  parent: 'E', depth: 2, mean_egc: 50,  max_egc: 100, sample_count: 128 },
+          ],
+          sample_count: 128,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'top-egc', source: 'cog' }} />)
+
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+    await screen.findByText('COG_LEAF_HIGH')
+
+    function barStyle(annotationId: string): string {
+      const row = screen.getByText(annotationId).closest('tr')!
+      const bar = row.querySelector('td:last-child > div')!
+      return bar.getAttribute('style') ?? ''
+    }
+
+    // Before filtering: scaled against the depth-1 row's mean_egc=1000
+    // (the unfiltered max) -- the leaf rows read as nearly empty (10%/5%).
+    expect(barStyle('COG_LEAF_HIGH')).toContain('var(--teal) 10%,')
+    expect(barStyle('COG_LEAF_LOW')).toContain('var(--teal) 5%,')
+
+    // Filter to Level 2 only -- hides the depth-1 row entirely.
+    await user.click(screen.getByRole('button', { name: 'Level 2' }))
+    await waitFor(() => {
+      expect(screen.queryByText('Amino acid metabolism')).not.toBeInTheDocument()
+    })
+
+    // Now scaled against the real (filtered) max, 100 -- the highest
+    // visible row reads as a genuine 100%, not still 10%.
+    expect(barStyle('COG_LEAF_HIGH')).toContain('var(--teal) 100%,')
+    expect(barStyle('COG_LEAF_LOW')).toContain('var(--teal) 50%,')
+  })
+})
+
 // E8 (docs/AUDIT-2026-10-05.md): the Lookup result list showed only a
 // bare mean_egc number, with no (N/128) detection-count disclosure, no
 // "mean when detected" tooltip, and no sort-method label -- all three

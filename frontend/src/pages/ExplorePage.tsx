@@ -1400,7 +1400,13 @@ export function ExplorePage({
       })
   }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter])
 
-  const maxMean = Math.max(...state.rows.map(r => r.mean_egc), 1)
+  // E11 (docs/AUDIT-2026-10-05.md): must scale against `sorted` (what's
+  // actually visible after the rank/text filters), not the unfiltered
+  // state.rows -- otherwise narrowing to e.g. a specific rank still
+  // scales every visible bar against a since-filtered-out branch/rollup
+  // node's much larger mean, making every bar in the narrowed view read
+  // as nearly empty even though they're the ones actually on screen.
+  const maxMean = Math.max(...sorted.map(r => r.mean_egc), 1)
 
   function toggleSection(s: ExploreSection) {
     setState(prev => ({ ...prev, openSection: prev.openSection === s ? null : s }))
