@@ -171,6 +171,41 @@ describe('ExplorePage — Top EGC date suffix describes what was loaded, not the
   })
 })
 
+// E8 (docs/AUDIT-2026-10-05.md): the Lookup result list showed only a
+// bare mean_egc number, with no (N/128) detection-count disclosure, no
+// "mean when detected" tooltip, and no sort-method label -- all three
+// of which the Analyze page's own equivalent list (LeftResultList)
+// already has, for the same reason: a 9-sample mean and a 128-sample
+// mean otherwise look identical, and a sparse detection can outrank a
+// fully-detected one with nothing to warn the reader.
+describe('ExplorePage — Annotation Lookup detection-count disclosure (E8)', () => {
+  it('shows (N/128) and a detection tooltip for a partially-detected result, but not for a fully-detected one', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations') && url.includes('sources=kegg')) {
+        return Promise.resolve(jsonResponse({
+          data: [
+            { annotation_id: 'K00001', name: 'alcohol dehydrogenase', parent: null, depth: 4, mean_egc: 100, max_egc: 200, sample_count: 9 },
+            { annotation_id: 'K00002', name: 'other dehydrogenase', parent: null, depth: 4, mean_egc: 50, max_egc: 90, sample_count: 128 },
+          ],
+          total: 2,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'kegg' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'K00001')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    await screen.findByText('K00001')
+    expect(screen.getByText('(9/128)')).toBeInTheDocument()
+    expect(screen.queryByText('(128/128)')).not.toBeInTheDocument()
+    expect(screen.getByTitle('Mean when detected, across 9 of 128 samples')).toBeInTheDocument()
+    expect(screen.getByText(/sorted by mean EGC/i)).toBeInTheDocument()
+  })
+})
+
 describe('ExplorePage — Annotation Lookup source race (W29)', () => {
   it('switching source before the search resolves does not tag the result under the new source', async () => {
     const user = userEvent.setup()

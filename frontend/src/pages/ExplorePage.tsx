@@ -1945,6 +1945,8 @@ export function ExplorePage({
                       {state.lookupRankFilter.size === 0 && state.lookupTotal > state.lookupResults.length &&
                         ` · showing ${state.lookupResults.length}`}
                       {' · click to view details'}
+                      {' · sorted by mean EGC'}
+                      <HelpTooltip text="EGC here is the mean across samples where the annotation was actually detected, not all 128 -- an annotation detected in only a few samples can rank above one detected everywhere. Check the (N/128) next to a row's number, when shown, before comparing two rows' rank." />
                     </div>
                     <div style={{
                       border:       '1px solid var(--border)',
@@ -1996,12 +1998,31 @@ export function ExplorePage({
                               >
                                 {taxonomyAwarePrimaryLabel(effectiveLookupSource, row.annotation_id, row.name)}
                               </span>
-                              <span style={{
-                                font:  '400 10px var(--mono)',
-                                color: 'var(--text-dim)',
-                                flexShrink: 0,
-                              }}>
+                              <span
+                                style={{
+                                  font:  '400 10px var(--mono)',
+                                  color: 'var(--text-dim)',
+                                  flexShrink: 0,
+                                }}
+                                title={
+                                  // E8 (docs/AUDIT-2026-10-05.md): this
+                                  // list had no detection-count
+                                  // disclosure at all -- mean_egc is a
+                                  // mean over only the samples where the
+                                  // annotation was actually detected
+                                  // (see LeftResultList's own W21 note),
+                                  // and nothing here said so.
+                                  row.sample_count != null
+                                    ? `Mean when detected, across ${row.sample_count} of 128 samples`
+                                    : undefined
+                                }
+                              >
                                 {row.mean_egc.toExponential(2)}
+                                {row.sample_count != null && row.sample_count < 128 && (
+                                  <span style={{ opacity: 0.7 }}>
+                                    {' '}({row.sample_count}/128)
+                                  </span>
+                                )}
                               </span>
                             </div>
                             {row.name && effectiveLookupSource !== 'taxonomy' && (

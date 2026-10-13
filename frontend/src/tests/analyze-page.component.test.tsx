@@ -2541,7 +2541,7 @@ describe('ExplorePage — Annotation Lookup happy path', () => {
     await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
 
     await waitFor(() => {
-      expect(screen.getByText('2 results · click to view details')).toBeInTheDocument()
+      expect(screen.getByText(/2 results · click to view details/)).toBeInTheDocument()
     })
     expect(document.querySelector('.lookup-id')).toBeNull()
 
