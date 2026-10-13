@@ -12,9 +12,11 @@
 // Designed to be reusable — takes only the four metadata fields it needs,
 // no dependency on page-level state.
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
+import type { HierarchyPathResponse } from '../../types'
 import { SOURCE_TAG_CLS, expandParentLabel } from '../../constants'
+import { apiFetch } from '../../utils/api'
 import { ExternalLinks } from '../ui/ExternalLinks'
 
 export function AnnotationInfoDrawer({
@@ -29,6 +31,37 @@ export function AnnotationInfoDrawer({
   parent:       string | null
 }) {
   const [open, setOpen] = useState(false)
+  // G13 (docs/AUDIT-2026-10-05.md): `parent` is the single, last-occurrence-
+  // wins stored value (W30(a)/P3) -- a real multi-parent KEGG KO (e.g.
+  // K00844/hexokinase has 14 real pathway parents) or multi-category COG
+  // (P4, e.g. COG0028 under both category E and H) has more than one real
+  // immediate parent, but this drawer only ever showed the one stored
+  // value. Mirrors the exact fetch Explore's own Lookup card already uses
+  // (kegg_paths/cog_paths, built for the hierarchy popup, hold every real
+  // path) -- enzyme/taxonomy are never multi-parent (confirmed directly:
+  // 0 of 7,333 real EC nodes; taxonomy's parent is a full lineage-prefix,
+  // never ambiguous), so only kegg/cog need this.
+  const [realParents, setRealParents] = useState<{ annotation_id: string; name: string }[]>([])
+  const [realParentsStatus, setRealParentsStatus] = useState<'idle' | 'ok'>('idle')
+
+  useEffect(() => {
+    if (!open || realParentsStatus !== 'idle') return
+    if (source !== 'kegg' && source !== 'cog') { setRealParentsStatus('ok'); return }
+    apiFetch<HierarchyPathResponse>(`/api/${source}/path?id=${encodeURIComponent(annotationId)}`)
+      .then(r => {
+        const depth = r.paths[0]?.length ?? 0
+        const byId = new Map<string, { annotation_id: string; name: string }>()
+        if (depth >= 2) {
+          for (const path of r.paths) {
+            const immediate = path[depth - 2]
+            if (immediate) byId.set(immediate.annotation_id, immediate)
+          }
+        }
+        setRealParents([...byId.values()])
+        setRealParentsStatus('ok')
+      })
+      .catch(() => setRealParentsStatus('ok')) // fetch failed -- fall back to the stored single value below
+  }, [open, source, annotationId, realParentsStatus])
 
   return (
     <>
@@ -61,9 +94,13 @@ export function AnnotationInfoDrawer({
 
           {parent && (
             <div className="card-info-row">
-              <span className="card-info-label">Parent</span>
+              <span className="card-info-label">
+                {realParents.length > 1 ? 'Parents' : 'Parent'}
+              </span>
               <span className="card-info-value">
-                {expandParentLabel(parent, source)}
+                {realParents.length > 0
+                  ? realParents.map(p => p.name).join(', ')
+                  : expandParentLabel(parent, source)}
               </span>
             </div>
           )}
