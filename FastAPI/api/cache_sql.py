@@ -1001,6 +1001,41 @@ def estimate_mapping_row_count_sql(
     return row[0] if row else 0
 
 
+def strip_source_prefix(source: str, annotation_id: str) -> str:
+    """Strip kegg's "KO:" / enzyme's "EC:" prefix, if present, so an id
+    resolves the same way regardless of which form a caller passes.
+
+    A1 (docs/AUDIT-2026-10-05.md): this used to live ONLY inside
+    get_mappings_sql, called right before ITS OWN _expand_to_leaf_ids
+    call -- but routes.py's own cap-check (in search_mappings, before
+    get_mappings_sql ever runs) calls _expand_to_leaf_ids directly with
+    the UNSTRIPPED id. kegg_paths/enzyme_paths store bare ids at every
+    level, so a prefixed id (e.g. "KO:K02014") resolved to zero real
+    leaves there -- not because it isn't real, but because the lookup
+    never stripped the prefix first. With leaf_count=0, every cap check
+    in search_mappings sees nothing to cap, so the uncapped query below
+    it runs in full -- reproducing the exact 271,284-row/249.8s
+    production incident (K02014, prefixed) the cap exists to prevent,
+    for a prefixed form the API explicitly documents/tests as
+    supported. Both call sites now share this one function instead of
+    routes.py's own copy silently drifting from get_mappings_sql's.
+
+    Args:
+        source: "kegg", "cog", "enzyme", or "taxonomy".
+        annotation_id: A leaf or non-leaf id, with or without its
+            source's prefix.
+
+    Returns:
+        annotation_id with its source's prefix stripped, if it had one
+        and this source has one at all (cog/taxonomy never do).
+    """
+    if source == "kegg" and annotation_id.startswith("KO:"):
+        return annotation_id[len("KO:"):]
+    if source == "enzyme" and annotation_id.startswith("EC:"):
+        return annotation_id[len("EC:"):]
+    return annotation_id
+
+
 def _expand_to_leaf_ids(conn: sqlite3.Connection, source: str, annotation_id: str) -> list[str]:
     """Resolve annotation_id to every real leaf id it reaches -- itself,
     if it's already a leaf, or every descendant leaf if it's a pathway/
@@ -1094,15 +1129,14 @@ def get_mappings_sql(
     if source in ("kegg", "cog", "enzyme"):
         # kegg_paths/enzyme_paths store bare ids at every level (no "KO:"/
         # "EC:" prefix, same as e.g. a bare pathway code) -- strip it here
-        # so a caller passing either form (both are real call patterns,
-        # see test_bare_id_normalizes_to_prefixed_storage_form) resolves
-        # the same way. The prefix is re-added below when matching against
+        # (A1, docs/AUDIT-2026-10-05.md: via the shared strip_source_prefix,
+        # not a local copy -- routes.py's own cap-check needs the exact
+        # same stripping before ITS OWN _expand_to_leaf_ids call) so a
+        # caller passing either form (both are real call patterns, see
+        # test_bare_id_normalizes_to_prefixed_storage_form) resolves the
+        # same way. The prefix is re-added below when matching against
         # mappings.kegg_id / gene_enzyme.ec_id, which DO store it.
-        expand_id = annotation_id
-        if source == "kegg" and expand_id.startswith("KO:"):
-            expand_id = expand_id[len("KO:"):]
-        elif source == "enzyme" and expand_id.startswith("EC:"):
-            expand_id = expand_id[len("EC:"):]
+        expand_id = strip_source_prefix(source, annotation_id)
 
         leaf_ids = _expand_to_leaf_ids(conn, source, expand_id)
         if not leaf_ids:

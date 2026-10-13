@@ -36,7 +36,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"))
 
 from api.config import SQLITE_DB_PATH
-from api.cache_sql import get_mappings_sql, _sort_group_concat
+from api.cache_sql import get_mappings_sql, _sort_group_concat, _expand_to_leaf_ids, strip_source_prefix
 
 pytestmark = pytest.mark.skipif(
     not os.path.exists(SQLITE_DB_PATH),
@@ -364,6 +364,34 @@ def test_bare_id_normalizes_to_prefixed_storage_form(conn):
     prefix_enzyme = get_mappings_sql(conn, "enzyme", "EC:7.1.2.2")
     assert bare_enzyme, "bare EC id must not return zero rows"
     assert len(bare_enzyme) == len(prefix_enzyme)
+
+
+def test_strip_source_prefix_leaves_bare_ids_and_other_sources_unchanged():
+    assert strip_source_prefix("kegg", "K02014") == "K02014"
+    assert strip_source_prefix("enzyme", "1.1.1.1") == "1.1.1.1"
+    assert strip_source_prefix("cog", "COG0055") == "COG0055"  # cog never has a prefix
+    assert strip_source_prefix("taxonomy", "Bacteria") == "Bacteria"  # nor taxonomy
+
+
+def test_strip_source_prefix_strips_the_real_kegg_and_enzyme_prefixes():
+    assert strip_source_prefix("kegg", "KO:K02014") == "K02014"
+    assert strip_source_prefix("enzyme", "EC:1.1.1.1") == "1.1.1.1"
+
+
+def test_expand_to_leaf_ids_needs_the_prefix_stripped_first(conn):
+    """A1 (docs/AUDIT-2026-10-05.md): _expand_to_leaf_ids itself does NOT
+    strip a prefix (unlike get_mappings_sql, which strips before calling
+    it) -- confirmed directly: the prefixed form alone resolves to zero
+    leaves, even though it's a real, resolvable id. routes.py's own
+    cap-check used to call _expand_to_leaf_ids this unstripped way
+    directly, so a prefixed annotation_id (a documented/tested supported
+    form) saw leaf_count=0 and skipped every cap, reproducing the real
+    K02014/271,284-row production incident the cap exists to prevent.
+    strip_source_prefix must be called first, same as get_mappings_sql
+    already does internally."""
+    assert _expand_to_leaf_ids(conn, "kegg", "KO:K02014") == []  # the bug, if called directly
+    assert _expand_to_leaf_ids(conn, "kegg", strip_source_prefix("kegg", "KO:K02014")) == ["K02014"]
+    assert _expand_to_leaf_ids(conn, "kegg", "K02014") == ["K02014"]  # bare form always worked
 
 
 #=============================================================

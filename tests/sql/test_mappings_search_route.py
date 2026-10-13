@@ -365,6 +365,33 @@ def test_high_volume_leaf_id_is_capped_by_row_count_not_leaf_count(client):
     )
 
 
+def test_high_volume_leaf_id_is_capped_the_same_way_in_its_prefixed_form(client):
+    """A1 (docs/AUDIT-2026-10-05.md): the exact sibling test above
+    (test_high_volume_leaf_id_is_capped_by_row_count_not_leaf_count), but
+    for the "KO:K02014" form -- a real, documented/tested supported call
+    pattern (see test_bare_id_normalizes_to_prefixed_storage_form,
+    tests/sql/test_mappings_sql.py). search_mappings' own cap-check used
+    to call _expand_to_leaf_ids directly with this unstripped id, which
+    resolved to zero real leaves there (kegg_paths stores bare ids only)
+    -- leaf_count=0 skipped every cap, and the route fell through to the
+    same uncapped, 271,284-row/249.8s query this cap exists to prevent.
+    Deliberately NOT run at sample_count=128 against the pre-fix code to
+    confirm this (that's the real multi-minute query the bug causes) --
+    the root-cause mechanism is already confirmed directly, cheaply, and
+    fast in test_expand_to_leaf_ids_needs_the_prefix_stripped_first. This
+    test only needs to pass FAST against the fix, which it does once the
+    cap actually fires."""
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "KO:K02014", "source": "kegg", "sample_count": 128},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["leaf_count"] == 1
+    assert body["samples_were_capped"] is True
+    assert body["sample_count"] == 5
+
+
 def test_broad_taxonomy_node_is_capped_too(client):
     """Taxonomy was never covered by the leaf-count cap at all until this
     fix (2026-09-25) -- found live in production: source=taxonomy,

@@ -72,6 +72,7 @@ from .cache_sql import (
     get_search_annotations,
     get_top_annotations_from_catalog_sql,
     get_taxa_at_rank_sql,
+    strip_source_prefix,
     RANK_COLUMNS
 )
 
@@ -353,7 +354,14 @@ def search_mappings(
         leaf_count = None
         samples_were_capped = False
         if source.value in ("kegg", "cog", "enzyme"):
-            leaf_ids = _expand_to_leaf_ids(conn, source.value, annotation_id)
+            # A1 (docs/AUDIT-2026-10-05.md): must strip the same KO:/EC:
+            # prefix get_mappings_sql strips internally, or a prefixed id
+            # (a documented/tested supported form) resolves to zero real
+            # leaves here -- every cap check below then sees nothing to
+            # cap, so the uncapped query runs in full, reproducing the
+            # exact 271,284-row/249.8s production incident this cap
+            # exists to prevent.
+            leaf_ids = _expand_to_leaf_ids(conn, source.value, strip_source_prefix(source.value, annotation_id))
             leaf_count = len(leaf_ids)
             if leaf_count > _MANY_LEAVES_THRESHOLD and not bypass_cap:
                 allowed_samples = allowed_samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
