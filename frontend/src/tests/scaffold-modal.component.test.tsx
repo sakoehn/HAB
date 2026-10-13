@@ -996,6 +996,50 @@ describe('GroupScaffoldModal', () => {
     expect(screen.getByText('18', { selector: '.scaffold-stat-val' })).toBeTruthy()
   })
 
+  // G10 (docs/AUDIT-2026-10-05.md): the retry button was never disabled
+  // while a retry was already in flight, and the merge appended new rows
+  // rather than replacing by (annotationId, sample) -- two overlapping
+  // clicks fired two overlapping fetch rounds for the same failed
+  // member, both of which got appended, inflating the total (9+9+9=27
+  // instead of the real 9+9=18).
+  it('double-clicking retry does not duplicate rows or inflate the total', async () => {
+    mockPartialFailure()
+    render(
+      <GroupScaffoldModal
+        members={[
+          { annotationId: 'COG0055', source: 'cog', name: 'foo' },
+          { annotationId: 'K00001', source: 'kegg', name: 'bar' },
+        ]}
+        groupLabel="Grouped terms"
+        onClose={vi.fn()}
+      />,
+    )
+    await waitFor(() => screen.getByTestId('group-retry-btn'))
+
+    let resolveRetry!: () => void
+    const retryPending = new Promise<void>(resolve => { resolveRetry = resolve })
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('annotation_id=K00001')) {
+        return retryPending.then(() => ({ ok: true, json: async () => ({ data: MOCK_SUMMARY }) }))
+      }
+      return Promise.reject(new Error('should not refetch the succeeded member'))
+    })
+
+    const retryBtn = screen.getByTestId('group-retry-btn')
+    fireEvent.click(retryBtn)
+    // Second click while the first retry is still in flight -- must be a
+    // no-op, not a second overlapping fetch round.
+    fireEvent.click(retryBtn)
+    expect(retryBtn).toBeDisabled()
+
+    resolveRetry()
+    await waitFor(() => {
+      expect(screen.queryByTestId('group-fetch-warning')).toBeNull()
+    })
+    expect(screen.getByText('18', { selector: '.scaffold-stat-val' })).toBeTruthy()
+    expect(screen.queryByText('27', { selector: '.scaffold-stat-val' })).toBeNull()
+  })
+
   // G2 (docs/AUDIT-2026-10-05.md): same overcounting bug W22 already fixed
   // in ScaffoldExplorePanel -- a group containing both a taxonomy node and
   // its own descendant double-counted every scaffold/gene already inside

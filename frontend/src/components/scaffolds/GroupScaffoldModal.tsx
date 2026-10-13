@@ -92,6 +92,13 @@ export function GroupScaffoldModal({
   const [rows, setRows]           = useState<MergedRow[]>([])
   const [status, setStatus]       = useState<ApiStatus>('loading')
   const [failedMembers, setFailedMembers] = useState<Member[]>([])
+  // G10 (docs/AUDIT-2026-10-05.md): retryFailed was never guarded against
+  // being called again while an earlier retry is still in flight -- a
+  // double-click fired two overlapping fetch rounds for the same failed
+  // members, and the merge below appended both rounds' rows rather than
+  // replacing, double-counting every member in both the table and the
+  // summed stat strip.
+  const [retrying, setRetrying] = useState(false)
   // G2 (docs/AUDIT-2026-10-05.md): same overcounting bug W22 already fixed
   // in ScaffoldExplorePanel -- a group can contain nested (ancestor/
   // descendant) annotations (e.g. a taxonomy genus and its own parent
@@ -172,11 +179,27 @@ export function GroupScaffoldModal({
   // Re-fetches only the members that failed and merges them into the
   // existing rows — successful members are not re-requested.
   async function retryFailed() {
+    if (retrying) return
     const targets = failedMembers
     if (!targets.length) return
-    const results = await Promise.all(targets.map(fetchMember))
-    setRows(prev => [...prev, ...results.flatMap(({ member, data }) => toMergedRows(member, data))])
-    setFailedMembers(results.filter(r => r.failed).map(r => r.member))
+    setRetrying(true)
+    try {
+      const results = await Promise.all(targets.map(fetchMember))
+      const newRows = results.flatMap(({ member, data }) => toMergedRows(member, data))
+      // Merge by (annotationId, sample), replacing rather than appending --
+      // a safety net against double-counting even if this ever somehow
+      // runs twice for the same member (e.g. a future caller without the
+      // retrying guard above), not just the double-click this guard
+      // already prevents.
+      setRows(prev => {
+        const byKey = new Map(prev.map(r => [`${r.annotationId}::${r.sample}`, r]))
+        for (const row of newRows) byKey.set(`${row.annotationId}::${row.sample}`, row)
+        return [...byKey.values()]
+      })
+      setFailedMembers(results.filter(r => r.failed).map(r => r.member))
+    } finally {
+      setRetrying(false)
+    }
   }
 
   // ── Close on Escape ───────────────────────────────────────────────────
@@ -413,8 +436,8 @@ export function GroupScaffoldModal({
                 {failedMembers.length !== 1 ? 's' : ''} in this group — the
                 request may have timed out.
               </span>
-              <button className="btn sm" data-testid="group-retry-btn" onClick={retryFailed}>
-                Retry
+              <button className="btn sm" data-testid="group-retry-btn" onClick={retryFailed} disabled={retrying}>
+                {retrying ? 'Retrying…' : 'Retry'}
               </button>
             </div>
           )}
@@ -435,8 +458,8 @@ export function GroupScaffoldModal({
                     load ({failedMembers.map(m => m.annotationId).join(', ')})
                     — totals below exclude them.
                   </span>
-                  <button className="btn sm" data-testid="group-retry-btn" onClick={retryFailed}>
-                    Retry
+                  <button className="btn sm" data-testid="group-retry-btn" onClick={retryFailed} disabled={retrying}>
+                    {retrying ? 'Retrying…' : 'Retry'}
                   </button>
                 </div>
               )}
