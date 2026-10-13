@@ -171,6 +171,22 @@ export function TaxonomyPage({
     }
   }, [state.rootId, state.excludedIds, state.seriesCache, fetchSeries])
 
+  // G5 (docs/AUDIT-2026-10-05.md): the effect above only fetches a taxon
+  // that has NO cache entry yet -- once a fetch resolves to 'error', the
+  // entry exists (just with that status), so the effect's own `!cache[key]`
+  // guard never fires again for it. A transient failure (one timeout) was
+  // therefore permanent for the rest of the session, with no way to try
+  // again short of a full page reload. Evicting the entry makes the next
+  // render see it as missing again, which the existing effect above picks
+  // right back up -- no separate fetch path needed.
+  const retrySeries = useCallback((annotationId: string) => {
+    setState(prev => {
+      const next = { ...prev.seriesCache }
+      delete next[`${annotationId}::taxonomy`]
+      return { ...prev, seriesCache: next }
+    })
+  }, [setState])
+
   const cache: SeriesCache = state.seriesCache
   const rootKey    = state.rootId ? `${state.rootId}::taxonomy` : null
   const rootEntry  = rootKey ? cache[rootKey] : undefined
@@ -412,6 +428,14 @@ export function TaxonomyPage({
               {rootStatus === 'error' && (
                 <div className="state-box" style={{ padding: 32 }}>
                   Failed to load series for {state.rootId}.
+                  {' '}
+                  <button
+                    className="btn sm ghost"
+                    onClick={() => state.rootId && retrySeries(state.rootId)}
+                    style={{ marginLeft: 4 }}
+                  >
+                    Retry
+                  </button>
                 </div>
               )}
               {rootStatus === 'ok' && (
@@ -444,6 +468,14 @@ export function TaxonomyPage({
                       Failed to load {excludedFailed.length} exclusion{excludedFailed.length !== 1 ? 's' : ''}:
                       {' '}{excludedFailed.map(bareTaxonName).join(', ')}.
                       {' '}The chart below excludes only the {excludedLoaded.length} that loaded successfully.
+                      {' '}
+                      <button
+                        className="btn sm ghost"
+                        onClick={() => excludedFailed.forEach(retrySeries)}
+                        style={{ marginLeft: 4 }}
+                      >
+                        Retry
+                      </button>
                       {' '}
                       <button
                         className="btn sm ghost"

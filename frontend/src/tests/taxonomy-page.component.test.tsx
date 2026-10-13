@@ -255,3 +255,100 @@ describe('TaxonomyPage — W19 failed exclusion fetch', () => {
     expect(screen.queryByText(/Failed to load/i)).not.toBeInTheDocument()
   })
 })
+
+// G5 (docs/AUDIT-2026-10-05.md): a failed series fetch is cached as
+// {status: 'error'} with nothing ever evicting it -- the page's own
+// fetch effect only fetches a taxon with NO cache entry at all, so
+// once that error entry exists it's permanent for the rest of the
+// session, with no way to recover from what might be a one-off
+// transient failure short of a full page reload.
+describe('TaxonomyPage — G5 retry after a failed series fetch', () => {
+  it('retrying a failed root series clears the error and loads the real data', async () => {
+    let seriesCalls = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations') && url.includes('annotation_id=Bacteria&')) {
+        seriesCalls++
+        return Promise.resolve(jsonResponse({
+          data: [{
+            source: 'taxonomy', sample: 's1', annotation_id: 'Bacteria', name: 'Bacteria',
+            timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '2021-05-09T13:00:00' },
+            value: { egc: 1000 },
+          }],
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(
+      <Wrapper
+        onGoScaffoldExplore={vi.fn()}
+        initialState={{
+          seriesCache: { 'Bacteria::taxonomy': { data: [], status: 'error' } },
+        }}
+      />,
+    )
+
+    expect(screen.getByText(/Failed to load series for Bacteria/i)).toBeInTheDocument()
+    // The pre-fix effect never re-fetches an id that already has a cache
+    // entry (even an error one) -- confirm nothing has fired yet.
+    expect(seriesCalls).toBe(0)
+
+    fireEvent.click(screen.getByRole('button', { name: /^Retry$/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Failed to load series for Bacteria/i)).not.toBeInTheDocument()
+    })
+    expect(seriesCalls).toBe(1)
+    expect(document.querySelectorAll('.legend-item').length).toBe(1)
+  })
+
+  it('retrying a failed exclusion clears its error and applies it to the chart', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations') && url.includes('annotation_id=Bacteria&')) {
+        return Promise.resolve(jsonResponse({
+          data: [{
+            source: 'taxonomy', sample: 's1', annotation_id: 'Bacteria', name: 'Bacteria',
+            timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '2021-05-09T13:00:00' },
+            value: { egc: 1000 },
+          }],
+        }))
+      }
+      if (url.includes('annotation_id=Bacteria%3BActinobacteria')) {
+        return Promise.resolve(jsonResponse({
+          data: [{
+            source: 'taxonomy', sample: 's1', annotation_id: 'Bacteria;Actinobacteria', name: 'Actinobacteria',
+            timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '2021-05-09T13:00:00' },
+            value: { egc: 20 },
+          }],
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+
+    render(
+      <Wrapper
+        onGoScaffoldExplore={vi.fn()}
+        initialState={{
+          excludedIds: new Set(['Bacteria;Actinobacteria']),
+          seriesCache: {
+            'Bacteria;Actinobacteria::taxonomy': { data: [], status: 'error' },
+          },
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to load 1 exclusion/i)).toBeInTheDocument()
+    })
+    const retryBtn = screen.getByRole('button', { name: /^Retry$/i })
+
+    fireEvent.click(retryBtn)
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Failed to load/i)).not.toBeInTheDocument()
+    })
+    // Both the root and the now-successfully-retried exclusion are real
+    // series -- 2 legend items, exclusion actually applied.
+    expect(document.querySelectorAll('.legend-item').length).toBe(2)
+  })
+})
