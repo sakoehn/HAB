@@ -550,10 +550,19 @@ export function DatasetOverviewPanel({
                   Summed EGC over time — top 5 functional groups
                 </div>
                 <ChartErrorBoundary label="Explore temporal chart">
+                  {/* E3 (docs/AUDIT-2026-10-05.md): must read loadedParams,
+                      not the live dateFrom/dateTo above -- every sibling
+                      render site in this section (the summary line, CSV
+                      filename, yLabel) already reads loadedParams for the
+                      same W29 reason. This was the one site still reading
+                      live state: typing a new date into the picker after
+                      loading, without reloading, silently narrowed the
+                      chart while the summary line right above it still
+                      correctly said "all dates" (or the real loaded range). */}
                   <MultiEgcChart
                     series={temporalSeries}
-                    dateFrom={dateFrom}
-                    dateTo={dateTo}
+                    dateFrom={loadedParams?.dateFrom ?? ''}
+                    dateTo={loadedParams?.dateTo ?? ''}
                     dataDateRange={dataDateRange}
                   />
                 </ChartErrorBoundary>
