@@ -1591,8 +1591,17 @@ export function ExplorePage({
                 }}>
                   Based on {state.sampleCount} sample
                   {state.sampleCount !== 1 ? 's' : ''}
-                  {state.dateFrom || state.dateTo
-                    ? ` · ${state.dateFrom || '…'} → ${state.dateTo || '…'}`
+                  {/* E1 (docs/AUDIT-2026-10-05.md): must read loadedParams, not the
+                      live dateFrom/dateTo above -- sampleCount describes what was
+                      actually loaded, and every sibling render site in this file
+                      already reads loadedParams for the same reason (see its own
+                      comment on the ExploreState type). This was the one missed
+                      site: editing/clearing the date picker after loading, without
+                      clicking Load again, used to flip this suffix to the live
+                      (unloaded) value while sampleCount kept describing the old
+                      request. */}
+                  {state.loadedParams?.dateFrom || state.loadedParams?.dateTo
+                    ? ` · ${state.loadedParams?.dateFrom || '…'} → ${state.loadedParams?.dateTo || '…'}`
                     : ' (all dates)'}
                 </div>
               )}

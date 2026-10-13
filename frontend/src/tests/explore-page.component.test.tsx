@@ -132,6 +132,45 @@ describe('ExplorePage — Top EGC Annotations source race (W29)', () => {
   })
 })
 
+// E1 (docs/AUDIT-2026-10-05.md): the "Based on N samples" date suffix
+// below the Top EGC table must describe the request that actually
+// produced the displayed rows/sampleCount, not whatever is currently
+// sitting in the live date picker -- clearing/editing the date fields
+// after loading, without clicking Load again, used to flip just this
+// suffix to the live (unloaded) value while sampleCount and the table
+// kept describing the real, still-dated request.
+describe('ExplorePage — Top EGC date suffix describes what was loaded, not the live picker (E1)', () => {
+  it('keeps the loaded date range in the suffix after the date picker is cleared without reloading', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) {
+        return Promise.resolve(jsonResponse({
+          data: [{ annotation_id: 'K00001', name: 'alcohol dehydrogenase', parent: null, mean_egc: 100, max_egc: 200, sample_count: 10 }],
+          sample_count: 10,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'top-egc', source: 'kegg', dateFrom: '2021-06-01', dateTo: '2021-06-10' }} />)
+
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Based on 10 samples/)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/2021-06-01 → 2021-06-10/)).toBeInTheDocument()
+
+    // Clear the live date picker WITHOUT clicking Load again -- rows and
+    // sampleCount still describe the original 2021-06-01..06-10 request.
+    // (Not /clear/i -- the page header's unrelated "Clear Page" button
+    // also matches that, since its accessible name includes "Clear".)
+    await user.click(screen.getByRole('button', { name: '✕ clear' }))
+
+    expect(screen.getByText(/Based on 10 samples/)).toBeInTheDocument()
+    expect(screen.getByText(/2021-06-01 → 2021-06-10/)).toBeInTheDocument()
+    expect(screen.queryByText(/\(all dates\)/)).not.toBeInTheDocument()
+  })
+})
+
 describe('ExplorePage — Annotation Lookup source race (W29)', () => {
   it('switching source before the search resolves does not tag the result under the new source', async () => {
     const user = userEvent.setup()
