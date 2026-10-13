@@ -130,7 +130,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
 
   const { sunTimes, tides, tidesLoading, tidesError } =
     useSolarTideData(showNightShading || showTide || showDayBands)
-  const { allSamples } = useAllSamples()
+  const { allSamples, allSamplesError } = useAllSamples()
 
   useEffect(() => {
     onMetricChange?.(metric)
@@ -525,6 +525,23 @@ export const EgcChart = forwardRef<EgcChartHandle, {
             {yLabel} · {processedPoints.length} of {allPoints.length} samples
             {egcVals.length < processedPoints.length && ` (detected in ${egcVals.length})`}
           </div>
+          {/* F5 (docs/AUDIT-2026-10-05.md): useAllSamples' error/loading
+              fields used to be destructured off and never read -- on a
+              failed /api/samples fetch, allPoints silently falls back to
+              just this annotation's own detected rows (no merged-in real
+              timeline), so the header above reads e.g. "70 of 70 samples"
+              with no "(detected in N)" qualifier whenever every detected
+              point happens to also be the only points on hand -- visually
+              identical to the genuinely-detected-everywhere case W21 was
+              written to tell apart from this one. */}
+          {allSamplesError && (
+            <div style={{
+              fontSize: 11, fontFamily: 'var(--mono)',
+              color: 'var(--amber)', marginTop: 2,
+            }}>
+              ⚠ full sample timeline unavailable — detection gaps may not be shown
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <ScaffoldBtn

@@ -391,4 +391,30 @@ describe('EgcChart — W21 detection gaps (useAllSamples merge)', () => {
     await screen.findByText(/2 of 2 samples/)
     expect(screen.queryByText(/detected in/)).not.toBeInTheDocument()
   })
+
+  // F5 (docs/AUDIT-2026-10-05.md): on a failed /api/samples fetch,
+  // allPoints has nothing to merge in but this annotation's own detected
+  // rows -- every one of them is "detected", so the header reads e.g.
+  // "2 of 2 samples" with no "(detected in N)" qualifier, visually
+  // identical to the genuinely-detected-everywhere case above. Nothing
+  // on screen told the user the real timeline failed to load at all.
+  it('surfaces a visible warning when /api/samples fails, instead of silently looking fully-detected', async () => {
+    const FreshEgcChart = await freshEgcChart()
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/samples?page_size=200') {
+        throw new Error('network error')
+      }
+      throw new Error(`unexpected path: ${path}`)
+    })
+
+    render(
+      <FreshEgcChart
+        data={[makePoint('5/27/21 8:00', 100, 's1'), makePoint('5/28/21 8:00', 150, 's2')]}
+        annotationId="COG0001"
+        annotationName="GroEL"
+      />,
+    )
+
+    await screen.findByText(/full sample timeline unavailable/i)
+  })
 })
