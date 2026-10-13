@@ -44,7 +44,12 @@ export function DateRangePicker({
         className="field date-field"
         value={from}
         min={minDate}
-        max={maxDate}
+        // G14 (docs/AUDIT-2026-10-05.md): also capped at `to` (when set),
+        // not just the dataset's own max -- without this, picking a
+        // `from` after the already-selected `to` silently produces an
+        // inverted range that empties every chart/table reading it, with
+        // no error shown anywhere.
+        max={to || maxDate}
         onChange={(e: React.ChangeEvent<HTMLInputElement>) => onFrom(e.target.value)}
       />
       <span style={{ color: 'var(--text-dim)', fontSize: 13 }}>→</span>
@@ -52,7 +57,9 @@ export function DateRangePicker({
         type="date"
         className="field date-field"
         value={to}
-        min={minDate}
+        // Also floored at `from` (when set), for the same reason as `max`
+        // above, mirrored.
+        min={from || minDate}
         max={maxDate}
         onChange={(e: React.ChangeEvent<HTMLInputElement>) => onTo(e.target.value)}
       />
