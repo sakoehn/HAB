@@ -143,6 +143,23 @@ class TestCorrelationEndpoint:
         assert body["r"] == 0.9
         assert body["p"] == 0.0001
 
+    # C4 (docs/AUDIT-2026-10-05.md): same allowlist-up-front fix as the
+    # family endpoint, for this single-pair endpoint too.
+
+    def test_invalid_method_returns_400(self, client):
+        response = client.get(
+            "/correlation",
+            params={"catalog_id_a": 1, "catalog_id_b": 2, "metric": "egc", "method": "not_a_real_method"},
+        )
+        assert response.status_code == 400
+
+    def test_invalid_metric_returns_400(self, client):
+        response = client.get(
+            "/correlation",
+            params={"catalog_id_a": 1, "catalog_id_b": 2, "metric": "not_a_real_metric", "method": "raw_pearson"},
+        )
+        assert response.status_code == 400
+
 
 @pytest.fixture
 def circular_shift_client(tmp_path, monkeypatch):
@@ -299,6 +316,38 @@ class TestCorrelationFamilyEndpoint:
             params={
                 "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
                 "target_source": "not_a_real_source", "metric": "egc", "method": "raw_pearson",
+            },
+        )
+
+        assert response.status_code == 400
+
+    # C4 (docs/AUDIT-2026-10-05.md): method/metric used to only ever get
+    # validated deep inside the per-candidate scoring loop -- a typo
+    # reached that check only after resolving the whole family (and, for
+    # circular_shift, running the full prescreening pass), so it 500'd
+    # only after real work was already done, not immediately. These must
+    # 400 before any of that work starts -- confirmed by asking for a
+    # real reference that genuinely has family candidates (not an empty
+    # or unknown one), so a slow/wasted-work path would actually have
+    # been reachable if validation didn't happen first.
+
+    def test_invalid_method_returns_400_before_any_scoring(self, client):
+        response = client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "not_a_real_method",
+            },
+        )
+
+        assert response.status_code == 400
+
+    def test_invalid_metric_returns_400_before_any_scoring(self, client):
+        response = client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "not_a_real_metric", "method": "raw_pearson",
             },
         )
 

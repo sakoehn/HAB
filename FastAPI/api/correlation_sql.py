@@ -23,6 +23,19 @@ from .correlation_loaders import (
 
 router = APIRouter()
 
+# ── Input validation ──────────────────────────────────────────────────────────
+# C4 (docs/AUDIT-2026-10-05.md): method/metric used to only ever get
+# validated deep inside the per-candidate scoring loop (core_scoring's
+# bare `raise ValueError` for method, load_vector's for metric) -- a
+# typo in either one on /correlations/family reached that check only
+# after resolving the whole family and (for circular_shift) running the
+# full prescreening pass first, so it 500'd only after a family's worth
+# of real work, not immediately. Both endpoints below now check against
+# these allowlists up front and return 400 before any of that work
+# starts, mirroring target_source's own existing validation pattern.
+VALID_METHODS = {"raw_pearson", "log_pearson", "spearman", "circular_shift"}
+VALID_METRICS = {"egc", "norm_egc"}
+
 # ── Correlation result cache ──────────────────────────────────────────────────
 
 _CORR_CACHE: dict[tuple, list] = {}
@@ -649,6 +662,10 @@ def _connect() -> sqlite3.Connection:
 # ── Endpoint: thin HTTP wrapper ──────────────────────────────────
 @router.get("/correlation")
 def correlate_endpoint(catalog_id_a: int, catalog_id_b: int, metric: str, method: str):
+    if metric not in VALID_METRICS:
+        raise HTTPException(status_code=400, detail=f"metric must be one of {VALID_METRICS}")
+    if method not in VALID_METHODS:
+        raise HTTPException(status_code=400, detail=f"method must be one of {VALID_METHODS}")
     conn = _connect()
     try:
         result = _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method)
@@ -709,6 +726,10 @@ def correlation_family_endpoint(
     valid_sources = {s.value for s in AnnotationSource}
     if target_source not in valid_sources:
         raise HTTPException(status_code=400, detail=f"target_source must be one of {valid_sources}")
+    if metric not in VALID_METRICS:
+        raise HTTPException(status_code=400, detail=f"metric must be one of {VALID_METRICS}")
+    if method not in VALID_METHODS:
+        raise HTTPException(status_code=400, detail=f"method must be one of {VALID_METHODS}")
 
     conn = _connect()
     try:
