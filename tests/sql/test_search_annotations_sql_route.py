@@ -175,3 +175,35 @@ def test_negative_page_is_rejected(client):
         params={"q": "iron", "sources": ["cog"], "page": -1, "page_size": 5},
     )
     assert resp.status_code == 422
+
+
+# A10 (docs/AUDIT-2026-10-05.md): `sources` used to be typed list[str] --
+# an unknown source name silently matched zero rows (source IN (...) with
+# a value no real row has) and came back 200/total:0, indistinguishable
+# from "these are real sources, there just happened to be no matches".
+# Now typed as list[AnnotationSource] so an unknown name is rejected with
+# a 422 before the query ever runs.
+
+def test_unknown_source_name_is_rejected_not_a_silent_empty_result(client):
+    resp = client.get(
+        "/search/annotations",
+        params={"q": "iron", "sources": ["bogus"]},
+    )
+    assert resp.status_code == 422
+
+
+def test_real_source_names_still_work(client):
+    resp = client.get(
+        "/search/annotations",
+        params={"q": "iron", "sources": ["cog", "kegg", "enzyme", "taxonomy"]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["total"] > 0
+
+
+def test_one_unknown_source_mixed_with_real_ones_is_still_rejected(client):
+    resp = client.get(
+        "/search/annotations",
+        params={"q": "iron", "sources": ["cog", "bogus"]},
+    )
+    assert resp.status_code == 422

@@ -462,7 +462,12 @@ def search_annotations(
     q:             str | None = Query(None, min_length=1),
     annotation_id: str | None = Query(None),
     name_exact:    str | None = Query(None),
-    sources: list[str] = Query(...),
+    # A10 (docs/AUDIT-2026-10-05.md): was list[str] -- an unknown source
+    # name (e.g. "bogus") silently matched nothing (source IN (...) with
+    # a value no row ever has) and came back 200/total:0, indistinguishable
+    # from "real sources, genuinely no results". Typed as the real enum so
+    # FastAPI rejects it with a 422 up front instead.
+    sources: list[AnnotationSource] = Query(...),
     page: int = Query(1, ge=1), page_size: int = Query(500, ge=1, le=2000),
 ):
     """
@@ -478,9 +483,10 @@ def search_annotations(
         )
     if q is not None and len(q) < 3:
         raise HTTPException(status_code=400, detail="Search must have at least 3 characters.")
+    source_values = [s.value for s in sources]
     db = connect_to_sql()
     try:
-        results = get_search_annotations(db, sources, q, annotation_id, name_exact)
+        results = get_search_annotations(db, source_values, q, annotation_id, name_exact)
     finally:
         close_sql_connection(db)
     results.sort(key=lambda r: r.get("mean_egc") or 0, reverse=True)
@@ -488,7 +494,7 @@ def search_annotations(
         "query":         q,
         "annotation_id": annotation_id,
         "name_exact":    name_exact,
-        "sources":       sources,
+        "sources":       source_values,
         "total":         len(results),
         **paginate(results, page, page_size),
     }
