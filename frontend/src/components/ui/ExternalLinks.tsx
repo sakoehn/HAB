@@ -84,25 +84,48 @@ export function ExternalLinks({
         </button>,
       )
     } else {
-      // W32 (docs/AUDIT-2026-09-22.md): a bare code like `genome.jp/entry/00010`
-      // returns "No such data" -- KEGG requires an `entry`-type prefix. Real
-      // pathway maps (e.g. 00010 Glycolysis, 02024 Quorum sensing) use `map`;
-      // codes reserved purely for BRITE-only organizational groups (Brite
-      // Hierarchies, Not included in regular maps, Unclassified...) have no
-      // standalone pathway map and use `br:ko` instead. Confirmed against
-      // every code the audit itself cited: pathway maps fall below 09000,
-      // BRITE-only groups are the 09xxx/99xxx ranges (09100 Metabolism, 09180
-      // Brite Hierarchies, 99980/99996 Unclassified -- all real examples from
-      // W30's own BRITE code table).
-      const numeric = /^\d{5}$/.test(id) ? Number(id) : null
-      const isBriteOnlyGroup = numeric !== null && numeric >= 9000
-      links.push(link(
-        isBriteOnlyGroup
-          ? `https://www.genome.jp/entry/br:ko${id}`
-          : `https://www.genome.jp/entry/map${id}`,
-        'KEGG',
-        isBriteOnlyGroup ? 'KEGG BRITE hierarchy group' : 'KEGG pathway map',
-      ))
+      // G4 (docs/AUDIT-2026-10-05.md): the numeric >=9000 threshold W32
+      // used (see superseded comment this replaces) got this wrong in both
+      // directions -- real BRITE-only hierarchy files like 02000
+      // (Transporters), 03000 (Transcription factors), and 04131 (Membrane
+      // trafficking) fall well under 9000; and 09101 (Carbohydrate
+      // metabolism), 99980 (Enzymes with EC numbers) etc. are bare CATEGORY
+      // CODES *inside* a hierarchy file, not hierarchy files themselves --
+      // genome.jp/entry/br:ko09101 is not a real page (confirmed live).
+      //
+      // The catalog's own `name` already carries the real distinction, as
+      // a bracketed suffix on the real ko00001.keg line: " [PATH:koNNNNN]"
+      // for an actual pathway map (e.g. "Glycolysis / Gluconeogenesis
+      // [PATH:ko00010]"), " [BR:koNNNNN]" for an actual BRITE hierarchy
+      // file (e.g. "Transporters [BR:ko02000]"), and NO suffix at all for
+      // a bare in-file category code (e.g. just "Carbohydrate
+      // metabolism") -- branch on that instead of guessing from the id.
+      const hasPathMarker = !!name && /\[PATH:ko\d+\]/.test(name)
+      const hasBriteFileMarker = !!name && /\[BR:ko\d+\]/.test(name)
+      if (hasPathMarker) {
+        links.push(link(
+          `https://www.genome.jp/entry/map${id}`,
+          'KEGG',
+          'KEGG pathway map',
+        ))
+      } else if (hasBriteFileMarker) {
+        links.push(link(
+          `https://www.genome.jp/entry/br:ko${id}`,
+          'KEGG',
+          'KEGG BRITE hierarchy group',
+        ))
+      } else {
+        // A bare category code has no standalone page of its own -- fall
+        // back to the same BRITE-browser "find in page" query the real-KO
+        // branch above already uses for its own BRITE link, which works
+        // for any valid code regardless of type. Also the safe default
+        // when `name` isn't available at all to read a marker from.
+        links.push(link(
+          `https://www.genome.jp/kegg-bin/show_brite?htext=ko00001.keg&query=${id}`,
+          'KEGG',
+          'Find in KEGG BRITE functional hierarchy',
+        ))
+      }
     }
 
     return <>{links}</>

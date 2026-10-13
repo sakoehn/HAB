@@ -64,24 +64,50 @@ describe('ExternalLinks — kegg', () => {
     expect(screen.getByRole('button', { name: /Color Mapper/i })).toBeInTheDocument()
   })
 
-  // W32: 09101 (Carbohydrate metabolism) is a real BRITE-only organizational
-  // group inside ko00001.keg -- it has no standalone pathway map, so it
-  // needs the `br:ko` entry prefix, not a bare `map` one.
-  it('a non-KO kegg id for a BRITE-only group (09xxx/99xxx) gets a br:ko-prefixed KEGG link', () => {
-    render(<ExternalLinks annotationId="09101" source="kegg" />)
+  // G4 (docs/AUDIT-2026-10-05.md): the id's own numeric value can't tell
+  // a real BRITE hierarchy FILE apart from a bare category CODE inside
+  // one -- both can be any value. The catalog's own `name` field carries
+  // the real distinction via a bracketed " [BR:koNNNNN]" suffix on an
+  // actual hierarchy file's own ko00001.keg line; 02000 (Transporters) is
+  // real, confirmed against the live catalog, and -- unlike the old
+  // numeric->=9000 guess -- falls well under that threshold.
+  it('a non-KO kegg id with a real [BR:] name marker gets a br:ko-prefixed KEGG link', () => {
+    render(<ExternalLinks annotationId="02000" source="kegg" name="Transporters [BR:ko02000]" />)
     expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
-      'href', 'https://www.genome.jp/entry/br:ko09101',
+      'href', 'https://www.genome.jp/entry/br:ko02000',
     )
     expect(screen.queryByRole('link', { name: 'BRITE' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Color Mapper/i })).not.toBeInTheDocument()
   })
 
-  // W32: 02024 (Quorum sensing) is a real KEGG pathway map, not a BRITE-only
-  // group -- confirmed against the audit's own W30 example table.
-  it('a non-KO kegg id for a real pathway map gets a map-prefixed KEGG link', () => {
-    render(<ExternalLinks annotationId="02024" source="kegg" />)
+  // 02024 (Quorum sensing) is a real KEGG pathway map, confirmed against
+  // the live catalog's own " [PATH:ko02024]" name suffix.
+  it('a non-KO kegg id with a real [PATH:] name marker gets a map-prefixed KEGG link', () => {
+    render(<ExternalLinks annotationId="02024" source="kegg" name="Quorum sensing [PATH:ko02024]" />)
     expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
       'href', 'https://www.genome.jp/entry/map02024',
+    )
+  })
+
+  // 09101 (Carbohydrate metabolism) has NEITHER marker in its real
+  // catalog name -- it's a bare category code inside ko00001.keg, not a
+  // standalone page of its own. The old numeric->=9000 guess sent this to
+  // a nonexistent br:ko09101 page; it must now fall back to the same
+  // BRITE-browser query form the real-KO BRITE link already uses.
+  it('a non-KO kegg id with no marker in its name (a bare in-file category code) falls back to the BRITE-browser query form', () => {
+    render(<ExternalLinks annotationId="09101" source="kegg" name="Carbohydrate metabolism" />)
+    expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
+      'href', 'https://www.genome.jp/kegg-bin/show_brite?htext=ko00001.keg&query=09101',
+    )
+  })
+
+  // No `name` at all means no marker can be read -- must fall back to the
+  // same safe BRITE-browser query form, never guess from the id's numeric
+  // value (the old, now-removed behavior).
+  it('a non-KO kegg id with no name prop at all also falls back to the BRITE-browser query form', () => {
+    render(<ExternalLinks annotationId="09101" source="kegg" />)
+    expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
+      'href', 'https://www.genome.jp/kegg-bin/show_brite?htext=ko00001.keg&query=09101',
     )
   })
 
