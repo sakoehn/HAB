@@ -400,6 +400,53 @@ class TestConcurrentInsertRace:
         assert rows == 0
 
 
+class TestOperationalErrorDuringCacheWrite:
+    # C5 (docs/AUDIT-2026-10-05.md): a lock-timeout mid-write (plausible
+    # against a large, heavily-contended real db) used to raise an
+    # uncaught sqlite3.OperationalError -- only IntegrityError was ever
+    # caught -- which would 500 the whole family request and discard
+    # every other candidate's already-computed result along with it,
+    # potentially minutes to hours of circular_shift work. A different
+    # failure mode from the IntegrityError race above: nobody else won
+    # here, nothing was ever actually written by anyone, so there's no
+    # winner row to read back -- the fix is to roll back the failed
+    # write and still return the real result this call itself computed.
+
+    def test_operational_error_on_insert_still_returns_the_real_computed_result(self, conn):
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        identical_values = {s: 10.0 + i for i, s in enumerate(SAMPLES)}
+        insert_series(conn, "kegg", "K00001", identical_values)
+        insert_series(conn, "kegg", "K00002", identical_values)
+
+        class AlwaysOperationalErrorOnInsertProxy:
+            """Same wrapping trick as AlwaysIntegrityErrorOnInsertProxy,
+            but simulates a lock-timeout (OperationalError) instead --
+            the write itself never lands, by anyone."""
+            def __init__(self, real_conn):
+                self._real = real_conn
+
+            def execute(self, sql, params=()):
+                if sql.strip().startswith("INSERT INTO correlations_cache"):
+                    raise sqlite3.OperationalError("database is locked")
+                return self._real.execute(sql, params)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        result = _get_or_compute_correlation(
+            AlwaysOperationalErrorOnInsertProxy(conn), 1, 2, metric="egc", method="raw_pearson",
+        )
+
+        # The real, freshly-computed result must still come back -- a
+        # near-perfect self-copy (identical_values for both ids) scores
+        # r=1.0 -- not None, not a crash.
+        assert result is not None
+        assert result["r"] == pytest.approx(1.0)
+        rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
+        assert rows == 0  # the failed write really never persisted anything
+
+
 class TestCircularShiftMethod:
     # CR2 (docs/AUDIT.md): "circular_shift" through the real read-through
     # cache -- confirms the stored p_value is the raw permutation

@@ -630,6 +630,19 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
             winner_lag = row[6]
             winner_at_p_floor = bool(row[9]) if row[9] is not None else None
             return {'r': row[3], 'p': row[7], 'lag_samples': -winner_lag if reference_is_high else winner_lag, 'n_pairs': row[8], 'at_p_floor': winner_at_p_floor}
+        except sqlite3.OperationalError:
+            # C5 (docs/AUDIT-2026-10-05.md): a lock-timeout mid-write
+            # (plausible against a 59.5 GB db with a large un-checkpointed
+            # WAL) used to propagate uncaught all the way up through the
+            # family endpoint's per-candidate loop, 500ing the WHOLE
+            # request and discarding every other candidate's
+            # already-computed result along with it -- potentially minutes
+            # to hours of circular_shift work already done. The cache
+            # write is best-effort: roll back the failed write and still
+            # return the real, already-computed result below. It just
+            # won't be cached for next time -- a future request recomputes
+            # it instead of hitting a cache entry that was never written.
+            conn.rollback()
         return {'r': r, 'p': bonf_p, 'lag_samples': -lag if reference_is_high else lag, 'n_pairs': n_pairs, 'at_p_floor': at_p_floor}
 
 
