@@ -66,9 +66,16 @@ TIDE_SHIFT_HOURS = 1
 
 # ── Correlation tuning ────────────────────────────────────────────────────────
 
-# Lag window in sample units: 0, ±1, ±2, ±3, ±6 correspond to 0–24 h at
-# the dataset's 4-hour sampling cadence.
-CORRELATION_LAGS    = [0, 1, -1, 2, -2, 3, -3, 6, -6]
+# Lag window in sample units: every offset from 0 to ±6 (0-24h at the
+# dataset's 4-hour sampling cadence).
+#
+# C8 (docs/AUDIT-2026-10-05.md): this used to skip ±4/±5 (jumping
+# straight from ±3 to ±6), forcing a real 4- or 5-sample lead/lag onto
+# whichever of the 3- or 6-sample buckets was closer -- confirmed
+# directly, up to 8h of avoidable lag-label error. Filling the gap
+# makes this a complete, non-skipping sweep of every real offset up to
+# a full day, not an arbitrary subset of them.
+CORRELATION_LAGS    = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6]
 LAG_HOURS_PER_SAMPLE = 4
 
 # CR8 (docs/AUDIT-2026-09-22.md): circular_shift's null used to be built

@@ -160,6 +160,26 @@ class TestSpearmanAtLags:
         assert best_lag == 2
         assert best_r == 1.0
 
+    def test_a_true_4_or_5_sample_lag_is_found_exactly_not_forced_onto_3_or_6(self):
+        """C8 (docs/AUDIT-2026-10-05.md): CORRELATION_LAGS used to skip
+        ±4/±5 entirely (jumping straight from ±3 to ±6), so a real 4- or
+        5-sample lead/lag had no exact bucket to land in and got forced
+        onto whichever of 3 or 6 was closer -- a real r very close to but
+        provably not 1.0 (confirmed directly: the old 9-lag set found
+        lag=3 at r=0.9999402915173476 for this exact fixture, not the
+        true lag=4 at the real r=1.0). The real (now 13-entry)
+        CORRELATION_LAGS must find the true lag exactly."""
+        n = 30
+        ref = [(j + 1) ** 2 for j in range(n)]
+        cand = [(i + 5) ** 2 for i in range(n)]  # true lag = 4 (cand[i] == ref[i+4])
+
+        best_r, best_lag, _best_p, _best_n = _spearman_at_lags(
+            ref, cand, CORRELATION_LAGS, method="raw_pearson"
+        )
+
+        assert best_lag == 4
+        assert best_r == 1.0
+
     def test_skips_lags_that_trim_below_ten_points(self):
         ref = list(range(1, 13))   # length 12
         cand = list(range(1, 13))
