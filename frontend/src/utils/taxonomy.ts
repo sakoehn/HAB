@@ -127,6 +127,21 @@ export function bareTaxonName(taxonId: string): string {
   return segments[segments.length - 1]
 }
 
+// immediateParentSegment
+// G9 (docs/AUDIT-2026-10-05.md): two genuine cross-lineage homonyms (same
+// bare name, different ancestry -- the repo's own documented Bosea case,
+// see taxonomy_egc_homonym_bug) render identically wherever only
+// bareTaxonName is shown, with nothing inviting the user to notice they're
+// different taxa. The immediate parent (the lineage-prefix's second-to-
+// last segment) is the cheapest real disambiguator available without
+// showing the full lineage inline. null for a domain-level id (a single
+// segment, no parent above it).
+
+export function immediateParentSegment(taxonId: string): string | null {
+  const segments = taxonId.split(';')
+  return segments.length >= 2 ? segments[segments.length - 2] : null
+}
+
 // taxonomyDepthFromId
 // The rank (1=domain..8=strain) is just the lineage-prefix's segment
 // count — usable anywhere a taxonomy id is available but the record

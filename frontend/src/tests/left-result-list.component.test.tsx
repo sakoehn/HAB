@@ -85,6 +85,65 @@ describe('LeftResultList — empty state and basics', () => {
   })
 })
 
+// G9 (docs/AUDIT-2026-10-05.md): two genuine cross-lineage taxonomy
+// homonyms (same bare name, different ancestry -- the repo's own
+// documented Bosea case) used to render with identical name + identical
+// rank label and no lineage hint anywhere, with nothing inviting the
+// user to notice they're different taxa.
+describe('LeftResultList — taxonomy homonym disambiguation (G9)', () => {
+  it('shows the immediate parent next to the name and the full lineage as a title tooltip', () => {
+    renderList({
+      rows: [
+        makeRow({
+          source: 'taxonomy', depth: 6, name: 'Bosea',
+          annotation_id: 'Bacteria;Proteobacteria;Alphaproteobacteria;Rhizobiales;Boseaceae;Bosea',
+        }),
+      ],
+      total: 1,
+    })
+    expect(screen.getByText(/in Boseaceae/)).toBeInTheDocument()
+    expect(document.querySelector('.al-row-name')).toHaveAttribute(
+      'title',
+      'Bacteria;Proteobacteria;Alphaproteobacteria;Rhizobiales;Boseaceae;Bosea',
+    )
+  })
+
+  it('distinguishes two real cross-lineage Bosea homonyms by their immediate parent', () => {
+    renderList({
+      rows: [
+        makeRow({
+          source: 'taxonomy', depth: 6, name: 'Bosea',
+          annotation_id: 'Bacteria;Proteobacteria;Alphaproteobacteria;Rhizobiales;Boseaceae;Bosea',
+        }),
+        makeRow({
+          source: 'taxonomy', depth: 6, name: 'Bosea',
+          annotation_id: 'Bacteria;Proteobacteria;Alphaproteobacteria;Hyphomicrobiales;SomeOtherFamily;Bosea',
+        }),
+      ],
+      total: 2,
+    })
+    expect(screen.getByText(/in Boseaceae/)).toBeInTheDocument()
+    expect(screen.getByText(/in SomeOtherFamily/)).toBeInTheDocument()
+  })
+
+  it('does not show a parent hint for a domain-level taxon (no parent above it)', () => {
+    renderList({
+      rows: [makeRow({ source: 'taxonomy', depth: 1, name: 'Bacteria', annotation_id: 'Bacteria' })],
+      total: 1,
+    })
+    expect(screen.queryByText(/ in /)).not.toBeInTheDocument()
+  })
+
+  it('does not show a parent hint or lineage title for non-taxonomy sources', () => {
+    renderList({
+      rows: [makeRow({ source: 'cog', annotation_id: 'COG0001', name: 'Chaperonin GroEL' })],
+      total: 1,
+    })
+    expect(screen.queryByText(/ in /)).not.toBeInTheDocument()
+    expect(screen.getByText('Chaperonin GroEL').closest('.al-row-name')).not.toHaveAttribute('title')
+  })
+})
+
 describe('LeftResultList — source filter pills', () => {
   it('does not show filter pills when only one source is present', () => {
     renderList({ rows: [makeRow({ source: 'cog' })], total: 1 })

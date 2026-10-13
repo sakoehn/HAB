@@ -18,7 +18,7 @@ import { useMemo, useRef, useState, useEffect } from 'react'
 
 import type { AnnotationItem, SeriesCache } from '../../types'
 import { SOURCE_COLORS, SOURCE_TAG_CLS, TAXONOMY_RANK_NAMES, taxonomyRankLabel } from '../../constants'
-import { taxonomyDomainFromId } from '../../utils/taxonomy'
+import { taxonomyDomainFromId, immediateParentSegment } from '../../utils/taxonomy'
 import { CopyBtn } from '../ui/controls'
 import { HelpTooltip } from '../ui/HelpTooltip'
 
@@ -323,7 +323,22 @@ export function LeftResultList({
                     {ann.source}
                   </span>
                 </div>
-                <div className="al-row-name">{ann.name ?? '—'}</div>
+                <div
+                  className="al-row-name"
+                  title={ann.source === 'taxonomy' ? ann.annotation_id : undefined}
+                >
+                  {ann.name ?? '—'}
+                  {ann.source === 'taxonomy' && immediateParentSegment(ann.annotation_id) && (
+                    // G9 (docs/AUDIT-2026-10-05.md): the cheapest real
+                    // disambiguator for two cross-lineage homonyms (same
+                    // bare name, different ancestry) short of showing the
+                    // full lineage inline -- hovering the row still shows
+                    // the whole thing via the title attribute above.
+                    <span className="al-row-parent-hint">
+                      {' '}in {immediateParentSegment(ann.annotation_id)}
+                    </span>
+                  )}
+                </div>
                 {hasMeta && (
                   <div className="al-row-meta">
                     <span

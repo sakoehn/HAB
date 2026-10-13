@@ -1010,6 +1010,11 @@ select.field { cursor: pointer; }
   opacity: 0.7;
 }
 
+.al-row-parent-hint {
+  opacity: 0.6;
+  font-size: 0.9em;
+}
+
 /* + add button */
 .al-add-btn {
   flex-shrink: 0;
