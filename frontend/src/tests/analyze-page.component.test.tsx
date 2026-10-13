@@ -150,6 +150,15 @@ const DEFAULT_SERIES = {
     value: { egc: 100 + i * 10, norm_egc: 0.00001 + i * 0.000001 },
   })),
 }
+// E4 (docs/AUDIT-2026-10-05.md): 12 real samples vs. DEFAULT_SERIES'
+// 10 detected points -- lets a test distinguish the detected-only count
+// (n) from the real total (allSamples.length) in the card header.
+const DEFAULT_SAMPLES = {
+  data: Array.from({ length: 12 }, (_, i) => ({
+    sample:    `sample_${i}`,
+    timepoint: { taxon_oid: `s${i}`, timepoint: String(i), datetime: `2021-05-${String(i + 1).padStart(2, '0')}T00:00:00` },
+  })),
+}
 const DEFAULT_MAPPINGS = {
   data: [
     {
@@ -983,6 +992,72 @@ describe('EgcChart — decoupled metric/standardize controls', () => {
     await userEvent.click(within(standardizeGroup).getByText('Off'))
     await waitFor(() => {
       expect(within(standardizeGroup).getByText('Z-score').className).not.toContain('on')
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AnalyzePage — chart card header mean matches the chart's active metric (E4)
+// ─────────────────────────────────────────────────────────────────────────────
+// The card header used to always compute a raw-EGC mean and a bare
+// detected-only sample count, regardless of which metric (EGC vs.
+// Relative Abundance, the chart's own default) the chart right below it
+// was actually displaying, and with no "of N" denominator the way
+// LeftResultList's equivalent count already has.
+//
+// useAllSamples caches its /api/samples result at MODULE scope -- every
+// earlier test above that successfully renders a chart card never mocks
+// /api/samples, so by the time a normal test would run here that cache
+// is already poisoned to an empty list. vi.resetModules() + a fresh
+// dynamic re-import of App gives this block its own clean copy, the
+// same fix egc-chart.component.test.tsx's own W21 block uses for this
+// exact hook.
+describe("AnalyzePage — chart header mean matches the chart's active metric (E4)", () => {
+  let FreshApp: React.ComponentType
+
+  beforeEach(async () => {
+    vi.resetModules()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      if (url.includes('/api/samples'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SAMPLES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    const module = await import('../App')
+    FreshApp = module.default
+  })
+
+  it("shows Relative Abundance (the chart's default metric) with the real sample total, not raw EGC", async () => {
+    render(<FreshApp />)
+    const resultRow = await searchAndGetResult()
+    await userEvent.click(resultRow)
+
+    // DEFAULT_SERIES norm_egc = 0.00001 + i*0.000001 for i=0..9 -> mean
+    // 0.0000145 -> "0.00145%". DEFAULT_SAMPLES has 12 real samples vs.
+    // 10 detected -> "10 / 12 samples".
+    await waitFor(() => {
+      expect(screen.getByText(/mean rel\. abundance 0\.00145% · 10 \/ 12 samples/)).toBeInTheDocument()
+    })
+  })
+
+  it('switches to the raw EGC mean (still with the real total) when the chart metric is switched to EGC', async () => {
+    render(<FreshApp />)
+    const resultRow = await searchAndGetResult()
+    await userEvent.click(resultRow)
+    await waitFor(() => screen.getAllByText(/↓ PNG/i).length > 0)
+
+    await userEvent.click(screen.getAllByText('EGC')[0])
+
+    // DEFAULT_SERIES egc = 100 + i*10 for i=0..9 -> mean 145 -> "1.45e+2".
+    await waitFor(() => {
+      expect(screen.getByText(/mean EGC 1\.45e\+2 · 10 \/ 12 samples/)).toBeInTheDocument()
     })
   })
 })

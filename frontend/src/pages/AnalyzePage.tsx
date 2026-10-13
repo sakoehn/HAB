@@ -20,13 +20,15 @@ import React, {
 
 import type {
   ApiStatus, AnnotationItem, RightCard,
-  SeriesCache, SharedAnnotation,
+  SeriesCache, SharedAnnotation, ChartMetric,
 } from '../types'
 import { SOURCE_COLORS, SOURCE_TAG_CLS, CHART_COLORS, taxonomyAwarePrimaryLabel } from '../constants'
 import { filterRedundantAnnotations } from '../utils/annotationHierarchy'
 import { nextColorForSource } from '../constants'
 import { apiFetch } from '../utils/api'
-import { extractEgc, sumMembersByTimestamp } from '../utils/stats'
+import { extractEgc, extractNormEgc, sumMembersByTimestamp } from '../utils/stats'
+import { formatRelativeAbundancePercent } from '../utils/format'
+import { useAllSamples } from '../utils/useAllSamples'
 import { useCopyId } from '../hooks/useCopyId'
 import { ChartErrorBoundary }  from '../components/ui/ChartErrorBoundary'
 import { DateRangePicker }     from '../components/ui/DateRangePicker'
@@ -135,16 +137,24 @@ function RightSingleCard({
 }) {
   const cached = seriesCache[card.key]
   const chartRef = useRef<EgcChartHandle>(null)
+  // E4 (docs/AUDIT-2026-10-05.md): the chart below defaults to Relative
+  // Abundance (norm_egc), not raw EGC -- this tracks which one it's
+  // actually showing right now (via EgcChart's own onMetricChange), so
+  // the header mean below can report the same metric instead of always
+  // computing raw EGC regardless of what the chart displays.
+  const [activeMetric, setActiveMetric] = useState<ChartMetric>('norm_egc')
+  const { allSamples } = useAllSamples()
 
   const quickStats = useMemo(() => {
     if (cached?.status !== 'ok' || !cached.data.length) return null
+    const extract = activeMetric === 'norm_egc' ? extractNormEgc : extractEgc
     const vals = cached.data
-      .map(d => extractEgc(d.value))
+      .map(d => extract(d.value))
       .filter((v): v is number => v !== null)
     if (!vals.length) return null
     const mean = vals.reduce((a, b) => a + b, 0) / vals.length
     return { mean, n: vals.length }
-  }, [cached])
+  }, [cached, activeMetric])
 
   return (
     <div className="al-right-card">
@@ -170,7 +180,10 @@ function RightSingleCard({
               font:  '600 11px var(--mono)',
               color: 'var(--text-dim)',
             }}>
-              mean EGC {quickStats.mean.toExponential(2)} · {quickStats.n} samples
+              {activeMetric === 'norm_egc'
+                ? `mean rel. abundance ${formatRelativeAbundancePercent(quickStats.mean)}`
+                : `mean EGC ${quickStats.mean.toExponential(2)}`}
+              {' · '}{quickStats.n}{allSamples ? ` / ${allSamples.length}` : ''} samples
             </span>
           )}
           {cached?.status === 'ok' && (
@@ -221,6 +234,7 @@ function RightSingleCard({
               depth={card.depth}
               dataDateRange={dataDateRange}
               onGoExplore={onGoExplore}
+              onMetricChange={setActiveMetric}
             />
           </ChartErrorBoundary>
 <MappingsPanel

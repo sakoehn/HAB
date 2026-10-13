@@ -82,6 +82,12 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   depth?:         number | null
   dataDateRange?: { min: string; max: string } | null
   onGoExplore?:   (annotationId: string, source: string) => void
+  // E4 (docs/AUDIT-2026-10-05.md): the metric toggle (EGC vs. Relative
+  // Abundance) is otherwise private state inside this chart -- a caller
+  // showing its own derived summary (e.g. AnalyzePage's card-header mean)
+  // has no way to know which one is currently displayed, and would
+  // silently show a different unit than the chart right below it.
+  onMetricChange?: (metric: ChartMetric) => void
 }>(function EgcChart({
   data,
   annotationId,
@@ -91,6 +97,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   depth = null,
   dataDateRange,
   onGoExplore,
+  onMetricChange,
 }, ref) {
   const [dateFrom, setDateFrom]               = useState('')
   const [dateTo, setDateTo]                   = useState('')
@@ -124,6 +131,10 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   const { sunTimes, tides, tidesLoading, tidesError } =
     useSolarTideData(showNightShading || showTide || showDayBands)
   const { allSamples } = useAllSamples()
+
+  useEffect(() => {
+    onMetricChange?.(metric)
+  }, [metric]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // W21 (docs/AUDIT-2026-09-22.md): `data` only has rows for samples where
   // this annotation was actually detected -- annotation_series has no row
