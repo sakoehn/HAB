@@ -641,6 +641,13 @@ describe('ScaffoldExplorePanel — W22 redundant terms', () => {
       expect(screen.getByText(/already counted inside another tracked term/i)).toBeInTheDocument()
     })
     expect(screen.getByText('All terms (1)')).toBeInTheDocument()
+
+    // G3 (docs/AUDIT-2026-10-05.md): the subtitle below the legend must
+    // agree with the legend's own post-redundancy-filter count (1), not
+    // recompute its own pre-filter count (2) and contradict the banner
+    // right above it that already names COG0055 as dropped.
+    expect(screen.getByText(/across all 1 annotations listed below/i)).toBeInTheDocument()
+    expect(screen.queryByText(/across all 2 annotations listed below/i)).not.toBeInTheDocument()
   })
 
   it('does not show the redundancy banner when split by term (nothing gets summed)', async () => {

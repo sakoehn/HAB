@@ -471,6 +471,15 @@ export function ScaffoldExplorePanel({
 
   // ── Chart data ─────────────────────────────────────────────────────────
 
+  // G3 (docs/AUDIT-2026-10-05.md): lifted out of chartSeries below so the
+  // subtitle render site can read the same post-redundancy-filter count
+  // the legend/sum already use, instead of recomputing (and silently
+  // disagreeing with) its own pre-filter count from visibleTerms.
+  const aggregatedTerms = useMemo(
+    () => readyTerms.filter(t => !redundancy.droppedKeys.has(`${t.source}::${t.annotationId}`)),
+    [readyTerms, redundancy],
+  )
+
   const chartSeries = useMemo(() => {
     if (!readyTerms.length) return []
 
@@ -483,9 +492,6 @@ export function ScaffoldExplorePanel({
       }))
     }
 
-    const aggregatedTerms = readyTerms.filter(
-      t => !redundancy.droppedKeys.has(`${t.source}::${t.annotationId}`),
-    )
     if (!aggregatedTerms.length) return []
 
     return [{
@@ -494,7 +500,7 @@ export function ScaffoldExplorePanel({
       color: 'var(--chart-1)',
       data:  buildAggregatedChartRows(aggregatedTerms, dateFrom, dateTo),
     }]
-  }, [readyTerms, redundancy, dateFrom, dateTo, splitByTerm])
+  }, [readyTerms, aggregatedTerms, dateFrom, dateTo, splitByTerm])
 
   const chartRows = useMemo(() => {
     const dateSet = new Set<string>()
@@ -820,7 +826,7 @@ export function ScaffoldExplorePanel({
                   marginTop: 2,
                 }}>
                   Sum of {chartMetric === 'scaffold_count' ? 'scaffold counts' : 'gene counts'}{' '}
-                  across all {visibleTerms.filter(t => t.status === 'ok').length} annotations listed
+                  across all {aggregatedTerms.length} annotations listed
                   below, per sample — not a single annotation's value.{' '}
                   {visibleTerms.length > 1 && 'Use "Split by term" to see each one separately.'}
                 </div>
