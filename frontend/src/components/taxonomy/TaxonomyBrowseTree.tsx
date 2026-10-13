@@ -62,10 +62,24 @@ function BrowseNodeRow({
           className="tax-node-chevron"
           onClick={() => onToggleExpand(node)}
           disabled={node.loadStatus === 'loading'}
-          title={node.expanded ? 'Collapse' : 'Expand'}
+          title={
+            node.loadStatus === 'error'
+              ? 'Failed to load children — click to retry'
+              : node.expanded ? 'Collapse' : 'Expand'
+          }
         >
           {node.loadStatus === 'loading' ? '…' : node.expanded ? '▾' : '▸'}
         </button>
+
+        {/* G8/G12 (docs/AUDIT-2026-10-05.md): see HierarchyTree's matching
+            comment -- a failed child fetch left loadStatus:'error' with
+            nothing rendering it, indistinguishable from a row that was
+            simply never clicked. */}
+        {node.loadStatus === 'error' && (
+          <span className="tax-node-load-error" title="Failed to load children — click ▸ to retry">
+            ⚠
+          </span>
+        )}
 
         <button
           className="tax-node-select"

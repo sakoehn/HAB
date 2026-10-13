@@ -158,6 +158,38 @@ describe('HierarchyModal — auto-expand to path', () => {
     render(<HierarchyModal annotationId="NOT_REAL" source="kegg" onClose={vi.fn()} />)
     expect(await screen.findByTestId('error-state')).toBeInTheDocument()
   })
+
+  // G8/G12 (docs/AUDIT-2026-10-05.md): /kegg/path (the fetch pathStatus
+  // tracks) is a SEPARATE request from the root /kegg/children fetch
+  // goToPath triggers internally to resolve the ancestor chain -- the
+  // path lookup itself can succeed (pathStatus 'ok') while that root
+  // fetch independently fails, leaving `nodes` empty. Before this fix,
+  // that rendered the exact same "No entries under this node." message
+  // as a genuinely childless root, with pathStatus giving no hint
+  // anything had actually failed.
+  it('shows a distinct tree-load error when the root fetch fails even though the path lookup succeeded', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/kegg/path')) {
+        return Promise.resolve(jsonResponse({
+          annotation_id: 'K00844',
+          paths: [GLYCOLYSIS_PATH],
+          path_count: 1,
+        }))
+      }
+      // The bare root fetch has no `?parent=` at all -- only that one
+      // request fails; this still proves it's reachable from a fully
+      // successful path lookup, not an artificial fetch-everything stub.
+      if (!url.includes('parent=')) {
+        return Promise.reject(new Error('network error'))
+      }
+      return Promise.resolve(jsonResponse({ data: [] }))
+    })
+
+    render(<HierarchyModal annotationId="K00844" source="kegg" onClose={vi.fn()} />)
+
+    expect(await screen.findByText('Failed to load hierarchy tree.')).toBeInTheDocument()
+    expect(screen.queryByText('No entries under this node.')).not.toBeInTheDocument()
+  })
 })
 
 describe('HierarchyModal — switching between real paths', () => {

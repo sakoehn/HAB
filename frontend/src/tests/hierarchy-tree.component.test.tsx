@@ -46,6 +46,43 @@ describe('HierarchyTree — empty state', () => {
   })
 })
 
+// G8/G12 (docs/AUDIT-2026-10-05.md): a failed root fetch left `nodes`
+// empty exactly the same way a genuinely childless root would -- both
+// used to render the identical "No entries under this node." message,
+// with no way to tell a real network failure apart from a real empty
+// result.
+describe('HierarchyTree — root load failure (G8/G12)', () => {
+  it('shows a distinct error message when status is error, even with zero nodes', () => {
+    render(<HierarchyTree nodes={[]} status="error" highlightId={null} onToggleExpand={vi.fn()} />)
+    expect(screen.getByText('Failed to load hierarchy tree.')).toBeInTheDocument()
+    expect(screen.queryByText('No entries under this node.')).not.toBeInTheDocument()
+  })
+
+  it('still shows the real empty-result message when status is ok', () => {
+    render(<HierarchyTree nodes={[]} status="ok" highlightId={null} onToggleExpand={vi.fn()} />)
+    expect(screen.getByText('No entries under this node.')).toBeInTheDocument()
+  })
+})
+
+// G8/G12: a failed CHILD fetch (loadStatus:'error' on an already-rendered
+// node, as opposed to the root case above) used to revert that row to the
+// exact same look as a never-clicked collapsed row -- clicking the
+// chevron again does retry (loadStatus never auto-resets), but nothing
+// on screen told the user the previous click had actually failed.
+describe('HierarchyTree — per-node child load failure (G8/G12)', () => {
+  it('shows a warning marker on a node whose child fetch failed', () => {
+    render(
+      <HierarchyTree nodes={[makeNode({ loadStatus: 'error' })]} highlightId={null} onToggleExpand={vi.fn()} />,
+    )
+    expect(screen.getByTitle('Failed to load children — click ▸ to retry')).toBeInTheDocument()
+  })
+
+  it('does not show a warning marker on a node that was never clicked', () => {
+    render(<HierarchyTree nodes={[makeNode({ loadStatus: 'idle' })]} highlightId={null} onToggleExpand={vi.fn()} />)
+    expect(screen.queryByTitle('Failed to load children — click ▸ to retry')).not.toBeInTheDocument()
+  })
+})
+
 describe('HierarchyTree — rendering', () => {
   it('renders a node name', () => {
     render(<HierarchyTree nodes={[makeNode()]} highlightId={null} onToggleExpand={vi.fn()} />)

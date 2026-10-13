@@ -106,4 +106,24 @@ describe('TaxonomyBrowseTree — interaction', () => {
 
     expect(await screen.findByText('Proteobacteria')).toBeInTheDocument()
   })
+
+  // G8/G12 (docs/AUDIT-2026-10-05.md): a failed CHILD fetch (as opposed
+  // to the root-level failure the "states" describe above already
+  // covers) reverted the row to the exact same look as a never-clicked
+  // collapsed row, with nothing on screen distinguishing "failed" from
+  // "not yet clicked" -- even though the chevron is already clickable
+  // again to retry (loadStatus never auto-resets).
+  it('shows a warning marker on a node whose child fetch failed, not just a reverted chevron', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      data: [{ annotation_id: 'Bacteria', name: 'Bacteria', depth: 1, category: 'Bacteria' }],
+    }))
+    render(<TaxonomyBrowseTree onSelectRoot={vi.fn()} />)
+    await screen.findByText('Bacteria')
+
+    mockFetch.mockResolvedValueOnce(errorResponse(500))
+    await user.click(screen.getByTitle('Expand'))
+
+    expect(await screen.findByTitle('Failed to load children — click ▸ to retry')).toBeInTheDocument()
+  })
 })

@@ -42,7 +42,7 @@ export function HierarchyModal({
   onClose:      () => void
 }) {
   const {
-    nodes, highlightId, paths, selectedPathIndex,
+    nodes, status, highlightId, paths, selectedPathIndex,
     toggleExpand, expandToPath, switchToPath,
   } = useHierarchyTree(source)
   const [pathStatus, setPathStatus] = useState<'loading' | 'ok' | 'error'>('loading')
@@ -143,7 +143,7 @@ export function HierarchyModal({
           )}
           {pathStatus === 'ok' && (
             <div style={{ padding: '12px 16px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
-              <HierarchyTree nodes={nodes} highlightId={highlightId} onToggleExpand={toggleExpand} />
+              <HierarchyTree nodes={nodes} status={status} highlightId={highlightId} onToggleExpand={toggleExpand} />
             </div>
           )}
         </div>

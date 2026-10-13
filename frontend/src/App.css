@@ -2168,6 +2168,11 @@ select.field { cursor: pointer; }
 .tax-tree-error {
   color: #e05a5a;
 }
+.tax-node-load-error {
+  color: #e05a5a;
+  font-size: 11px;
+  cursor: default;
+}
 
 .tax-node-row {
   display:     flex;
