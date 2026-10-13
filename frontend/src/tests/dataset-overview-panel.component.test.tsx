@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { DatasetOverviewPanel } from '../pages/ExplorePage'
@@ -218,5 +218,31 @@ describe('DatasetOverviewPanel — labels reflect what was actually loaded, not 
       expect(call).toBeTruthy()
       expect(String(call![0])).toContain('source=kegg')
     })
+  })
+})
+
+// E7 (docs/AUDIT-2026-10-05.md): groups here are formed purely by each
+// row's own immediate parent, with no regard for hierarchy depth -- a
+// broad category and one of its own sub-categories can both appear as
+// separate "peer" groups in the same bar chart/top-5 list (live example:
+// KEGG groups 09182 and 09183 are themselves both members of group 09180,
+// plotted as three independent peers). Scoped to a visible disclosure
+// rather than changing the grouping/ranking behavior itself.
+describe('DatasetOverviewPanel — discloses that groups can be nested, not independent peers (E7)', () => {
+  it('shows a help tooltip next to the groups heading explaining nested groups are not additive peers', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({
+      data: [makeRow('K00001', '09180', 100), makeRow('K00002', '09182', 50)],
+      sample_count: 128,
+    }))
+    const user = userEvent.setup()
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    await loadOverview()
+
+    await waitFor(() => expect(screen.getByText(/Top Functional Groups/i)).toBeInTheDocument())
+
+    const heading = screen.getByText(/Top Functional Groups/i).closest('span')!
+    await user.click(within(heading).getByTitle('Help'))
+
+    expect(screen.getByText(/not independent peers/i)).toBeInTheDocument()
   })
 })

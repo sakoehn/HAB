@@ -422,7 +422,10 @@ export function DatasetOverviewPanel({
               alignItems:      'center',
               justifyContent:  'space-between',
             }}>
-              <span>Top Functional Groups by Σ Mean EGC</span>
+              <span>
+                Top Functional Groups by Σ Mean EGC
+                <HelpTooltip text="Each group here is formed by an annotation's own immediate parent, with no regard for hierarchy depth -- a broad category and one of its own sub-categories can both appear as separate groups in this same list. When that happens their totals are not independent peers: the sub-category's whole total is already included inside its parent category's total, so summing group totals together (or comparing them side by side in the chart below) can overstate how much of the dataset each one really represents." />
+              </span>
               {seriesStatus === 'idle' && (
                 <button className="btn sm" onClick={loadTemporalChart}>
                   Load time series →
