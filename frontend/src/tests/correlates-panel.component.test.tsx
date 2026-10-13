@@ -23,7 +23,7 @@
  * Run: npx vitest run src/tests/correlates-panel.component.test.tsx
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -36,8 +36,25 @@ function jsonResponse(data: unknown) {
   return { ok: true, status: 200, json: async () => data }
 }
 
+// G11 (docs/AUDIT-2026-10-05.md): what apiFetch's own AbortController
+// actually produces on a real timeout -- a plain `new Error('timed out')`
+// (this file's old fixture) is indistinguishable from a hard 4xx failure
+// to the retry logic post-fix, so it no longer retries. Tests that mean
+// to simulate a genuine timeout must reject with this instead.
+function abortError() {
+  return new DOMException('The operation was aborted.', 'AbortError')
+}
+
+function httpError(status: number, statusText: string) {
+  return new Error(`${status} ${statusText}`)
+}
+
 beforeEach(() => {
   mockFetch.mockReset()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 // CR2 (docs/AUDIT-2026-09-22.md): the panel now defaults to
@@ -119,8 +136,8 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     // Fails twice (simulating two 10-minute client timeouts while the
     // server keeps computing), then succeeds on the third attempt.
     mockFetch
-      .mockRejectedValueOnce(new Error('timed out'))
-      .mockRejectedValueOnce(new Error('timed out'))
+      .mockRejectedValueOnce(abortError())
+      .mockRejectedValueOnce(abortError())
       .mockResolvedValueOnce(jsonResponse({
         results: [
           { catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 },
@@ -134,30 +151,80 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     expect(screen.queryByText(/still not done/i)).not.toBeInTheDocument()
   })
 
-  it('shows live elapsed-time text once at least one retry has happened', async () => {
+  // G11 (docs/AUDIT-2026-10-05.md): the elapsed-time text now reflects
+  // real wall-clock time (Date.now()), not retryAttempt * 10 (which
+  // assumed every retry consumed the full 10-minute timeout regardless
+  // of how long it actually took) -- Date.now() is mocked to advance by
+  // exactly 10 real minutes across the one retry here, so "about 10 min"
+  // is a genuine measurement, not a restated assumption.
+  it('shows live elapsed-time text reflecting real wall-clock time, once a retry has happened', async () => {
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
     const user = await openPanel()
 
+    let now = 1_700_000_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
     mockFetch
-      .mockRejectedValueOnce(new Error('timed out'))
+      .mockImplementationOnce(() => {
+        now += 10 * 60_000 // simulate 10 real minutes passing before the timeout fires
+        return Promise.reject(abortError())
+      })
       .mockReturnValue(new Promise(() => {})) // second attempt hangs -- stays in 'loading'
     await selectCircularShift(user)
 
     expect(await screen.findByText(/still working — about 10 min so far/i)).toBeInTheDocument()
   })
 
-  it('only shows a real error after exhausting all retries, with method-specific guidance', async () => {
+  it('only shows a real error after exhausting all retries, with method-specific guidance and the real elapsed time', async () => {
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
     const user = await openPanel()
 
-    mockFetch.mockRejectedValue(new Error('timed out'))
+    let now = 1_700_000_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    mockFetch.mockImplementation(() => {
+      now += 10 * 60_000 // each of the 12 retryable attempts "takes" 10 real minutes
+      return Promise.reject(abortError())
+    })
     await selectCircularShift(user)
 
     // 1 initial attempt + MAX_CIRCULAR_SHIFT_RETRIES (12) retries = 13 calls
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(13), { timeout: 10000 })
-    expect(await screen.findByText(/still not done after about 2 hours/i)).toBeInTheDocument()
+    // 12 retryable attempts x 10 real minutes each = 120 minutes = 2 hours.
+    expect(await screen.findByText(/still not done after about 120 minutes/i)).toBeInTheDocument()
     expect(screen.getByText(/try spearman/i)).toBeInTheDocument()
   }, 15000)
+
+  // G11: a real 4xx (not a timeout) is a hard, immediate failure -- must
+  // not be retried 12 times back-to-back before giving up, and the real
+  // HTTP status must be surfaced instead of a fabricated "hours of
+  // trying" message that implies retries actually happened.
+  it('does not retry a real 4xx error, and surfaces the real HTTP status instead of a fabricated retry duration', async () => {
+    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
+    const user = await openPanel()
+
+    mockFetch.mockRejectedValue(httpError(422, 'Unprocessable Entity'))
+    await selectCircularShift(user)
+
+    await waitFor(() => expect(screen.getByText(/correlation failed/i)).toBeInTheDocument())
+    expect(mockFetch).toHaveBeenCalledTimes(1) // no retries at all
+    expect(screen.getByText(/HTTP 422/)).toBeInTheDocument()
+    expect(screen.queryByText(/still not done/i)).not.toBeInTheDocument()
+  })
+
+  // G11: a 5xx IS worth retrying (a transient server-side issue, same as
+  // a real timeout) -- distinct from the 4xx case above.
+  it('does retry a 5xx error the same way as a timeout', async () => {
+    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
+    const user = await openPanel()
+
+    mockFetch
+      .mockRejectedValueOnce(httpError(503, 'Service Unavailable'))
+      .mockResolvedValueOnce(jsonResponse({
+        results: [], prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+      }))
+    await selectCircularShift(user)
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
+  })
 
   it('still fails immediately (no retry) for a non-permutation method', async () => {
     // CR2 (docs/AUDIT-2026-09-22.md): the panel now defaults to

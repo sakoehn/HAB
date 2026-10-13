@@ -41,6 +41,21 @@ const METRIC_LABEL: Record<ChartMetric, string> = {
   norm_egc: 'norm EGC',
 }
 
+// G11 (docs/AUDIT-2026-10-05.md): apiFetch throws a plain Error with the
+// real HTTP status as the message's leading token (e.g. "404 Not Found")
+// on a non-2xx response -- extracts it so the retry logic and the error
+// message can tell a real 4xx apart from a timeout/5xx instead of
+// treating every failure identically.
+function httpStatusFromError(err: unknown): number | null {
+  if (!(err instanceof Error)) return null
+  const match = /^(\d{3})\s/.exec(err.message)
+  return match ? Number(match[1]) : null
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === 'AbortError'
+}
+
 export function CorrelatesPanel({
   annotationId,
   source,
@@ -82,6 +97,14 @@ export function CorrelatesPanel({
   const [metric, setMetric] = useState<ChartMetric>('norm_egc')
   const requestSeqRef = useRef(0)
   const [retryAttempt, setRetryAttempt] = useState(0)
+  // G11: real wall-clock elapsed time for the "still working"/"gave up"
+  // messages, instead of assuming every retry actually consumed the full
+  // 10-minute timeout -- a run of immediate hard failures took nowhere
+  // near that. Set on the first attempt (attempt===0) of a fetch run,
+  // read (not reset) on every subsequent retry within that same run.
+  const fetchStartRef = useRef<number | null>(null)
+  const [elapsedMinutes, setElapsedMinutes] = useState(0)
+  const [lastErrorStatus, setLastErrorStatus] = useState<number | null>(null)
 
   const allSources: AnnotationSourceKey[] = ['kegg', 'cog', 'enzyme', 'taxonomy']
 
@@ -120,6 +143,11 @@ export function CorrelatesPanel({
     setSignificantCount(null)
     setStatus('loading')
     setRetryAttempt(attempt)
+    if (attempt === 0) {
+      fetchStartRef.current = Date.now()
+      setElapsedMinutes(0)
+      setLastErrorStatus(null)
+    }
 
     try {
       const url =
@@ -147,9 +175,20 @@ export function CorrelatesPanel({
           : null,
       )
       setStatus('ok')
-    } catch {
+    } catch (err) {
       if (requestId !== requestSeqRef.current) return
-      if (method === 'circular_shift' && attempt < MAX_CIRCULAR_SHIFT_RETRIES) {
+      // G11 (docs/AUDIT-2026-10-05.md): a 404/422/500 used to be
+      // indistinguishable from a timeout/abort here -- ALL of them
+      // retried identically, firing up to 13 attempts back-to-back in
+      // under a second for a genuinely dead endpoint before finally
+      // giving up. Only a real timeout/abort or a 5xx (a transient
+      // server-side issue, worth another try) should trigger a retry; a
+      // 4xx is a real, immediate failure right now, not "still working".
+      const httpStatus = httpStatusFromError(err)
+      setLastErrorStatus(httpStatus)
+      const isRetryable = isAbortError(err) || (httpStatus != null && httpStatus >= 500)
+      if (method === 'circular_shift' && isRetryable && attempt < MAX_CIRCULAR_SHIFT_RETRIES) {
+        setElapsedMinutes(Math.round((Date.now() - (fetchStartRef.current ?? Date.now())) / 60_000))
         void fetchCorr(attempt + 1)
         return
       }
@@ -265,7 +304,12 @@ export function CorrelatesPanel({
                   }}>
                     {retryAttempt === 0
                       ? 'This method is slower and can take a while on a large family. It keeps trying on its own, so feel free to leave this open.'
-                      : `Still working — about ${retryAttempt * 10} min so far. Large families can take a while with this method; it keeps retrying automatically.`}
+                      // G11: real elapsed time, not retryAttempt * 10 --
+                      // that assumed every retry consumed the full
+                      // 10-minute timeout, which a run of genuinely slow
+                      // (not failed) retries roughly does, but is still
+                      // measuring the real thing rather than assuming it.
+                      : `Still working — about ${elapsedMinutes} min so far. Large families can take a while with this method; it keeps retrying automatically.`}
                   </div>
                 )}
                 {Array.from({ length: 7 }).map((_, i) => (
@@ -283,15 +327,27 @@ export function CorrelatesPanel({
             {status === 'error' && (
               <div className="corr-empty corr-empty-error">
                 <span className="corr-empty-icon">⚠</span>
-                {method === 'circular_shift' ? (
+                {/* G11 (docs/AUDIT-2026-10-05.md): retryAttempt > 0 here
+                    means retries actually happened and were genuinely
+                    exhausted (the "still working" message above was
+                    showing) -- a hard, non-retryable error (4xx) stops
+                    on attempt 0 instead, with nothing to call "hours of
+                    trying" (that used to be shown unconditionally,
+                    fabricated from MAX_CIRCULAR_SHIFT_RETRIES regardless
+                    of how long -- or how little -- time had actually
+                    passed). */}
+                {method === 'circular_shift' && retryAttempt > 0 ? (
                   <>
-                    Still not done after about {MAX_CIRCULAR_SHIFT_RETRIES * 10 / 60} hours of
+                    Still not done after about {elapsedMinutes} minute{elapsedMinutes === 1 ? '' : 's'} of
                     trying — this family may just be too large for this
                     method right now. Try spearman, or a smaller target
                     source.{' '}
                   </>
                 ) : (
-                  <>Correlation failed — check server connection.{' '}</>
+                  <>
+                    Correlation failed{lastErrorStatus ? ` (HTTP ${lastErrorStatus})` : ''} — check
+                    server connection.{' '}
+                  </>
                 )}
                 <button
                   onClick={() => void fetchCorr()}
