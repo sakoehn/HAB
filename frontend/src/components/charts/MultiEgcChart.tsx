@@ -299,9 +299,24 @@ export function MultiEgcChart({
     // wording at all) -- suppression here is a claim that the WHOLE
     // comparison is now safe, so it needs the stricter check.
     if (standardize && series.every(s => canStandardizeSeries(s.id))) return false
+    // F7 (docs/AUDIT-2026-10-05.md): this used to read every point in
+    // s.data directly, ignoring dateFrom/dateTo entirely -- the warning
+    // could fire (or stay silent) based on data that isn't even visible
+    // on screen. Filters the same way baseRows above does, but stays on
+    // raw EGC specifically (not unsmoothedRows, which holds norm_egc
+    // instead once metric='norm_egc') -- this check is deliberately
+    // metric-independent per its own W33 note above: Relative Abundance
+    // doesn't resolve a raw-EGC scale gap, so comparing norm_egc values
+    // here would silently undo that fix.
     const means = series
       .map(s => {
         const vals = s.data
+          .filter(d => {
+            const iso = isoDate(d.timepoint?.datetime ?? '')
+            if (dateFrom && iso < dateFrom) return false
+            if (dateTo   && iso > dateTo)   return false
+            return true
+          })
           .map(d => extractEgc(d.value))
           .filter((v): v is number => v !== null)
         return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0
@@ -309,7 +324,7 @@ export function MultiEgcChart({
       .filter(m => m > 0)
     if (means.length < 2) return false
     return Math.max(...means) / Math.min(...means) > 10
-  }, [series, standardize, unsmoothedRows])
+  }, [series, standardize, dateFrom, dateTo, unsmoothedRows])
 
   const yLabel = metric === 'norm_egc'
     ? (standardizeApplied ? 'Relative Abundance (Z-score, σ from mean)' : 'Relative Abundance')

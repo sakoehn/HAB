@@ -386,6 +386,50 @@ describe('MultiEgcChart — stats are per-series, not pooled (W25)', () => {
   })
 })
 
+// F7 (docs/AUDIT-2026-10-05.md): the scale-mismatch warning's own mean
+// computation read every point in s.data directly, completely ignoring
+// dateFrom/dateTo -- unlike the Stats panel right next to it (which
+// already correctly reads the date-filtered unsmoothedRows), the warning
+// could fire (or stay silent) based on data that isn't even visible on
+// screen once a date range narrows what's actually shown.
+describe('MultiEgcChart — scale-mismatch respects the active date filter (F7)', () => {
+  it('does not fire once filtered to a date range where the two series are actually close in scale', async () => {
+    const user = userEvent.setup()
+    render(
+      <MultiEgcChart
+        series={[
+          // Over the FULL range, A's mean (5050) vs B's (100) is >50x --
+          // but filtered to just 5/27 (excluding 6/10 for both), both are
+          // 100 -- genuinely no mismatch once filtered.
+          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 10000)] },
+          { id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 100)] },
+        ]}
+        dateFrom="" dateTo="2021-05-28"
+      />,
+    )
+    await selectRawEgc(user)
+
+    expect(screen.queryByText(/very different EGC scales/i)).not.toBeInTheDocument()
+  })
+
+  it('still fires when the mismatch genuinely exists within the filtered range', async () => {
+    const user = userEvent.setup()
+    render(
+      <MultiEgcChart
+        series={[
+          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 10000)] },
+          { id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 100)] },
+        ]}
+        dateFrom="2021-06-01" dateTo=""
+      />,
+    )
+    await selectRawEgc(user)
+
+    // Filtered to just 6/10: A=10000 vs B=100, still >10x -- must still warn.
+    expect(screen.getByText(/very different EGC scales/i)).toBeInTheDocument()
+  })
+})
+
 describe('MultiEgcChart — date range props', () => {
   it('excludes out-of-range points from both the chart and the stats', async () => {
     const user = userEvent.setup()

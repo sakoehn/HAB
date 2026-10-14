@@ -287,9 +287,21 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   // per-sample-row column, a different, legitimate need). See
   // nativeTideTrace's own doc comment in utils/solar.ts for why this doesn't
   // need to share an x-axis with the EGC trace.
+  //
+  // F7 (docs/AUDIT-2026-10-05.md): bounded only by dateFrom/dateTo used to
+  // mean the Timepoints pill filter (selectedDates/selectedTimes, which
+  // filteredPoints below already applies) had no effect on this overlay --
+  // narrowing to a handful of pills still showed a tide trace spanning the
+  // whole loaded range. filteredPoints is already sorted chronologically
+  // (inherited from allPoints), so its own first/last entries are the real
+  // visible range under EVERY active filter at once, not just the two date
+  // inputs -- using them instead keeps this overlay in sync with whatever
+  // the EGC line itself is actually showing.
   const nativeTide = useMemo(
-    () => (showTide && tides) ? nativeTideTrace(tides, dateFrom || undefined, dateTo || undefined) : { x: [], y: [] },
-    [showTide, tides, dateFrom, dateTo],
+    () => (showTide && tides)
+      ? nativeTideTrace(tides, filteredPoints[0]?.iso, filteredPoints[filteredPoints.length - 1]?.iso)
+      : { x: [], y: [] },
+    [showTide, tides, filteredPoints],
   )
 
   const dayBandsList = useMemo(
