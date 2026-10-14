@@ -815,7 +815,6 @@ export function AnalyzePage({
     state.activeTermIdx,
     Math.max(0, displayTerms.length - 1),
   )
-  const activeTerm = displayTerms[activeTermIdx] ?? ''
 
   const uniqueByTerm = useMemo(() =>
     state.resultsByTerm.map(termRows => {
