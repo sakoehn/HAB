@@ -558,7 +558,9 @@ describe('mappings API URL construction', () => {
     // existing behavior working instead of silently truncating to the
     // backend's own default (100).
     const url = buildMappingsUrl('K02014', 'kegg', 128, false)
-    expect(url).toContain('page_size=200000')
+    // 50000 = /mappings/search's page_size cap (and its hard row limit);
+    // anything higher is rejected with a 422.
+    expect(url).toContain('page_size=50000')
   })
 
   it('omits bypass_cap by default, includes it when explicitly requested', () => {

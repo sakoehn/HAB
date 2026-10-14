@@ -107,7 +107,10 @@ export function totalPages(rowCount: number, pageSize: number = MAPPINGS_PAGE_SI
 // stays well under this) so the panel keeps fetching everything in one
 // call and sorting/paginating client-side, same as it always has, rather
 // than needing a page-by-page rewrite (W24, docs/AUDIT-2026-09-22.md).
-const MAPPINGS_FETCH_PAGE_SIZE = 200_000
+// 50_000 = the backend's own page_size cap on /mappings/search, which is
+// also its hard row limit (_MAPPINGS_ROW_LIMIT), so asking for more could
+// never return more -- and since A6 it's rejected with a 422 instead.
+const MAPPINGS_FETCH_PAGE_SIZE = 50_000
 
 export function buildMappingsUrl(
   annotationId: string,

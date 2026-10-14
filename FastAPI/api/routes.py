@@ -468,7 +468,11 @@ def search_annotations(
     # from "real sources, genuinely no results". Typed as the real enum so
     # FastAPI rejects it with a 422 up front instead.
     sources: list[AnnotationSource] = Query(...),
-    page: int = Query(1, ge=1), page_size: int = Query(500, ge=1, le=2000),
+    # le=5000: AnalyzePage fetches every match for a term in one call
+    # (page_size=5000) -- A6's original le=2000 rejected that with a 422 and
+    # broke Analyze search. Real broad terms exceed 2000 ("protein" matches
+    # 6,117). tests/test_frontend_page_size_contract.py pins this pairing.
+    page: int = Query(1, ge=1), page_size: int = Query(500, ge=1, le=5000),
 ):
     """
     Search across all samples for one or more annotation sources.

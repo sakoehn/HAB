@@ -70,7 +70,7 @@ async function fetchMemberSeries(
 ): Promise<CompareEntryMember> {
   try {
     const json = await apiFetch<{ data: AnnotationItem[] }>(
-      `/api/series/annotations?source=${m.source}&annotation_id=${encodeURIComponent(m.annotationId)}&page_size=5000`,
+      `/api/series/annotations?source=${m.source}&annotation_id=${encodeURIComponent(m.annotationId)}&page_size=500`,
     )
     return { annotationId: m.annotationId, source: m.source, data: json.data ?? [], status: 'ok' }
   } catch {
@@ -229,7 +229,7 @@ export function ComparePage({
         if (ann.kind === 'single') {
           try {
             const json = await apiFetch<{ data: AnnotationItem[] }>(
-              `/api/series/annotations?source=${ann.source}&annotation_id=${encodeURIComponent(ann.annotationId)}&page_size=5000`,
+              `/api/series/annotations?source=${ann.source}&annotation_id=${encodeURIComponent(ann.annotationId)}&page_size=500`,
             )
             const data = json.data ?? []
             return {
@@ -369,7 +369,7 @@ export function ComparePage({
     await Promise.all(toAdd.map(async (ann) => {
       try {
         const json = await apiFetch<{ data: AnnotationItem[] }>(
-          `/api/series/annotations?source=${ann.source}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
+          `/api/series/annotations?source=${ann.source}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=500`,
         )
         setState(prev => ({
           ...prev,
@@ -420,7 +420,7 @@ export function ComparePage({
 
     try {
       const json = await apiFetch<{ data: AnnotationItem[] }>(
-        `/api/series/annotations?source=${ann.source}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
+        `/api/series/annotations?source=${ann.source}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=500`,
       )
       setState(prev => ({
         ...prev,
@@ -477,7 +477,7 @@ export function ComparePage({
 
     try {
       const json = await apiFetch<{ data: AnnotationItem[] }>(
-        `/api/series/annotations?source=${entry.source}&annotation_id=${encodeURIComponent(entry.annotationId)}&page_size=5000`,
+        `/api/series/annotations?source=${entry.source}&annotation_id=${encodeURIComponent(entry.annotationId)}&page_size=500`,
       )
       setState(prev => ({
         ...prev,

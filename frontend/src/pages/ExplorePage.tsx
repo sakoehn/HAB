@@ -249,7 +249,7 @@ export function DatasetOverviewPanel({
     const results = await Promise.all(
       allAnns.map(ann =>
         apiFetch<{ data: AnnotationItem[] }>(
-          `/api/series/annotations?source=${loadedSource}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
+          `/api/series/annotations?source=${loadedSource}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=500`,
         )
           .then(r => ({ id: ann.annotation_id, data: r.data ?? [], failed: false }))
           .catch(() => ({ id: ann.annotation_id, data: [] as AnnotationItem[], failed: true })),
@@ -733,7 +733,7 @@ export function AnnotationsByParentPanel({
         // series under a source the user has since switched to would ask
         // for the wrong annotations entirely.
         apiFetch<{ data: AnnotationItem[] }>(
-          `/api/series/annotations?source=${loadedSource}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=5000`,
+          `/api/series/annotations?source=${loadedSource}&annotation_id=${encodeURIComponent(ann.annotation_id)}&page_size=500`,
         )
           .then(r => ({ id: ann.annotation_id, data: r.data ?? [], failed: false }))
           .catch(() => ({ id: ann.annotation_id, data: [] as AnnotationItem[], failed: true })),

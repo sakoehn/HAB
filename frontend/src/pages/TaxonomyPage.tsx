@@ -149,7 +149,7 @@ export function TaxonomyPage({
       }
     })
     apiFetch<{ data: AnnotationItem[] }>(
-      `/api/series/annotations?source=taxonomy&annotation_id=${encodeURIComponent(annotationId)}&page_size=5000`,
+      `/api/series/annotations?source=taxonomy&annotation_id=${encodeURIComponent(annotationId)}&page_size=500`,
     ).then(json => {
       setState(prev => ({
         ...prev,

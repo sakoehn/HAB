@@ -862,7 +862,7 @@ export function AnalyzePage({
     }))
     try {
       const json = await apiFetch<{ data: AnnotationItem[] }>(
-        `/api/series/annotations?source=${source}&annotation_id=${encodeURIComponent(annotationId)}&page_size=5000`,
+        `/api/series/annotations?source=${source}&annotation_id=${encodeURIComponent(annotationId)}&page_size=500`,
       )
       setState(prev => ({
         ...prev,
