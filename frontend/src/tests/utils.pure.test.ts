@@ -1637,6 +1637,27 @@ describe('nextColorForSource', () => {
     const color = nextColorForSource('unknown_source')
     expect(CHART_COLORS).toContain(color)
   })
+
+  // F6 (docs/AUDIT-2026-10-05.md): every family only had 4 shades, cycled
+  // modulo 4 -- a 5th same-source Compare series got the exact same
+  // color as the 1st, making the two indistinguishable in both the
+  // chart and the legend. Each family now has at least 8 shades, so a
+  // 5th (and up to an 8th) same-source series still gets a genuinely
+  // distinct color.
+  it('a 5th same-source call no longer repeats the 1st color (every family has more than 4 shades)', () => {
+    for (const source of Object.keys(SOURCE_SHADES)) {
+      expect(SOURCE_SHADES[source].length).toBeGreaterThan(4)
+    }
+  })
+
+  it('the 5th kegg series gets a genuinely distinct color from the 1st', () => {
+    const first = nextColorForSource('kegg')
+    nextColorForSource('kegg')
+    nextColorForSource('kegg')
+    nextColorForSource('kegg')
+    const fifth = nextColorForSource('kegg')
+    expect(fifth).not.toBe(first)
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -27,11 +27,19 @@ export const CHART_COLORS = [
 
 // Per-source shade palettes — used to give each new card a distinct hue
 // within its source family rather than repeating the same color.
+//
+// F6 (docs/AUDIT-2026-10-05.md): each family only had 4 shades, cycled
+// modulo 4 (see nextColorForSource below) -- a 5th same-source Compare
+// series got the exact same color as the 1st, with no visual way to
+// tell them apart in the chart or legend. Extended to 8 per family
+// (doubling real headroom before any repeat), each new shade still
+// within the same family's hue so it reads as "another kegg series",
+// not an unrelated color.
 export const SOURCE_SHADES: Record<string, string[]> = {
-  kegg:     ['#56B4E9', '#0090C5', '#89D4F5', '#2B8FC4'],  // sky-blue family
-  cog:      ['#CC79A7', '#A0407A', '#E8A8C8', '#B55090'],  // reddish-purple family
-  enzyme:   ['#E69F00', '#B27A00', '#F0BC4D', '#D48A00'],  // orange family
-  taxonomy: ['#009E73', '#006B4E', '#4DC9A3', '#007A5A'],  // bluish-green/teal family
+  kegg:     ['#56B4E9', '#0090C5', '#89D4F5', '#2B8FC4', '#003D56', '#B3E5FC', '#1C7A9E', '#6FCCF0'],  // sky-blue family
+  cog:      ['#CC79A7', '#A0407A', '#E8A8C8', '#B55090', '#6E2452', '#F5CBE0', '#8A3368', '#D98FB8'],  // reddish-purple family
+  enzyme:   ['#E69F00', '#B27A00', '#F0BC4D', '#D48A00', '#7A4400', '#FAD98A', '#9C6300', '#EDAA26'],  // orange family
+  taxonomy: ['#009E73', '#006B4E', '#4DC9A3', '#007A5A', '#00402E', '#8FE3C8', '#00563D', '#2EB68C'],  // bluish-green/teal family
 }
 
 // ── Color allocation ───────────────────────────────────────────────────────
