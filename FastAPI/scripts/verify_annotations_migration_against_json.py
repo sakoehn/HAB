@@ -20,6 +20,17 @@ scratch (straight from disk, one file at a time):
 
 ...and compares each against the real counts in hab_mappings.db.
 
+P6 (docs/AUDIT-2026-10-05.md): counts alone can't catch wrong VALUES --
+every egc/norm_egc in the db could be wrong and the counts would still
+match. So for every sample file it also compares each annotation's
+egc/norm_egc against that same (source, sample)'s db rows, with a tight
+relative tolerance (VALUE_REL_TOL) to absorb float round-trip noise only.
+Annotations present on one side but not the other are reported too.
+
+What this does NOT prove: that the source JSON files are themselves
+current. It checks db == JSON, so a stale JSON file (P2's concern) and a
+db faithfully copied from it would still match.
+
 Processes one sample file at a time (never holds more than one parsed
 JSON file in memory at once) -- taxonomy files run up to ~197MB each,
 12.35GB total across the source, so this matters for keeping the
@@ -30,6 +41,7 @@ Usage (from FastAPI/):
 """
 
 import json
+import math
 import os
 import sqlite3
 import sys
@@ -46,22 +58,89 @@ SOURCES = {
     "taxonomy": (TAXONOMY_DIR, ".tax.json"),
 }
 
+# Relative tolerance for egc/norm_egc: far looser than float round-trip
+# noise (~1e-16), far tighter than any real migration bug would produce.
+VALUE_REL_TOL = 1e-9
 
-def count_from_json(source_dir: str, suffix: str) -> tuple[int, int, int]:
+# How many example value mismatches to print per source.
+MAX_EXAMPLES = 5
+
+
+def _values_match(json_val, sql_val) -> bool:
+    """None only matches None; numbers match within VALUE_REL_TOL. NaN
+    never matches anything (math.isclose returns False for it)."""
+    if json_val is None or sql_val is None:
+        return json_val is None and sql_val is None
+    return math.isclose(json_val, sql_val, rel_tol=VALUE_REL_TOL, abs_tol=0.0)
+
+
+def compare_values(data: dict, sql_rows: dict) -> list:
+    """Compare one sample's parsed JSON against that sample's db values.
+
+    Args:
+        data: Parsed per-sample JSON, {annotation_id: entry}.
+        sql_rows: {annotation_id: (egc, norm_egc)} from values_from_sql().
+
+    Returns:
+        Sorted list of (annotation_id, field, json_value, sql_value) for
+        every disagreement. field is "egc", "norm_egc", "missing_in_sql"
+        or "missing_in_json" (the last two carry None, None as values).
+    """
+    mismatches = []
+    for annotation_id in sorted(set(data) | set(sql_rows)):
+        if annotation_id not in sql_rows:
+            mismatches.append((annotation_id, "missing_in_sql", None, None))
+            continue
+        if annotation_id not in data:
+            mismatches.append((annotation_id, "missing_in_json", None, None))
+            continue
+        entry = data[annotation_id]
+        sql_egc, sql_norm = sql_rows[annotation_id]
+        for field, json_val, sql_val in (
+            ("egc", entry.get("egc"), sql_egc),
+            ("norm_egc", entry.get("norm_egc"), sql_norm),
+        ):
+            if not _values_match(json_val, sql_val):
+                mismatches.append((annotation_id, field, json_val, sql_val))
+    return mismatches
+
+
+def values_from_sql(conn: sqlite3.Connection, source: str, sample: str) -> dict:
+    """{annotation_id: (egc, norm_egc)} for one (source, sample) pair."""
+    return {
+        annotation_id: (egc, norm_egc)
+        for annotation_id, egc, norm_egc in conn.execute(
+            "SELECT annotation_id, egc, norm_egc FROM annotation_series "
+            "WHERE source = ? AND sample = ?",
+            (source, sample),
+        )
+    }
+
+
+def count_from_json(
+    source_dir: str, suffix: str, conn: sqlite3.Connection, source: str
+) -> tuple[int, int, int, list]:
     """Recompute row counts directly from the raw per-sample JSON files,
-    one file at a time (never holds more than one parsed file in memory).
+    one file at a time (never holds more than one parsed file in memory),
+    and compare each file's egc/norm_egc values against the db while it's
+    loaded.
 
     Args:
         source_dir: Directory containing this source's per-sample JSON
             files.
         suffix: Filename suffix identifying this source's files.
+        conn: Open SQLite connection (for the per-sample value check).
+        source: Annotation source ("cog", "kegg", "enzyme", "taxonomy").
 
     Returns:
-        (sample_count, annotation_series_count, scaffolds_count).
+        (sample_count, annotation_series_count, scaffolds_count,
+        value_mismatches) -- value_mismatches is a list of
+        (sample, annotation_id, field, json_value, sql_value).
     """
     sample_count = 0
     series_count = 0
     scaffolds_count = 0
+    value_mismatches = []
 
     for filename in sorted(os.listdir(source_dir)):
         if not filename.endswith(suffix):
@@ -75,9 +154,13 @@ def count_from_json(source_dir: str, suffix: str) -> tuple[int, int, int]:
             scaffolds = entry.get("scaffolds") or {}
             scaffolds_count += len(scaffolds)
 
+        sample = filename[:-len(suffix)]
+        for mismatch in compare_values(data, values_from_sql(conn, source, sample)):
+            value_mismatches.append((sample, *mismatch))
+
         del data
 
-    return sample_count, series_count, scaffolds_count
+    return sample_count, series_count, scaffolds_count, value_mismatches
 
 
 def count_from_sql(conn: sqlite3.Connection, source: str) -> tuple[int, int, int]:
@@ -117,7 +200,9 @@ def main() -> None:
         for source, (source_dir, suffix) in SOURCES.items():
             print(f"=== {source} ===")
             start = time.time()
-            json_samples, json_series, json_scaffolds = count_from_json(source_dir, suffix)
+            json_samples, json_series, json_scaffolds, value_mismatches = count_from_json(
+                source_dir, suffix, conn, source
+            )
             elapsed = time.time() - start
 
             sql_samples, sql_series, sql_scaffolds = count_from_sql(conn, source)
@@ -132,6 +217,13 @@ def main() -> None:
                 all_match = all_match and ok
                 status = "OK" if ok else "MISMATCH"
                 print(f"  {label:10s} json={json_val:>10} sql={sql_val:>10}  {status}")
+
+            values_ok = not value_mismatches
+            all_match = all_match and values_ok
+            print(f"  {'values':10s} {len(value_mismatches)} egc/norm_egc mismatches  "
+                  f"{'OK' if values_ok else 'MISMATCH'}")
+            for sample, annotation_id, field, json_val, sql_val in value_mismatches[:MAX_EXAMPLES]:
+                print(f"    {sample} {annotation_id} {field}: json={json_val!r} sql={sql_val!r}")
             print(f"  (json-side recount took {elapsed:.1f}s)")
             print()
     finally:
