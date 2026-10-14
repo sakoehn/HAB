@@ -1383,7 +1383,14 @@ export function ExplorePage({
       .filter(r => !q
         || r.annotation_id.toLowerCase().includes(q)
         || (r.name   ?? '').toLowerCase().includes(q)
-        || (r.parent ?? '').toLowerCase().includes(q),
+        || (r.parent ?? '').toLowerCase().includes(q)
+        // E9 (docs/AUDIT-2026-10-05.md): also test the Group column's
+        // actual DISPLAYED label, not just the raw stored r.parent code
+        // -- typing "Glycolysis" (what's visibly shown) matched 0 rows
+        // before this, since the real text on screen is topGroupDisplay's
+        // expanded label (e.g. "Glycolysis / Gluconeogenesis" for the
+        // bare stored code "00010"), not the bare code itself.
+        || topGroupDisplay(r).label.toLowerCase().includes(q),
       )
       .filter(r => state.topRankFilter.size === 0
         || (r.depth != null && state.topRankFilter.has(r.depth)),
@@ -1398,7 +1405,7 @@ export function ExplorePage({
           ? String(av).localeCompare(String(bv))
           : String(bv).localeCompare(String(av))
       })
-  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter])
+  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter, topKeggParents, effectiveTopSource])
 
   // E11 (docs/AUDIT-2026-10-05.md): must scale against `sorted` (what's
   // actually visible after the rank/text filters), not the unfiltered

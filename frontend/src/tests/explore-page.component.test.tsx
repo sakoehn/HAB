@@ -171,6 +171,44 @@ describe('ExplorePage — Top EGC date suffix describes what was loaded, not the
   })
 })
 
+// E9 (docs/AUDIT-2026-10-05.md): the "Filter by ID, name, or parent
+// group…" box tested only the raw stored r.parent code (e.g. bare "E"),
+// never the expanded label actually shown in the Group column (e.g.
+// "Amino acid transport and metabolism") -- typing the visible text
+// returned 0 rows.
+describe('ExplorePage — Top EGC filter box matches the displayed Group label, not just the raw stored code (E9)', () => {
+  it('matches a row by its expanded Group label even though the stored parent is a bare code', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) {
+        return Promise.resolve(jsonResponse({
+          data: [
+            { annotation_id: 'COG0001', name: 'GroEL', parent: 'E', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 },
+            { annotation_id: 'COG0002', name: 'Other',  parent: 'K', depth: 2, mean_egc: 50,  max_egc: 100, sample_count: 128 },
+          ],
+          sample_count: 128,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'top-egc', source: 'cog' }} />)
+
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+    await screen.findByText('COG0001')
+    // Confirms the Group column really shows the expanded label, not the
+    // bare stored code -- otherwise this test would prove nothing.
+    expect(screen.getByText('Amino acid transport and metabolism')).toBeInTheDocument()
+
+    await user.type(
+      screen.getByPlaceholderText(/Filter by ID, name, or parent group/i),
+      'Amino acid',
+    )
+
+    expect(screen.getByText('COG0001')).toBeInTheDocument()
+    expect(screen.queryByText('COG0002')).not.toBeInTheDocument()
+  })
+})
+
 // E11 (docs/AUDIT-2026-10-05.md): the "Relative" bar's width used to
 // scale against the UNFILTERED rows' max mean_egc, even when a rank
 // filter narrowed the visible rows to a subset that no longer includes
