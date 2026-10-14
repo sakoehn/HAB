@@ -114,7 +114,12 @@ CREATE TABLE IF NOT EXISTS gene_cog (
                               -- visiting every cog_id match regardless of
                               -- which samples were requested (found live
                               -- in production, 2026-09-25: COG2801 took
-                              -- 55.0s without this)
+                              -- 55.0s without this). NOT NULL here, but the
+                              -- live db's column is nullable: it was added
+                              -- there later by backfill_gene_cog_sample_column.py
+                              -- (ALTER TABLE ADD COLUMN can't add NOT NULL
+                              -- without a default). 0 real NULLs exist; a fresh
+                              -- build deliberately keeps the stricter rule.
 );
 
 CREATE TABLE IF NOT EXISTS gene_enzyme (
@@ -131,10 +136,13 @@ CREATE TABLE IF NOT EXISTS annotation_series(
     annotation_id  TEXT NOT NULL,
     name           TEXT,
     category       TEXT,           -- functional category (cog/kegg/enzyme); domain root for taxonomy
-    parent         TEXT,           -- taxonomy's own parent field, or kegg/enzyme's parent_name; NULL for cog
+    parent         TEXT,           -- taxonomy's own parent field, kegg/enzyme's parent_name, or cog's
+                                    -- category letter (e.g. COG0001 -> 'H'). NULL only for each source's
+                                    -- top-level roots (e.g. cog's 25 category letters themselves).
     depth          INTEGER,        -- MEANING IS SOURCE-SPECIFIC: taxonomic rank (1=domain..8=strain) for
                                     -- taxonomy; kegg/enzyme's own pathway/EC hierarchy depth otherwise (NOT
-                                    -- a taxonomic rank) -- see migrate_annotations_to_sql.py. NULL for cog.
+                                    -- a taxonomic rank) -- see migrate_annotations_to_sql.py. For cog,
+                                    -- 1 = category letter, 2 = COG. Never NULL in the live db.
     egc            REAL,
     norm_egc       REAL,
     scaffold_count INTEGER,
@@ -147,15 +155,16 @@ CREATE TABLE IF NOT EXISTS annotation_catalog(
     source  TEXT NOT NULL, -- 'cog' | 'enzyme' | 'kegg' | 'taxonomy',
     annotation_id TEXT NOT NULL,
     name TEXT,
-    parent TEXT,
-    depth INTEGER,         -- MEANING IS SOURCE-SPECIFIC: taxonomic rank for
-                            -- taxonomy; kegg/enzyme's own pathway/EC hierarchy
-                            -- depth otherwise (NOT a taxonomic rank). NULL for cog.
+    parent TEXT,           -- see annotation_series.parent
     mean_egc REAL,
     max_egc REAL,
     mean_norm_egc REAL,
     max_norm_egc REAL,
     sample_count INTEGER,
+    depth INTEGER,         -- see annotation_series.depth. Declared LAST to
+                            -- match the live db's column order (it was added
+                            -- after the other columns there), so a fresh
+                            -- build stays column-compatible with production.
     UNIQUE (source, annotation_id)
 );
 
