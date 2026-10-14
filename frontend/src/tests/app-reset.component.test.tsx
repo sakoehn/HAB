@@ -83,3 +83,61 @@ describe('per-page reset isolation', () => {
     expect(lookupInputAgain).toHaveValue('siderophore')
   })
 })
+
+describe('App::handleSendToAnalyze (real navigation, not a hand-mocked simulation)', () => {
+  it('"View Timeseries in Analyze" from an Explore lookup result lands on Analyze with that id as the only query field', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({
+            data: [{
+              annotation_id: 'K02014', source: 'kegg', name: 'TonB-dependent receptor',
+              parent: null, mean_egc: 1, max_egc: 1, sample_count: 1,
+            }],
+            total: 1,
+          }),
+        })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    render(<App />)
+
+    // Pre-pollute Analyze state so a stale value surviving the navigation
+    // (instead of being reset by the real handleSendToAnalyze) would show
+    // up as a visible failure, not just an empty-by-coincidence pass.
+    await userEvent.click(await screen.findByText('Analyze'))
+    const searchInput = await screen.findByPlaceholderText(/e\.g\. iron/i)
+    await userEvent.type(searchInput, 'some-stale-query')
+
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    const lookupCard = await screen.findByText('Annotation Lookup', { selector: '.explore-card-label' })
+    await userEvent.click(lookupCard)
+    await userEvent.type(await screen.findByPlaceholderText(/ID \(K02014\)/i), 'K02014')
+    await userEvent.click(screen.getByRole('button', { name: /^Search$/i }))
+    await waitFor(() => expect(document.querySelector('.lookup-result')).toBeTruthy())
+
+    await userEvent.click(screen.getByRole('button', { name: /View Timeseries in Analyze/i }))
+
+    // Real navigation: lands on Analyze (not still on Explore). Pages stay
+    // mounted (hidden, not unmounted) when switching -- the content alone
+    // can't prove navigation happened, since it's present either way -- so
+    // check the thing that actually changes: the sidebar's active nav item.
+    await waitFor(() => {
+      const analyzeNavItem = screen.getByText('Analyze', { selector: '.nav-label' }).closest('.nav-item')
+      expect(analyzeNavItem).toHaveClass('active')
+    })
+    const analyzeInputAfterNav = await screen.findByPlaceholderText(/e\.g\. iron/i)
+    // Real reset: queryFields is [annotationId], not the stale text typed
+    // into Analyze before navigating away, and it's the only field.
+    expect(analyzeInputAfterNav).toHaveValue('K02014')
+    expect(screen.queryAllByPlaceholderText(/Term \d/i)).toHaveLength(0)
+  })
+})

@@ -51,8 +51,10 @@
  *   available targets exclude current source
  *   always exactly 3 available targets
  *
- * Analyze page navigation:
- *   handleSendToAnalyze resets query fields, results, status
+ * Analyze page navigation ("handleSendToAnalyze resets query fields,
+ * results, status") is covered as a real integration test in
+ * app-reset.component.test.tsx, not here -- see the comment where that
+ * section used to live, below.
  *
  * Run: npx vitest run src/tests/mappings-panel.unit.test.ts
  */
@@ -663,59 +665,12 @@ describe('data date range from /api/status', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Analyze page — handleSendToAnalyze navigation
+// Analyze page — handleSendToAnalyze navigation. Used to be tested here via
+// a hand-built simulateSendToAnalyze() that just reconstructed the expected
+// state shape in-line -- none of those assertions ever touched the real
+// App.tsx::handleSendToAnalyze, so a regression there (e.g. forgetting to
+// reset activeTermIdx) couldn't have failed this suite. Moved to a real
+// integration test in app-reset.component.test.tsx, which renders the
+// actual App and drives the actual "View Timeseries in Analyze" button --
+// same fix applied to the CorrelatesPanel case removed above.
 // ─────────────────────────────────────────────────────────────────────────────
-
-function simulateSendToAnalyze(annotationId: string) {
-  return {
-    queryFields:   [annotationId],
-    resultsByTerm: [] as unknown[],
-    totalsByTerm:  [] as number[],
-    searchStatus:  'idle' as const,
-    activeTermIdx: 0,
-    checkedByTerm: {} as Record<string, unknown>,
-  }
-}
-
-describe('analyze page — sendToAnalyze navigation', () => {
-  it('sets queryFields to [annotationId]', () => {
-    expect(simulateSendToAnalyze('K02014').queryFields).toEqual(['K02014'])
-  })
-
-  it('exactly one query field', () => {
-    expect(simulateSendToAnalyze('K02014').queryFields).toHaveLength(1)
-  })
-
-  it('clears resultsByTerm', () => {
-    expect(simulateSendToAnalyze('K02014').resultsByTerm).toHaveLength(0)
-  })
-
-  it('clears totalsByTerm', () => {
-    expect(simulateSendToAnalyze('K02014').totalsByTerm).toHaveLength(0)
-  })
-
-  it('resets searchStatus to idle', () => {
-    expect(simulateSendToAnalyze('K02014').searchStatus).toBe('idle')
-  })
-
-  it('resets activeTermIdx to 0', () => {
-    expect(simulateSendToAnalyze('K02014').activeTermIdx).toBe(0)
-  })
-
-  it('resets checkedByTerm to empty object', () => {
-    expect(Object.keys(simulateSendToAnalyze('K02014').checkedByTerm)).toHaveLength(0)
-  })
-
-  it('works with taxonomy IDs containing spaces', () => {
-    expect(simulateSendToAnalyze('Tenacibaculum maritimum').queryFields[0])
-      .toBe('Tenacibaculum maritimum')
-  })
-
-  it('works with enzyme EC numbers', () => {
-    expect(simulateSendToAnalyze('EC:1.1.1.1').queryFields[0]).toBe('EC:1.1.1.1')
-  })
-
-  it('works with COG IDs', () => {
-    expect(simulateSendToAnalyze('COG0001').queryFields[0]).toBe('COG0001')
-  })
-})
