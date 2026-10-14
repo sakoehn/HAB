@@ -26,7 +26,7 @@ import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel, taxonomyRankLabel, ta
 import { apiFetch, downloadCsv } from '../utils/api'
 import {
   extractEgc, computeTrend, sumMembersByTimestamp,
-  resolveLookupCategory, resolveLookupScaffoldCount, resolveLookupDepth,
+  resolveLookupCategory, resolveLookupScaffoldCount, resolveLookupDepth, depthLabel,
 } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
 import { CopyBtn, ResetBtn } from '../components/ui/controls'
@@ -2108,14 +2108,6 @@ export function ExplorePage({
                       const scaffoldCount = resolveLookupScaffoldCount(r)
                       const depth         = resolveLookupDepth(r)
 
-                      const depthLabel = (depth: number) => {
-                        if (effectiveLookupSource === 'kegg')     return { 1: 'pathway class', 2: 'subcategory', 3: 'pathway', 4: 'leaf (KO)' }[depth] ?? String(depth)
-                        if (effectiveLookupSource === 'cog')      return { 1: 'category', 2: 'leaf (COG)' }[depth] ?? String(depth)
-                        if (effectiveLookupSource === 'enzyme')   return { 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' }[depth] ?? String(depth)
-                        if (effectiveLookupSource === 'taxonomy') return taxonomyRankLabel(depth, rawCategory)
-                        return String(depth)
-                      }
-
                       return (
                         <div className="lookup-result">
                           <div className="lookup-header">
@@ -2194,7 +2186,7 @@ export function ExplorePage({
                                     color:       'var(--text-dim)',
                                     fontWeight:  400,
                                   }}>
-                                    ({depthLabel(depth)})
+                                    ({depthLabel(depth, effectiveLookupSource, rawCategory)})
                                   </span>
                                 </span>
                               </div>

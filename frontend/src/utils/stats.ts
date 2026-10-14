@@ -4,6 +4,7 @@
 
 import type { DescStats, AnnotationItem, TopAnnotation } from '../types'
 import { parseDateTime } from './format'
+import { taxonomyRankLabel } from '../constants'
 
 // ── EGC value extraction ───────────────────────────────────────────────────
 // Annotation JSON values vary in shape across sources — some are bare numbers,
@@ -68,6 +69,22 @@ export function resolveLookupScaffoldCount(r: TopAnnotation): number | null {
 
 export function resolveLookupDepth(r: TopAnnotation): number | null {
   return r.depth ?? r.value?.depth ?? null
+}
+
+// depthLabel
+// Human-readable hierarchy label for the Annotation Lookup detail card's
+// "Depth" row. Source-specific rank names for kegg/cog/enzyme; taxonomy
+// defers to taxonomyRankLabel (domain-aware rank names), since taxonomy's
+// hierarchy depth means something different per domain. Extracted out of
+// ExplorePage so it's a real, independently-testable function rather than
+// a hand-copied mirror in a test file.
+
+export function depthLabel(depth: number, source: string, category?: string | null): string {
+  if (source === 'kegg')     return ({ 1: 'pathway class', 2: 'subcategory', 3: 'pathway', 4: 'leaf (KO)' } as Record<number, string>)[depth] ?? String(depth)
+  if (source === 'cog')      return ({ 1: 'category', 2: 'leaf (COG)' } as Record<number, string>)[depth] ?? String(depth)
+  if (source === 'enzyme')   return ({ 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' } as Record<number, string>)[depth] ?? String(depth)
+  if (source === 'taxonomy') return taxonomyRankLabel(depth, category)
+  return String(depth)
 }
 
 // ── computeStats ───────────────────────────────────────────────────────────

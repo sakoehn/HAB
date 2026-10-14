@@ -6,10 +6,11 @@
  *
  * All logic here is pure (no DOM, no React):
  *
- * depthLabel(depth, source)
+ * depthLabel(depth, source, category)
  *   Returns a human-readable hierarchy label for each source type and depth
- *   level. Defined inline in the ExplorePage render; mirrored here exactly
- *   so any future edit to the real function breaks this test.
+ *   level. Real import from utils/stats.ts (extracted out of ExplorePage's
+ *   render, which now calls the same shared function) -- not a hand-copied
+ *   mirror, so a real change to the function's behavior shows up here.
  *
  * scaffoldCount
  *   Object.keys(value.scaffolds).length — how many unique scaffolds carry
@@ -43,23 +44,8 @@
 
 import { describe, it, expect } from 'vitest'
 import { expandParentLabel } from '../constants'
-import { resolveLookupCategory, resolveLookupScaffoldCount, resolveLookupDepth } from '../utils/stats'
+import { resolveLookupCategory, resolveLookupScaffoldCount, resolveLookupDepth, depthLabel } from '../utils/stats'
 import type { TopAnnotation, AnnotationValue } from '../types'
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// depthLabel — mirrors the inline function in ExplorePage's lookup detail card
-// ─────────────────────────────────────────────────────────────────────────────
-
-function depthLabel(depth: number, source: string): string {
-  if (source === 'kegg')
-    return ({ 1: 'pathway class', 2: 'subcategory', 3: 'pathway', 4: 'leaf (KO)' } as Record<number, string>)[depth] ?? String(depth)
-  if (source === 'cog')
-    return ({ 1: 'category', 2: 'leaf (COG)' } as Record<number, string>)[depth] ?? String(depth)
-  if (source === 'enzyme')
-    return ({ 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' } as Record<number, string>)[depth] ?? String(depth)
-  return String(depth)
-}
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,9 +118,19 @@ describe('depthLabel — Enzyme', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('depthLabel — taxonomy / unknown source', () => {
-  it('taxonomy: returns raw depth number as string (variable hierarchy depth)', () => {
-    expect(depthLabel(3, 'taxonomy')).toBe('3')
-    expect(depthLabel(1, 'taxonomy')).toBe('1')
+  it('taxonomy: defers to taxonomyRankLabel, not a raw depth number', () => {
+    // This is the one branch where the inline ExplorePage copy this test
+    // used to hand-mirror had already drifted from the real function --
+    // the real depthLabel calls taxonomyRankLabel(depth, category) for
+    // taxonomy, which returns a real rank name, not String(depth). See
+    // taxonomy-utils.unit.test.ts for taxonomyRankLabel's own full
+    // rank-name coverage; this just confirms depthLabel delegates to it.
+    expect(depthLabel(3, 'taxonomy')).toBe('Class')
+    expect(depthLabel(1, 'taxonomy')).toBe('Domain')
+  })
+
+  it('taxonomy: category is passed through to taxonomyRankLabel', () => {
+    expect(depthLabel(6, 'taxonomy', 'Archaea')).toBe('Genus')
   })
 
   it('unknown source: falls through to raw number', () => {
