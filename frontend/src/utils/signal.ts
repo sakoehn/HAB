@@ -133,9 +133,22 @@ export function applyLowess(
     // window instead means every included point gets a real, nonzero
     // weight. Falls back to the old boundary behavior only when the
     // window already covers the entire series (no "next point" exists).
-    const maxDist = span < dists.length
-      ? (dists[span].d || 1)
-      : (neighbors[neighbors.length - 1].d || 1)
+    // F4 (docs/AUDIT-2026-10-05.md): dists[span].d alone isn't enough --
+    // on the real ~4h-uniform cadence, the farthest INCLUDED point often
+    // ties in distance with one or more points just outside the window
+    // (confirmed live: 9 of 15 real slider settings). When that happens,
+    // dists[span].d equals the included point's own distance, giving it
+    // u=1 and the exact same zero-weight bug W27 fixed, just recurring at
+    // the boundary. Advances past every tied distance to the first
+    // genuinely farther point, so the farthest included point's own
+    // distance can never equal maxDist.
+    const includedMaxD = neighbors[neighbors.length - 1].d
+    let maxDist = includedMaxD || 1
+    if (span < dists.length) {
+      let j = span
+      while (j < dists.length && dists[j].d === includedMaxD) j++
+      maxDist = j < dists.length ? dists[j].d : (includedMaxD || 1)
+    }
 
     let sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0
     for (const { p, d } of neighbors) {

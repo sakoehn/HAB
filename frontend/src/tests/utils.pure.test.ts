@@ -677,6 +677,33 @@ describe('applyLowess', () => {
     expect(Math.abs((result[2].egc as number) - 10)).toBeGreaterThan(0.01)
   })
 
+  // F4 (docs/AUDIT-2026-10-05.md): W27's own fix above only advanced ONE
+  // step past the window (dists[span]) to find maxDist -- on the real
+  // ~4h-uniform cadence, that one step can ALSO be tied with the farthest
+  // INCLUDED point's own distance (symmetric distances around a center
+  // point are inherently tie-prone), recreating the exact same zero-
+  // weight bug one tier deeper. Confirmed live: 9 of 15 real slider
+  // settings hit this.
+  it('still gives the farthest included point a real nonzero weight when the very next point outside the window ties with it', () => {
+    // 7 evenly-spaced points (4h apart), query at the center (ts=12).
+    // Distances from center: 12, 8, 4, 0, 4, 8, 12 -- two real ties (at 4
+    // and at 8). span=4 (bandwidth=0.5, n=7) includes [d=0, d=4, d=4,
+    // d=8] (one of the two d=8 points, by stable-sort original order) --
+    // the farthest included point (d=8) ties exactly with the very next
+    // point outside the window (the OTHER real d=8 point), so the old
+    // one-step-advance fix still lands on dists[span].d === includedMaxD.
+    const data = [
+      { egc: 10, ts: 0 }, { egc: 100, ts: 4 }, { egc: 10, ts: 8 },
+      { egc: 10, ts: 12 }, { egc: 10, ts: 16 }, { egc: 100, ts: 20 }, { egc: 10, ts: 24 },
+    ]
+    const result = applyLowess(data, 0.5)
+    // If the farthest included point (y=100) still got zeroed out, every
+    // other neighbor in the window is y=10 and the fit reproduces the
+    // query point's own raw value (10) exactly, same degeneracy as the
+    // W27 case above.
+    expect(Math.abs((result[3].egc as number) - 10)).toBeGreaterThan(0.01)
+  })
+
   it('reduces variance on noisy alternating series', () => {
     const data     = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6, 4, 8, 3, 9, 2, 10, 1].map((egc, ts) => ({ egc, ts }))
     const raw      = data.map(d => d.egc as number)
