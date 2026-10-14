@@ -507,6 +507,99 @@ describe('AnalyzePage — search', () => {
     expect(screen.queryByText(/^Grouped: zinc/)).not.toBeInTheDocument()
   })
 
+  // E10 (docs/AUDIT-2026-10-05.md): checkedByTerm used to be keyed by the
+  // raw search TEXT -- two tabs that happen to search the exact same
+  // text (e.g. both "iron") shared one checkbox set, since the text
+  // itself was the key, not each tab's own position.
+  it('two tabs searching the exact same text do not share checkbox state', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => TWO_ROW_SEARCH })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    render(<App />)
+    await userEvent.click(screen.getByText('+ Add term'))
+
+    const input1 = await getAnalyzeSearchInput()
+    const input2 = screen.getByPlaceholderText('Term 2')
+    await userEvent.type(input1, 'iron')
+    await userEvent.type(input2, 'iron')
+    await userEvent.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(screen.getAllByText('iron', { selector: '.al-term-tab' }).length).toBe(2)
+    })
+
+    // Tab 1 is active by default -- check its first row.
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-row-checkbox').length).toBe(2)
+    })
+    await userEvent.click(document.querySelectorAll('.al-row-checkbox')[0])
+    expect(document.querySelectorAll('.al-row-checkbox')[0]).toHaveAttribute('aria-pressed', 'true')
+
+    // Switch to tab 2 (the second "iron" tab, by position).
+    await userEvent.click(screen.getAllByText('iron', { selector: '.al-term-tab' })[1])
+
+    // Tab 2's rows must start fully unchecked -- tab 1's own checked
+    // state must not have leaked across via a shared text-based key.
+    await waitFor(() => {
+      const boxes = document.querySelectorAll('.al-row-checkbox')
+      expect(boxes.length).toBe(2)
+      expect(boxes[0]).toHaveAttribute('aria-pressed', 'false')
+      expect(boxes[1]).toHaveAttribute('aria-pressed', 'false')
+    })
+  })
+
+  // E10 (docs/AUDIT-2026-10-05.md): group card keys used to be
+  // `group::${termLabel}::${Date.now()}` -- two groups created from the
+  // same term within the same millisecond collided on an identical key.
+  // Date.now() is frozen here to force that exact collision window.
+  it('two groups created in the same millisecond still get distinct keys', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => TWO_ROW_SEARCH })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+    })
+    const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+
+    render(<App />)
+    const input = await getAnalyzeSearchInput()
+    await userEvent.type(input, 'iron')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-row-checkbox').length).toBe(2)
+    })
+
+    // Create the first group.
+    await userEvent.click(document.querySelectorAll('.al-row-checkbox')[0])
+    await userEvent.click(document.querySelectorAll('.al-row-checkbox')[1])
+    await userEvent.click(screen.getByTitle(/Sum EGC across/i))
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-right-card-group').length).toBe(1)
+    })
+
+    // Create a second group from the same rows -- checkedByTerm resets
+    // to empty after a group is created, so the same 2 rows can be
+    // checked again. Date.now() is still frozen to the same value.
+    await userEvent.click(document.querySelectorAll('.al-row-checkbox')[0])
+    await userEvent.click(document.querySelectorAll('.al-row-checkbox')[1])
+    await userEvent.click(screen.getByTitle(/Sum EGC across/i))
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-right-card-group').length).toBe(2)
+    })
+
+    // If both groups' keys had collided, removing one (by key) would
+    // have removed both.
+    await userEvent.click(document.querySelectorAll('.al-right-card-group .al-card-close')[0])
+    await waitFor(() => {
+      expect(document.querySelectorAll('.al-right-card-group').length).toBe(1)
+    })
+
+    dateSpy.mockRestore()
+  })
+
   it('shows error state when search API fails', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/search/annotations'))

@@ -839,7 +839,13 @@ export function AnalyzePage({
     [state.rightCards],
   )
 
-  const activeChecked = state.checkedByTerm[activeTerm] ?? new Set<string>()
+  // E10 (docs/AUDIT-2026-10-05.md): keyed by tab POSITION, not the raw
+  // search text -- two tabs that happen to search the exact same text
+  // (e.g. both "iron") used to share one checkbox set, since the text
+  // itself was the key. resultsByTerm/totalsByTerm are already
+  // positionally indexed for the same reason (W29); this just applies
+  // the same rule to checkedByTerm.
+  const activeChecked = state.checkedByTerm[String(activeTermIdx)] ?? new Set<string>()
 
   // ── Series fetcher ───────────────────────────────────────────────────
   // force=true bypasses the cache-hit guard — used by a failed card's
@@ -916,11 +922,11 @@ export function AnalyzePage({
   // ── Left column actions ──────────────────────────────────────────────
   function toggleCheck(key: string) {
     setState(prev => {
-      const cur = new Set(prev.checkedByTerm[activeTerm] ?? [])
+      const cur = new Set(prev.checkedByTerm[String(activeTermIdx)] ?? [])
       if (cur.has(key)) cur.delete(key); else cur.add(key)
       return {
         ...prev,
-        checkedByTerm: { ...prev.checkedByTerm, [activeTerm]: cur },
+        checkedByTerm: { ...prev.checkedByTerm, [String(activeTermIdx)]: cur },
       }
     })
   }
@@ -970,7 +976,7 @@ export function AnalyzePage({
       ...prev,
       rightCards:    [...prev.rightCards, ...newCards],
       drawerChecked: new Set([...prev.drawerChecked, ...newKeys]),
-      checkedByTerm: { ...prev.checkedByTerm, [activeTerm]: new Set() },
+      checkedByTerm: { ...prev.checkedByTerm, [String(activeTermIdx)]: new Set() },
     }))
     toAdd.forEach(ann => fetchSeries(ann.annotation_id, ann.source))
   }
@@ -980,7 +986,8 @@ export function AnalyzePage({
       state.activeTermIdx,
       Math.max(0, displayTerms.length - 1),
     )
-    const termKey = displayTerms[termIdx] ?? ''
+    // E10: index-based, not text-based -- see activeChecked's own comment above.
+    const termKey = String(termIdx)
     const checked = state.checkedByTerm[termKey] ?? new Set<string>()
     const rows    = (uniqueByTerm[termIdx] ?? []).filter(
       r => checked.has(`${r.annotation_id}::${r.source}`),
@@ -1031,7 +1038,11 @@ export function AnalyzePage({
 
     const termLabel = displayTerms[termIdx] ?? 'group'
     const label     = `${termLabel} (${capped.length})`
-    const key       = `group::${termLabel}::${Date.now()}`
+    // E10 (docs/AUDIT-2026-10-05.md): Date.now() alone collides for two
+    // groups created in the same millisecond (same shape G1 already
+    // fixed for ComparePage's entry ids) -- crypto.randomUUID() is
+    // genuinely unique regardless of timing.
+    const key       = `group::${termLabel}::${crypto.randomUUID()}`
     const card: RightCard = {
       kind:          'group',
       key,
