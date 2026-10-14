@@ -346,15 +346,31 @@ def test_phylum_level_parent_returns_its_real_classes(conn):
 
 
 def test_strain_level_parent_has_no_children(conn):
-    """depth=8 (strain) is a real leaf rank -- must return [], not raise
-    (unlike taxon_paths_under()'s out-of-range depths, which DO raise --
-    depth=8 here is perfectly valid, it just has nothing beneath it)."""
+    """depth=8 (strain) is a real leaf rank -- must return [], not raise.
+    (taxon_paths_under() itself takes no depth argument at all -- it
+    matches purely on lineage_prefix -- so it has no "out-of-range depth"
+    case to compare against; see test_taxonomy_children_depth_outside_
+    valid_range_returns_empty_list below for how THIS function behaves
+    when depth is genuinely outside 1-8.)"""
     strain_lineage = (
         "Bacteria;Bacteroidetes;Flavobacteriia;Flavobacteriales;"
         "Flavobacteriaceae;Flagellimonas;Flagellimonas pacifica;"
         "Flagellimonas pacifica DSM 25885"
     )
     children = get_taxonomy_children_sql(conn, strain_lineage, depth=8)
+    assert children == []
+
+
+@pytest.mark.parametrize("bad_depth", [-1, 9, 100])
+def test_taxonomy_children_depth_outside_valid_range_returns_empty_list(conn, bad_depth):
+    """Unlike get_taxa_at_rank_sql (which raises ValueError for depth
+    outside 1-8, see test_taxa_at_rank_depth_outside_valid_range_raises
+    below), get_taxonomy_children_sql has no explicit depth-range check --
+    it falls through RANK_COLUMNS.get(next_depth) returning None and bails
+    out with [] instead of raising. This pins down that actual (silent,
+    non-raising) behavior so a future refactor can't accidentally start
+    raising -- or start returning real rows -- without a test noticing."""
+    children = get_taxonomy_children_sql(conn, "Bacteria;Bacteroidetes", depth=bad_depth)
     assert children == []
 
 
@@ -1390,10 +1406,12 @@ def test_sorted_ascending(conn):
 
 @pytest.mark.parametrize("bad_depth", [0, 9, -1, 100])
 def test_taxa_at_rank_depth_outside_valid_range_raises(conn, bad_depth):
-    """Matches taxon_paths_under's existing convention for the identical
-    situation (see test_depth_outside_valid_range_raises above): an
-    invalid depth must fail loudly and immediately with a clear
-    ValueError, not return None and let a confusing failure (or a
-    silent empty-looking result) surface somewhere downstream instead."""
+    """get_taxa_at_rank_sql validates depth explicitly and must fail loudly
+    and immediately with a clear ValueError, not return None and let a
+    confusing failure (or a silent empty-looking result) surface somewhere
+    downstream instead. Contrast with get_taxonomy_children_sql, which has
+    no such check and instead returns [] for an out-of-range depth -- see
+    test_taxonomy_children_depth_outside_valid_range_returns_empty_list
+    above."""
     with pytest.raises(ValueError):
         get_taxa_at_rank_sql(conn, depth=bad_depth)

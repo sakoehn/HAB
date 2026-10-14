@@ -440,6 +440,33 @@ def test_unknown_nonleaf_id_still_returns_empty_not_an_error(conn):
     assert get_mappings_sql(conn, "cog", "COG0055")
 
 
+def test_empty_string_annotation_id_returns_empty_not_everything(conn):
+    """annotation_id="" must not accidentally behave as a match-all --
+    for cog/kegg/enzyme it goes through _expand_to_leaf_ids (empty string
+    isn't a real leaf/category/pathway id, so it should expand to no
+    leaves); for taxonomy it hits the same substr(full_path, 1, 1) = ';'
+    prefix check as cache_sql.test_empty_lineage_prefix_returns_empty_list_
+    not_everything, and no real full_path starts with ';'."""
+    assert get_mappings_sql(conn, "kegg", "") == []
+    assert get_mappings_sql(conn, "cog", "") == []
+    assert get_mappings_sql(conn, "enzyme", "") == []
+    assert get_mappings_sql(conn, "taxonomy", "") == []
+
+
+def test_sql_metacharacters_in_annotation_id_are_treated_literally(conn):
+    """get_mappings_sql never uses LIKE -- cog/kegg/enzyme match via IN(...)
+    against expanded leaf ids and taxonomy via exact substr()-prefix
+    comparison, not pattern matching -- so SQL/LIKE metacharacters in
+    annotation_id (%, _, ', ;) must be treated as literal, inert
+    characters: no match (since no real id contains them), no wildcard
+    behavior, and no crash from the raw string being parameter-bound."""
+    for bad_id in ["%", "_", "COG%", "K_0001", "O'Brien", "x; DROP TABLE mappings;"]:
+        assert get_mappings_sql(conn, "cog", bad_id) == []
+        assert get_mappings_sql(conn, "kegg", bad_id) == []
+        assert get_mappings_sql(conn, "enzyme", bad_id) == []
+        assert get_mappings_sql(conn, "taxonomy", bad_id) == []
+
+
 @pytest.mark.slow
 def test_search_values_correct(conn):
     result = get_mappings_sql(conn, "cog", "COG0055")

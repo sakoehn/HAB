@@ -208,10 +208,20 @@ def test_category_and_scaffold_count_present_across_all_four_sources(conn):
         assert results[0]["scaffold_count"] is not None, f"{source}/{ann_id} has no scaffold_count"
 
 
+@pytest.mark.slow
 def test_broad_taxonomy_search_completes_quickly(conn):
     """Regression guard for the slow ORDER BY variant considered and
     rejected during W5 (minutes for the full taxonomy catalog vs ~8s
-    unordered) -- a realistic broad taxonomy search must stay fast."""
+    unordered) -- a realistic broad taxonomy search must stay fast.
+
+    Marked slow: this is a wall-clock threshold assertion (5s), not a
+    correctness check -- a loaded/throttled CI runner could legitimately
+    exceed it without the underlying query plan having regressed. Note
+    pytest.ini's `slow` marker is currently informational only (nothing
+    in this repo's config passes `-m "not slow"` by default), so this
+    mark doesn't yet skip the test automatically -- it's here so a
+    future CI split can select on it, and so a human reading a failure
+    here knows to suspect machine load before the query itself."""
     import time
     t0 = time.time()
     results = get_search_annotations(conn, sources=["taxonomy"], q="bacteria", annotation_id=None, name_exact=None)
@@ -258,6 +268,81 @@ def test_taxonomy_homonym_search_returns_both_distinct_lineages(conn):
     assert by_id[old_lineage]["name"] == by_id[new_lineage]["name"] == "Bosea"
     assert by_id[old_lineage]["parent"] != by_id[new_lineage]["parent"]
     assert by_id[old_lineage]["depth"] == by_id[new_lineage]["depth"] == 6
+
+
+def test_empty_string_q_matches_everything_not_nothing(conn):
+    """q="" is falsy in Python, so `if annotation_id: ... elif q: ... else:
+    pass` falls all the way to the no-clause branch -- an empty string
+    behaves exactly like q=None (matches every annotation for the given
+    sources), NOT like "search for nothing". This is real, current
+    behavior of get_search_annotations itself; the /search/annotations
+    route separately rejects q shorter than 3 chars before ever reaching
+    this function (see test_search_annotations_sql_route.py), so this
+    matters only to callers of the data-layer function directly."""
+    results_empty = get_search_annotations(conn, sources=["cog"], q="", annotation_id=None, name_exact=None)
+    results_none = get_search_annotations(conn, sources=["cog"], q=None, annotation_id=None, name_exact=None)
+    assert results_empty  # not []: an empty string must not match nothing
+    assert {(r["source"], r["annotation_id"]) for r in results_empty} == \
+           {(r["source"], r["annotation_id"]) for r in results_none}
+
+
+def test_search_is_case_insensitive(conn):
+    """SQLite's LIKE is case-insensitive for ASCII by default (verified
+    directly against an in-memory table before writing this test) -- a
+    mixed-case query must return the exact same rows as the lowercase
+    form already proven to work in test_all_sources_search."""
+    results_lower = get_search_annotations(
+        conn, sources=["cog", "kegg", "enzyme", "taxonomy"], q="synthase", annotation_id=None, name_exact=None,
+    )
+    results_upper = get_search_annotations(
+        conn, sources=["cog", "kegg", "enzyme", "taxonomy"], q="SYNTHASE", annotation_id=None, name_exact=None,
+    )
+    results_mixed = get_search_annotations(
+        conn, sources=["cog", "kegg", "enzyme", "taxonomy"], q="SynThAse", annotation_id=None, name_exact=None,
+    )
+    assert results_lower
+    key = lambda rows: {(r["source"], r["annotation_id"]) for r in rows}
+    assert key(results_lower) == key(results_upper) == key(results_mixed)
+
+
+def test_percent_and_underscore_in_query_act_as_sql_wildcards_not_literals(conn):
+    """KNOWN BEHAVIOR, not asserted as desirable: q is interpolated into a
+    LIKE pattern as f"%{q}%" with no escaping of LIKE's own metacharacters.
+    A literal '%' in the query becomes part of the pattern (not a literal
+    percent sign to search for), so q="%" produces the pattern "%%%",
+    which matches every row with a non-null name/annotation_id -- same
+    "matches everything" surprise as the empty-string case above, just
+    reached through a different input. A literal '_' similarly matches
+    any single character rather than a literal underscore (confirmed
+    directly: pattern "%K_0001%" matches "K10001" too, not just a real
+    "K_0001"). This test pins down the actual behavior so a future caller
+    can't be surprised twice, without claiming it's the right behavior."""
+    results_percent = get_search_annotations(conn, sources=["cog"], q="%", annotation_id=None, name_exact=None)
+    results_q_none = get_search_annotations(conn, sources=["cog"], q=None, annotation_id=None, name_exact=None)
+    assert results_percent
+    key = lambda rows: {(r["source"], r["annotation_id"]) for r in rows}
+    assert key(results_percent) == key(results_q_none)
+
+    # "COG0055" contains no literal underscore, but "%COG0_55%" (one
+    # wildcard character standing in for "0") still matches it.
+    results_wildcard_underscore = get_search_annotations(
+        conn, sources=["cog"], q="COG0_55", annotation_id=None, name_exact=None,
+    )
+    ann_ids = {r["annotation_id"] for r in results_wildcard_underscore}
+    assert "COG0055" in ann_ids
+
+
+def test_sql_metacharacters_in_query_are_safely_parameterized(conn):
+    """q is always bound as a query parameter (params.append(...)), never
+    string-concatenated into the SQL text -- a single quote, semicolon, or
+    SQL-comment sequence in q must not raise sqlite3.OperationalError or
+    otherwise break the query, and (since none of these appear in any
+    real annotation_id/name) must simply return no matches."""
+    for bad_q in ["O'Brien", "x'; DROP TABLE annotation_catalog; --", "a' OR '1'='1"]:
+        results = get_search_annotations(
+            conn, sources=["cog", "kegg", "enzyme", "taxonomy"], q=bad_q, annotation_id=None, name_exact=None,
+        )
+        assert results == []
 
 
 def test_no_match_returns_empty(conn):

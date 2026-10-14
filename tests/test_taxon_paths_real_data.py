@@ -36,14 +36,13 @@ Run:
     pytest tests/test_taxon_paths_real_data.py -v
 """
 
-import os
-from pathlib import Path
-
 import pytest
 
-# Matches the convention used in test_mappings_notebook_matches.py /
-# test_egc_json_vs_jgi.py / test_jgi_file_parsing.py.
-DATA_ROOT      = Path(os.environ.get("HAB_DATA_ROOT", r"C:\Users\sakoehn\Desktop\JGI"))
+# Same HAB_DATA_ROOT-overridable value conftest.py computes (defaults to
+# the repo root, not a hardcoded machine-specific path), matching the
+# convention used in test_mappings_notebook_matches.py / test_jgi_file_parsing.py.
+from conftest import DATA_ROOT
+
 METAGENOME_DIR = DATA_ROOT / "Metagenome_Samples"
 
 

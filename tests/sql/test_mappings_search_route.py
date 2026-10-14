@@ -166,8 +166,17 @@ def test_results_sorted_chronologically(client):
     assert is_ascending
 
 
+@pytest.mark.slow
 def test_small_sample_count_is_meaningfully_faster_than_the_full_dataset(client):
     """Locks in the actual fix, not just a vague speed bound.
+
+    Marked slow: both the relative comparison and the 2.0s absolute floor
+    are wall-clock assertions against a live HTTP round-trip, so a loaded
+    CI box could trip either one without the underlying query actually
+    regressing. (pytest.ini's `slow` marker is informational only in this
+    repo today -- see test_broad_taxonomy_search_completes_quickly in
+    test_search_annotations_sql.py for the same caveat -- but this is
+    where a future CI split would filter it out.)
 
     get_mappings_sql used to have no way to filter by sample at the SQL
     level: it always fetched and GROUP_CONCAT-ed every matching row for the

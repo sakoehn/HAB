@@ -79,16 +79,18 @@ Run:
                                                                             # this isn't a hang)
 """
 import csv
-import os
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
 import pytest
 
-# Real dataset root -- override via env var, matches the convention used
-# in test_egc_json_vs_jgi.py / test_jgi_file_parsing.py
-DATA_ROOT     = Path(os.environ.get("HAB_DATA_ROOT", r"C:\Users\sakoehn\Desktop\JGI"))
+# Real dataset root -- same HAB_DATA_ROOT-overridable value conftest.py
+# computes (defaults to the repo root, not a hardcoded machine-specific
+# path), so this file works on any checkout/CI box, not just the one it
+# was written on.
+from conftest import DATA_ROOT
+
 BASE_DS       = DATA_ROOT / "DataStructures"
 METAGENOME_DIR = DATA_ROOT / "Metagenome_Samples"
 

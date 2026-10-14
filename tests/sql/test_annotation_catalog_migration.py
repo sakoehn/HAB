@@ -144,28 +144,44 @@ def test_rebuild_still_produces_correct_catalog_rows(conn):
 
 def test_ids_can_be_renumbered_across_a_rebuild(conn):
     # The real CR11 trigger: with no AUTOINCREMENT, a DELETE+reinsert can
-    # hand out a previously-used id to a DIFFERENT annotation. This doesn't
-    # assert any particular renumbering (SQLite's rowid reuse order isn't a
-    # contract this test should pin down), just that the scenario the cache
-    # wipe protects against is real: ids are not guaranteed stable.
+    # hand out a previously-used id to a DIFFERENT annotation. We don't pin
+    # down *which* annotation gets which id (SQLite's GROUP BY emission
+    # order isn't a contract this test should assert on), but the id *set*
+    # a full DELETE+reinsert produces IS deterministic: with no
+    # AUTOINCREMENT, SQLite always restarts rowid assignment at 1 once a
+    # table is completely empty, regardless of row order. So two rebuilds
+    # that each populate exactly 2 rows must both land on ids {1, 2} --
+    # even though the second rebuild's row set (K00000, K00002) has
+    # nothing but K00002 in common with the first's (K00001, K00002).
     insert_series(conn, "kegg", "K00001", "s1")
     insert_series(conn, "kegg", "K00002", "s1")
     populate_annotation_catalog(conn)
+    first_ids = {
+        row[0] for row in conn.execute("SELECT id FROM annotation_catalog")
+    }
     first_id_k1 = conn.execute(
         "SELECT id FROM annotation_catalog WHERE annotation_id = 'K00001'"
     ).fetchone()[0]
+    assert first_ids == {1, 2}
 
-    # Simulate a dataset change that drops K00001 and adds a new annotation
-    # before K00002 alphabetically/by GROUP BY order -- a realistic case
-    # where the old K00001 id could be reassigned to something else.
+    # Simulate a dataset change that drops K00001 and adds a new annotation.
     conn.execute("DELETE FROM annotation_series WHERE annotation_id = 'K00001'")
     insert_series(conn, "kegg", "K00000", "s1")
     populate_annotation_catalog(conn)
 
+    second_ids = {
+        row[0] for row in conn.execute("SELECT id FROM annotation_catalog")
+    }
     new_id_k0 = conn.execute(
         "SELECT id FROM annotation_catalog WHERE annotation_id = 'K00000'"
     ).fetchone()[0]
-    # Not a strict requirement that they collide every time -- but confirms
-    # ids are freshly assigned each rebuild, not preserved per-annotation,
-    # which is the real precondition for CR11's stale-cache scenario.
-    assert isinstance(first_id_k1, int) and isinstance(new_id_k0, int)
+    # Same id set reused for an entirely different pair of annotations --
+    # this IS the CR11 precondition: whichever annotation now holds
+    # first_id_k1 is guaranteed not to be K00001 (it no longer exists), so
+    # a stale correlations_cache row keyed on first_id_k1 would silently
+    # be served against the wrong annotation if the cache weren't wiped.
+    assert second_ids == {1, 2}
+    assert conn.execute(
+        "SELECT annotation_id FROM annotation_catalog WHERE id = ?", (first_id_k1,)
+    ).fetchone()[0] != "K00001"
+    assert isinstance(new_id_k0, int)
