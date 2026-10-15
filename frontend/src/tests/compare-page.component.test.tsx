@@ -35,8 +35,8 @@
  *   checkbox present on each result row
  *   checking a row enables "Add N selected" button
  *   unchecking a row hides "Add N selected" button
- *   "Select all visible" checkbox present
- *   checking "Select all visible" checks all rows
+ *   "Select top N" (open slots) checkbox present
+ *   checking "Select top N" checks the top N eligible rows
  *   "Add N selected" button shows correct count
  *
  * ComparePage — 4-entry cap:
@@ -354,7 +354,8 @@ describe('ComparePage — search', () => {
   it('result count badge shows correct number', async () => {
     await doSearch()
     await waitFor(() => {
-      expect(screen.getByText(/2 results/i)).toBeInTheDocument()
+      expect(screen.getByText(/2 matches/i)).toBeInTheDocument()
+      expect(screen.getByText(/showing 2/i)).toBeInTheDocument()
     })
   })
 
@@ -386,9 +387,9 @@ describe('ComparePage — bulk-select', () => {
     expect(checkboxes.length).toBeGreaterThanOrEqual(3)
   })
 
-  it('"Select all visible" checkbox present', async () => {
+  it('"Select top N" checkbox present (N = open slots)', async () => {
     await searchAndWait()
-    expect(screen.getByLabelText(/select all visible/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/select top 4/i)).toBeInTheDocument()
   })
 
   it('checking a row enables "Add N selected" button', async () => {
@@ -421,9 +422,9 @@ describe('ComparePage — bulk-select', () => {
     })
   })
 
-  it('"Select all visible" checks all eligible rows', async () => {
+  it('"Select top N" checks the top N eligible rows', async () => {
     await searchAndWait()
-    const selectAll = screen.getByLabelText(/select all visible/i)
+    const selectAll = screen.getByLabelText(/select top 4/i)
     await userEvent.click(selectAll)
     await waitFor(() => {
       // With 2 results and 4 slots, both should be selectable
@@ -858,7 +859,8 @@ describe('ComparePage — deduplication', () => {
     })
     // Only 1 result badge should show
     await waitFor(() => {
-      expect(screen.getByText(/1 results?/i)).toBeInTheDocument()
+      // deduped rows actually shown (the mocked backend total still says 2)
+      expect(screen.getByText(/showing 1\b/i)).toBeInTheDocument()
     })
   })
 
@@ -877,7 +879,7 @@ describe('ComparePage — deduplication', () => {
     await userEvent.click(screen.getByRole('button', { name: /find/i }))
 
     await waitFor(() => {
-      expect(screen.getByText(/2 results?/i)).toBeInTheDocument()
+      expect(screen.getByText(/showing 2\b/i)).toBeInTheDocument()
     })
   })
 
@@ -891,7 +893,7 @@ describe('ComparePage — deduplication', () => {
     const input = await screen.findByPlaceholderText(/search annotation id or name/i)
     await userEvent.type(input, 'K02014')
     await userEvent.click(screen.getByRole('button', { name: /find/i }))
-    await waitFor(() => expect(screen.getByText(/2 results?/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/showing 2\b/i)).toBeInTheDocument())
 
     const checkboxes = screen.getAllByRole('checkbox').filter(cb => cb.closest('label') === null)
     await userEvent.click(checkboxes[0])
@@ -1057,5 +1059,93 @@ describe('ComparePage — group entry from Analyze handoff', () => {
       expect(screen.queryByTestId('compare-entry-failed')).toBeNull()
     })
     expect(screen.getByText('2 annotations summed')).toBeInTheDocument()
+  })
+})
+// ─────────────────────────────────────────────────────────────────────────────
+// ComparePage — full results list + per-entry mean (UI round 2026-10-14)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ComparePage — full results list', () => {
+  const MANY = Array.from({ length: 15 }, (_, i) => ({
+    ...SEARCH_RESULT_1,
+    annotation_id: `K9${String(i).padStart(4, '0')}`,
+    name:          `Result number ${i}`,
+    mean_egc:      1000 - i,
+  }))
+
+  async function searchMany(total = 6117) {
+    setupMocks({ searchData: { data: MANY, total } })
+    render(<ManagedComparePage />)
+    const input = await screen.findByPlaceholderText(/search annotation id or name/i)
+    await userEvent.type(input, 'protein')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+    await waitFor(() => screen.getByText('Result number 0'))
+  }
+
+  it('renders every loaded result, not just the first 12', async () => {
+    await searchMany()
+    expect(screen.getByText('Result number 14')).toBeInTheDocument()
+  })
+
+  it("header shows the backend's real total, not just how many were loaded", async () => {
+    await searchMany(6117)
+    expect(screen.getByText(/6,117 matches/)).toBeInTheDocument()
+    expect(screen.getByText(/showing 15/i)).toBeInTheDocument()
+  })
+
+  it('requests the same page_size as Analyze (5000)', async () => {
+    await searchMany()
+    const url = mockFetch.mock.calls.map(c => c[0] as string).find(u => u.includes('/api/search/annotations'))!
+    expect(url).toContain('page_size=5000')
+  })
+
+  it('select-all control is labelled by what it really selects (top N open slots)', async () => {
+    await searchMany()
+    expect(screen.getByText(/select top 4/i)).toBeInTheDocument()
+    expect(screen.queryByText(/select all visible/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('ComparePage — per-entry mean on selected annotations', () => {
+  const RISING_SERIES = {
+    data: Array.from({ length: 5 }, (_, i) => ({
+      annotation_id: 'K02014',
+      source:        'kegg',
+      name:          'TonB-dep receptor',
+      sample:        `s${i}`,
+      timepoint: { taxon_oid: `s${i}`, timepoint: String(i), datetime: `2021-05-${String(i + 1).padStart(2, '0')}T08:00:00` },
+      value:     { egc: 1000 + i * 100, norm_egc: 0.0001 * (i + 1) },
+    })),
+  }
+
+  async function addOne(initialState?: Partial<CompareState>) {
+    setupMocks({ seriesData: RISING_SERIES })
+    render(<ManagedComparePage initialState={initialState} />)
+    const input = await screen.findByPlaceholderText(/search annotation id or name/i)
+    await userEvent.type(input, 'K02014')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+    await waitFor(() => screen.getByText('TonB-dep receptor'))
+    await userEvent.click(screen.getAllByRole('checkbox').slice(1)[0])
+    await userEvent.click(screen.getByText(/add 1 selected/i))
+    return await screen.findByTestId('compare-entry-mean')
+  }
+
+  it('shows mean relative abundance by default, same format as Analyze', async () => {
+    const mean = await addOne()
+    // norm_egc 0.0001..0.0005 -> mean 0.0003 -> "0.0300%"
+    expect(mean).toHaveTextContent('mean rel. abundance 0.0300%')
+  })
+
+  it("switches to mean EGC when the chart's metric is switched to raw EGC", async () => {
+    const mean = await addOne()
+    await userEvent.click(screen.getByTitle('Raw EGC values'))
+    // egc 1000..1400 -> mean 1200
+    await waitFor(() => expect(mean).toHaveTextContent('mean EGC 1.20e+3'))
+  })
+
+  it('only counts samples inside the active date filter', async () => {
+    const mean = await addOne({ dateFrom: '2021-05-04' })
+    // days 4-5 only: norm_egc 0.0004, 0.0005 -> 0.00045 -> "0.0450%"
+    expect(mean).toHaveTextContent('mean rel. abundance 0.0450%')
   })
 })

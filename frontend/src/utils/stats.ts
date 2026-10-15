@@ -2,8 +2,8 @@
 // Pure functions for descriptive statistics and EGC value extraction.
 // No React imports — all functions are fully testable in Node.
 
-import type { DescStats, AnnotationItem, TopAnnotation } from '../types'
-import { parseDateTime } from './format'
+import type { DescStats, AnnotationItem, TopAnnotation, ChartMetric } from '../types'
+import { parseDateTime, isoDate } from './format'
 import { taxonomyRankLabel } from '../constants'
 
 // ── EGC value extraction ───────────────────────────────────────────────────
@@ -85,6 +85,34 @@ export function depthLabel(depth: number, source: string, category?: string | nu
   if (source === 'enzyme')   return ({ 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' } as Record<number, string>)[depth] ?? String(depth)
   if (source === 'taxonomy') return taxonomyRankLabel(depth, category)
   return String(depth)
+}
+
+// ── seriesMeanInRange ──────────────────────────────────────────────────────
+// Mean of one series' active metric over the points inside an optional
+// date window -- the Compare page's per-entry chip mean. Same extraction as
+// Analyze's card-header mean (extractEgc / extractNormEgc) and the same
+// inclusive window rule MultiEgcChart filters its own points by (isoDate of
+// timepoint.datetime vs dateFrom/dateTo, '' = unbounded), so the number
+// always describes exactly what the chart is drawing. Points with no value
+// for the metric are skipped (not counted as zero). null if none remain.
+
+export function seriesMeanInRange(
+  data:     { timepoint?: { datetime?: string } | null; value: unknown }[],
+  metric:   ChartMetric,
+  dateFrom: string,
+  dateTo:   string,
+): { mean: number; n: number } | null {
+  const extract = metric === 'norm_egc' ? extractNormEgc : extractEgc
+  const vals: number[] = []
+  for (const d of data) {
+    const iso = isoDate(d.timepoint?.datetime ?? '')
+    if (dateFrom && iso < dateFrom) continue
+    if (dateTo   && iso > dateTo)   continue
+    const v = extract(d.value)
+    if (v !== null) vals.push(v)
+  }
+  if (!vals.length) return null
+  return { mean: vals.reduce((a, b) => a + b, 0) / vals.length, n: vals.length }
 }
 
 // ── computeStats ───────────────────────────────────────────────────────────

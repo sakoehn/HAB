@@ -1,7 +1,7 @@
 // @ts-expect-error plotly.js-dist-min ships no .d.ts; types from @types/plotly.js
 import PlotlyBase from 'plotly.js-dist-min'
 import createPlotlyComponent from 'react-plotly.js/factory'
-import { useState, useRef, useMemo } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
@@ -98,6 +98,7 @@ export function MultiEgcChart({
   onGoScaffoldExplore,
   title,
   defaultStandardize = false,
+  onMetricChange,
 }: {
   series:               SeriesEntry[]
   dateFrom:             string
@@ -108,8 +109,12 @@ export function MultiEgcChart({
   // Initial Z-score state only; the user can still toggle it. Compare turns it
   // on because its whole purpose is cross-series trend comparison.
   defaultStandardize?:  boolean
+  // Reports the active metric (initially and on every toggle) so a parent
+  // can label its own numbers to match -- Compare's per-entry chip mean.
+  onMetricChange?:      (metric: ChartMetric) => void
 }) {
   const [metric, setMetric]                   = useState<ChartMetric>('norm_egc')
+  useEffect(() => { onMetricChange?.(metric) }, [metric, onMetricChange])
   const [standardize, setStandardize]         = useState(defaultStandardize)
   const [smoothed, setSmoothed]               = useState(false)
   const [smoothBandwidth, setSmoothBandwidth] = useState(0.3) // W27: within the real [0.1, 0.8] slider range

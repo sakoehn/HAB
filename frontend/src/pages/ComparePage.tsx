@@ -21,12 +21,14 @@ import React, { useState, useEffect } from 'react'
 
 import type {
   CompareEntry, CompareEntryMember,
-  AnnotationItem, ApiStatus, SharedAnnotation,
+  AnnotationItem, ApiStatus, SharedAnnotation, ChartMetric,
 } from '../types'
 import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel } from '../constants'
 import { nextColorForSource, resetSourceCounters } from '../constants'
 import { apiFetch } from '../utils/api'
-import { sumMembersByTimestamp } from '../utils/stats'
+import { sumMembersByTimestamp, seriesMeanInRange } from '../utils/stats'
+import { formatRelativeAbundancePercent, isoDate } from '../utils/format'
+import { useAllSamples } from '../utils/useAllSamples'
 import { useCopyId } from '../hooks/useCopyId'
 import { CopyBtn, ResetBtn } from '../components/ui/controls'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
@@ -301,6 +303,14 @@ export function ComparePage({
 
   // ── Bulk-select state ──────────────────────────────────────────────────
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set())
+  // Backend's real match count for the last search -- can exceed how many
+  // rows were loaded (page_size cap), so the header can say so.
+  const [searchTotal, setSearchTotal] = useState<number | null>(null)
+  // The overlay chart's active metric (reported via onMetricChange), so each
+  // entry chip's mean is labelled and computed in the same metric -- same
+  // behavior as Analyze's card-header mean (E4).
+  const [chartMetric, setChartMetric] = useState<ChartMetric>('norm_egc')
+  const { allSamples } = useAllSamples()
 
   async function searchForAdd() {
     const q = state.query.trim()
@@ -308,8 +318,10 @@ export function ComparePage({
     setState(prev => ({ ...prev, searchStatus: 'loading' }))
     setBulkSelected(new Set())
     try {
-      const json = await apiFetch<{ data: AnnotationItem[] }>(
-        `/api/search/annotations?q=${encodeURIComponent(q)}&sources=kegg&sources=cog&sources=enzyme&sources=taxonomy&page_size=500`,
+      // page_size=5000 matches Analyze's search (and /search/annotations'
+      // own le=5000 cap); every loaded row is shown in the scrollable list.
+      const json = await apiFetch<{ data: AnnotationItem[]; total?: number }>(
+        `/api/search/annotations?q=${encodeURIComponent(q)}&sources=kegg&sources=cog&sources=enzyme&sources=taxonomy&page_size=5000`,
       )
       const seen   = new Set<string>()
       const unique = (json.data ?? []).filter(r => {
@@ -318,6 +330,7 @@ export function ComparePage({
         seen.add(key)
         return true
       })
+      setSearchTotal(json.total ?? unique.length)
       setState(prev => ({ ...prev, searchResults: unique, searchStatus: 'ok' }))
     } catch {
       setState(prev => ({ ...prev, searchStatus: 'error' }))
@@ -585,11 +598,17 @@ export function ComparePage({
                         setBulkSelected(new Set(allSelected ? [] : allSlice))
                       }}
                     />
-                    Select all visible
+                    Select top {slotsRemaining}
                   </label>
                   <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
-                    {state.searchResults.length} results ·{' '}
-                    {slotsRemaining} slot{slotsRemaining !== 1 ? 's' : ''} available
+                    {(searchTotal ?? state.searchResults.length).toLocaleString()} matches ·
+                    showing {state.searchResults.length.toLocaleString()}
+                    {(searchTotal ?? 0) > state.searchResults.length && (
+                      <span style={{ color: 'var(--amber)' }}>
+                        {' '}(highest mean EGC first — refine search to narrow)
+                      </span>
+                    )}
+                    {' · '}{slotsRemaining} slot{slotsRemaining !== 1 ? 's' : ''} available
                   </span>
                   {bulkSelected.size > 0 ? (
                     <button
@@ -610,8 +629,11 @@ export function ComparePage({
                   )}
                 </div>
 
-                {/* Result rows */}
-                {state.searchResults.slice(0, 12).map((r, i) => {
+                {/* Result rows -- every loaded row, in a box that scrolls
+                    past ~12 rows (used to hard-cut at 12 with no way to
+                    see the rest). */}
+                <div data-testid="compare-results-scroll" style={{ maxHeight: 500, overflowY: 'auto' }}>
+                {state.searchResults.map((r, i) => {
                   const alreadyAdded = state.entries.some(
                     e => e.annotationId === r.annotation_id && e.source === r.source,
                   )
@@ -628,7 +650,7 @@ export function ComparePage({
                         padding:      '10px 16px',
                         cursor:       canAdd ? 'pointer' : 'default',
                         opacity:      alreadyAdded ? 0.45 : 1,
-                        borderBottom: i < Math.min(12, state.searchResults.length) - 1
+                        borderBottom: i < state.searchResults.length - 1
                           ? '1px solid var(--border)'
                           : 'none',
                         background:   isChecked ? 'var(--teal-dim)' : 'transparent',
@@ -691,6 +713,7 @@ export function ComparePage({
                     </div>
                   )
                 })}
+                </div>
               </div>
             </div>
           )}
@@ -758,6 +781,27 @@ export function ComparePage({
                         {e.source}
                       </span>
                     )}
+                    {e.status === 'ok' && (() => {
+                      // Same label/format as Analyze's card-header mean,
+                      // limited to the active date filter like the chart.
+                      const stats = seriesMeanInRange(e.data, chartMetric, state.dateFrom, state.dateTo)
+                      if (!stats) return null
+                      const inRange = allSamples?.filter(s => {
+                        const iso = isoDate(s.datetime)
+                        return !(state.dateFrom && iso < state.dateFrom) && !(state.dateTo && iso > state.dateTo)
+                      }).length
+                      return (
+                        <span
+                          data-testid="compare-entry-mean"
+                          style={{ font: '600 11px var(--mono)', color: 'var(--text-dim)' }}
+                        >
+                          {chartMetric === 'norm_egc'
+                            ? `mean rel. abundance ${formatRelativeAbundancePercent(stats.mean)}`
+                            : `mean EGC ${stats.mean.toExponential(2)}`}
+                          {' · '}{stats.n}{inRange ? ` / ${inRange}` : ''} samples
+                        </span>
+                      )
+                    })()}
                     {e.status === 'loading' && (
                       <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>…</span>
                     )}
@@ -964,6 +1008,7 @@ export function ComparePage({
                     dataDateRange={dataDateRange}
                     onGoScaffoldExplore={onGoScaffoldExplore}
                     defaultStandardize
+                    onMetricChange={setChartMetric}
                   />
                 </ChartErrorBoundary>
               </>
