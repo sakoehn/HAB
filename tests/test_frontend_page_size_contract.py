@@ -63,7 +63,11 @@ def _frontend_page_size_requests() -> list[tuple[str, int, str, int]]:
         }
         for m in PAGE_SIZE_RE.finditer(text):
             line = text.count("\n", 0, m.start()) + 1
-            routes = API_PATH_RE.findall(text[max(0, m.start() - LOOKBACK_CHARS):m.start()])
+            # Skip mentions inside a // comment -- not a real request.
+            line_start = text.rfind("\n", 0, m.start()) + 1
+            if "//" in text[line_start:m.start()]:
+                continue
+            routes =API_PATH_RE.findall(text[max(0, m.start() - LOOKBACK_CHARS):m.start()])
             assert routes, f"{path.name}:{line}: page_size= with no /api/<route> before it"
             if m.group(2):
                 assert m.group(2) in consts, (
