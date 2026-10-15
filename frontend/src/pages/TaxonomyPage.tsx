@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { AnnotationItem, ApiStatus, SeriesCache } from '../types'
 import { apiFetch, downloadCsv } from '../utils/api'
-import { computeExclusionSeries, computeChartTitle, bareTaxonName, taxonomyDomainFromId } from '../utils/taxonomy'
+import { computeExclusionSeries, computeInclusionSeries, filterRedundantExclusions, computeChartTitle, bareTaxonName, taxonomyDomainFromId } from '../utils/taxonomy'
 import { TAXONOMY_RANK_NAMES, taxonomyRankLabel } from '../constants'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
 import { ChartErrorBoundary } from '../components/ui/ChartErrorBoundary'
@@ -39,7 +39,10 @@ export type TaxonomyState = {
   rootQuery:         string
   rootSearchResults: AnnotationItem[]
   rootSearchStatus:  ApiStatus
+  // The checked branches. Read as "remove these from the scope" or "keep only
+  // these" depending on selectionMode -- switching modes keeps the same set.
   excludedIds:       Set<string>
+  selectionMode:     'remove' | 'keep'
   seriesCache:       SeriesCache
   dateFrom:          string
   dateTo:            string
@@ -52,6 +55,7 @@ export function makeDefaultTaxonomyState(): TaxonomyState {
     rootSearchResults: [],
     rootSearchStatus:  'idle',
     excludedIds:       new Set(),
+    selectionMode:     'remove',
     seriesCache:       {},
     dateFrom:          '',
     dateTo:            '',
@@ -231,6 +235,24 @@ export function TaxonomyPage({
     if (excludedLoaded.length === 0) return [full] // every exclusion failed
 
     const excludedSeriesArrays = excludedLoaded.map(id => cache[`${id}::taxonomy`]?.data ?? [])
+
+    if (state.selectionMode === 'keep') {
+      // Only the checked branches, summed (computeInclusionSeries) -- the
+      // complement of the minus line below for the same checked set.
+      const keptNames = filterRedundantExclusions(excludedLoaded).map(bareTaxonName)
+      const keepLabel = keptNames.length <= 3
+        ? keptNames.join(' + ')
+        : `${keptNames.length} kept branches of ${rootName}`
+      return [full, {
+        id:           `${state.rootId}__keep`,
+        annotationId: `${state.rootId}__keep`,
+        name:         keepLabel,
+        data:         computeInclusionSeries(rootData, excludedLoaded, excludedSeriesArrays, `${state.rootId}__keep`, null),
+        color:        '#D55E00',
+        source:       'taxonomy',
+        scaffoldsDisabled: true,
+      }]
+    }
     // annotationId just needs to be distinct from the root's own (see
     // computeExclusionSeries' doc comment) — MultiEgcChart's legend shows
     // .name, not annotationId, for taxonomy series, so this doesn't need to
@@ -247,7 +269,7 @@ export function TaxonomyPage({
     }
     return [full, minus]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.rootId, rootStatus, rootData, excludedLoaded.join(','), excludedPending.length])
+  }, [state.rootId, state.selectionMode, rootStatus, rootData, excludedLoaded.join(','), excludedPending.length])
 
   return (
     <div className="page-fade">
@@ -255,7 +277,7 @@ export function TaxonomyPage({
         <div className="page-header-left">
           <h1>Taxonomy Explorer</h1>
           <p className="subtitle">
-            Pick a taxon, then exclude branches to see the total without them
+            Pick a taxon, then remove branches from its total or keep only the ones you check
           </p>
         </div>
         <div className="page-header-actions">
@@ -410,14 +432,30 @@ export function TaxonomyPage({
               maxHeight:    520,
               overflowY:    'auto',
             }}>
+              <div role="radiogroup" aria-label="What checked branches do" style={{ display: 'flex', gap: 12, marginBottom: 8, font: '12px var(--mono)' }}>
+                {([['remove', 'Remove checked'], ['keep', 'Keep only checked']] as const).map(([mode, label]) => (
+                  <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="taxonomy-selection-mode"
+                      checked={state.selectionMode === mode}
+                      onChange={() => setState(prev => ({ ...prev, selectionMode: mode }))}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
               <h2 style={{ fontSize: 14, marginBottom: 8 }}>
-                Exclude branches
-                <HelpTooltip text="Checking a taxon subtracts it (and everything below it) from the total. You can't drill further into an already-excluded branch." />
+                {state.selectionMode === 'keep' ? 'Keep branches' : 'Remove branches'}
+                <HelpTooltip text={state.selectionMode === 'keep'
+                  ? "The second line is the sum of only the checked taxa (each with everything below it). Switching back to Remove keeps the same checks. You can't drill further into an already-checked branch, so nothing is counted twice."
+                  : "Checking a taxon subtracts it (and everything below it) from the total. Switch to Keep only to see just the checked taxa instead -- your checks are kept. You can't drill further into an already-checked branch."} />
               </h2>
               <TaxonomyTree
                 rootId={state.rootId}
                 excludedIds={state.excludedIds}
                 onToggleExclude={toggleExclude}
+                mode={state.selectionMode}
               />
             </div>
 
@@ -493,7 +531,7 @@ export function TaxonomyPage({
                       dateFrom={state.dateFrom}
                       dateTo={state.dateTo}
                       dataDateRange={dataDateRange}
-                      title={computeChartTitle(state.rootId, excludedLoaded)}
+                      title={computeChartTitle(state.rootId, excludedLoaded, state.selectionMode)}
                       onGoScaffoldExplore={onGoScaffoldExplore}
                     />
                   </ChartErrorBoundary>

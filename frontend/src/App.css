@@ -2230,6 +2230,20 @@ select.field { cursor: pointer; }
   background:   #e05a5a;
   border-color: #e05a5a;
 }
+/* Taxonomy page "Keep only checked" mode: a checked branch is kept, not
+   removed -- teal instead of red, and its name is not struck through. */
+.tax-node-checkbox-keep:hover {
+  border-color: rgba(61,217,184,.5);
+  background:   rgba(61,217,184,.07);
+}
+.tax-node-checkbox-keep.tax-node-checkbox-checked {
+  background:   var(--teal);
+  border-color: var(--teal);
+}
+.tax-node-kept .tax-node-name {
+  color:       var(--teal);
+  font-weight: 600;
+}
 .tax-node-checkbox-tick {
   font-size:   10px;
   line-height: 1;

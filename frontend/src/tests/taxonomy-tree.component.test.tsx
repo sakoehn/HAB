@@ -193,3 +193,27 @@ describe('TaxonomyTree — exclusion', () => {
     expect(screen.getByTitle('Exclude this taxon (and everything under it) from the total')).not.toBeDisabled()
   })
 })
+
+// UI round 2026-10-14: in "Keep only checked" mode a checked branch is kept,
+// not removed -- it must not look struck-through/red like an exclusion.
+describe('TaxonomyTree — keep-mode styling', () => {
+  const CHILD = { annotation_id: 'Proteobacteria', name: 'Proteobacteria', depth: 2, category: 'Bacteria' }
+
+  it('remove mode (default): a checked branch reads as excluded', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ data: [CHILD] }))
+    render(<TaxonomyTree rootId="Bacteria" excludedIds={new Set(['Proteobacteria'])} onToggleExclude={vi.fn()} />)
+    const row = (await screen.findByText('Proteobacteria')).closest('.tax-node-row')!
+    expect(row.className).toContain('tax-node-excluded')
+  })
+
+  it('keep mode: a checked branch reads as kept, with keep wording', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ data: [CHILD] }))
+    render(<TaxonomyTree rootId="Bacteria" excludedIds={new Set(['Proteobacteria'])} onToggleExclude={vi.fn()} mode="keep" />)
+    const row = (await screen.findByText('Proteobacteria')).closest('.tax-node-row')!
+    expect(row.className).not.toContain('tax-node-excluded')
+    expect(row.className).toContain('tax-node-kept')
+    const box = row.querySelector('.tax-node-checkbox')!
+    expect(box.className).toContain('tax-node-checkbox-keep')
+    expect(box.getAttribute('title')).toMatch(/stop keeping/i)
+  })
+})

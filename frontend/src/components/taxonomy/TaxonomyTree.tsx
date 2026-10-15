@@ -33,10 +33,14 @@ export function TaxonomyTree({
   rootId,
   excludedIds,
   onToggleExclude,
+  mode = 'remove',
 }: {
   rootId:          string
   excludedIds:     Set<string>
   onToggleExclude: (annotationId: string) => void
+  // What a checked branch means on the Taxonomy page: removed from the
+  // total (struck through, red) or kept (teal, not struck through).
+  mode?:           'remove' | 'keep'
 }) {
   const { nodes, status, toggleExpand } = useTaxonomyTree(rootId)
 
@@ -67,6 +71,7 @@ export function TaxonomyTree({
           node={node}
           excludedIds={excludedIds}
           onToggleExclude={onToggleExclude}
+          mode={mode}
           onToggleExpand={node => toggleExpand(node, canExpand)}
         />
       ))}
@@ -79,26 +84,29 @@ function TaxonomyNodeRow({
   excludedIds,
   onToggleExclude,
   onToggleExpand,
+  mode,
 }: {
   node:            TaxonomyTreeNode
   excludedIds:     Set<string>
   onToggleExclude: (annotationId: string) => void
   onToggleExpand:  (node: TaxonomyTreeNode) => void
+  mode:            'remove' | 'keep'
 }) {
+  const keep = mode === 'keep'
   const isExcluded = excludedIds.has(node.annotationId)
   const isCovered  = !isExcluded && isCoveredByAnotherExclusion(node.annotationId, excludedIds)
   const rank       = taxonomyRankLabel(node.depth, node.category)
 
   return (
     <div className="tax-node">
-      <div className={`tax-node-row ${isExcluded ? 'tax-node-excluded' : ''}`}>
+      <div className={`tax-node-row ${isExcluded ? (keep ? 'tax-node-kept' : 'tax-node-excluded') : ''}`}>
         <button
           className="tax-node-chevron"
           onClick={() => onToggleExpand(node)}
           disabled={isExcluded || node.loadStatus === 'loading'}
           title={
             isExcluded
-              ? 'Cannot drill into an excluded taxon'
+              ? `Cannot drill into ${keep ? 'an already-kept' : 'an excluded'} taxon`
               : node.loadStatus === 'error'
                 ? 'Failed to load children — click to retry'
                 : node.expanded ? 'Collapse' : 'Expand'
@@ -118,15 +126,21 @@ function TaxonomyNodeRow({
         )}
 
         <button
-          className={`tax-node-checkbox ${isExcluded ? 'tax-node-checkbox-checked' : ''}`}
+          className={`tax-node-checkbox ${isExcluded ? 'tax-node-checkbox-checked' : ''} ${keep ? 'tax-node-checkbox-keep' : ''}`}
           onClick={() => onToggleExclude(node.annotationId)}
           disabled={isCovered}
           title={
-            isCovered
-              ? 'Already excluded via an ancestor taxon -- excluding it separately would subtract it twice'
-              : isExcluded
-                ? 'Include this taxon again'
-                : 'Exclude this taxon (and everything under it) from the total'
+            keep
+              ? isCovered
+                ? 'Already kept via an ancestor taxon -- keeping it separately would count it twice'
+                : isExcluded
+                  ? 'Stop keeping this taxon'
+                  : 'Keep this taxon (and everything under it) in the total'
+              : isCovered
+                ? 'Already excluded via an ancestor taxon -- excluding it separately would subtract it twice'
+                : isExcluded
+                  ? 'Include this taxon again'
+                  : 'Exclude this taxon (and everything under it) from the total'
           }
           aria-pressed={isExcluded}
         >
@@ -145,6 +159,7 @@ function TaxonomyNodeRow({
               node={child}
               excludedIds={excludedIds}
               onToggleExclude={onToggleExclude}
+              mode={mode}
               onToggleExpand={onToggleExpand}
             />
           ))}

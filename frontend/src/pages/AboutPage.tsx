@@ -262,13 +262,14 @@ export function AboutPage() {
               Pick a scope taxon — search by name, or use{' '}
               <strong>or browse</strong> to drill down from the 4 domains
               (Bacteria, Archaea, Eukaryota, Viruses) to any level. Then check
-              boxes in the <strong>Exclude branches</strong> tree to remove
-              specific phyla, classes, or any other descendant from the
-              total — the chart overlays the full scope against the total
-              with your exclusions removed, so you can see how much a branch
-              is contributing over time. Exclude as many branches as you
-              like and re-check a box to add one back in; changing scope
-              clears exclusions since they no longer apply.
+              boxes in the branch tree: in <strong>Remove checked</strong> mode
+              the chart overlays the full scope against the total with those
+              branches removed; switch to <strong>Keep only checked</strong> to
+              see just the checked branches summed instead (your checks carry
+              over). Either way you can see how much a branch is contributing
+              over time. Check as many branches as you
+              like and un-check a box to undo it; changing scope
+              clears your checks since they no longer apply.
             </p>
             <p style={{ marginTop: 12 }}>
               <strong style={{ color: 'var(--text-dim)' }}>

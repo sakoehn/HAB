@@ -1417,10 +1417,9 @@ describe('TaxonomyPage — help tooltips', () => {
     await userEvent.click(within(searchBar).getByText('Find'))
     const scopeResult = await screen.findByText('Bacteria', { selector: 'span' })
     await userEvent.click(scopeResult)
-    // Scoped to h2 — the About page's own copy (always mounted) also mentions
-    // "Exclude branches" as plain text inside a <strong>, not an <h2>.
+    // Scoped to h2 -- the branch tree's heading (default Remove mode).
     await waitFor(() => {
-      expect(screen.getByText('Exclude branches', { selector: 'h2' })).toBeInTheDocument()
+      expect(screen.getByText('Remove branches', { selector: 'h2' })).toBeInTheDocument()
     })
     // Two tooltips now present: scope-change and exclude-branches
     const helpBtns = screen.getAllByTitle('Help')

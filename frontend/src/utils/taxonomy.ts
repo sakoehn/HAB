@@ -115,6 +115,66 @@ export function computeExclusionSeries(
   return out
 }
 
+// computeInclusionSeries
+// The Taxonomy page's "Keep only checked" line: per sample, the sum of only
+// the checked branches -- the complement of computeExclusionSeries' "minus
+// checked" line for the same checked set (the two add back up to the scope's
+// full total). Same rules as the exclusion line: built on the scope's own
+// sample axis (a sample where the scope has no value is dropped), a branch
+// absent from a sample contributes 0, and a checked branch nested under
+// another checked branch is skipped so nothing is counted twice.
+
+export function computeInclusionSeries(
+  rootSeries: AnnotationItem[],
+  keptIds: string[],
+  keptSeries: AnnotationItem[][],
+  outputAnnotationId: string,
+  outputName: string | null,
+): AnnotationItem[] {
+  const effective = keptIds
+    .map((id, i) => ({ id, series: keptSeries[i] }))
+    .filter(({ id }) => !isCoveredByAnotherExclusion(id, keptIds))
+    .map(({ series }) => series)
+
+  const egcBySample = effective.map(series => {
+    const m = new Map<string, number>()
+    for (const item of series) {
+      const egc = extractEgc(item.value)
+      if (egc != null) m.set(item.sample, egc)
+    }
+    return m
+  })
+  const normBySample = effective.map(series => {
+    const m = new Map<string, number>()
+    for (const item of series) {
+      const norm = extractNormEgc(item.value)
+      if (norm != null) m.set(item.sample, norm)
+    }
+    return m
+  })
+
+  const out: AnnotationItem[] = []
+  for (const rootItem of rootSeries) {
+    if (extractEgc(rootItem.value) == null) continue
+    const rootNorm = extractNormEgc(rootItem.value)
+    let egc  = 0
+    let norm = 0
+    for (let i = 0; i < effective.length; i++) {
+      egc  += egcBySample[i].get(rootItem.sample) ?? 0
+      norm += normBySample[i].get(rootItem.sample) ?? 0
+    }
+    out.push({
+      source:        rootItem.source,
+      sample:        rootItem.sample,
+      timepoint:     rootItem.timepoint,
+      annotation_id: outputAnnotationId,
+      name:          outputName,
+      value:         { egc, norm_egc: rootNorm != null ? norm : null },
+    })
+  }
+  return out
+}
+
 // bareTaxonName
 // annotation_id for taxonomy is the full lineage-prefix (e.g.
 // "Bacteria;Proteobacteria;Alphaproteobacteria") — the bare rank label is
@@ -171,8 +231,8 @@ export function taxonomyDomainFromId(taxonId: string): string {
 // their bare rank label — the full lineage is still one hover/click away
 // (the chart legend and info drawer), just not crammed into the title.
 
-export function computeChartTitle(rootId: string, excludedList: string[]): string {
+export function computeChartTitle(rootId: string, excludedList: string[], mode: 'remove' | 'keep' = 'remove'): string {
   return excludedList.length === 0
     ? bareTaxonName(rootId)
-    : `${bareTaxonName(rootId)} — Excluding ${excludedList.map(bareTaxonName).join(', ')}`
+    : `${bareTaxonName(rootId)} — ${mode === 'keep' ? 'Only' : 'Excluding'} ${excludedList.map(bareTaxonName).join(', ')}`
 }

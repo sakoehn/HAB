@@ -352,3 +352,54 @@ describe('TaxonomyPage — G5 retry after a failed series fetch', () => {
     expect(document.querySelectorAll('.legend-item').length).toBe(2)
   })
 })
+
+
+// UI round 2026-10-14: "Keep only checked" mode -- the same checked set, read
+// as an explicit include instead of an exclude.
+describe('TaxonomyPage — Remove / Keep-only mode', () => {
+  const point = (id: string, egc: number) => ({
+    source: 'taxonomy', sample: 's1', annotation_id: id, name: id,
+    timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '2021-05-09T13:00:00' },
+    value: { egc },
+  })
+  const cached = (id: string, egc: number) => ({ data: [point(id, egc)], status: 'ok' as const })
+
+  function renderWithTwoChecked() {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve(jsonResponse({ data: [point('Bacteria', 100)] }))
+      return Promise.resolve(jsonResponse({ data: [] }))
+    })
+    render(
+      <Wrapper
+        onGoScaffoldExplore={vi.fn()}
+        initialState={{
+          excludedIds: new Set(['Bacteria;Actinobacteria', 'Bacteria;Bacteroidetes']),
+          seriesCache: {
+            'Bacteria;Actinobacteria::taxonomy': cached('Bacteria;Actinobacteria', 20),
+            'Bacteria;Bacteroidetes::taxonomy':  cached('Bacteria;Bacteroidetes', 30),
+          },
+        }}
+      />,
+    )
+  }
+  const legend = () => [...document.querySelectorAll('.legend-item')].map(e => e.textContent ?? '')
+
+  it('defaults to Remove: heading and line read as today', async () => {
+    renderWithTwoChecked()
+    await waitFor(() => expect(legend().some(t => t.includes('minus 2 exclusions'))).toBe(true))
+    expect(screen.getByRole('heading', { name: /remove branches/i })).toBeInTheDocument()
+  })
+
+  it("switching to Keep only shows the kept branches' sum, with the same checked set", async () => {
+    renderWithTwoChecked()
+    await waitFor(() => expect(legend().some(t => t.includes('minus 2 exclusions'))).toBe(true))
+    fireEvent.click(screen.getByLabelText(/keep only checked/i))
+    await waitFor(() => expect(legend().some(t => t.includes('Actinobacteria + Bacteroidetes'))).toBe(true))
+    expect(legend().some(t => t.includes('minus'))).toBe(false)
+    expect(screen.getByRole('heading', { name: /keep branches/i })).toBeInTheDocument()
+    // switching back restores the remove line for the same checked set
+    fireEvent.click(screen.getByLabelText(/remove checked/i))
+    await waitFor(() => expect(legend().some(t => t.includes('minus 2 exclusions'))).toBe(true))
+  })
+})
