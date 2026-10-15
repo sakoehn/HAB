@@ -666,14 +666,6 @@ export function taxonomyRankLabel(depth: number | null, _domain?: string | null)
   return TAXONOMY_RANK_NAMES[depth] ?? `Level ${depth}`
 }
 
-// ── Taxonomy-aware primary label ────────────────────────────────────────────
-// annotation_id is the full lineage-prefix for taxonomy (e.g.
-// "Bacteria;Proteobacteria;...;Bosea") — far too crowded to print as the
-// headline label everywhere it appears (legends, modal headers, member
-// lists). For taxonomy, the bare `name` is what should read as the primary
-// label, with the full lineage available on demand (title/hover, or an
-// explicit toggle) rather than always inline. For every other source,
-// annotation_id already IS the short, meaningful label, so it's unchanged.
 // primaryLabelWithCogCategory
 // For places that show an annotation by its ID alone, with no name beside
 // it (Compare chips, chart legends, group member lists): a bare COG category
@@ -691,6 +683,14 @@ export function primaryLabelWithCogCategory(
   return taxonomyAwarePrimaryLabel(source, annotationId, name)
 }
 
+// ── Taxonomy-aware primary label ────────────────────────────────────────────
+// annotation_id is the full lineage-prefix for taxonomy (e.g.
+// "Bacteria;Proteobacteria;...;Bosea") — far too crowded to print as the
+// headline label everywhere it appears (legends, modal headers, member
+// lists). For taxonomy, the bare `name` is what should read as the primary
+// label, with the full lineage available on demand (title/hover, or an
+// explicit toggle) rather than always inline. For every other source,
+// annotation_id already IS the short, meaningful label, so it's unchanged.
 export function taxonomyAwarePrimaryLabel(
   source: string,
   annotationId: string,
