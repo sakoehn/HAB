@@ -340,9 +340,17 @@ describe('App shell', () => {
 
   it('navigates to About page', async () => {
     render(<App />)
-    await userEvent.click(await screen.findByText('About & API'))
+    await userEvent.click(await screen.findByText('About & API', { selector: '.nav-label' }))
     await waitFor(() => {
-      expect(screen.getByText(/About HAB Portal/i)).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'About Metatrace' })).toBeVisible()
+    })
+  })
+
+  it('navigates to Methods page', async () => {
+    render(<App />)
+    await userEvent.click(await screen.findByText('Methods', { selector: '.nav-label' }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'How Values Are Calculated' })).toBeVisible()
     })
   })
 

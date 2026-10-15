@@ -732,6 +732,11 @@ export const NAV_ITEMS: { id: Page; label: string; icon: string }[] = [
     icon:  `<svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 2v5M9 7L4 14M9 7l5 7M4 14h10"/></svg>`,
   },
   {
+    id:    'methods',
+    label: 'Methods',
+    icon:  `<svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 2h7l3 3v11H4z"/><path d="M7 8h5M7 11h5M7 14h3"/></svg>`,
+  },
+  {
     id:    'about',
     label: 'About & API',
     icon:  `<svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="9" cy="9" r="7"/><line x1="9" y1="8" x2="9" y2="13"/><circle cx="9" cy="5.5" r=".75" fill="currentColor" stroke="none"/></svg>`,

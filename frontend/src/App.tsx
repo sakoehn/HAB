@@ -33,6 +33,7 @@ import {
   type TaxonomyState,
 } from './pages/TaxonomyPage'
 import { AboutPage } from './pages/AboutPage'
+import { MethodsPage } from './pages/MethodsPage'
 
 export default function App() {
   // ── UI state ─────────────────────────────────────────────────────────
@@ -323,6 +324,9 @@ export default function App() {
           />
         </div>
 
+        <div style={{ display: page === 'methods' ? 'block' : 'none' }}>
+          <MethodsPage />
+        </div>
         <div style={{ display: page === 'about' ? 'block' : 'none' }}>
           <AboutPage />
         </div>

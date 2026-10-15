@@ -5,7 +5,7 @@
 // ── Primitive aliases ──────────────────────────────────────────────────────
 
 export type ApiStatus = 'idle' | 'loading' | 'ok' | 'error'
-export type Page      = 'analyze' | 'compare' | 'explore' | 'taxonomy' | 'about'
+export type Page      = 'analyze' | 'compare' | 'explore' | 'taxonomy' | 'methods' | 'about'
 export type SortDir   = 'asc' | 'desc'
 export type Theme     = 'dark' | 'light'
 
