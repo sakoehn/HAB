@@ -26,7 +26,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { AnnotationsByParentPanel } from '../pages/ExplorePage'
@@ -360,17 +360,25 @@ describe('AnnotationsByParentPanel — files a multi-parent KO under every real 
     expect(groupBRow.textContent).toContain('1.00e+2')
   })
 
-  it('a kegg row with no real parent at all (an A-level root) falls back to Ungrouped', async () => {
+  it('a kegg row with no real parent at all (an A-level root) goes in "Top-level categories", listed last with an explanation', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/annotations/top'))
-        return Promise.resolve(jsonResponse({ data: [makeRow('09100', 'irrelevant', 50)] }))
+        return Promise.resolve(jsonResponse({ data: [makeRow('09100', 'irrelevant', 5000), makeRow('K00001', '00010', 50)] }))
       if (url.includes('/api/kegg/parents'))
-        return Promise.resolve(jsonResponse({ parents: { '09100': [] } }))
+        return Promise.resolve(jsonResponse({ parents: { '09100': [], K00001: [{ annotation_id: '00010', name: 'Glycolysis' }] } }))
       return Promise.resolve(jsonResponse({}))
     })
+    const user = userEvent.setup()
     render(<AnnotationsByParentPanel source="kegg" />)
 
-    await waitFor(() => expect(screen.getByText('Ungrouped')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Top-level categories')).toBeInTheDocument())
+    expect(screen.queryByText('Ungrouped')).not.toBeInTheDocument()
+    // listed after the real parent groups even though its total is larger
+    const labels = [...document.querySelectorAll('.toggle-label')].map(e => e.textContent)
+    expect(labels.indexOf('Top-level categories')).toBeGreaterThan(labels.indexOf('Glycolysis'))
+    const row = screen.getByText('Top-level categories').closest('.parent-group')! as HTMLElement
+    await user.click(within(row).getByTitle('Help'))
+    expect(screen.getByText(/already includes everything beneath it/i)).toBeInTheDocument()
   })
 
   // E2 (docs/AUDIT-2026-10-05.md): the catch block's old comment claimed a

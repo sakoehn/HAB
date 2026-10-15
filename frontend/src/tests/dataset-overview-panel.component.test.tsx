@@ -246,3 +246,68 @@ describe('DatasetOverviewPanel — discloses that groups can be nested, not inde
     expect(screen.getByText(/not independent peers/i)).toBeInTheDocument()
   })
 })
+
+// UI round 2026-10-14: rows with no parent (each source's top-level
+// categories) used to form an "Ungrouped" group that ranked #1 -- its total
+// summed the categories themselves, each of which already includes every
+// annotation beneath it, i.e. the same genes the other groups count. They're
+// now a separate, expandable "Top-level categories" row outside the ranking
+// and the chart.
+describe('DatasetOverviewPanel — top-level categories are listed separately, not ranked as "Ungrouped"', () => {
+  const ROWS: TopAnnotation[] = [
+    { annotation_id: 'E', name: 'Amino acid transport and metabolism', parent: null, mean_egc: 5000, max_egc: 6000, sample_count: 128 },
+    { annotation_id: 'J', name: 'Translation, ribosomal structure and biogenesis', parent: null, mean_egc: 4000, max_egc: 5000, sample_count: 128 },
+    { annotation_id: 'COG0001', name: 'gene one', parent: 'E', mean_egc: 300, max_egc: 400, sample_count: 128 },
+    { annotation_id: 'COG0002', name: 'gene two', parent: 'J', mean_egc: 200, max_egc: 300, sample_count: 128 },
+  ]
+
+  async function loadCog() {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) return Promise.resolve(jsonResponse({ data: ROWS, sample_count: 128 }))
+      return Promise.resolve(jsonResponse({ data: [] }))
+    })
+    const user = userEvent.setup()
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    await user.selectOptions(screen.getByRole('combobox'), 'cog')
+    await loadOverview()
+    await waitFor(() => expect(screen.getByText(/Top Functional Groups/i)).toBeInTheDocument())
+    return user
+  }
+
+  it('no "Ungrouped" group, and the ranked groups are only real parents', async () => {
+    await loadCog()
+    expect(screen.queryByText('Ungrouped')).not.toBeInTheDocument()
+    // header count reflects ranked groups only (E and J as parents)
+    expect(screen.getByText(/functional groups/).parentElement!.textContent).toMatch(/\b2\s*functional groups/)
+  })
+
+  it('a separate "Top-level categories" row explains the overlap in a tooltip', async () => {
+    const user = await loadCog()
+    const row = screen.getByTestId('overview-top-level-row')
+    expect(row).toHaveTextContent('Top-level categories')
+    expect(row).toHaveTextContent('2')
+    await user.click(within(row).getByTitle('Help'))
+    expect(screen.getByText(/already includes everything beneath it/i)).toBeInTheDocument()
+  })
+
+  it('expands to list each top-level category with its full name and mean EGC', async () => {
+    const user = await loadCog()
+    expect(screen.queryByText('E · Amino acid transport and metabolism')).not.toBeInTheDocument()
+    await user.click(within(screen.getByTestId('overview-top-level-row')).getByRole('button', { name: /top-level categories/i }))
+    const list = screen.getByTestId('overview-top-level-list')
+    expect(within(list).getByText('E · Amino acid transport and metabolism')).toBeInTheDocument()
+    expect(within(list).getByText('J · Translation, ribosomal structure and biogenesis')).toBeInTheDocument()
+    expect(list).toHaveTextContent('5.00e+3')
+  })
+
+  it('the time-series chart fetches only ranked groups\' members, never the top-level rows', async () => {
+    const user = await loadCog()
+    await user.click(screen.getByRole('button', { name: /Load time series/i }))
+    await waitFor(() => {
+      const urls = mockFetch.mock.calls.map(c => c[0] as string).filter(u => u.includes('/api/series/annotations'))
+      expect(urls.length).toBe(2)
+    })
+    const urls = mockFetch.mock.calls.map(c => c[0] as string).filter(u => u.includes('/api/series/annotations'))
+    expect(urls.some(u => /annotation_id=(E|J)&/.test(u))).toBe(false)
+  })
+})

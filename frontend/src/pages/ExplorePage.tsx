@@ -22,7 +22,26 @@ import type {
   ExploreSection, ExploreSortCol, SortDir,
   HierarchyPathResponse,
 } from '../types'
-import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel, taxonomyRankLabel, taxonomyAwarePrimaryLabel } from '../constants'
+import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel, taxonomyRankLabel, taxonomyAwarePrimaryLabel, primaryLabelWithCogCategory } from '../constants'
+
+// Annotations with no parent -- each source's top-level categories. Shared by
+// Dataset Overview and Annotations by Parent. Used to be an "Ungrouped" bucket
+// that ranked #1: its total summed the categories themselves, each of which
+// already includes every annotation beneath it, i.e. the very genes the other
+// groups count.
+const TOP_LEVEL_LABEL = 'Top-level categories'
+const TOP_LEVEL_TOOLTIP =
+  "Annotations with no parent: each source's top-level categories (COG category letters, " +
+  "KEGG's top classes, the EC classes, taxonomic domains). Each one's EGC already includes " +
+  'everything beneath it, so it overlaps every group listed above -- it is shown separately ' +
+  'instead of being ranked alongside them.'
+
+function topLevelEntryLabel(r: TopAnnotation, source: string): string {
+  if (source === 'taxonomy') return r.name ?? r.annotation_id
+  const withCog = primaryLabelWithCogCategory(source, r.annotation_id, r.name)
+  if (withCog !== r.annotation_id) return withCog
+  return r.name ? `${r.annotation_id} · ${r.name}` : r.annotation_id
+}
 import { apiFetch, downloadCsv } from '../utils/api'
 import {
   extractEgc, computeTrend, sumMembersByTimestamp,
@@ -163,6 +182,7 @@ export function DatasetOverviewPanel({
   const [seriesStatus, setSeriesStatus] = useState<ApiStatus>('idle')
   const [seriesFailed, setSeriesFailed] = useState<string[]>([])
   const [seriesTruncatedFrom, setSeriesTruncatedFrom] = useState<number | null>(null)
+  const [topLevelOpen, setTopLevelOpen] = useState(false)
 
   // W29 (docs/AUDIT-2026-09-22.md): `rows` is only ever correct for whatever
   // (source, dateFrom, dateTo) was actually sent with the request that
@@ -182,6 +202,7 @@ export function DatasetOverviewPanel({
     setLoadedParams(null)
     setSeriesData({}); setSeriesStatus('idle'); setSeriesFailed([])
     setSeriesTruncatedFrom(null)
+    setTopLevelOpen(false)
   }, [resetKey])
 
   async function load() {
@@ -190,6 +211,7 @@ export function DatasetOverviewPanel({
     setStatus('loading')
     setSeriesData({}); setSeriesStatus('idle'); setSeriesFailed([])
     setSeriesTruncatedFrom(null)
+    setTopLevelOpen(false)
     try {
       let url = `/api/annotations/top?source=${params.source}&limit=200`
       if (params.dateFrom) url += `&date_from=${params.dateFrom}`
@@ -206,10 +228,18 @@ export function DatasetOverviewPanel({
     }
   }
 
+  // Rows with no parent are the top-level categories -- kept out of the
+  // ranked groups and the chart (see TOP_LEVEL_TOOLTIP), listed separately.
+  const topLevelRows = useMemo(
+    () => rows.filter(r => r.parent == null).sort((a, b) => b.mean_egc - a.mean_egc),
+    [rows],
+  )
+
   const parentGroups = useMemo(() => {
     const map = new Map<string, TopAnnotation[]>()
     for (const r of rows) {
-      const key = r.parent ?? 'Ungrouped'
+      if (r.parent == null) continue
+      const key = r.parent
       if (!map.has(key)) map.set(key, [])
       map.get(key)!.push(r)
     }
@@ -510,6 +540,35 @@ export function DatasetOverviewPanel({
               })}
             </div>
 
+            {topLevelRows.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div
+                  data-testid="overview-top-level-row"
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, font: '500 12px var(--mono)', color: 'var(--text-dim)' }}
+                >
+                  <button
+                    className="btn sm ghost"
+                    aria-expanded={topLevelOpen}
+                    onClick={() => setTopLevelOpen(o => !o)}
+                  >
+                    {topLevelOpen ? '▾' : '▸'} {TOP_LEVEL_LABEL}
+                  </button>
+                  <HelpTooltip text={TOP_LEVEL_TOOLTIP} />
+                  <span>{topLevelRows.length} · not ranked</span>
+                </div>
+                {topLevelOpen && (
+                  <div data-testid="overview-top-level-list" style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 0 0 28px' }}>
+                    {topLevelRows.map(r => (
+                      <div key={r.annotation_id} style={{ display: 'flex', gap: 12, font: '400 12px var(--mono)' }}>
+                        <span style={{ flex: 1, color: 'var(--text-h)' }}>{topLevelEntryLabel(r, loadedParams?.source ?? source)}</span>
+                        <span style={{ color: 'var(--text-dim)' }}>{r.mean_egc.toExponential(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {seriesStatus === 'ok' && seriesFailed.length > 0 && (
               <div
                 className="state-box error"
@@ -690,7 +749,8 @@ export function AnnotationsByParentPanel({
           // introduced for COG.
           for (const p of parents) addTo(p.annotation_id, p.name, r)
         } else {
-          addTo('Ungrouped', 'Ungrouped', r)
+          // No real parent at all = a top-level category (see TOP_LEVEL_TOOLTIP)
+          addTo('Ungrouped', TOP_LEVEL_LABEL, r)
         }
       } else {
         // E2 (docs/AUDIT-2026-10-05.md): also the real single-parent
@@ -700,7 +760,7 @@ export function AnnotationsByParentPanel({
         // than dumping everything into one undifferentiated "Ungrouped"
         // bucket.
         const key = r.parent ?? 'Ungrouped'
-        addTo(key, expandParentLabel(key, loadedSource), r)
+        addTo(key, r.parent == null ? TOP_LEVEL_LABEL : expandParentLabel(key, loadedSource), r)
       }
     }
 
@@ -712,7 +772,10 @@ export function AnnotationsByParentPanel({
         sumEgc: items.reduce((s, i) => s + i.mean_egc, 0),
         count:  items.length,
       }))
-      .sort((a, b) => b.sumEgc - a.sumEgc)
+      // Top-level categories go last: their totals overlap every other
+      // group's, so ranking them first by size would be misleading.
+      .sort((a, b) =>
+        Number(a.parent === 'Ungrouped') - Number(b.parent === 'Ungrouped') || b.sumEgc - a.sumEgc)
   }, [allRows, loadedSource, multiParents, multiParentsFetchFailed])
 
   function toggleParent(p: string) {
@@ -886,6 +949,7 @@ export function AnnotationsByParentPanel({
 
             return (
               <div key={group.parent} className="parent-group">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <button
                   className={`mappings-toggle ${isOpen ? 'open' : ''}`}
                   onClick={() => {
@@ -909,6 +973,8 @@ export function AnnotationsByParentPanel({
                     {group.count} annotations · Σ {group.sumEgc.toExponential(2)}
                   </span>
                 </button>
+                {group.parent === 'Ungrouped' && <HelpTooltip text={TOP_LEVEL_TOOLTIP} />}
+                </div>
 
                 {isOpen && (
                   <div
