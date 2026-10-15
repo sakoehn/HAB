@@ -104,16 +104,50 @@ def test_missing_all_of_q_annotation_id_name_exact_returns_400(client):
     assert resp.status_code == 400
 
 
-def test_query_too_short_rejected(client):
-    """q with fewer than 3 characters should be rejected with a 400, not
-    silently truncated or treated as a valid (dangerously broad) search --
-    this is the actual HTTP-level enforcement of the min-length rule,
-    complementing (not duplicating) any function-level check."""
+# A 1-2 character q is an exact (case-insensitive) ID lookup, not a
+# substring search: a short substring would match nearly everything, but
+# the 25 COG category letters and 7 EC classes are real 1-character IDs
+# that used to be unsearchable (400) from Lookup/Analyze/Compare.
+
+def test_short_query_is_an_exact_id_lookup_not_rejected(client):
+    """A short q with no matching ID returns an empty 200, not a 400 -- and
+    is never treated as a broad substring search."""
     resp = client.get(
         "/search/annotations",
         params={"q": "ab", "sources": ["cog", "kegg"]},
     )
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+
+
+@pytest.mark.parametrize("q", ["E", "e"])
+def test_single_letter_finds_the_cog_category(client, q):
+    resp = client.get("/search/annotations", params={"q": q, "sources": ["cog"]})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [(r["source"], r["annotation_id"]) for r in body["data"]] == [("cog", "E")]
+    assert body["data"][0]["name"] == "Amino acid transport and metabolism"
+
+
+def test_single_digit_finds_the_ec_class(client):
+    resp = client.get("/search/annotations", params={"q": "3", "sources": ["enzyme", "cog"]})
+    assert resp.status_code == 200
+    assert [(r["source"], r["annotation_id"], r["name"]) for r in resp.json()["data"]] == [
+        ("enzyme", "3", "Hydrolases")
+    ]
+
+
+def test_blank_query_is_rejected_not_treated_as_match_everything(client):
+    resp = client.get("/search/annotations", params={"q": "   ", "sources": ["cog"]})
     assert resp.status_code == 400
+
+
+def test_short_query_does_not_substring_match(client):
+    """'E' is a substring of thousands of names/IDs -- only the exact ID
+    may come back, and only from the requested sources."""
+    resp = client.get("/search/annotations", params={"q": "E", "sources": ["kegg", "enzyme"]})
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
 
 
 def test_pagination_slices_correctly(client):

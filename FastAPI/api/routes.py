@@ -478,19 +478,28 @@ def search_annotations(
     Search across all samples for one or more annotation sources.
 
     Queries `annotation_series` directly with LIKE (native substring
-    matching) and sorts by mean_egc. Enforces a 3-character minimum on `q`.
+    matching) and sorts by mean_egc. A `q` shorter than 3 characters is an
+    exact, case-insensitive ID lookup instead (COG letters, EC classes).
     """
     if not q and not annotation_id and not name_exact:
         raise HTTPException(
             status_code=400,
             detail="Provide at least one of: q, annotation_id, or name_exact",
         )
-    if q is not None and len(q) < 3:
-        raise HTTPException(status_code=400, detail="Search must have at least 3 characters.")
+    # A 1-2 character q would substring-match nearly everything, so it is an
+    # exact, case-insensitive ID lookup instead of a substring search. The
+    # only real IDs that short are the 25 COG category letters and the 7 EC
+    # classes ("E", "3"), which used to be unsearchable here (a 400) from
+    # every search box in the app.
+    search_q, search_id = q, annotation_id
+    if q is not None and not q.strip():
+        raise HTTPException(status_code=400, detail="Search text is blank.")
+    if q is not None and len(q.strip()) < 3 and not annotation_id:
+        search_q, search_id = None, q.strip().upper()
     source_values = [s.value for s in sources]
     db = connect_to_sql()
     try:
-        results = get_search_annotations(db, source_values, q, annotation_id, name_exact)
+        results = get_search_annotations(db, source_values, search_q, search_id, name_exact)
     finally:
         close_sql_connection(db)
     results.sort(key=lambda r: r.get("mean_egc") or 0, reverse=True)
