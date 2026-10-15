@@ -1340,7 +1340,16 @@ export function ExplorePage({
   // generic "Level N" taxonomyRankLabel already uses for an out-of-range
   // taxonomy depth.
   function rankPillLabel(depth: number, source: string): string {
-    return source === 'taxonomy' ? taxonomyRankLabel(depth) : `Level ${depth}`
+    return source === 'taxonomy' ? taxonomyRankLabel(depth) : depthLabel(depth, source)
+  }
+
+  // Rank column / CSV `rank`: the same per-source names as the Lookup card's
+  // Depth row and the Rank filter pills (depthLabel). Taxonomy's domain is
+  // the first segment of its lineage id.
+  function topRankLabel(row: TopAnnotation): string {
+    if (row.depth == null) return '—'
+    const domain = effectiveTopSource === 'taxonomy' ? row.annotation_id.split(';')[0] : null
+    return depthLabel(row.depth, effectiveTopSource, domain)
   }
 
   // E6 (docs/AUDIT-2026-10-05.md): the Group column's display -- real
@@ -1349,17 +1358,20 @@ export function ExplorePage({
   // non-kegg source, a kegg root with no real parent above it, or
   // topKeggParentsFailed). label is what's shown in the cell; title is
   // the full real parent list for the tooltip when there's more than one.
-  function topGroupDisplay(row: TopAnnotation): { label: string; title: string | undefined } {
+  // full: every real parent, readable, for the CSV `group` column ('' when
+  // there is no parent).
+  function topGroupDisplay(row: TopAnnotation): { label: string; title: string | undefined; full: string } {
     const parents = effectiveTopSource === 'kegg' ? topKeggParents[row.annotation_id] : undefined
     if (parents && parents.length > 0) {
       const names = parents.map(p => p.name)
       return {
         label: names.length > 1 ? `${names[0]} (+${names.length - 1} more)` : names[0],
         title: names.join(', '),
+        full:  names.join('; '),
       }
     }
     const expanded = row.parent ? expandParentLabel(row.parent, effectiveTopSource) : '—'
-    return { label: expanded, title: expanded === '—' ? undefined : expanded }
+    return { label: expanded, title: expanded === '—' ? undefined : expanded, full: expanded === '—' ? '' : expanded }
   }
 
   // Ranks actually present among the loaded rows — mirrors LeftResultList's
@@ -1568,7 +1580,14 @@ export function ExplorePage({
                   <button
                     className="btn sm"
                     onClick={() => downloadCsv(
-                      sorted.map(r => ({ ...r, source: effectiveTopSource })),
+                      // rank/group: exactly what the table shows, readable on
+                      // their own; raw depth/parent codes are kept as-is.
+                      sorted.map(r => ({
+                        ...r,
+                        source: effectiveTopSource,
+                        rank:   topRankLabel(r),
+                        group:  topGroupDisplay(r).full,
+                      })),
                       `top_${effectiveTopSource}_annotations.csv`,
                     )}
                   >
@@ -1706,6 +1725,7 @@ export function ExplorePage({
                       <th style={{ width: 32 }}>#</th>
                       <th>Annotation ID</th>
                       <th>Name</th>
+                      <th>Rank</th>
                       <th>Group</th>
                       <SortTh col="mean_egc"     label="Mean EGC"  />
                       <SortTh col="sample_count" label="Samples"   />
@@ -1737,6 +1757,14 @@ export function ExplorePage({
                           </div>
                         </td>
                         <td className="name-cell">{row.name ?? '—'}</td>
+                        <td style={{
+                          fontFamily: 'var(--mono)',
+                          fontSize:   11,
+                          color:      'var(--text-dim)',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {topRankLabel(row)}
+                        </td>
                         <td style={{
                           fontFamily:   'var(--mono)',
                           fontSize:     11,

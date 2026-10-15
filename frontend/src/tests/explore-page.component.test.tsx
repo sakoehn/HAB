@@ -226,7 +226,7 @@ describe('ExplorePage — Top EGC "Relative" bars scale to the filtered rows, no
             // Depth 1 (category rollup) -- by far the largest mean_egc,
             // sets the unfiltered max. Hidden once rank-filtered to leaves.
             { annotation_id: 'E', name: 'Amino acid metabolism', parent: null, depth: 1, mean_egc: 1000, max_egc: 2000, sample_count: 128 },
-            // Depth 2 (real leaves) -- what's left once filtered to Level 2.
+            // Depth 2 (real leaves) -- what's left once filtered to 'leaf (COG)'.
             { annotation_id: 'COG_LEAF_HIGH', name: 'leaf high', parent: 'E', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 },
             { annotation_id: 'COG_LEAF_LOW',  name: 'leaf low',  parent: 'E', depth: 2, mean_egc: 50,  max_egc: 100, sample_count: 128 },
           ],
@@ -251,8 +251,8 @@ describe('ExplorePage — Top EGC "Relative" bars scale to the filtered rows, no
     expect(barStyle('COG_LEAF_HIGH')).toContain('var(--teal) 10%,')
     expect(barStyle('COG_LEAF_LOW')).toContain('var(--teal) 5%,')
 
-    // Filter to Level 2 only -- hides the depth-1 row entirely.
-    await user.click(screen.getByRole('button', { name: 'Level 2' }))
+    // Filter to depth 2 ('leaf (COG)') only -- hides the depth-1 row entirely.
+    await user.click(screen.getByRole('button', { name: 'leaf (COG)' }))
     await waitFor(() => {
       expect(screen.queryByText('Amino acid metabolism')).not.toBeInTheDocument()
     })
@@ -761,12 +761,15 @@ describe('ExplorePage — Top EGC rank filter works for non-taxonomy sources (A8
     expect(screen.getByText('K00001')).toBeInTheDocument()
 
     // Rank pills exist (previously impossible for kegg -- no depth in the
-    // response at all) and use a generic "Level N" label, never a
-    // taxonomy-specific rung name like "Domain" for a non-taxonomy source.
-    expect(screen.getByText('Level 1')).toBeInTheDocument()
-    expect(screen.getByText('Level 4')).toBeInTheDocument()
+    // response at all) and use kegg's own rank names (same as the Lookup
+    // card's Depth row), never a taxonomy rung name like "Domain" for a
+    // non-taxonomy source.
+    const pill = (label: string) => screen.getAllByRole('button').find(b => b.className.includes('al-source-pill') && b.textContent === label)
+    expect(pill('pathway class')).toBeDefined()
+    expect(pill('leaf (KO)')).toBeDefined()
+    expect(screen.queryByText('Domain')).not.toBeInTheDocument()
 
-    await user.click(screen.getByText('Level 4'))
+    await user.click(pill('leaf (KO)')!)
 
     expect(screen.queryByText('09180')).not.toBeInTheDocument()
     expect(screen.getByText('K00001')).toBeInTheDocument()
