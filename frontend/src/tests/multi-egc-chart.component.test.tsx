@@ -75,7 +75,7 @@ function pressed(name: string | RegExp): boolean {
 }
 
 describe('MultiEgcChart — defaults', () => {
-  const series = [{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]
+  const series = [{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg', data: [makePoint('5/27/21 8:00', 100)] }]
 
   it('opens on Relative Abundance with Z-score off', () => {
     render(<MultiEgcChart series={series} dateFrom="" dateTo="" />)
@@ -98,7 +98,7 @@ describe('MultiEgcChart — empty state', () => {
   it('shows a message when the date range excludes every point', () => {
     render(
       <MultiEgcChart
-        series={[{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]}
+        series={[{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg', data: [makePoint('5/27/21 8:00', 100)] }]}
         dateFrom="2021-12-01"
         dateTo=""
       />,
@@ -128,8 +128,8 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
     render(
       <MultiEgcChart
         series={[
-          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 50)] },
-          { id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 200)] },
+          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg', data: [makePoint('5/27/21 8:00', 50)] },
+          { id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'kegg', data: [makePoint('5/27/21 8:00', 200)] },
         ]}
         dateFrom="" dateTo=""
       />,
@@ -335,11 +335,11 @@ describe('MultiEgcChart — stats are per-series, not pooled (W25)', () => {
       <MultiEgcChart
         series={[
           {
-            id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog',
+            id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg',
             data: [makePoint('5/27/21 8:00', 10), makePoint('5/27/21 12:00', 30)],
           },
           {
-            id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'cog',
+            id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'kegg',
             data: [makePoint('5/27/21 8:00', 100), makePoint('5/27/21 12:00', 300)],
           },
         ]}
@@ -401,8 +401,8 @@ describe('MultiEgcChart — scale-mismatch respects the active date filter (F7)'
           // Over the FULL range, A's mean (5050) vs B's (100) is >50x --
           // but filtered to just 5/27 (excluding 6/10 for both), both are
           // 100 -- genuinely no mismatch once filtered.
-          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 10000)] },
-          { id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 100)] },
+          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 10000)] },
+          { id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'kegg', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 100)] },
         ]}
         dateFrom="" dateTo="2021-05-28"
       />,
@@ -417,8 +417,8 @@ describe('MultiEgcChart — scale-mismatch respects the active date filter (F7)'
     render(
       <MultiEgcChart
         series={[
-          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 10000)] },
-          { id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 100)] },
+          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 10000)] },
+          { id: 'B', annotationId: 'B', name: 'B', color: '#000', source: 'kegg', data: [makePoint('5/27/21 8:00', 100), makePoint('6/10/21 8:00', 100)] },
         ]}
         dateFrom="2021-06-01" dateTo=""
       />,
@@ -436,7 +436,7 @@ describe('MultiEgcChart — date range props', () => {
     render(
       <MultiEgcChart
         series={[{
-          id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog',
+          id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg',
           data: [makePoint('5/27/21 8:00', 100), makePoint('6/1/21 8:00', 300)],
         }]}
         dateFrom="2021-05-29" dateTo=""
@@ -461,7 +461,7 @@ describe('MultiEgcChart — statistics are unaffected by the Smooth toggle (W27)
     )
     render(
       <MultiEgcChart
-        series={[{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: points }]}
+        series={[{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg', data: points }]}
         dateFrom="" dateTo=""
       />,
     )
@@ -487,7 +487,7 @@ describe('MultiEgcChart — Z-score is a no-op with fewer than 2 real points', (
     const user = userEvent.setup()
     render(
       <MultiEgcChart
-        series={[{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog', data: [makePoint('5/27/21 8:00', 100)] }]}
+        series={[{ id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg', data: [makePoint('5/27/21 8:00', 100)] }]}
         dateFrom="" dateTo=""
       />,
     )
@@ -502,7 +502,7 @@ describe('MultiEgcChart — Z-score is a no-op with fewer than 2 real points', (
     render(
       <MultiEgcChart
         series={[{
-          id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog',
+          id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg',
           data: [makePoint('5/27/21 8:00', 100), makePoint('5/28/21 8:00', 110)],
         }]}
         dateFrom="" dateTo=""

@@ -52,7 +52,7 @@ const ALL_SAMPLES = ['s1', 's2', 's3'].map((sample, i) => ({
 
 function makePoint(datetime: string, egc: number): AnnotationItem {
   return {
-    source: 'cog', sample: 's1', annotation_id: 'A', name: 'A',
+    source: 'kegg', sample: 's1', annotation_id: 'A', name: 'A',
     timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime },
     // norm_egc included -- the chart opens on Relative Abundance (metric
     // defaults to 'norm_egc'), which reads this field, not raw egc.
@@ -74,7 +74,7 @@ beforeEach(() => {
 describe('MultiEgcChart — real detection gaps are drawn as breaks, not bridged (F1)', () => {
   it('unions the full sample timeline and sets an explicit null at an undetected timepoint', async () => {
     const series = [{
-      id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'cog',
+      id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg',
       // Detected at 0:00 and 16:00 only -- genuinely missing at 8:00.
       data: [makePoint('5/27/21 0:00', 100), makePoint('5/27/21 16:00', 300)],
     }]

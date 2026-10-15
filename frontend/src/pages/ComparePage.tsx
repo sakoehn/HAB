@@ -23,7 +23,7 @@ import type {
   CompareEntry, CompareEntryMember,
   AnnotationItem, ApiStatus, SharedAnnotation, ChartMetric,
 } from '../types'
-import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel } from '../constants'
+import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel, primaryLabelWithCogCategory } from '../constants'
 import { nextColorForSource, resetSourceCounters } from '../constants'
 import { apiFetch } from '../utils/api'
 import { sumMembersByTimestamp, seriesMeanInRange } from '../utils/stats'
@@ -743,7 +743,7 @@ export function ComparePage({
                       title={e.annotationId}
                       style={!e.isGrouped && e.source === 'taxonomy' ? { fontStyle: 'italic' } : undefined}
                     >
-                      {e.isGrouped ? e.annotationId : taxonomyAwarePrimaryLabel(e.source, e.annotationId, e.name)}
+                      {e.isGrouped ? e.annotationId : primaryLabelWithCogCategory(e.source, e.annotationId, e.name)}
                     </span>
                     {e.isGrouped ? (
                       <>
@@ -926,7 +926,7 @@ export function ComparePage({
                               overflowWrap: 'anywhere',
                             }}
                           >
-                            {taxonomyAwarePrimaryLabel(m.source, m.annotationId, null)}
+                            {primaryLabelWithCogCategory(m.source, m.annotationId, null)}
                           </span>
                           <span style={{ color: 'var(--text-dim)' }}>{m.source}</span>
                           {m.status === 'error' && (
@@ -1056,7 +1056,7 @@ export function ComparePage({
                           fontStyle:  !e.isGrouped && e.source === 'taxonomy' ? 'italic' : 'normal',
                         }}
                       >
-                        {e.isGrouped ? e.annotationId : taxonomyAwarePrimaryLabel(e.source, e.annotationId, e.name)}
+                        {e.isGrouped ? e.annotationId : primaryLabelWithCogCategory(e.source, e.annotationId, e.name)}
                       </span>
                       <span className={`tag ${SOURCE_TAG_CLS[e.source] ?? ''}`}>
                         {e.source}

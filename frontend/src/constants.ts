@@ -674,6 +674,23 @@ export function taxonomyRankLabel(depth: number | null, _domain?: string | null)
 // label, with the full lineage available on demand (title/hover, or an
 // explicit toggle) rather than always inline. For every other source,
 // annotation_id already IS the short, meaningful label, so it's unchanged.
+// primaryLabelWithCogCategory
+// For places that show an annotation by its ID alone, with no name beside
+// it (Compare chips, chart legends, group member lists): a bare COG category
+// letter ("E") is unreadable on its own, so it also carries its full category
+// name ("E · Amino acid transport and metabolism"). Everything else is
+// exactly taxonomyAwarePrimaryLabel.
+export function primaryLabelWithCogCategory(
+  source: string,
+  annotationId: string,
+  name: string | null | undefined,
+): string {
+  if (source === 'cog' && COG_CATEGORY_LABELS[annotationId]) {
+    return `${annotationId} · ${COG_CATEGORY_LABELS[annotationId]}`
+  }
+  return taxonomyAwarePrimaryLabel(source, annotationId, name)
+}
+
 export function taxonomyAwarePrimaryLabel(
   source: string,
   annotationId: string,

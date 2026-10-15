@@ -15,7 +15,7 @@ import { useSolarTideData } from '../../utils/useSolarTideData'
 import { useAllSamples } from '../../utils/useAllSamples'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
-import { taxonomyAwarePrimaryLabel } from '../../constants'
+import { primaryLabelWithCogCategory } from '../../constants'
 import { StatsPanel }   from '../ui/StatsPanel'
 import { HelpTooltip } from '../ui/HelpTooltip'
 import { ChartControls } from './ChartControls'
@@ -282,7 +282,7 @@ export function MultiEgcChart({
         const v = row[s.id]
         if (typeof v === 'number') vals.push(v)
       }
-      return { label: taxonomyAwarePrimaryLabel(s.source, s.annotationId, s.name), vals }
+      return { label: primaryLabelWithCogCategory(s.source, s.annotationId, s.name), vals }
     })
   }, [unsmoothedRows, series])
 
@@ -426,7 +426,7 @@ export function MultiEgcChart({
         line:    { color: traceColor, width: sw },
         marker:  { color: traceColor, size: s.isGrouped ? 5 : 3, opacity },
         opacity,
-        name: s.annotationId,
+        name: primaryLabelWithCogCategory(s.source, s.annotationId, s.name),
         yaxis: 'y',
         // F1 (docs/AUDIT-2026-10-05.md): must not connect across a real
         // non-detection -- see baseRows' union-with-the-full-timeline
@@ -438,7 +438,7 @@ export function MultiEgcChart({
           '<b>%{customdata[1]}</b><br>' +
           // W27: discloses when the hovered value is a fitted LOWESS
           // curve, not the real sample value -- previously indistinguishable.
-          s.annotationId + (seriesSmoothedApplied ? ' (smoothed)' : '') + ': %{customdata[0]}' +
+          primaryLabelWithCogCategory(s.source, s.annotationId, s.name) + (seriesSmoothedApplied ? ' (smoothed)' : '') + ': %{customdata[0]}' +
           '<extra></extra>',
       }
     })
@@ -554,7 +554,7 @@ export function MultiEgcChart({
                   title={s.annotationId}
                   style={s.source === 'taxonomy' ? { fontStyle: 'italic' } : undefined}
                 >
-                  {taxonomyAwarePrimaryLabel(s.source, s.annotationId, s.name)}
+                  {primaryLabelWithCogCategory(s.source, s.annotationId, s.name)}
                 </span>
                 {!s.scaffoldsDisabled && (
                   <>

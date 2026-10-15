@@ -22,7 +22,7 @@ import type {
   ApiStatus, AnnotationItem, RightCard,
   SeriesCache, SharedAnnotation, ChartMetric,
 } from '../types'
-import { SOURCE_COLORS, SOURCE_TAG_CLS, CHART_COLORS, taxonomyAwarePrimaryLabel } from '../constants'
+import { SOURCE_COLORS, SOURCE_TAG_CLS, CHART_COLORS, taxonomyAwarePrimaryLabel, primaryLabelWithCogCategory } from '../constants'
 import { filterRedundantAnnotations } from '../utils/annotationHierarchy'
 import { nextColorForSource } from '../constants'
 import { apiFetch } from '../utils/api'
@@ -362,7 +362,7 @@ function RightGroupCard({
               overflowWrap: 'anywhere',
             }}
           >
-            {taxonomyAwarePrimaryLabel(card.sources[i], id, null)}
+            {primaryLabelWithCogCategory(card.sources[i], id, null)}
           </span>
         ))}
       </div>

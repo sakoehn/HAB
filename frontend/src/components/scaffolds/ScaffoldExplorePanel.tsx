@@ -114,7 +114,7 @@ export function buildAggregatedChartRows(
 }
 
 import type { ApiStatus, ScaffoldExploreTerm, ScaffoldSummaryRow, ScaffoldDetailRow, TopAnnotation } from '../../types'
-import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel, taxonomyRankLabel } from '../../constants'
+import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel, primaryLabelWithCogCategory, taxonomyRankLabel } from '../../constants'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime, isoDate, toPlotlyDate } from '../../utils/format'
 import { minMeanMax } from '../../utils/stats'
@@ -762,7 +762,7 @@ export function ScaffoldExplorePanel({
                   overflowWrap: 'anywhere',
                 }}
               >
-                {taxonomyAwarePrimaryLabel(term.source, term.annotationId, null)}
+                {primaryLabelWithCogCategory(term.source, term.annotationId, null)}
               </span>
               <span className={`tag ${SOURCE_TAG_CLS[term.source] ?? ''}`}>
                 {term.source}
@@ -971,7 +971,7 @@ export function ScaffoldExplorePanel({
                 fontStyle:  term.source === 'taxonomy' ? 'italic' : 'normal',
               }}
             >
-              {taxonomyAwarePrimaryLabel(term.source, term.annotationId, null)}
+              {primaryLabelWithCogCategory(term.source, term.annotationId, null)}
             </span>
             <span className={`tag ${SOURCE_TAG_CLS[term.source] ?? ''}`}>{term.source}</span>
             <span className="toggle-count">

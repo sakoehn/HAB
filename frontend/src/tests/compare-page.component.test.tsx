@@ -1149,3 +1149,32 @@ describe('ComparePage — per-entry mean on selected annotations', () => {
     expect(mean).toHaveTextContent('mean rel. abundance 0.0450%')
   })
 })
+
+describe('ComparePage — COG category letters carry their full name', () => {
+  const CAT_E = {
+    ...SEARCH_RESULT_1,
+    annotation_id: 'E',
+    source:        'cog',
+    name:          'Amino acid transport and metabolism',
+    parent:        null,
+  }
+  const SERIES_E = {
+    data: DEFAULT_SERIES.data.map(d => ({ ...d, annotation_id: 'E', source: 'cog', name: CAT_E.name })),
+  }
+
+  it('selected chip and chart legend show "E · Amino acid transport and metabolism", not a bare "E"', async () => {
+    setupMocks({ searchData: { data: [CAT_E], total: 1 }, seriesData: SERIES_E })
+    render(<ManagedComparePage />)
+    const input = await screen.findByPlaceholderText(/search annotation id or name/i)
+    await userEvent.type(input, 'E')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+    await waitFor(() => screen.getByText('Amino acid transport and metabolism'))
+    await userEvent.click(screen.getAllByRole('checkbox').slice(1)[0])
+    await userEvent.click(screen.getByText(/add 1 selected/i))
+    await screen.findByTestId('compare-entry-mean')
+    // chip + legend (at least two places), and no element whose whole text is just "E"
+    await waitFor(() =>
+      expect(screen.getAllByText('E · Amino acid transport and metabolism').length).toBeGreaterThanOrEqual(2),
+    )
+  })
+})
