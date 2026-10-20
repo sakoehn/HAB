@@ -102,3 +102,72 @@ def test_fully_specified_id_missing_from_brite_resolves_like_a_partial_id():
 
 def test_fully_specified_id_with_no_resolvable_ancestor_is_dropped():
     assert resolve_or_drop_ec("9.9.9.9", BRITE) is None
+
+
+# ── Transferred (renumbered) EC numbers ─────────────────────────────────────
+# An EC number that was renumbered is credited to its NEW place in the tree,
+# not walked up under its old one -- e.g. DNA helicase 3.6.4.12 now lives in
+# Isomerases (5.6.2.3 / 5.6.2.4), not Hydrolases (3.6.4). When one old
+# number was split into several new ones, the gene is credited to their
+# shared parent only, since the old label can't say which one it was.
+
+BRITE_WITH_NEW_HOMES = {
+    **BRITE,
+    "5":       {"depth": 1},
+    "5.6":     {"depth": 2},
+    "5.6.2":   {"depth": 3},
+    "5.6.2.3": {"depth": 4},
+    "5.6.2.4": {"depth": 4},
+    "7":       {"depth": 1},
+    "7.1":     {"depth": 2},
+    "7.1.1":   {"depth": 3},
+    "7.1.1.1": {"depth": 4},
+}
+
+
+def test_renumbered_id_is_credited_to_its_new_number():
+    # 1.6.1.2 (NAD(P)+ transhydrogenase) was transferred to 7.1.1.1.
+    assert resolve_or_drop_ec("1.6.1.2", BRITE_WITH_NEW_HOMES) == "7.1.1.1"
+
+
+def test_id_split_into_several_new_numbers_is_credited_to_their_shared_parent():
+    # 3.6.4.12 was split into 5.6.2.3 and 5.6.2.4 -- credit 5.6.2 only,
+    # not either specific one, and not its old Hydrolases home (3.6.4).
+    assert resolve_or_drop_ec("3.6.4.12", BRITE_WITH_NEW_HOMES) == "5.6.2"
+
+
+def test_retired_partial_subclass_is_credited_to_where_its_members_went():
+    # Subclass 3.6.3 was retired; 53 of its 54 renumbered members moved to
+    # class 7 (Translocases), so "3.6.3.-" is credited to class 7.
+    assert resolve_or_drop_ec("3.6.3.-", BRITE_WITH_NEW_HOMES) == "7"
+
+
+def test_new_number_missing_from_brite_walks_up_from_the_new_number():
+    # If a download of ko01000.keg ever lacks the new leaf, the gene still
+    # lands in the new branch (7.1.1), never back under the old one (1.6.1).
+    brite = {k: v for k, v in BRITE_WITH_NEW_HOMES.items() if k != "7.1.1.1"}
+    assert resolve_or_drop_ec("1.6.1.2", brite) == "7.1.1"
+
+
+def test_unknown_missing_id_still_walks_up_from_its_own_number():
+    # 3.6.4.99 isn't a known renumbering, so the original walk-up applies.
+    assert resolve_or_drop_ec("3.6.4.99", BRITE_WITH_NEW_HOMES) == "3.6.4"
+
+
+def test_every_new_number_is_a_real_node_in_the_real_ko01000():
+    """Guards the table against a typo or a future ko01000.keg download that
+    drops one of the targets: each one must be a real BRITE node."""
+    import re
+    import pytest
+    from enzyme_ec_utils import TRANSFERRED_EC
+
+    keg = DATA_ROOT / "DataStructures" / "Enzyme" / "ko01000.keg"
+    if not keg.exists():
+        pytest.skip(f"{keg} not found")
+    real_ids = set()
+    for line in keg.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^[A-D]\s*(?:<[^>]+>)?\s*(\d+(?:\.\d+){0,3})\.?(?:\s|<|$)", line.strip())
+        if m:
+            real_ids.add(m.group(1))
+    missing = {old: new for old, new in TRANSFERRED_EC.items() if new not in real_ids}
+    assert missing == {}
