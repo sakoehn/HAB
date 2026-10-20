@@ -20,13 +20,13 @@ export function AboutPage() {
           <div style={{ marginBottom: 12 }}><h2>About Metatrace</h2></div>
           <div className="about-card" style={{ lineHeight: 1.9 }}>
             <p>
-              Metatrace is an interactive browser for a high-frequency metagenomic time
+              MetaTrace is an interactive dashboard for a high-frequency metagenomic time
               series collected through a harmful algal bloom (HAB) at Rosario, Orcas Island,
               Washington: 128 samples taken roughly every 4 hours from 27 May to 18 June
               2021, sequenced and annotated by the DOE Joint Genome Institute (JGI). It
-              lets you follow how the abundance of genes, functions and organisms — KEGG
-              orthologs, COGs, enzymes and taxa — changes through the bloom, compare them
-              side by side, browse their hierarchies, scaffolds and gene mappings, and find
+              follows how the abundance of genes, functions and organisms — KEGG
+              orthologs, COGs, enzymes and taxa — change throughout the bloom, compares them
+              side by side, browses their hierarchies, scaffolds and gene mappings, and finds
               annotations whose abundance rises and falls together. How every value is
               calculated is described on the <strong>Methods</strong> page; everything shown
               is also available through the API below.
