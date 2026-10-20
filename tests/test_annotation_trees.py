@@ -1490,7 +1490,17 @@ class TestEnzymeEGCVsJGI:
             f"EC:1.1.1.1 mismatches ({len(mismatches)}):\n" + "\n".join(mismatches)
 
     def test_all_jgi_enzymes_spot_sample(self, enzyme_by_sample, enzyme_jgi_table):
-        """Every leaf EC entry in both JGI table and JSON for the spot sample must match."""
+        """Every leaf EC entry in both JGI table and JSON for the spot sample must match.
+
+        Skips leaves that a renumbered EC number was merged into (e.g.
+        1.3.5.4 -> 1.3.5.1): JGI's table holds one EGC per *label*, so it
+        has no single value for "genes labelled 1.3.5.1 or 1.3.5.4" to
+        compare against. Those leaves are checked gene-by-gene against the
+        raw files in test_scaffold_ground_truth.py instead."""
+        sys.path.insert(0, str(DATA_ROOT / "Notebooks"))
+        from enzyme_ec_utils import TRANSFERRED_EC  # pylint: disable=import-error
+        absorbs_renumbered = set(TRANSFERRED_EC.values())
+
         sid     = "3300060590"
         leaf_re = re.compile(r'^EC:\d+\.\d+\.\d+\.\d+$')
         if sid not in enzyme_by_sample:
@@ -1499,6 +1509,8 @@ class TestEnzymeEGCVsJGI:
         compared = 0
         for jgi_id, row in enzyme_jgi_table.items():
             if not leaf_re.match(jgi_id):
+                continue
+            if jgi_id[3:] in absorbs_renumbered:
                 continue
             jgi_val = row.get(sid)
             if jgi_val is None:

@@ -139,11 +139,19 @@ export function MethodsPage() {
             counts in full toward each one. Each group’s total is therefore correct on its
             own, but totals summed across groups can exceed the overall total.
           </Item>
-          <Item title="Incomplete EC numbers">
-            An EC number that is partial (e.g. 3.6.4.-) or fully specified but missing from
-            KEGG’s EC hierarchy is credited to its deepest real ancestor (3.6.4.12 →
-            3.6.4), since an EC number’s position is fixed by its own digits. An EC number
-            with no resolvable ancestor at all is dropped.
+          <Item title="Renumbered and incomplete EC numbers">
+            Some EC numbers in the JGI annotations have since been renumbered and are no
+            longer in KEGG’s EC hierarchy. These are credited to their new place in the
+            tree, per KEGG’s record of where each was transferred (e.g. 1.6.1.2 → 7.1.1.1).
+            When one old number was split into several new ones, the gene is credited to
+            their shared parent only, since the old label can’t say which it was: DNA
+            helicase 3.6.4.12 (now 5.6.2.3 and 5.6.2.4) and RNA helicase 3.6.4.13 are
+            credited to 5.6.2. Genes labelled with the retired subclass 3.6.3.- are
+            credited to class 7 (Translocases), where nearly all of its enzymes moved.
+            Any other EC number that is partial (e.g. 3.6.1.-) or missing from the
+            hierarchy is credited to its deepest real ancestor, since an EC number’s
+            position is fixed by its own digits; one with no resolvable ancestor at all is
+            dropped.
           </Item>
           <Item title="Taxonomy is keyed by full lineage">
             Each taxon is identified by its complete lineage, not its bare name, so two

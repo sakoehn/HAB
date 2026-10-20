@@ -51,6 +51,10 @@ import pytest
 
 from conftest import COG_JSON_DIR, DATA_ROOT, KEGG_JSON_DIR, METAGENOME_SAMPLES_DIR
 
+import sys  # noqa: E402
+sys.path.insert(0, str(DATA_ROOT / "Notebooks"))
+from enzyme_ec_utils import TRANSFERRED_EC  # noqa: E402  pylint: disable=wrong-import-position,import-error
+
 ENZYME_JSON_DIR: Path   = DATA_ROOT / "DataStructures" / "Enzyme"
 TAXONOMY_JSON_DIR: Path = DATA_ROOT / "DataStructures" / "Taxonomy"
 
@@ -127,7 +131,10 @@ def _tally_enzyme(sample: str) -> dict[str, dict[str, int]]:
             gene_id, ec_id = parts[0], parts[2]
             if ec_id.startswith("EC:"):
                 ec_id = ec_id[3:]
-            genes[ec_id].add(gene_id)
+            # A renumbered EC number is credited to its new id (e.g. genes
+            # labelled 1.3.5.4 count toward 1.3.5.1, which it was merged
+            # into), the same way EGC_ENZYME_TREE.ipynb builds the tree.
+            genes[TRANSFERRED_EC.get(ec_id, ec_id)].add(gene_id)
     return _dedup_gene_tally(genes)
 
 
