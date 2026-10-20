@@ -50,9 +50,8 @@ def test_all_unique(conn):
 def test_correct_shape(conn):
     """Every column on the real table is exactly the set of fields the
     catalog is supposed to have -- source/annotation_id/name/parent plus
-    the 5 aggregate stats, plus the id surrogate key and `depth` (added
-    alongside the taxonomy_egc_homonym_bug fix so search results can show
-    taxonomic rank). Catches a column typo/omission in the schema itself,
+    the 5 aggregate stats, plus the id surrogate key and `depth` (so
+    search results can show taxonomic rank). Catches a column typo/omission in the schema itself,
     not just in query results."""
     cursor = conn.execute("SELECT * FROM annotation_catalog LIMIT 1")
     row = cursor.fetchone()
@@ -97,9 +96,8 @@ def test_correct_values(conn):
     kegg's 8 top-level branches, enzyme's 7 top-level classes, taxonomy's
     4 domains -- reconfirmed live before writing this), so a blanket NULL
     check there would fail on real, valid data, not a bug. `depth` is NOT
-    excluded -- post-E15 (COG category rollup), every source populates a
-    real depth for every row, cog included; reconfirmed live (0 NULL
-    depth rows across all 4 sources) before tightening this check."""
+    excluded -- every source populates a real depth for every row, cog
+    included (0 NULL depth rows across all 4 sources)."""
     never_null_columns = [
         "source", "annotation_id", "name", "depth",
         "mean_egc", "max_egc", "mean_norm_egc", "max_norm_egc", "sample_count",
@@ -127,15 +125,11 @@ def test_correct_values(conn):
 
 
 def test_depth_is_never_null_for_any_source(conn):
-    """`depth` (added for the taxonomy_egc_homonym_bug fix, see
-    test_correct_shape) is non-NULL for every row in every source.
+    """`depth` (see test_correct_shape) is non-NULL for every row in every source.
 
-    This used to be false for cog -- EGC_COG_TREE.ipynb only ever
-    registered a gene at its specific COG id, never at the COG's category
-    letter, so category nodes (and their depth/parent) didn't exist at
-    all (E15). Fixed by registering every gene at both levels; cog rows
-    now carry a real depth (1=category, 2=specific COG id) same as every
-    other source."""
+    For cog this depends on EGC_COG_TREE.ipynb registering every gene at
+    both its specific COG id and its category letter, so cog rows carry a
+    real depth (1=category, 2=specific COG id) like every other source."""
     for source in ("cog", "kegg", "enzyme", "taxonomy"):
         total = conn.execute(
             "SELECT COUNT(*) FROM annotation_catalog WHERE source = ?", (source,)
@@ -150,8 +144,8 @@ def test_depth_is_never_null_for_any_source(conn):
 def test_taxonomy_homonym_produces_two_distinct_catalog_rows(conn):
     """Real, confirmed cross-lineage homonym: the taxonomy source has a
     genus called "Bosea" that legitimately exists under two different
-    families (a taxonomic reclassification -- see taxonomy_egc_homonym_bug
-    and tests/sql/test_cache_sql.py's BOSEA_OLD_LINEAGE/BOSEA_NEW_LINEAGE).
+    families (a taxonomic reclassification -- see
+    tests/sql/test_cache_sql.py's BOSEA_OLD_LINEAGE/BOSEA_NEW_LINEAGE).
     The catalog must carry BOTH as separate rows sharing `name` but with
     distinct `annotation_id` (full lineage) and `parent` -- not collapsed
     into one via the (source, annotation_id) UNIQUE constraint, which only
@@ -170,15 +164,15 @@ def test_taxonomy_homonym_produces_two_distinct_catalog_rows(conn):
 
 
 def test_partial_ec_two_level_walkup_never_synthesizes_a_fake_node(conn):
-    """E18 (docs/AUDIT-2026-09-22.md): a gene whose only EC annotation is
+    """A gene whose only EC annotation is
     partial/wildcard (e.g. "3.6.3.-") is resolved to its deepest REAL
     ko01000.keg ancestor (resolve_partial_ec(), Notebooks/enzyme_ec_utils.py)
     by walking up as many levels as needed -- confirmed directly against
     the real ko01000.keg file that these 3 specific ids need TWO levels,
     because even their immediate parent isn't a real node: "3.6.3",
     "1.10.2" and "1.16.8" were never in ko01000.keg, only their
-    grandparents "3.6"/"1.10"/"1.16" are (the audit's own cited example,
-    K03924 moxR [EC:3.6.3.-], is the first of these).
+    grandparents "3.6"/"1.10"/"1.16" are (K03924 moxR [EC:3.6.3.-] is the
+    first of these).
 
     This is a real-data regression guard specifically for a NAIVE
     alternative implementation mistake: treating a partial id's own

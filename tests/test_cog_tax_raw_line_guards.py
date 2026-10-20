@@ -1,10 +1,10 @@
 """
 test_cog_tax_raw_line_guards.py
 =================================
-P10 (docs/AUDIT-2026-10-05.md): EGC_KEGG_TREE/EGC_ENZYME_TREE assert each
-raw entry carries exactly one id (E10), but EGC_COG_TREE's read_cog and
-EGC_TAX_TREE's read_tax took parts[1] / parts[-1] on trust. Each now
-guards its own file's real shape:
+EGC_KEGG_TREE/EGC_ENZYME_TREE assert each raw entry carries exactly one
+id; EGC_COG_TREE's read_cog and EGC_TAX_TREE's read_tax likewise guard
+their own file's real shape instead of taking parts[1] / parts[-1] on
+trust:
   - .a.cog.txt:       exactly 10 columns, id is exactly COG + 4 digits
                       (a ';'-joined list fails the shape check)
   - .a.phylodist.txt: exactly 5 columns, lineage read from column 4 (it

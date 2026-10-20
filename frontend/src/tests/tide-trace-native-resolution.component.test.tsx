@@ -1,13 +1,11 @@
 /**
  * tide-trace-native-resolution.component.test.tsx
  * ===================================================
- * Component-level wiring test for the Tides fix (docs/AUDIT-2026-09-22.md).
+ * Component-level wiring test for the native-resolution tide trace.
  *
  * utils.pure.test.ts already covers nativeTideTrace() thoroughly in
  * isolation, but nothing exercised whether EgcChart, GroupedEgcChart, and
- * MultiEgcChart actually WIRE its output into the rendered Plotly trace --
- * the exact shape of gap this session's own W29/W32 self-reviews found
- * elsewhere ("the fix touched a render site, but no test exercises it").
+ * MultiEgcChart actually WIRE its output into the rendered Plotly trace.
  * Real Plotly doesn't render meaningful SVG under jsdom (confirmed:
  * egc-chart.component.test.tsx's own docblock avoids the tide-ON path
  * entirely for this reason), so this mocks react-plotly.js/factory to
@@ -89,7 +87,7 @@ function tideTraceFrom(data: typeof capturedData) {
   return data.find(t => t.name === 'Tide (m)')
 }
 
-describe('EgcChart — tide trace wiring (Tides, docs/AUDIT-2026-09-22.md)', () => {
+describe('EgcChart — tide trace wiring', () => {
   it('the rendered tide trace has as many points as the real tide data, not the EGC sample count', async () => {
     const user = userEvent.setup()
     const { EgcChart } = await import('../components/charts/EgcChart')
@@ -124,8 +122,8 @@ describe('EgcChart — tide trace wiring (Tides, docs/AUDIT-2026-09-22.md)', () 
     // which would make this test wrongly read capturedData from before the
     // filter was applied rather than actually exercising the filtered case.
     // Distinct sample ids ('s1'/'s2') -- makeSparsePoint's own `sample`
-    // default is shared across calls, and allPoints (F7, docs/AUDIT-2026-
-    // 10-05.md) keys its per-point map by sample, so two points reusing
+    // default is shared across calls, and allPoints keys its per-point map
+    // by sample, so two points reusing
     // the same default id would collide and silently drop one of them.
     render(
       <EgcChart

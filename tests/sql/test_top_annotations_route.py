@@ -77,10 +77,9 @@ def test_invalid_source(client):
     assert resp.status_code == 422
 
 
-# W2: date_from/date_to were compared as plain text against the stored
-# unpadded "M/D/YY H:MM" datetime, so a date_to always emptied the results
-# and a date_from never filtered anything (the whole-dataset ranking came
-# back mislabeled with the requested range, sample_count stuck at 128).
+# date_from/date_to must be compared as real dates, not as plain text
+# against the stored unpadded "M/D/YY H:MM" datetime -- a text comparison
+# makes a date_to empty the results and a date_from filter nothing.
 # All dates below are inside the real dataset's range (2021-05-27..2021-06-18,
 # confirmed live via /status's date_min/date_max).
 
@@ -91,7 +90,7 @@ def test_date_to_no_longer_empties_the_results(client):
     )
     resp.raise_for_status()
     body = resp.json()
-    assert body["data"], "date_to must not empty the results (W2 regression)"
+    assert body["data"], "date_to must not empty the results"
     assert 0 < body["sample_count"] < 128
 
 
@@ -107,7 +106,7 @@ def test_date_from_actually_filters_and_is_not_identical_to_unfiltered(client):
     filtered_body = filtered.json()
 
     assert filtered_body["sample_count"] < unfiltered.json()["sample_count"], \
-        "date_from must narrow sample_count below the unfiltered total (W2 regression)"
+        "date_from must narrow sample_count below the unfiltered total"
     assert filtered_body["sample_count"] < 128
 
 
@@ -123,10 +122,10 @@ def test_sample_count_reflects_the_active_filter_not_the_whole_dataset(client):
     assert body["sample_count"] == 9
 
 
-# A8 (docs/AUDIT-2026-10-05.md): depth was missing from this route's response
-# entirely for kegg/cog/enzyme, so the frontend had no way to rank-filter
-# down to real leaf annotations -- the top-25 by mean_egc is otherwise 100%
-# branch/rollup nodes, since a parent's EGC is the sum of its descendants.
+# depth must be in this route's response for kegg/cog/enzyme so the
+# frontend can rank-filter down to real leaf annotations -- the top-25 by
+# mean_egc is otherwise 100% branch/rollup nodes, since a parent's EGC is
+# the sum of its descendants.
 # Covers both response code paths: the unfiltered fast path (reads
 # annotation_catalog) and the date-filtered live-aggregation path (reads
 # annotation_series) -- they're different functions and must both carry it.
@@ -153,11 +152,10 @@ def test_depth_is_present_on_every_row_date_filtered_path(client):
     assert all(row.get("depth") is not None for row in rows)
 
 
-# A5 (docs/AUDIT-2026-10-05.md): an unparseable date_from/date_to used to be
-# silently ignored -- falling through to the FULL unfiltered dataset while
-# still being echoed back in the response as if it had been applied. Each
-# example below is the audit's own cited case: a plausible hand-typed value
-# that isn't the one supported "YYYY-MM-DD" shape.
+# An unparseable date_from/date_to must be rejected, not silently ignored --
+# ignoring it falls through to the FULL unfiltered dataset while still
+# echoing the bound back as if it had been applied. Each example below is a
+# plausible hand-typed value that isn't the one supported "YYYY-MM-DD" shape.
 
 @pytest.mark.parametrize("bad_date_from", [
     "06/10/2021",   # US format
@@ -182,8 +180,7 @@ def test_unparseable_date_to_is_rejected_not_silently_ignored(client):
 
 
 def test_a_valid_date_still_works_after_the_validation_added(client):
-    # Regression safety: A5's new check must not reject the real,
-    # already-supported "YYYY-MM-DD" shape every other test here relies on.
+    # The validation must not reject the real, supported "YYYY-MM-DD" shape every other test here relies on.
     resp = client.get(
         "/annotations/top",
         params={"source": "cog", "limit": 10, "date_from": "2021-06-10"},

@@ -38,7 +38,7 @@ class TestBonferroniCorrect:
         assert _bonferroni_correct(0.2, 5) == 1.0
 
 
-# ── _prescreen_rank_key (C3, docs/AUDIT-2026-10-05.md) ──────────────────────
+# ── _prescreen_rank_key ──────────────────────────────────────────────────────
 
 class TestPrescreenRankKey:
     def test_matches_the_fisher_z_style_formula_directly(self):
@@ -51,7 +51,7 @@ class TestPrescreenRankKey:
         assert _prescreen_rank_key(r=-0.8, n_pairs=20) == _prescreen_rank_key(r=0.8, n_pairs=20)
 
     def test_same_r_ranks_higher_n_above_lower_n(self):
-        # The actual point of C3: at equal |r|, more real data must win.
+        # The point of the n-aware key: at equal |r|, more real data must win.
         assert _prescreen_rank_key(r=0.6, n_pairs=100) > _prescreen_rank_key(r=0.6, n_pairs=20)
 
     def test_same_n_ranks_higher_r_above_lower_r(self):
@@ -60,10 +60,10 @@ class TestPrescreenRankKey:
         assert _prescreen_rank_key(r=0.9, n_pairs=50) > _prescreen_rank_key(r=0.3, n_pairs=50)
 
     def test_a_sparse_high_r_candidate_can_lose_to_a_dense_moderate_r_one(self):
-        # The exact real-world failure case C3 describes: a 10-point
-        # candidate at a near-perfect r=1.0 used to beat a 50-point
-        # candidate at a real, substantial r=0.48 under plain |r| ranking
-        # -- this statistic must reverse that, not just tweak it slightly.
+        # The real-world failure case: under plain |r| ranking a 10-point
+        # candidate at a near-perfect r=1.0 beats a 50-point candidate at a
+        # real, substantial r=0.48 -- this statistic must reverse that, not
+        # just tweak it slightly.
         sparse_high_r = _prescreen_rank_key(r=1.0, n_pairs=10)
         dense_moderate_r = _prescreen_rank_key(r=0.4840816326530612, n_pairs=50)
         assert abs(1.0) > abs(0.4840816326530612)  # confirms raw |r| would have picked the sparse one
@@ -120,7 +120,7 @@ class TestCoreScoring:
         assert r == 1.0  # rank correlation is exact for any monotonic transform
 
     def test_returns_none_for_a_constant_candidate(self):
-        # CR4: zero variance in either series makes pearsonr return NaN for
+        # Zero variance in either series makes pearsonr return NaN for
         # both r and p. That NaN must never reach the caller as a "valid"
         # score -- unguarded, it eventually hits correlations_cache's
         # NOT NULL columns (sqlite3 silently binds NaN as SQL NULL) and
@@ -161,14 +161,11 @@ class TestSpearmanAtLags:
         assert best_r == 1.0
 
     def test_a_true_4_or_5_sample_lag_is_found_exactly_not_forced_onto_3_or_6(self):
-        """C8 (docs/AUDIT-2026-10-05.md): CORRELATION_LAGS used to skip
-        ±4/±5 entirely (jumping straight from ±3 to ±6), so a real 4- or
-        5-sample lead/lag had no exact bucket to land in and got forced
-        onto whichever of 3 or 6 was closer -- a real r very close to but
-        provably not 1.0 (confirmed directly: the old 9-lag set found
-        lag=3 at r=0.9999402915173476 for this exact fixture, not the
-        true lag=4 at the real r=1.0). The real (now 13-entry)
-        CORRELATION_LAGS must find the true lag exactly."""
+        """CORRELATION_LAGS must include every offset up to ±6, so a real
+        4- or 5-sample lead/lag lands in its exact bucket instead of being
+        forced onto whichever of 3 or 6 is closer (a lag set skipping
+        ±4/±5 finds lag=3 at r=0.99994 for this fixture, not the true
+        lag=4 at r=1.0)."""
         n = 30
         ref = [(j + 1) ** 2 for j in range(n)]
         cand = [(i + 5) ** 2 for i in range(n)]  # true lag = 4 (cand[i] == ref[i+4])
@@ -203,10 +200,10 @@ class TestSpearmanAtLags:
         assert (best_r, best_lag, best_p, best_n) == (None, None, None, None)
 
 
-# ── _circular_shift_pvalue (CR2/CR8, docs/AUDIT-2026-09-22.md) ──────────────
-# CR8 replaced random sampling (n_perm draws, a seed) with exhaustive
-# enumeration of the valid shift range -- there is no longer a sample
-# count or seed to pass in, and the function is fully deterministic.
+# ── _circular_shift_pvalue ───────────────────────────────────────────────────
+# The valid shift range is enumerated exhaustively (no random draws), so
+# there is no sample count or seed to pass in and the function is fully
+# deterministic.
 
 from api.config import CORRELATION_LAGS  # noqa: E402  (grouped with the math tests, not the top-level imports)
 
@@ -223,13 +220,11 @@ def _valid_shift_count(n):
     the exact evaluable count (and therefore the exact minimum p) without
     reaching into the function's internals.
 
-    Re-audit (docs/AUDIT-2026-10-05.md, C1/CR8): the exclusion margin is
-    2*MAX_LAG, not MAX_LAG -- the inner lag-search _circular_shift_pvalue
-    runs on every shifted series can itself move the effective offset by up
-    to MAX_LAG in either direction, so a shift only MAX_LAG+1 away from a
-    boundary could still combine with an inner lag to land back on (or very
-    near) the real alignment. Only excluding by MAX_LAG left that window
-    open; this used to be the actual, exploitable bug."""
+    The exclusion margin is 2*MAX_LAG, not MAX_LAG -- the inner lag-search
+    _circular_shift_pvalue runs on every shifted series can itself move the
+    effective offset by up to MAX_LAG in either direction, so a shift only
+    MAX_LAG+1 away from a boundary could combine with an inner lag to land
+    back on (or very near) the real alignment."""
     lo, hi = 2 * MAX_LAG + 1, n - 2 * MAX_LAG - 1
     return max(0, hi - lo + 1)
 
@@ -264,16 +259,11 @@ class TestCircularShiftPvalue:
         result2 = _circular_shift_pvalue(ref, cand, r)
         assert result1 == result2  # both p AND at_p_floor must match
 
-    def test_minimum_possible_pvalue_at_the_real_dataset_size_matches_the_re_audits_own_1_in_104(self):
-        """Re-audit (docs/AUDIT-2026-10-05.md, C1/CR8): CR8's original verify
-        line claimed 'the smallest possible p is then about 1/116' for a real
-        n=128 series, but that number came from the buggy MAX_LAG (not
-        2*MAX_LAG) exclusion margin -- see _valid_shift_count's docstring.
-        With the margin corrected, n=128 gives 103 evaluable shifts (lo=13,
-        hi=115), so the true floor is 1/104, not 1/116 -- and, unlike the old
-        formula, this floor no longer varies by which lag the real
-        correlation sits at (the audit measured the old floor ranging
-        0.0086-0.0345 depending on lag)."""
+    def test_minimum_possible_pvalue_at_the_real_dataset_size_is_1_in_104(self):
+        """With the 2*MAX_LAG exclusion margin (see _valid_shift_count's
+        docstring), a real n=128 series has 103 evaluable shifts (lo=13,
+        hi=115), so the floor is 1/104 -- and it doesn't vary by which lag
+        the real correlation sits at."""
         assert _valid_shift_count(128) == 103
         rng = random.Random(2)
         ref = [rng.gauss(0, 1) for _ in range(128)]
@@ -283,7 +273,7 @@ class TestCircularShiftPvalue:
         assert r > 0.999
         p, at_p_floor = _circular_shift_pvalue(ref, cand, r)
         assert p == pytest.approx(1 / 104)
-        # C2 (docs/AUDIT-2026-10-05.md): this IS the floor -- no shift in
+        # This IS the floor -- no shift in
         # a near-perfect pair's permutation null should score as extreme
         # as the real alignment, so at_p_floor must be True here, the
         # exact case the disclosure exists for.
@@ -295,8 +285,8 @@ class TestCircularShiftPvalue:
         often enough that a consistently-low p here would indicate the
         permutation test is broken (e.g. always returning the floor).
 
-        n=128 (not a shorter series): the corrected, coarser 2*MAX_LAG
-        exclusion margin (C1, docs/AUDIT-2026-10-05.md) leaves too few
+        n=128 (not a shorter series): the 2*MAX_LAG exclusion margin
+        leaves too few
         evaluable shifts at small n for this test's 0.1 threshold to be
         meaningful -- at n=40 the floor itself is 1/16=0.0625, already
         below 0.1 regardless of whether the test series are related."""
@@ -310,17 +300,13 @@ class TestCircularShiftPvalue:
         assert p > 0.1, f"expected weak/no correlation between independent noise, got p={p}"
 
     def test_never_evaluates_a_shift_within_the_lag_search_window(self, monkeypatch):
-        """CR8 issue #1, corrected by the C1 re-audit (docs/AUDIT-2026-10-05.md):
-        a shift that small lets the lag search re-create part of the
-        ORIGINAL alignment, so the null it feeds isn't fully destroyed. The
-        margin that matters is 2*MAX_LAG, not MAX_LAG: the inner lag-search
-        run on every shifted series can itself move the effective offset by
-        up to MAX_LAG in either direction, so a shift only MAX_LAG+1 away
-        from a boundary (previously allowed) could combine with an inner
-        lag to land back on, or very near, the real alignment. This
-        assertion used to check only `MAX_LAG < shift < n - MAX_LAG`, which
-        is exactly why the bug shipped unnoticed -- it is now
-        `2*MAX_LAG < shift < n - 2*MAX_LAG`, matching the fixed production
+        """A shift that small lets the lag search re-create part of the
+        ORIGINAL alignment. The margin that matters is 2*MAX_LAG, not
+        MAX_LAG: the inner lag-search run on every shifted series can itself
+        move the effective offset by up to MAX_LAG in either direction, so a
+        shift only MAX_LAG+1 away from a boundary could combine with an
+        inner lag to land back on, or very near, the real alignment. Checks
+        `2*MAX_LAG < shift < n - 2*MAX_LAG`, matching the production
         exclusion range. Spies on every shifted_ref actually passed to the
         lag-search and decodes which shift amount produced it (ref's
         values are all distinct, so this is unambiguous) -- proves the
@@ -353,12 +339,11 @@ class TestCircularShiftPvalue:
                 f"shift={shift} is within {2 * MAX_LAG} samples of 0 or n={n} -- "
                 f"combined with the inner lag-search, this shift can "
                 f"reconstruct an effective offset inside the real lag "
-                f"window and must never be evaluated (C1, "
-                f"docs/AUDIT-2026-10-05.md)"
+                f"window and must never be evaluated"
             )
 
     def test_pvalue_is_never_exactly_zero(self):
-        """CR8 issue #2: p=(1+extreme)/(1+evaluable) can never be 0, no
+        """p=(1+extreme)/(1+evaluable) can never be 0, no
         matter how strong the real correlation is -- confirmed via the
         same near-perfect fixture that hits the theoretical floor above."""
         rng = random.Random(2)
@@ -369,10 +354,10 @@ class TestCircularShiftPvalue:
         assert p > 0.0
 
     def test_unscorable_shifts_are_excluded_from_the_denominator_not_counted_as_non_extreme(self, monkeypatch):
-        """CR8 issue #3: a shift where no lag could be scored (perm_r is
-        None) used to still occupy one of the n_perm denominator slots,
-        silently shrinking p for sparse series as if that shift had been a
-        real, scored, non-extreme draw. Stubs _spearman_at_lags to make a
+        """A shift where no lag could be scored (perm_r is None) must not
+        occupy a denominator slot -- counted, it would silently shrink p for
+        sparse series as if that shift had been a real, scored,
+        non-extreme draw. Stubs _spearman_at_lags to make a
         known subset of the valid shifts unscorable, and confirms the
         returned p matches hand-computed (1+extreme)/(1+evaluable) over
         only the REMAINING (scorable) shifts -- not the full valid range."""
@@ -408,12 +393,13 @@ class TestCircularShiftPvalue:
         # denominator), p would instead equal 1/(1+valid_count), a
         # different, smaller number for this fixture.
         assert p != pytest.approx((1 + 0) / (1 + valid_count))
-        # C2: 0.5 (the stub's fixed r) never >= observed_r=0.9, so every
+        # 0.5 (the stub's fixed r) never >= observed_r=0.9, so every
         # evaluable shift counts as non-extreme -- this also hits the floor.
         assert at_p_floor is True
 
     def test_re_searches_all_lags_per_shift_not_fixed_at_observed_best(self):
-        """The CR2 bias fix this function has always had, proven directly
+        """Re-searching every lag on each shift (rather than fixing the lag
+        at the observed best) avoids a lag-search bias -- proven directly
         by comparison rather than just checking the output is "a valid
         probability" (which would pass even if the bug were still
         present). Reconstructs what a fixed-at-observed-lag approach would
@@ -476,13 +462,13 @@ class TestScorePairCircularShift:
         assert score_pair(ref, cand, "circular_shift") is None
 
     def test_p_is_not_bonferroni_scaled(self, monkeypatch):
-        """The whole point of CR2: circular_shift's returned p must be the
+        """circular_shift's returned p must be the
         raw permutation fraction, never run through _bonferroni_correct
         like every other method -- confirmed directly by spying on
         _bonferroni_correct itself, rather than inferring it from the
-        shape of the number (CR8 made evaluable-count, and therefore the
-        p-value's granularity, data-dependent, so "not a clean fraction"
-        is no longer a reliable signal on its own)."""
+        shape of the number (the evaluable-shift count, and therefore the
+        p-value's granularity, is data-dependent, so "not a clean fraction"
+        isn't a reliable signal on its own)."""
         import api.correlation_sql as correlation_sql_module
 
         calls = []
@@ -516,10 +502,10 @@ class TestScorePairCircularShift:
         assert 0.0 <= p <= 1.0
         assert lag in CORRELATION_LAGS
         assert n >= 10
-        assert at_p_floor in (True, False)  # C2: always a real bool for circular_shift
+        assert at_p_floor in (True, False)  # always a real bool for circular_shift
 
     def test_parametric_methods_report_at_p_floor_as_none(self):
-        # C2 (docs/AUDIT-2026-10-05.md): the floor concept only applies to
+        # The floor concept only applies to
         # circular_shift's permutation test -- every other method must
         # report None (not False, which would wrongly imply "checked, and
         # no"), since they have no such floor to hit.
@@ -531,17 +517,13 @@ class TestScorePairCircularShift:
         assert at_p_floor is None
 
 
-# ── CR2's own explicit verification bar ─────────────────────────────────────
+# ── False-positive rate / power simulation ──────────────────────────────────
 
-class TestCR2FalsePositiveRateSimulation:
+class TestCircularShiftFalsePositiveRateSimulation:
     """
-    CR2 (docs/AUDIT.md) states an explicit, checkable bar: "simulated
-    independent AR(1) pairs pass q < 0.05 at <= 5%". The audit's own
-    simulation measured ~51% under the OLD parametric significance gate at
-    phi=0.85, n=128 -- this reproduces that exact scenario (independent
-    AR(1) series, same autocorrelation strength, same sample count) against
-    the CR8-fixed circular_shift, to give a real measured answer rather
-    than assume the fix works because the mechanism sounds right.
+    Independent AR(1) pairs (phi=0.85, n=128) must pass q < 0.05 at <= 5%.
+    The parametric significance gate passes ~51% of exactly these pairs,
+    because it treats autocorrelated timepoints as independent.
     """
 
     @pytest.mark.slow
@@ -557,7 +539,7 @@ class TestCR2FalsePositiveRateSimulation:
         # pair, not a tunable sample count -- measured directly: 150 pairs
         # ~53s total (~0.36s/pair), about the same wall-clock cost as the
         # old n_perm=200 sampling it replaces (fewer shifts, but each one
-        # still runs the full 9-lag search, so the per-shift cost is what
+        # still runs the full lag search, so the per-shift cost is what
         # dominates, not the shift count).
         n_pairs = 150
         pvalues = []
@@ -576,19 +558,15 @@ class TestCR2FalsePositiveRateSimulation:
 
         assert pass_rate <= 0.05, (
             f"{pass_rate:.1%} of {len(qvalues)} independent AR(1) pairs (phi=0.85, "
-            f"n=128) passed q<0.05 -- CR2's own bar is <=5%. The audit's own "
-            f"simulation measured ~51% under the old parametric gate at these "
-            f"exact same parameters, so this is the real scenario CR2 describes, "
-            f"not a synthetic stand-in for it."
+            f"n=128) passed q<0.05 -- the bar is <=5% (the parametric gate "
+            f"passes ~51% at these exact parameters)."
         )
 
     @pytest.mark.slow
     def test_ar1_pairs_also_measures_power_not_just_the_false_positive_rate(self):
-        """Re-audit checklist (docs/AUDIT-2026-09-22.md, 'Tests' section):
-        'The CR2 simulation also measures power (the fraction of true
-        correlates detected)' -- the false-positive test above only proves
-        the gate isn't too loose; this proves it isn't so strict it also
-        throws away real signal.
+        """Measures power (the fraction of true correlates detected) -- the
+        false-positive test above only proves the gate isn't too loose;
+        this proves it isn't so strict it also throws away real signal.
 
         cand = ref + scaled independent AR(1) noise (both autocorrelated,
         same phi, matching the false-positive test's own noise structure)

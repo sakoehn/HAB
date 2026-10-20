@@ -12,14 +12,12 @@
  * --------
  *   loading state, error state + retry re-fetches, empty state
  *   groups rendered sorted by summed EGC descending
- *   truncation note shown only at exactly 200 rows (the real fetch limit --
- *     W31, docs/AUDIT-2026-09-22.md -- this used to check 500, a value the
- *     real fetch could never produce)
+ *   truncation note shown only at exactly 200 rows (the real fetch limit)
  *   "Summed by parent" toggle shows the aggregate table instead
  *   expanding a group fetches and renders its member series
  *   a partial per-annotation series failure shows a warning + retry
  *   expanding a group with more than 20 members discloses that its trend
- *     chart only sums the first 20 (W31)
+ *     chart only sums the first 20
  *   collapsing and re-expanding does not re-fetch (cached), but Retry does
  *
  * Run: npx vitest run src/tests/annotations-by-parent-panel.component.test.tsx
@@ -196,10 +194,9 @@ describe('AnnotationsByParentPanel — expanding a group to load its series', ()
     await waitFor(() => expect(seriesCallCount).toBeGreaterThan(callsBeforeRetry))
   })
 
-  // W31 (docs/AUDIT-2026-09-22.md): the group trend chart silently sums
-  // only the first 20 of a group's members -- confirmed live on COG data,
-  // where every parent is null and COG shows one 200-member "Ungrouped"
-  // group whose trend is the sum of just 20 of them, with nothing saying so.
+  // The group trend chart sums only the first 20 of a group's members, and
+  // must say so -- e.g. on COG data a 200-member group's trend is the sum
+  // of just 20 of them.
   it('discloses that the trend chart only sums the first 20 members when a group has more', async () => {
     const rows = Array.from({ length: 25 }, (_, i) => makeRow(`C${i}`, 'BigGroup', 25 - i))
     mockFetch.mockImplementation((url: string) => {
@@ -270,7 +267,7 @@ describe('AnnotationsByParentPanel — re-fetches when the source prop changes',
         return Promise.resolve(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
       if (url.includes('source=kegg'))
         return Promise.resolve(jsonResponse({ data: [makeRow('K00001', 'Metabolism', 50)] }))
-      // W30a: kegg rows are now grouped from /api/kegg/parents' real
+      // kegg rows are grouped from /api/kegg/parents' real
       // immediate-parent data, not the row's own single `parent` field.
       if (url.includes('/api/kegg/parents'))
         return Promise.resolve(jsonResponse({ parents: { K00001: [{ annotation_id: '09100', name: 'Metabolism' }] } }))
@@ -284,11 +281,10 @@ describe('AnnotationsByParentPanel — re-fetches when the source prop changes',
     expect(screen.queryByText('Custom Group')).not.toBeInTheDocument()
   })
 
-  // W29 (docs/AUDIT-2026-09-22.md): switching source while the PREVIOUS
-  // source's request is still in flight used to let the stale (slower)
-  // response land after the newer one and get labelled/grouped under the
-  // NEW source -- the audit's own live example: "switch from kegg to cog.
-  // The slower kegg response arrives last and is shown under 'cog'."
+  // Switching source while the PREVIOUS source's request is still in
+  // flight must not let the stale (slower) response land after the newer
+  // one and get labelled/grouped under the NEW source (switch from kegg to
+  // cog; the slower kegg response arrives last and must not show as "cog").
   it('a stale response from the OLD source is ignored, even if it resolves after the new source\'s real response', async () => {
     let resolveKegg!: (v: unknown) => void
     const keggPending = new Promise(resolve => { resolveKegg = resolve })
@@ -315,11 +311,10 @@ describe('AnnotationsByParentPanel — re-fetches when the source prop changes',
   })
 })
 
-// W30a (docs/AUDIT-2026-09-22.md): the actual point of this fix -- a KEGG
-// row with more than one real immediate parent must be filed under EVERY
+// A KEGG row with more than one real immediate parent must be filed under EVERY
 // one of them, not just the single last-occurrence-wins `parent` field
 // the row itself carries.
-describe('AnnotationsByParentPanel — files a multi-parent KO under every real parent group (W30a)', () => {
+describe('AnnotationsByParentPanel — files a multi-parent KO under every real parent group', () => {
   it('a multi-parent row appears in both of its real groups; a single-parent row appears in only one', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/annotations/top')) {
@@ -353,7 +348,7 @@ describe('AnnotationsByParentPanel — files a multi-parent KO under every real 
     // Group B: K01 only -- count=1, sum=100. The SAME K01 EGC (100) is
     // counted in both groups' totals (130 + 100 = 230, more than K01+K02's
     // real combined 130) -- the same already-accepted cross-group
-    // non-additivity E17 introduced for COG's multi-category fix, not a
+    // non-additivity as COG's multi-category rollup, not a
     // bug to "fix" by splitting/dividing K01's value between groups.
     const groupBRow = screen.getByText('Group B').closest('.mappings-toggle')!
     expect(groupBRow.textContent).toContain('1 annotations')
@@ -381,10 +376,9 @@ describe('AnnotationsByParentPanel — files a multi-parent KO under every real 
     expect(screen.getByText(/already includes everything beneath it/i)).toBeInTheDocument()
   })
 
-  // E2 (docs/AUDIT-2026-10-05.md): the catch block's old comment claimed a
-  // single-parent fallback already existed on a /kegg/parents failure, but
-  // nothing actually consulted r.parent -- every row silently landed in one
-  // undifferentiated "Ungrouped" bucket with no error shown to the user.
+  // On a /kegg/parents failure, rows must fall back to their own single
+  // r.parent (not one undifferentiated "Ungrouped" bucket) and a visible
+  // warning must be shown.
   it('falls back to single-parent grouping and shows a visible warning when /kegg/parents fails', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/annotations/top')) {
@@ -444,15 +438,15 @@ describe('AnnotationsByParentPanel — files a multi-parent KO under every real 
     expect(mockFetch.mock.calls.some(([u]) => String(u).includes('/api/kegg/parents'))).toBe(false)
   })
 
-  // The existing W29 race test (above) covers a stale response superseded
-  // at the FIRST fetch (/api/annotations/top). This covers the other new
-  // await this fix introduced: a kegg request that already committed its
+  // The source-switch race test (above) covers a stale response superseded
+  // at the FIRST fetch (/api/annotations/top). This covers the other
+  // await: a kegg request that already committed its
   // allRows/loadedSource, then gets superseded WHILE still awaiting its
   // own /api/kegg/parents call. The panel's `status` stays 'loading'
   // across that whole await specifically so nothing stale can render in
   // between -- this proves the late-resolving kegg parents response can't
   // corrupt or overwrite the newer (cog) request's already-shown result.
-  // The existing W29 race test (above) and the cross-source variant below
+  // The source-switch race test (above) and the cross-source variant below
   // both supersede with a DIFFERENT source -- loadedSource ends up !=
   // 'kegg', so the grouping logic's own `if (loadedSource === 'kegg')`
   // branch never even reads multiParents, masking a missing requestId

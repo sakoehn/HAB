@@ -22,8 +22,8 @@ export function HierarchyTree({
   nodes:          HierarchyTreeNode[]
   highlightId:    string | null
   onToggleExpand: (node: HierarchyTreeNode) => void
-  // G8/G12 (docs/AUDIT-2026-10-05.md): a failed root fetch left `nodes`
-  // empty exactly the same way a genuinely childless root would -- this
+  // A failed root fetch leaves `nodes` empty exactly the same way a
+  // genuinely childless root would, so callers pass `status` -- this
   // is reachable even when the popup's own path lookup (HierarchyModal's
   // pathStatus) succeeds, since goToPath's root-children fetch is a
   // separate request. Optional only so existing callers that never pass
@@ -90,14 +90,11 @@ function HierarchyNodeRow({
         </button>
 
         <span className="tax-node-name">{node.name}</span>
-        {/* G8/G12 (docs/AUDIT-2026-10-05.md): a failed child fetch left
-            loadStatus:'error' with nothing rendering it -- the row just
-            reverted to the same plain collapsed-arrow look as a real
-            empty/unexpanded node, with no indication the previous click
-            actually failed (as opposed to just not having been clicked
-            yet). loadStatus stays 'error' (never auto-reset), so the
+        {/* A failed child fetch (loadStatus:'error') would otherwise look
+            just like a real empty/unexpanded node, with no sign the click
+            failed. loadStatus stays 'error' (never auto-reset), so the
             chevron above is already clickable again to retry -- this is
-            purely the missing visual cue that a retry is warranted. */}
+            the visual cue that a retry is warranted. */}
         {node.loadStatus === 'error' && (
           <span className="tax-node-load-error" title="Failed to load children — click ▸ to retry">
             ⚠

@@ -36,11 +36,10 @@ type SeriesEntry = {
 }
 
 // buildGroupedEgcCsvRows
-// Exported so tests can exercise the real CSV row shape directly (W18).
+// Exported so tests can exercise the real CSV row shape directly.
 // The value column is named from the active metric, with metric/
-// standardized/smoothed recorded on every row -- was hardcoded "egc" with
-// no record of which transform (metric swap, z-score, LOWESS smoothing)
-// was applied.
+// standardized/smoothed recorded on every row, so the CSV records which
+// transform (metric swap, z-score, LOWESS smoothing) was applied.
 export function buildGroupedEgcCsvRows(
   points:      { datetime: string; egc: number | null; tide_wl?: number | null }[],
   groupLabel:  string,
@@ -72,7 +71,7 @@ export function GroupedEgcChart({
   const [metric, setMetric]                   = useState<ChartMetric>('norm_egc')
   const [standardize, setStandardize]         = useState(false)
   const [smoothed, setSmoothed]               = useState(false)
-  const [smoothBandwidth, setSmoothBandwidth] = useState(0.3) // W27: within the real [0.1, 0.8] slider range
+  const [smoothBandwidth, setSmoothBandwidth] = useState(0.3) // within the real [0.1, 0.8] slider range
   const [dateFrom, setDateFrom]               = useState('')
   const [dateTo, setDateTo]                   = useState('')
   const [showNightShading, setShowNightShading] = useState(false)
@@ -84,19 +83,15 @@ export function GroupedEgcChart({
     useSolarTideData(showNightShading || showTide)
   const { allSamples } = useAllSamples()
 
-  // F2 (docs/AUDIT-2026-10-05.md): a timepoint with zero detected members
-  // used to not exist in dtMap at all -- so the rendered trace silently
-  // skipped straight to the next detected timepoint (connectgaps:false
-  // below had nothing to break at, since there was no null point there to
-  // begin with), AND a surviving timepoint's "sum" was actually over
-  // whichever SUBSET of members happened to be detected there, presented
-  // identically to a timepoint where every member was detected -- the same
-  // W21 failure mode EgcChart/MultiEgcChart already fix, plus a second,
-  // distinct problem (the shifting member set) unique to a chart that sums.
-  // Unions in the full real sample timeline first (a UNION with the
-  // series' own detected samples, not a swap, same reasoning as
-  // EgcChart/MultiEgcChart), tracks how many members actually contributed
-  // at each timepoint, and leaves egc explicitly null when that count is 0.
+  // Two things a summed chart must not hide: a timepoint where no member
+  // was detected (the trace must break there, not skip straight to the
+  // next detected timepoint -- connectgaps:false below needs a real null
+  // point to break at), and a "sum" over only the SUBSET of members
+  // detected at a timepoint. So this unions in the full real sample
+  // timeline (a UNION with the series' own detected samples, not a swap,
+  // same reasoning as EgcChart/MultiEgcChart), tracks how many members
+  // actually contributed at each timepoint, and leaves egc explicitly null
+  // when that count is 0.
   const summedPoints = useMemo(() => {
     // When metric is norm_egc, sum norm_egc (egc / total_sample_depth) per
     // datetime for true depth-normalised group abundance. Otherwise sum raw egc.
@@ -134,7 +129,7 @@ export function GroupedEgcChart({
       }))
   }, [allSeries, dateFrom, dateTo, metric, allSamples])
 
-  // W27 (docs/AUDIT-2026-09-22.md): unsmoothed is the metric/standardize
+  // unsmoothed is the metric/standardize
   // pipeline WITHOUT LOWESS -- stats read this, so toggling Smooth never
   // changes the reported numbers, only the drawn curve.
   const unsmoothedPointsRaw = useMemo(() => {
@@ -144,12 +139,11 @@ export function GroupedEgcChart({
     return pts
   }, [summedPoints, standardize])
 
-  // W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op with
-  // fewer than 2 real points -- this is whether it ACTUALLY standardized,
+  // applyZScore is a silent no-op with fewer than 2 real points -- this is whether it ACTUALLY standardized,
   // not just whether the toggle is on.
   const standardizeApplied = standardize && canApplyZScore(unsmoothedPointsRaw.map(p => p.egc))
 
-  // F3 (docs/AUDIT-2026-10-05.md): applyLowess is a silent no-op with
+  // applyLowess is a silent no-op with
   // fewer than 3 real points -- this is whether it ACTUALLY smoothed,
   // not just whether the toggle is on.
   const smoothedApplied = smoothed && canApplyLowess(unsmoothedPointsRaw.map(p => p.egc))
@@ -176,7 +170,7 @@ export function GroupedEgcChart({
     [processedPoints],
   )
 
-  // Tides (docs/AUDIT-2026-09-22.md): the VISUAL tide trace plots at its own
+  // The VISUAL tide trace plots at its own
   // native resolution -- see nativeTideTrace's doc comment in
   // utils/solar.ts. The tide_wl field above still feeds CSV export.
   const nativeTide = useMemo(
@@ -184,7 +178,7 @@ export function GroupedEgcChart({
     [showTide, tides, dateFrom, dateTo],
   )
 
-  // W27: stats read the unsmoothed values, unaffected by the Smooth toggle.
+  // Stats read the unsmoothed values, unaffected by the Smooth toggle.
   const egcVals = useMemo(
     () => unsmoothedPointsRaw.map(d => d.egc).filter((v): v is number => v !== null),
     [unsmoothedPointsRaw],
@@ -207,9 +201,9 @@ export function GroupedEgcChart({
   const yLabel = metric === 'norm_egc'
     ? (standardizeApplied ? 'Summed Relative Abundance (Z-score)' : 'Summed Relative Abundance')
     : (standardizeApplied ? 'Summed EGC (Z-score)' : 'Summed EGC')
-  // W27: tooltip-only label -- discloses when the hovered value is a fitted
+  // Tooltip-only label -- discloses when the hovered value is a fitted
   // LOWESS curve, not the real summed sample value. Deliberately NOT used
-  // for the axis/StatsPanel yLabel above, since those now always describe
+  // for the axis/StatsPanel yLabel above, since those always describe
   // the unsmoothed data regardless of the Smooth toggle.
   const hoverYLabel = yLabel + (smoothedApplied ? ' (smoothed)' : '')
 
@@ -266,10 +260,9 @@ export function GroupedEgcChart({
       hovertemplate:
         '<b>%{customdata[1]}</b><br>' +
         hoverYLabel + ': %{customdata[0]}<br>' +
-        // F2 (docs/AUDIT-2026-10-05.md): discloses how many of the group's
-        // members actually contributed to this point's sum -- a point
-        // where only 1 of 3 members was detected used to look identical to
-        // one where all 3 were.
+        // Discloses how many of the group's members actually contributed to
+        // this point's sum -- otherwise a point where only 1 of 3 members
+        // was detected would look identical to one where all 3 were.
         '%{customdata[2]} of ' + allSeries.length + ' members detected' +
         '<extra></extra>',
     }]
@@ -361,8 +354,7 @@ export function GroupedEgcChart({
             fontSize: 12, fontFamily: 'var(--mono)',
             color: 'var(--text-dim)', marginTop: 2,
           }}>
-            {/* F2 (docs/AUDIT-2026-10-05.md): processedPoints.length is now
-                the full real sample timeline in range, not just timepoints
+            {/* processedPoints.length is the full real sample timeline in range, not just timepoints
                 where some member was detected -- disclose how many of
                 those actually had at least one real detection, the same
                 "(detected in N)" shape EgcChart's own header already uses. */}

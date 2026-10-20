@@ -44,9 +44,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 # Known-good totals, independently confirmed against the real database
-# right before this file was written (see conversation/project memory for
-# provenance -- e.g. sample 3300060358's count matches the figure verified
-# independently three separate times during the mapping-TSV rebuild).
+# (e.g. sample 3300060358's count was verified independently three
+# separate times during the mapping-TSV rebuild).
 EXPECTED_TOTAL_MAPPINGS   = 74_109_175
 EXPECTED_TOTAL_TAXON_PATHS = 42_099
 EXPECTED_SAMPLE_COUNT      = 128
@@ -288,7 +287,7 @@ def test_no_duplicate_cog_id_within_one_gene(conn):
 #=============================================================
 #  Test Mapping Search
 #=============================================================
-# Post taxonomy_egc_homonym_bug, get_mappings_sql's taxonomy branch matches
+# get_mappings_sql's taxonomy branch matches
 # against taxon_paths.full_path (a lineage-prefix), so a bare species name
 # no longer matches -- it must be the full lineage through that rank.
 TAXONOMY_SPECIES_LINEAGE = (
@@ -318,7 +317,7 @@ def test_exact_match_only_search(conn):
     node at ANY level (leaf or ancestor). "EC:7.1.2" is deliberately NOT
     used as a negative example here -- it's a real EC class node (see
     test_enzyme_class_id_is_not_a_substring_match_it_is_a_real_node
-    below), so post-W24 it correctly returns real rows, not []."""
+    below), so it correctly returns real rows, not []."""
 
     assert get_mappings_sql(conn, "cog", "COG0055")
     assert get_mappings_sql(conn, "cog", "COG005") == []
@@ -334,13 +333,11 @@ def test_exact_match_only_search(conn):
 
 
 def test_enzyme_class_id_is_not_a_substring_match_it_is_a_real_node(conn):
-    """W24 (docs/AUDIT-2026-09-22.md): "EC:7.1.2" ("Linked to the
-    hydrolysis of a nucleoside triphosphate") is a real, non-leaf EC
-    class with 2 real member leaf ECs -- pre-fix, this returned [] not
-    because the match was correctly rejected, but because the exact-match
-    code could never match anything but a full 4-level leaf EC number.
-    A test previously asserted the pre-fix [] as if it were the intended
-    "reject substrings" behavior; this replaces that assertion."""
+    """"EC:7.1.2" ("Linked to the hydrolysis of a nucleoside
+    triphosphate") is a real, non-leaf EC class with 2 real member leaf
+    ECs, so it must resolve to their mappings -- an empty result here would
+    mean only full 4-level leaf EC numbers can match, not that substrings
+    are being correctly rejected."""
     rows = get_mappings_sql(conn, "enzyme", "EC:7.1.2")
     assert rows, "EC:7.1.2 is a real EC class and must resolve to its member leaves' mappings"
     assert all(row["enzyme"] and "7.1.2." in row["enzyme"] for row in rows)
@@ -379,34 +376,26 @@ def test_strip_source_prefix_strips_the_real_kegg_and_enzyme_prefixes():
 
 
 def test_expand_to_leaf_ids_needs_the_prefix_stripped_first(conn):
-    """A1 (docs/AUDIT-2026-10-05.md): _expand_to_leaf_ids itself does NOT
-    strip a prefix (unlike get_mappings_sql, which strips before calling
-    it) -- confirmed directly: the prefixed form alone resolves to zero
-    leaves, even though it's a real, resolvable id. routes.py's own
-    cap-check used to call _expand_to_leaf_ids this unstripped way
-    directly, so a prefixed annotation_id (a documented/tested supported
-    form) saw leaf_count=0 and skipped every cap, reproducing the real
-    K02014/271,284-row production incident the cap exists to prevent.
-    strip_source_prefix must be called first, same as get_mappings_sql
-    already does internally."""
-    assert _expand_to_leaf_ids(conn, "kegg", "KO:K02014") == []  # the bug, if called directly
+    """_expand_to_leaf_ids itself does NOT strip a prefix (get_mappings_sql
+    strips before calling it): the prefixed form alone resolves to zero
+    leaves, even though it's a real, resolvable id. Any caller -- including
+    routes.py's cap-check -- must call strip_source_prefix first, or a
+    prefixed annotation_id sees leaf_count=0 and skips every cap (for
+    K02014 that's an uncapped 271,284-row query)."""
+    assert _expand_to_leaf_ids(conn, "kegg", "KO:K02014") == []  # unstripped: resolves to nothing
     assert _expand_to_leaf_ids(conn, "kegg", strip_source_prefix("kegg", "KO:K02014")) == ["K02014"]
     assert _expand_to_leaf_ids(conn, "kegg", "K02014") == ["K02014"]  # bare form always worked
 
 
 #=============================================================
-#  W24 (docs/AUDIT-2026-09-22.md): non-leaf ids now resolve
+#  Non-leaf ids resolve to their member leaves
 #=============================================================
-# get_mappings_sql used to match ONLY the exact leaf id (kegg_id = ?,
-# ec_id = ?, cog_id = ?), so a pathway/class/category id -- which never
-# appears as any gene's own kegg_id/ec_id/cog_id, only leaf ids do --
-# always returned zero rows, silently and indistinguishably from "this
-# annotation genuinely has no mappings". Pre-fix, the kegg branch built
-# `kegg_id = f"KO:{annotation_id}"` -- for annotation_id="00910" that's
-# the literal string "KO:00910", which mappings.kegg_id never contains
-# (it only ever holds "KO:K#####" leaf forms) -- so this was
-# unconditionally [] for every non-leaf kegg/enzyme/cog id, confirmed by
-# reading the pre-fix query, not just assumed.
+# A pathway/class/category id never appears as any gene's own
+# kegg_id/ec_id/cog_id -- only leaf ids do (mappings.kegg_id only ever
+# holds "KO:K#####" forms, never e.g. "KO:00910"). Matching only the exact
+# id would return zero rows for every non-leaf kegg/enzyme/cog id,
+# indistinguishable from "this annotation genuinely has no mappings", so
+# get_mappings_sql expands a non-leaf id to its member leaves first.
 
 def test_kegg_pathway_id_now_returns_its_member_kos_mappings(conn):
     """00910 (Nitrogen metabolism) is a real KEGG pathway with real member
@@ -479,7 +468,7 @@ def test_search_values_correct(conn):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# W11 -- GROUP_CONCAT(DISTINCT ...) order determinism
+# GROUP_CONCAT(DISTINCT ...) order determinism
 #
 # SQLite doesn't guarantee element order inside GROUP_CONCAT(DISTINCT ...);
 # search_mappings' unique_pairs dedup (FastAPI/api/routes.py) builds its key

@@ -62,7 +62,7 @@ def test_kegg_path_unknown_id_returns_404(client):
     assert resp.status_code == 404
 
 
-# W30a (docs/AUDIT-2026-09-22.md): /kegg/parents, the bulk sibling of
+# /kegg/parents, the bulk sibling of
 # /kegg/path -- "Annotations by Parent" needs every real immediate parent
 # for up to 200 rows at once, not one id-at-a-time call per row.
 
@@ -135,9 +135,8 @@ def test_cog_path_unknown_id_returns_404(client):
 def test_cog_path_resolves_multicategory_node_to_all_real_paths(client):
     """COG0028 is confirmed real under both category E (Amino acid
     transport and metabolism) and category H (Coenzyme transport and
-    metabolism) on NCBI's own site (E17, docs/AUDIT-2026-09-22.md) --
-    before that fix, cog_paths could only ever hold one of the two, so
-    this route could never have returned both. Skips if this dataset
+    metabolism) on NCBI's own site, so this route must return both paths.
+    Skips if this dataset
     doesn't happen to have COG0028 annotated."""
     resp = client.get("/cog/path", params={"id": "COG0028"})
     if resp.status_code == 404:
@@ -148,5 +147,5 @@ def test_cog_path_resolves_multicategory_node_to_all_real_paths(client):
     assert categories == {"E", "H"}, (
         f"expected COG0028 under both E and H, got {categories} -- "
         "if this is a single category, cog_paths hasn't been regenerated "
-        "from the E17-fixed notebook yet (Phase 3)"
+        "from the multi-category COG notebook yet"
     )

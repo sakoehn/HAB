@@ -85,12 +85,11 @@ describe('LeftResultList — empty state and basics', () => {
   })
 })
 
-// G9 (docs/AUDIT-2026-10-05.md): two genuine cross-lineage taxonomy
-// homonyms (same bare name, different ancestry -- the repo's own
-// documented Bosea case) used to render with identical name + identical
-// rank label and no lineage hint anywhere, with nothing inviting the
-// user to notice they're different taxa.
-describe('LeftResultList — taxonomy homonym disambiguation (G9)', () => {
+// Two genuine cross-lineage taxonomy homonyms (same bare name, different
+// ancestry, e.g. Bosea under two families) would otherwise render with
+// identical name + identical rank label, with nothing inviting the user to
+// notice they're different taxa.
+describe('LeftResultList — taxonomy homonym disambiguation', () => {
   it('shows the immediate parent next to the name and the full lineage as a title tooltip', () => {
     renderList({
       rows: [
@@ -452,11 +451,10 @@ describe('LeftResultList — row interactions', () => {
   })
 })
 
-// W21 (docs/AUDIT-2026-09-22.md): mean_egc is a mean over samples where
-// the annotation was actually detected, not all 128 -- previously shown
-// with no indication of how many samples it came from, so a 9-sample
-// mean and a 128-sample mean looked identical.
-describe('LeftResultList — W21 detection count disclosure', () => {
+// mean_egc is a mean over samples where the annotation was actually
+// detected, not all 128 -- without saying how many samples it came from, a
+// 9-sample mean and a 128-sample mean would look identical.
+describe('LeftResultList — detection count disclosure', () => {
   it('shows (N/128) next to the mean when sample_count is under the full 128', () => {
     renderList({
       rows: [makeRow({ annotation_id: 'COG0001', mean_egc: 100, sample_count: 9 })],

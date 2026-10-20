@@ -9,8 +9,7 @@ Item 8  — /api/status returns date_min / date_max
 (Item 6, /annotations/correlate concurrency fix, tested the now-deleted
 api/correlation.py -- an unregistered, orphaned module superseded by
 correlation_sql.py before this file was even written. Removed along with
-its tests as part of the JSON-backend-retirement scoping work; see
-project memory "json-backend-retirement-scope" for the full inventory.)
+its tests as part of the JSON-backend retirement.)
 
 REFACTORED FOR MODULE SPLIT
 ----------------------------
@@ -208,8 +207,8 @@ class TestSmokePatched:
             annotation_id="__nonexistent__",
             source=AnnotationSource.kegg,
             sample_count=1,
-            # A6 (docs/AUDIT-2026-10-05.md): page/page_size are now
-            # Query(1, ge=1)/Query(100, ...) defaults -- calling the route
+            # page/page_size are Query(1, ge=1)/Query(100, ...) defaults --
+            # calling the route
             # as a plain function (bypassing FastAPI's own request
             # pipeline, which is what actually resolves a Query default
             # into a real int) leaves the raw Query marker object as the
@@ -232,7 +231,7 @@ class TestSmokePatched:
             source=AnnotationSource.kegg,
             sample_count=5,
             unique_pairs=True,
-            page=1, page_size=100,  # A6 -- see test_search_mappings_returns_dict's comment
+            page=1, page_size=100,  # see test_search_mappings_returns_dict's comment
         )
         assert isinstance(result["data"], list)
 

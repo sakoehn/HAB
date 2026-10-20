@@ -42,8 +42,7 @@ def client():
 
 
 def test_get_children(client):
-    """`parent` must be the full lineage-prefix now (see
-    taxonomy_egc_homonym_bug) -- a bare rank name like "Bacteroidetes" is
+    """`parent` must be the full lineage-prefix -- a bare rank name like "Bacteroidetes" is
     no longer a valid identifier, see test_bare_name_no_longer_resolves."""
     resp = client.get(
         "/taxonomy/children",
@@ -120,13 +119,10 @@ def test_homonym_lineages_return_disjoint_children(client):
 
 
 def test_explicitly_empty_parent_returns_the_same_roots_as_omitting_it(client):
-    """A7 (docs/AUDIT-2026-10-05.md): parent="" (a real, explicitly empty
-    string -- FastAPI only supplies the None default when the query
-    param is omitted entirely) used to fall through this route's
-    truthiness check (`if parent and ...`) and hit a lineage-prefix match
-    against "", which matches no real taxon -- 200 + 0 children, not the
-    docstring's promised 4 domain roots. Confirmed live before this fix:
-    omitted gave count=4, parent="" gave count=0."""
+    """parent="" (a real, explicitly empty string -- FastAPI only supplies
+    the None default when the query param is omitted entirely) must behave
+    like omission: matched as a lineage prefix it would match no real
+    taxon and return 0 children instead of the 4 domain roots."""
     omitted = client.get("/taxonomy/children")
     empty   = client.get("/taxonomy/children", params={"parent": ""})
     assert omitted.status_code == 200

@@ -14,14 +14,14 @@
  *   kegg KO id (K##### shape) gets KEGG + BRITE + Color Mapper (3 links);
  *     Color Mapper copies the id to the clipboard and opens the mapper
  *   kegg non-KO id gets the plain KEGG database link, `map`-prefixed for a
- *     real pathway or `br:ko`-prefixed for a BRITE-only group (W32,
- *     docs/AUDIT-2026-09-22.md -- a bare code 404s on genome.jp)
+ *     real pathway or `br:ko`-prefixed for a BRITE-only group (a bare code
+ *     404s on genome.jp)
  *   cog id gets the NCBI COG link
  *   enzyme id gets a dash-padded KEGG link for a partial EC, and an ExPASy
- *     link (not NCBI's discontinued Enzyme database, W32) only for a
+ *     link (not NCBI's discontinued Enzyme database) only for a
  *     complete 4-level EC, with the "EC:" prefix stripped from both
  *   taxonomy id gets the NCBI Taxonomy search link built from the bare
- *     leaf-most rank name, not the full `;`-joined lineage (W32)
+ *     leaf-most rank name, not the full `;`-joined lineage
  *   unknown source -> null
  *   ExternalLink (inline variant): italicizes taxonomy labels, uses
  *     taxonomyAwarePrimaryLabel for the visible text
@@ -64,13 +64,13 @@ describe('ExternalLinks — kegg', () => {
     expect(screen.getByRole('button', { name: /Color Mapper/i })).toBeInTheDocument()
   })
 
-  // G4 (docs/AUDIT-2026-10-05.md): the id's own numeric value can't tell
+  // The id's own numeric value can't tell
   // a real BRITE hierarchy FILE apart from a bare category CODE inside
   // one -- both can be any value. The catalog's own `name` field carries
   // the real distinction via a bracketed " [BR:koNNNNN]" suffix on an
   // actual hierarchy file's own ko00001.keg line; 02000 (Transporters) is
-  // real, confirmed against the live catalog, and -- unlike the old
-  // numeric->=9000 guess -- falls well under that threshold.
+  // real, confirmed against the live catalog, and falls well under any
+  // numeric threshold like >=9000.
   it('a non-KO kegg id with a real [BR:] name marker gets a br:ko-prefixed KEGG link', () => {
     render(<ExternalLinks annotationId="02000" source="kegg" name="Transporters [BR:ko02000]" />)
     expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
@@ -142,9 +142,9 @@ describe('ExternalLinks — cog', () => {
 })
 
 describe('ExternalLinks — enzyme', () => {
-  // W32: NCBI's own Enzyme database is discontinued (404s for every EC,
-  // not just partial ones) -- replaced with the still-live ExPASy ENZYME
-  // database, labelled accordingly so the link text matches its real target.
+  // NCBI's own Enzyme database is discontinued (404s for every EC, not
+  // just partial ones) -- the still-live ExPASy ENZYME database is used
+  // instead, labelled accordingly so the link text matches its real target.
   it('a complete 4-level EC gets a KEGG link and an ExPASy link, EC: prefix stripped from both', () => {
     render(<ExternalLinks annotationId="EC:1.1.1.1" source="enzyme" />)
     expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
@@ -165,7 +165,7 @@ describe('ExternalLinks — enzyme', () => {
     )
   })
 
-  // W32: a partial EC (e.g. "2.7", an EC subclass with no complete 4-level
+  // A partial EC (e.g. "2.7", an EC subclass with no complete 4-level
   // number) 404s on genome.jp without dash-padding, and has no matching
   // per-entry page on ExPASy at all -- confirmed only the (now dash-padded)
   // KEGG link is shown for it.
@@ -179,7 +179,7 @@ describe('ExternalLinks — enzyme', () => {
 })
 
 describe('ExternalLinks — taxonomy', () => {
-  // W32: NCBI Taxonomy's search has no match for a full `;`-joined lineage
+  // NCBI Taxonomy's search has no match for a full `;`-joined lineage
   // string (confirmed live: "No items found") -- it needs just the
   // leaf-most rank's bare name.
   it('gets the real NCBI Taxonomy search link built from the bare leaf name, not the full lineage', () => {
@@ -220,7 +220,7 @@ describe('ExternalLink — inline variant', () => {
     expect(screen.getByRole('link', { name: 'NCBI COG' })).toBeInTheDocument()
   })
 
-  // W32: ExternalLink already computes a taxonomy `name` for its own visible
+  // ExternalLink already computes a taxonomy `name` for its own visible
   // label -- confirms that same value is threaded into ExternalLinks' NCBI
   // Taxonomy URL too, not just used for display.
   // Same fixture-design note as the ExternalLinks test above: `name`

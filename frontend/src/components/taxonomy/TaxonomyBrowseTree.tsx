@@ -71,10 +71,9 @@ function BrowseNodeRow({
           {node.loadStatus === 'loading' ? '…' : node.expanded ? '▾' : '▸'}
         </button>
 
-        {/* G8/G12 (docs/AUDIT-2026-10-05.md): see HierarchyTree's matching
-            comment -- a failed child fetch left loadStatus:'error' with
-            nothing rendering it, indistinguishable from a row that was
-            simply never clicked. */}
+        {/* See HierarchyTree's matching comment -- without this, a
+            failed child fetch (loadStatus:'error') would look identical to
+            a row that was simply never clicked. */}
         {node.loadStatus === 'error' && (
           <span className="tax-node-load-error" title="Failed to load children — click ▸ to retry">
             ⚠

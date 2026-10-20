@@ -5,15 +5,14 @@ Populates `cog_paths` (see create_sql_schema.py) -- one row per real
 (category letter, COG id) membership, parsed directly from
 DataStructures/COG/cog_categories.json.
 
-E17 (docs/AUDIT-2026-09-22.md): a COG id can belong to more than one of
-NCBI's 26 categories (confirmed: 400 of ~5,000 COGs). cog_categories.json
-is written by EGC_COG_TREE.ipynb's scraping cell and already contains one
-row per real membership -- unlike the original version of this script,
-this does NOT read annotation_catalog.parent, which is a single TEXT
-column and can only ever express one category per COG. That mirrors how
+A COG id can belong to more than one of NCBI's 26 categories (400 of
+~5,000 COGs). cog_categories.json is written by EGC_COG_TREE.ipynb's
+scraping cell and already contains one row per real membership -- this
+deliberately does NOT read annotation_catalog.parent, which is a single
+TEXT column and can only ever express one category per COG. That mirrors how
 migrate_kegg_paths_to_sql.py reads ko00001.keg directly instead of
 annotation_catalog's single-valued parent column, for the same reason
-(KEGG nodes can have multiple real parents too, see E14/CR3).
+(KEGG nodes can have multiple real parents too).
 
 annotation_catalog is still used as the "is this COG id actually real in
 our dataset" filter -- a membership row is only kept if its COG id is a

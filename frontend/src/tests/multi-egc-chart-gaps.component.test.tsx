@@ -1,16 +1,13 @@
 /**
  * multi-egc-chart-gaps.component.test.tsx
  * ==========================================
- * F1 (docs/AUDIT-2026-10-05.md): MultiEgcChart's own baseRows used to be
- * built only from timepoints where at least one displayed series had data,
- * and connectgaps was hardcoded true -- so a real non-detection in one
- * series, at a timepoint another series DID have data for, silently drew a
- * straight line across it instead of a break. A timepoint where NO
- * displayed series had any data didn't exist in the chart's x-axis at all.
+ * A real non-detection in one MultiEgcChart series must break the line,
+ * not draw a straight line across it -- including at a timepoint where
+ * another series DID have data, and at a timepoint where NO displayed
+ * series had any data (which must still exist on the chart's x-axis).
+ * Same behavior as EgcChart's own allPoints/connectgaps:false.
  *
- * This is the same W21 failure mode EgcChart already fixed (confirmed via
- * its own allPoints/connectgaps:false) -- MultiEgcChart is the sibling the
- * audit found still broken. Needs its own file (not multi-egc-chart.
+ * Needs its own file (not multi-egc-chart.
  * component.test.tsx) because it mocks react-plotly.js/factory to capture
  * the real `data` prop passed to <Plot>, the same technique
  * tide-trace-native-resolution.component.test.tsx already established --
@@ -44,7 +41,7 @@ function jsonResponse(data: unknown) {
 }
 
 // 3 real samples -- detected at the first and last, a genuine gap at the
-// middle one (8:00), the exact shape F1 describes.
+// middle one (8:00).
 const ALL_SAMPLES = ['s1', 's2', 's3'].map((sample, i) => ({
   sample,
   timepoint: { taxon_oid: sample, timepoint: `T${i}`, datetime: `5/27/21 ${8 * i}:00` },
@@ -71,7 +68,7 @@ beforeEach(() => {
   })
 })
 
-describe('MultiEgcChart — real detection gaps are drawn as breaks, not bridged (F1)', () => {
+describe('MultiEgcChart — real detection gaps are drawn as breaks, not bridged', () => {
   it('unions the full sample timeline and sets an explicit null at an undetected timepoint', async () => {
     const series = [{
       id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg',

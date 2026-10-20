@@ -324,12 +324,12 @@ class TestRealData:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TestNormEgcMatchesSqlDatabase — audit T1 fix: pin norm_egc to an absolute
+# TestNormEgcMatchesSqlDatabase — pin norm_egc to an absolute
 # expected value instead of only the range/ratio invariants
 # test_egc_api_vs_jgi.py already checks (in (0, 1], constant ratio within a
 # sample, same ratio across sources) -- those hold true for ANY consistent
-# denominator, including the old, wrong, per-source-scoped one, so they
-# can't catch a return to that bug or a SQL resync that drifted out of sync
+# denominator, including a wrong per-source-scoped one, so they can't
+# catch that or a SQL resync that drifted out of sync
 # with calculate_denominator_egc. This recomputes the real shared
 # denominator directly and checks it against the persisted `norm_egc`
 # column for one real annotation per source.

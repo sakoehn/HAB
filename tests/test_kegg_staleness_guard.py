@@ -1,15 +1,11 @@
 """
 test_kegg_staleness_guard.py
 ===============================
-P2 (docs/AUDIT-2026-10-05.md): EGC_KEGG_TREE.ipynb's original staleness
-guard (cell 3) only checked whether a raw `.a.ko.txt` was newer than
-`kegg_db.json` -- a direction that can't actually happen, since the raw
-JGI files are static 2023 downloads. The real risk it left unguarded:
-`kegg_db.json` gets rebuilt and this notebook's own written `.ko.json`
-outputs are never regenerated to match. Confirmed directly against this
-project's real files: all 128 `.ko.json` outputs on disk were dated 10
-days older than the `kegg_db.json` they claim to be derived from, with
-nothing anywhere checking that.
+Checking whether a raw `.a.ko.txt` is newer than `kegg_db.json` can't
+catch anything, since the raw JGI files are static 2023 downloads. The
+real risk is the other direction: `kegg_db.json` gets rebuilt and
+EGC_KEGG_TREE.ipynb's own written `.ko.json` outputs are never
+regenerated to match.
 
 find_stale_outputs() (Notebooks/staleness_utils.py) makes that drift
 visible; the write cell now calls it (reporting, not blocking, since the

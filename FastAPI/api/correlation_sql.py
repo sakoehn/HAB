@@ -25,15 +25,10 @@ from .correlation_loaders import (
 router = APIRouter()
 
 # ── Input validation ──────────────────────────────────────────────────────────
-# C4 (docs/AUDIT-2026-10-05.md): method/metric used to only ever get
-# validated deep inside the per-candidate scoring loop (core_scoring's
-# bare `raise ValueError` for method, load_vector's for metric) -- a
-# typo in either one on /correlations/family reached that check only
-# after resolving the whole family and (for circular_shift) running the
-# full prescreening pass first, so it 500'd only after a family's worth
-# of real work, not immediately. Both endpoints below now check against
-# these allowlists up front and return 400 before any of that work
-# starts, mirroring target_source's own existing validation pattern.
+# Both endpoints check method/metric against these allowlists up front and
+# return 400 before doing any work. Otherwise a typo would only surface
+# deep inside the per-candidate scoring loop (core_scoring / load_vector),
+# as a 500 after a whole family's worth of computation.
 VALID_METHODS = {"raw_pearson", "log_pearson", "spearman", "circular_shift"}
 VALID_METRICS = {"egc", "norm_egc"}
 
@@ -55,14 +50,12 @@ VALID_METRICS = {"egc", "norm_egc"}
 # A single process-wide dict of locks (not one global lock) so unrelated
 # families can still compute concurrently -- only requests for the EXACT
 # same family+method+metric serialize against each other. Correct for
-# this app's actual deployment (a single uvicorn worker process, see
-# reference_aws_deployment) -- would need a cross-process mechanism
-# (e.g. a row in correlations_cache itself) if ever run with multiple
-# worker processes.
+# this app's actual deployment (a single uvicorn worker process) -- would
+# need a cross-process mechanism (e.g. a row in correlations_cache itself)
+# if ever run with multiple worker processes.
 #
-# C6 (docs/AUDIT-2026-10-05.md): this dict used to grow by one entry per
-# distinct family ever requested, for the life of the process -- never
-# evicted. _evict_idle_family_locks bounds it, but only ever removes an
+# _evict_idle_family_locks keeps this dict from growing by one entry per
+# distinct family for the life of the process, but only ever removes an
 # entry that's BOTH idle past the threshold AND not currently held
 # (lock.locked() is False): a family lock already handed out to a
 # waiting/running request must never be replaced by a second, different
@@ -151,22 +144,20 @@ def _bonferroni_correct(p: float, n_tests: int):
 
 def _kegg_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
     """
-    CR3 (docs/AUDIT.md), the part left unresolved after switching `parent`
-    to parent_id: annotation_catalog's `parent` column can only ever hold
-    ONE of a KEGG node's real parents, but KEGG KOs are commonly
-    multi-parent (K00844/hexokinase has 14 real parents -- see E14). The
-    generic by_id/children_of walk below, which assumes one parent per
-    node, silently misses every real ancestor/descendant relationship
-    that isn't the one parent that happened to get recorded.
+    annotation_catalog's `parent` column can only hold ONE of a KEGG
+    node's real parents, but KEGG KOs are commonly multi-parent
+    (K00844/hexokinase has 14 real parents). The generic by_id/children_of
+    walk in get_family_candidates assumes one parent per node, so it would
+    miss every ancestor/descendant relationship except the one parent
+    that happened to get recorded.
 
     `kegg_paths` (built for the BRITE hierarchy popup, see
-    migrate_kegg_paths_to_sql.py) doesn't have this limitation -- it
-    stores every real occurrence-path a node appears in, not just one.
-    This walks that table instead, for KEGG only (verified: Enzyme and
-    COG are single-parent by construction -- 0 of 7,333 real EC nodes and
-    every COG id respectively have more than one real parent -- so the
-    generic walk is already exactly correct for them; taxonomy's `parent`
-    is a full lineage-prefix, never ambiguous either).
+    migrate_kegg_paths_to_sql.py) stores every real occurrence-path a node
+    appears in, so this walks that table instead. COG has the same
+    problem and gets the same treatment (_cog_family_exclusions); enzyme
+    is single-parent by construction (0 of 7,333 real EC nodes have more
+    than one parent) and taxonomy's `parent` is a full lineage prefix, so
+    the generic walk is exact for both.
 
     Args:
         conn: Open SQLite connection.
@@ -217,27 +208,19 @@ def _kegg_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
 
 def _cog_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
     """
-    P4 (docs/AUDIT-2026-10-05.md): the generic by_id/children_of walk in
-    get_family_candidates below assumes one parent per node, which this
-    function's own earlier docstring claimed was safe for COG ("verified
-    ... every COG id ... [has no] more than one real parent"). That
-    "verification" only ever checked annotation_catalog's own `parent`
-    column -- which migrate_annotations_to_sql.py populates from
-    EGC_COG_TREE.ipynb's `primary_cat_letter = categories[0]` (P4),
-    i.e. it can only ever hold ONE category by construction, regardless
-    of how many a COG id is REALLY in. get_cog_path_sql's docstring
-    already documents the real answer: COG0028 is genuinely in both
-    E and H (E17, docs/AUDIT-2026-09-22.md) -- 340 real multi-category
-    COGs confirmed. Without this, a multi-category COG's same-source
-    correlation family only ever excluded it from ONE category's
-    siblings, never the other, silently returning candidates that were
-    really its own siblings as if they were independent.
+    A COG id can belong to more than one category (340 real
+    multi-category COGs, e.g. COG0028 is in both E and H), but
+    annotation_catalog's `parent` column holds only one of them --
+    migrate_annotations_to_sql.py fills it from EGC_COG_TREE.ipynb's
+    `primary_cat_letter = categories[0]`. The generic one-parent walk in
+    get_family_candidates would therefore exclude a multi-category COG's
+    siblings in only ONE of its categories, returning the rest as if they
+    were independent candidates.
 
     `cog_paths` (built for the hierarchy popup, see
-    migrate_cog_paths_to_sql.py) doesn't have this limitation -- it
-    stores every real category a COG id belongs to, not just one. Same
-    approach as _kegg_family_exclusions above, just over COG's 2-level
-    (category, COG id) hierarchy instead of KEGG's 4.
+    migrate_cog_paths_to_sql.py) stores every category a COG id belongs
+    to. Same approach as _kegg_family_exclusions above, over COG's
+    2-level (category, COG id) hierarchy instead of KEGG's 4.
 
     Args:
         conn: Open SQLite connection.
@@ -295,16 +278,12 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
     construction: 0 of 7,333 real EC nodes have more than one real
     parent). kegg and cog each get their own dedicated exclusion path
     (_kegg_family_exclusions / _cog_family_exclusions above) since both
-    can have MULTIPLE real parents per node -- cog's generic-walk branch
-    was removed by P4 (docs/AUDIT-2026-10-05.md): it looked safe ("every
-    COG id has no more than one real parent") but that was only ever
-    true of the lossy single-value `parent` column the walk reads, not
-    of COG's real category membership (confirmed via cog_paths: 340 real
-    multi-category COGs, e.g. COG0028 in both E and H). Taxonomy gets its
-    own ancestor-exclusion path too (CR9, docs/AUDIT-2026-09-22.md): the
-    by_id tree-walk only sees ancestors shallower than
-    TAXONOMY_DEPTH_CUTOFF, so it silently stopped short for a species/strain
-    reference -- see the comment at the taxonomy branch below.
+    can have MULTIPLE real parents per node, which the single-value
+    `parent` column the generic walk reads can't represent. Taxonomy gets
+    its own ancestor-exclusion path too: the by_id tree-walk only sees
+    ancestors shallower than TAXONOMY_DEPTH_CUTOFF, so it would stop short
+    for a species/strain reference -- see the comment at the taxonomy
+    branch below.
 
     Returns a list of dicts:
         {"id": ..., "annotation_id": ..., "parent": ..., "name": ..., "depth": ...}
@@ -368,9 +347,9 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
         children_of.setdefault(parent, []).append(annotation_id)
 
     if target_source == AnnotationSource.taxonomy.value:
-        # CR9 (docs/AUDIT-2026-09-22.md): walking ancestors via by_id (built
-        # only from target_rows, which is itself capped at depth <=
-        # TAXONOMY_DEPTH_CUTOFF) breaks for a species/strain reference --
+        # Walking ancestors via by_id (built only from target_rows, which is
+        # itself capped at depth <= TAXONOMY_DEPTH_CUTOFF) would break for a
+        # species/strain reference --
         # ref_parent's own depth already exceeds the cutoff, so it's not a
         # key in by_id and the walk stops immediately, leaving every real
         # ancestor (genus and coarser) unexcluded. A taxonomy annotation_id
@@ -457,14 +436,14 @@ def core_scoring(vec_a: list[float], vec_b: list[float], method: str):
         # NOT NULL columns: sqlite3 silently binds a NaN float as SQL
         # NULL, so the INSERT raises IntegrityError, the caller assumes a
         # concurrent-write race, and crashes re-reading a row that was
-        # never written (see CR4).
+        # never written.
         return None
     return (r, pval, len(a))
 
 def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], observed_r: float) -> float:
     """
-    Circular block-shift permutation p-value for CR2 (docs/AUDIT.md): the
-    parametric p-value from scipy.stats.pearsonr assumes every timepoint
+    Circular block-shift permutation p-value. The parametric p-value from
+    scipy.stats.pearsonr assumes every timepoint
     is an independent observation, which real EGC series (sampled every
     4 hours) are not -- the effective sample size is far below the raw
     point count, so that p-value is systematically too optimistic
@@ -474,48 +453,20 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
     the null this test needs.
 
     Re-searches the FULL CORRELATION_LAGS window on every shift, instead
-    of fixing the lag at the observed best -- comparing a best-of-9-lags
-    observed statistic against a not-best-of-9 null understates the true
-    p-value (the same lag-search bias the old, since-removed
-    migrate_correlations_to_sql.py's corrected_pvalue was built to
-    avoid). This also means the multi-lag multiplicity is already
+    of fixing the lag at the observed best -- comparing a best-of-all-lags
+    observed statistic against a single-lag null would understate the
+    p-value. This also means the multi-lag multiplicity is already
     accounted for in the null itself -- the caller must NOT
     Bonferroni-correct this p-value afterward (see score_pair).
 
-    CR8 (docs/AUDIT-2026-09-22.md) fix -- this used to draw n_perm=1000
-    RANDOM shifts from the full [1, n-1] range, which had four compounding
-    problems, all fixed by enumerating the valid range exhaustively
-    instead of sampling it:
-      1. A random draw could land on (or within) one of CORRELATION_LAGS'
-         own lags (max|lag|=6) -- a shift that small re-creates part of
-         the original alignment at the lag search's own window, so the
-         null it feeds isn't fully destroyed. Now only shifts strictly
-         beyond every searched lag at BOTH ends are ever considered.
-         Re-audit (docs/AUDIT-2026-10-05.md, C1/CR8): "beyond every
-         searched lag" must be measured on the EFFECTIVE lag the inner
-         re-search can land on, not the raw shift amount -- the inner
-         _spearman_at_lags call below re-searches all of CORRELATION_LAGS
-         on top of the shift, so a shift of `max_lag+1` combined with an
-         inner lag of `-max_lag` reconstructs an effective offset of just
-         1, almost exactly the real alignment. Excluding by `2*max_lag+1`
-         instead of `max_lag+1` is what actually guarantees every
-         evaluated shift's effective offset is beyond every real lag.
-      2. `count / n_perm` could be exactly 0 -- a p-value of exactly 0
-         isn't defensible from any finite permutation test. Smoothed to
-         (1 + extreme) / (1 + evaluable), per the audit's own formula --
-         never zero, and the denominator reflects what was actually
-         evaluable, not a hardcoded target count.
-      3. A shift where no lag could be scored (e.g. too few co-observed
-         points after a circular shift exposes a gap run) still counted
-         toward the denominator as if it were a normal non-extreme draw
-         -- silently shrinking the effective p for sparse series. Now
-         excluded from both the numerator and denominator.
-      4. With a real n=128 series there are only 127 *possible* shifts
-         (115 after excluding the lag buffer at both ends) -- sampling
-         1000 draws WITH replacement implied far more precision than the
-         test actually has, and most of those 1000 draws were redundant.
-         Enumerating the valid range exactly once is both more correct
-         and (115 vs 1000 lag-searches) substantially cheaper.
+    Every shift in [2*max_lag+1, n-2*max_lag-1] is evaluated exactly once
+    (no random sampling). Shifts closer to zero are excluded: the inner
+    lag search can move the effective offset by up to max_lag in either
+    direction, so a shift of max_lag+1 combined with an inner lag of
+    -max_lag would land just 1 sample from the real alignment. Shifts
+    where no lag has enough co-observed points to score are dropped from
+    both numerator and denominator, and p is smoothed to
+    (1 + extreme) / (1 + evaluable) so it is never exactly 0.
 
     Args:
         ref: Full aligned reference vector (raw values, None gaps
@@ -525,8 +476,7 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
             pairwise-complete filtering still runs per lag inside
             _spearman_at_lags on every shift.
         cand: Full aligned candidate vector, never shifted (only the
-            reference is circularly shifted, matching the historical
-            convention).
+            reference is circularly shifted).
         observed_r: The real (unshifted) best-lag Spearman r, already
             computed by the caller.
 
@@ -537,7 +487,7 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
         at_floor is True iff NO evaluated shift was as extreme as
         observed_r, meaning p is already the smallest value THIS PAIR's
         permutation test could possibly report (not a precise measurement
-        close to zero -- see C2, docs/AUDIT-2026-10-05.md). This floor is
+        close to zero). This floor is
         pair-specific, not a single dataset-wide constant: a sparse
         candidate (real EGC data ranges from ~1 to 128 of 128 samples
         detected, confirmed directly across all four annotation sources)
@@ -549,11 +499,9 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
     """
     n = len(ref)
     max_lag = max(abs(lag) for lag in CORRELATION_LAGS)
-    # inclusive bounds on a valid shift: 2*max_lag, not max_lag, because the
+    # Inclusive bounds on a valid shift: 2*max_lag, not max_lag, because the
     # inner lag-search below can itself move the effective offset by up to
-    # max_lag in either direction -- a shift of only max_lag+1 combined with
-    # an inner lag of -max_lag reconstructs an effective offset of just 1.
-    # See the C1/CR8 note in the docstring above.
+    # max_lag in either direction (see the docstring).
     lo, hi = 2 * max_lag + 1, n - 2 * max_lag - 1
     if lo > hi:
         return 1.0, False
@@ -576,15 +524,15 @@ def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], ob
 
 def score_pair(ref: list[float], cand: list[float], method):
     """Returns (r, p, lag, n_pairs, at_p_floor). at_p_floor is only ever
-    meaningful for method='circular_shift' (C2, docs/AUDIT-2026-10-05.md:
-    whether p was forced to this pair's permutation-test resolution
-    limit, not a precise measurement) -- always None for every
+    meaningful for method='circular_shift' (whether p was forced to this
+    pair's permutation-test resolution limit, not a precise
+    measurement) -- always None for every
     parametric method, which has no such floor."""
     if method == "circular_shift":
         # Underlying r/lag statistic is always Spearman (rank-based,
-        # robust to monotonic-but-nonlinear EGC relationships, matches
-        # the historical convention this restores) -- CR2 is about fixing
-        # the P-VALUE's validity, not about offering a 4th r-statistic.
+        # robust to monotonic-but-nonlinear EGC relationships) --
+        # circular_shift changes how the P-VALUE is computed, not which
+        # correlation statistic is used.
         best_r, best_lag, _best_p, best_n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, "spearman")
         if best_r is None or best_lag is None:
             return None
@@ -619,9 +567,8 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
 
         lag = row[6]
         # row[9] (at_p_floor) is NULL for every non-circular_shift row and
-        # for any circular_shift row cached before this column existed
-        # (C2, docs/AUDIT-2026-10-05.md) -- genuinely unknown in both
-        # cases, kept as None rather than guessed at either way.
+        # for any circular_shift row cached before this column existed --
+        # genuinely unknown in both cases, kept as None rather than guessed.
         at_p_floor = bool(row[9]) if row[9] is not None else None
         return {'r': row[3], 'p': row[7], 'lag_samples': -lag if reference_is_high else lag, 'n_pairs': row[8], 'at_p_floor': at_p_floor}
     else:
@@ -661,17 +608,13 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
             winner_at_p_floor = bool(row[9]) if row[9] is not None else None
             return {'r': row[3], 'p': row[7], 'lag_samples': -winner_lag if reference_is_high else winner_lag, 'n_pairs': row[8], 'at_p_floor': winner_at_p_floor}
         except sqlite3.OperationalError:
-            # C5 (docs/AUDIT-2026-10-05.md): a lock-timeout mid-write
-            # (plausible against a 59.5 GB db with a large un-checkpointed
-            # WAL) used to propagate uncaught all the way up through the
-            # family endpoint's per-candidate loop, 500ing the WHOLE
-            # request and discarding every other candidate's
-            # already-computed result along with it -- potentially minutes
-            # to hours of circular_shift work already done. The cache
-            # write is best-effort: roll back the failed write and still
-            # return the real, already-computed result below. It just
-            # won't be cached for next time -- a future request recomputes
-            # it instead of hitting a cache entry that was never written.
+            # A lock-timeout mid-write (plausible against a ~60 GB db with a
+            # large un-checkpointed WAL) must not propagate up through the
+            # family endpoint's per-candidate loop -- that would 500 the
+            # WHOLE request and discard every other candidate's
+            # already-computed result. The cache write is best-effort: roll
+            # back the failed write and still return the real result below.
+            # It just won't be cached; a future request recomputes it.
             conn.rollback()
         return {'r': r, 'p': bonf_p, 'lag_samples': -lag if reference_is_high else lag, 'n_pairs': n_pairs, 'at_p_floor': at_p_floor}
 
@@ -721,9 +664,7 @@ def correlate_endpoint(catalog_id_a: int, catalog_id_b: int, metric: str, method
 
 # circular_shift is ~120x slower per candidate than a parametric method
 # (measured: spearman ~3ms/pair, circular_shift ~0.38s/pair against the
-# real db, post-CR8 fix -- docs/AUDIT-2026-09-22.md; was ~900x/3.6s/pair
-# pre-fix, since enumerating only the real valid shifts replaced 1000
-# random draws) -- a real family (measured against this database, COG0055
+# real db) -- a real family (measured against this database, COG0055
 # as reference) is 3,500-13,000 candidates, so running the full
 # permutation test on every one of them is still ~22-82 minutes even
 # fully cold, not instant. Pre-filtering to the
@@ -738,8 +679,7 @@ CIRCULAR_SHIFT_SCREEN_TOP_N = 200
 
 
 def _prescreen_rank_key(r: float, n_pairs: int) -> float:
-    """C3 (docs/AUDIT-2026-10-05.md): an n-aware ranking statistic for the
-    prescreen shortlist below, so a sparse candidate's raw |r| can't
+    """An n-aware ranking statistic for the prescreen shortlist below, so a sparse candidate's raw |r| can't
     crowd out a fully-sampled candidate's real signal just because raw
     |r| says nothing about how much data actually produced it.
 
@@ -750,8 +690,7 @@ def _prescreen_rank_key(r: float, n_pairs: int) -> float:
     strongest excluded one at |r|=0.5652, losing its slot by just 0.0016
     to that 10-point candidate.
 
-    Fisher-z-style |r|*sqrt(n-3), per the audit's own suggested fix:
-    increases with both |r| and n, so two candidates at the same |r|
+    Fisher-z-style |r|*sqrt(n-3) increases with both |r| and n, so two candidates at the same |r|
     rank by sample size, and two at the same n still rank by |r| --
     reflecting how much evidence actually backs each candidate's
     correlation, not just its raw size. n_pairs is always >= 10 here
@@ -856,8 +795,7 @@ def correlation_family_endpoint(
                     "lag_samples":   result["lag_samples"],
                     "lag_hours":     result["lag_samples"] * LAG_HOURS_PER_SAMPLE,
                     "n_pairs":       result["n_pairs"],
-                    # C2 (docs/AUDIT-2026-10-05.md): True means `p` above
-                    # is this pair's permutation-test resolution limit,
+                    # True means `p` above is this pair's permutation-test resolution limit,
                     # not a precise measurement -- None means unknown
                     # (non-circular_shift method, or cached before this
                     # disclosure existed). See _circular_shift_pvalue.
@@ -866,16 +804,14 @@ def correlation_family_endpoint(
 
         scored = _apply_fdr(scored)
         significant = [entry for entry in scored if entry["q"] < 0.05]
-        # CR5: results otherwise come back in catalog-id order (roughly
+        # Results otherwise come back in catalog-id order (roughly
         # alphabetical by annotation id), not by match strength -- sort by
         # |r| descending and cap the list so the first screen is the
         # strongest correlates, not an arbitrary alphabetical slice.
         significant.sort(key=lambda entry: abs(entry["r"]), reverse=True)
-        # CR10 (docs/AUDIT-2026-09-22.md): `limit` (default 50) silently cut
-        # the list with no way for the caller to tell "there were exactly
-        # 50 significant results" from "there were 3,000 and you're seeing
-        # the top 50" -- both looked identical. significant_count is the
-        # real total BEFORE the limit is applied, so the panel can show
+        # significant_count is the real total BEFORE `limit` (default 50) is
+        # applied, so the caller can tell "exactly 50 significant results"
+        # from "3,000, showing the top 50" and the panel can show
         # "top N of {significant_count}" instead of just N.
         return {
             "results":           significant[:limit],

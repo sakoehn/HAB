@@ -25,8 +25,8 @@ Covers shared (backend-agnostic) logic:
 
   Note: the seven /samples/{sample_name}/... routes (cog, kegg, enzyme,
   taxonomy, mappings, mappings/summary, full) and
-  /samples/{sample_name}/search/annotations were removed (W20, docs/AUDIT.md)
-  -- they only ever worked against the full local JSON dataset, which the
+  /samples/{sample_name}/search/annotations were removed -- they only ever
+  worked against the full local JSON dataset, which the
   production deployment never carries (55GB+ vs the 87MB SQL database), so
   they 404'd there regardless of DATA_BACKEND, and nothing in the frontend
   called them.
@@ -213,7 +213,7 @@ class TestParseDatetime:
 
     def test_bare_iso_date_format(self):
         """<input type="date"> pickers send bare 'YYYY-MM-DD', no time --
-        this is what date_from/date_to on /annotations/top receive (W2)."""
+        this is what date_from/date_to on /annotations/top receive."""
         from api.index import _parse_any_datetime
         dt = _parse_any_datetime("2021-06-05")
         assert dt is not None
@@ -371,9 +371,9 @@ class TestComputeDateRangeEdgeCases:
 
 class TestIsWithinDateRange:
     """
-    index.is_within_date_range -- W2 fix for /annotations/top's date filter.
+    index.is_within_date_range -- /annotations/top's date filter.
 
-    The bug: dt_str is unpadded "M/D/YY H:MM" (e.g. "6/9/21 8:00") while
+    dt_str is unpadded "M/D/YY H:MM" (e.g. "6/9/21 8:00") while
     date_from/date_to are bare ISO "YYYY-MM-DD" from <input type="date">.
     Comparing them as plain text is meaningless -- "6/9/21 8:00" < "2021-06-05"
     lexically no matter what the actual dates are (different formats
@@ -432,12 +432,9 @@ class TestIsWithinDateRange:
         assert is_within_date_range("6/9/21 8:00", "not-a-date", None) is True
 
 
-# index.search_index (the JSON backend's inverted-index lookup, including
-# its W3 short-indexed-word-flooding fix) was removed along with the rest
-# of the JSON search index -- the sql branch's /search/annotations uses
-# SQL LIKE against annotation_series instead (a different mechanism, see
-# tests/sql/test_search_annotations_sql_route.py), which doesn't have an
-# indexed-word-tokenization step for W3's flooding failure mode to apply to.
+# /search/annotations uses SQL LIKE against annotation_series (see
+# tests/sql/test_search_annotations_sql_route.py); there is no in-memory
+# search index to test here.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -616,9 +613,8 @@ class TestPaginate:
 
 
 class TestTopAnnotationsCache:
-    """A4 (docs/AUDIT-2026-10-05.md): routes._top_ann_cache_get/_set --
-    the in-process /annotations/top cache used to be a plain unbounded
-    dict with no size cap and no expiry. Each test gets its own isolated,
+    """routes._top_ann_cache_get/_set -- the in-process /annotations/top
+    cache's size cap and expiry. Each test gets its own isolated,
     empty OrderedDict (monkeypatched in place of the real module-level
     one) so these don't interfere with each other or with a real server
     process's actual cached entries."""
@@ -695,7 +691,7 @@ class TestTopAnnotationsCache:
 class TestFilterTimepointsToRealSamples:
     """routes._filter_timepoints_to_real_samples -- drops TIMEPOINTS entries
     with no corresponding processed sample data (the "/timepoints reports
-    132 while /samples reports 128" item, docs/AUDIT.md's Also-noted list).
+    132 while /samples reports 128" mismatch).
 
     Tested directly (not via patched_client/HTTP) since the real fix
     branches on DATA_BACKEND at the route layer to pick the right sample
@@ -778,7 +774,7 @@ def patched_client():
 @pytest.mark.skipif(
     not os.path.exists(SQLITE_DB_PATH),
     reason=f"{SQLITE_DB_PATH} not found -- these tests boot the real app via "
-           f"main.py's lifespan, which needs a real database (W12, docs/AUDIT-2026-09-22.md)",
+           f"main.py's lifespan, which needs a real database",
 )
 class TestRoutesViaTestClient:
     """HTTP-level tests for the backend-agnostic endpoints (no DATA_BACKEND

@@ -67,9 +67,9 @@ function buildScaffoldTrace(
 // dateFrom/dateTo are bare "YYYY-MM-DD" from <input type="date">, while
 // r.date is the raw datetime the scaffold summary endpoint returns (unpadded
 // "M/D/YY H:MM", e.g. "5/27/21 13:00" — see FastAPI/api/index.py's
-// _parse_any_datetime docstring). Comparing them as plain text is wrong
-// (W15): different formats entirely, so a date_to emptied everything and a
-// date_from filtered nothing. isoDate() normalizes r.date to the same
+// _parse_any_datetime docstring). Comparing them as plain text is wrong --
+// different formats entirely, so a date_to would empty everything and a
+// date_from would filter nothing. isoDate() normalizes r.date to the same
 // "YYYY-MM-DD" shape first.
 export function filterSummaryForChart(
   rows:     ScaffoldSummaryRow[],
@@ -91,7 +91,7 @@ export type AggregatedChartRow = { date: string; scaffold_count: number; gene_co
 // Sums scaffold_count/gene_count across every term's rows, per date, within
 // a date range — the "aggregated" (non-split) chart mode. Same date-range
 // handling as filterSummaryForChart, see its docstring for why raw text
-// comparison is wrong here (W15).
+// comparison is wrong here.
 export function buildAggregatedChartRows(
   terms:    { summary: ScaffoldSummaryRow[] }[],
   dateFrom: string,
@@ -430,14 +430,13 @@ export function ScaffoldExplorePanel({
     [visibleTerms],
   )
 
-  // W22 (docs/AUDIT-2026-09-22.md): the default "All terms" line sums every
-  // ready term's scaffold/gene counts together with zero ancestor/
-  // descendant awareness -- egc/scaffold/gene counts are hierarchical
-  // rollups, so a nested chain (e.g. the real default top-10 taxonomy
-  // terms: Bacteria ⊃ Proteobacteria ⊃ Alphaproteobacteria ⊃ ...) gets
-  // double-, triple-, or worse-counted. Confirmed against the audit's own
-  // live numbers: summing just 3 of those nested terms gave 375,910
-  // scaffolds where the true distinct count (Bacteria's own) was 198,368.
+  // The default "All terms" line sums every ready term's scaffold/gene
+  // counts. egc/scaffold/gene counts are hierarchical rollups, so a nested
+  // chain (e.g. the real default top-10 taxonomy terms: Bacteria ⊃
+  // Proteobacteria ⊃ Alphaproteobacteria ⊃ ...) would be double-, triple-,
+  // or worse-counted -- summing just 3 of those nested terms gives 375,910
+  // scaffolds where the true distinct count (Bacteria's own) is 198,368.
+  // So ancestor/descendant-redundant terms are dropped from the sum.
   // Only matters for the AGGREGATED view -- split-by-term shows each
   // term's own line separately, nothing gets summed, nothing to drop.
   const [redundancy, setRedundancy] = useState<{
@@ -471,10 +470,10 @@ export function ScaffoldExplorePanel({
 
   // ── Chart data ─────────────────────────────────────────────────────────
 
-  // G3 (docs/AUDIT-2026-10-05.md): lifted out of chartSeries below so the
+  // Lifted out of chartSeries below so the
   // subtitle render site can read the same post-redundancy-filter count
-  // the legend/sum already use, instead of recomputing (and silently
-  // disagreeing with) its own pre-filter count from visibleTerms.
+  // the legend/sum use, instead of recomputing its own pre-filter count
+  // from visibleTerms.
   const aggregatedTerms = useMemo(
     () => readyTerms.filter(t => !redundancy.droppedKeys.has(`${t.source}::${t.annotationId}`)),
     [readyTerms, redundancy],
@@ -625,7 +624,7 @@ export function ScaffoldExplorePanel({
                 All
               </button>
               <HelpTooltip text="Narrows the results below to the selected taxonomic rank(s) — doesn't re-search, just filters what's already loaded." />
-              {/* W7: no domain passed -- a depth-only aggregate here can span
+              {/* No domain passed -- a depth-only aggregate here can span
                   multiple domains at once, so there's no single correct one. */}
               {availableRanks.map(depth => (
                 <button
@@ -707,8 +706,7 @@ export function ScaffoldExplorePanel({
             }}>
               <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
                 {/*
-                  W (2.6, docs/AUDIT-2026-09-22.md): a user who has added
-                  manual terms keeps suggested terms from a PRIOR source
+                  A user who has added manual terms keeps suggested terms from a PRIOR source
                   (the refresh effect above skips re-fetching once any
                   manual term exists), so the live searchSrc dropdown can
                   disagree with what source these suggested terms actually
@@ -737,7 +735,7 @@ export function ScaffoldExplorePanel({
                 All
               </button>
               <HelpTooltip text="Narrows this list (and the chart/table below) to the selected taxonomic rank(s) — non-taxonomy terms are unaffected." />
-              {/* W7: no domain passed -- see the matching comment above availableRanks. */}
+              {/* No domain passed -- see the matching comment above availableRanks. */}
               {availableTermRanks.map(depth => (
                 <button
                   key={depth}

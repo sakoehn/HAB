@@ -47,7 +47,7 @@ export type EgcChartHandle = {
 }
 
 // buildEgcTimeseriesCsvRows
-// Exported so tests can exercise the real CSV row shape directly (W18).
+// Exported so tests can exercise the real CSV row shape directly.
 // The value column is named from the active metric ("egc" or "norm_egc"),
 // with `metric`/`standardized`/`smoothed` recorded on every row -- d.egc
 // is whichever transform is currently displayed (metric swap, z-score,
@@ -82,11 +82,11 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   depth?:         number | null
   dataDateRange?: { min: string; max: string } | null
   onGoExplore?:   (annotationId: string, source: string) => void
-  // E4 (docs/AUDIT-2026-10-05.md): the metric toggle (EGC vs. Relative
+  // The metric toggle (EGC vs. Relative
   // Abundance) is otherwise private state inside this chart -- a caller
   // showing its own derived summary (e.g. AnalyzePage's card-header mean)
-  // has no way to know which one is currently displayed, and would
-  // silently show a different unit than the chart right below it.
+  // has no way to know which one is currently displayed without this, and
+  // could show a different unit than the chart right below it.
   onMetricChange?: (metric: ChartMetric) => void
 }>(function EgcChart({
   data,
@@ -105,22 +105,19 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   const [metric, setMetric]                   = useState<ChartMetric>('norm_egc')
   const [standardize, setStandardize]         = useState(false)
   const [smoothed, setSmoothed]               = useState(false)
-  const [smoothBandwidth, setSmoothBandwidth] = useState(0.3) // W27: within the real [0.1, 0.8] slider range
+  const [smoothBandwidth, setSmoothBandwidth] = useState(0.3) // within the real [0.1, 0.8] slider range
   const [showStats, setShowStats]             = useState(false)
   const [tpPanelOpen, setTpPanelOpen]         = useState(false)
   const [selectedDates, setSelectedDates]     = useState<Set<string> | null>(null)
   const [selectedTimes, setSelectedTimes]     = useState<Set<string> | null>(null)
-  // W21 (docs/AUDIT-2026-09-22.md) gap-fill fix: allDates/allTimes now
-  // come from allPoints, which can grow after first render once
-  // useAllSamples finishes loading (the true full timeline arrives async,
-  // after the initial detected-only fallback). Without tracking whether
-  // the user has actually touched these filters, the old "seed once"
-  // effect below would freeze selectedDates at whatever smaller set
-  // existed on first render, silently excluding every date that only
-  // shows up once the real timeline loads -- confirmed live: a 3-sample
-  // series with 1 real gap rendered "2 of 3 samples" instead of "3 of 3
-  // (detected in 2)", because the newly-revealed gap date's pill was
-  // never actually selected.
+  // allDates/allTimes come from allPoints, which can grow after first
+  // render once useAllSamples finishes loading (the true full timeline
+  // arrives async, after the initial detected-only fallback). Without
+  // tracking whether the user has actually touched these filters, seeding
+  // selectedDates once would freeze it at whatever smaller set existed on
+  // first render, silently excluding every date that only shows up once
+  // the real timeline loads (a 3-sample series with 1 real gap would show
+  // "2 of 3 samples" instead of "3 of 3 (detected in 2)").
   const [userTouchedDateFilter, setUserTouchedDateFilter] = useState(false)
   const [userTouchedTimeFilter, setUserTouchedTimeFilter] = useState(false)
   const [showNightShading, setShowNightShading] = useState(false)
@@ -136,7 +133,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
     onMetricChange?.(metric)
   }, [metric]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // W21 (docs/AUDIT-2026-09-22.md): `data` only has rows for samples where
+  // `data` only has rows for samples where
   // this annotation was actually detected -- annotation_series has no row
   // at all for an undetected sample, so there's nothing here to tell "not
   // detected" apart from "sample doesn't exist". Left as-is, the line
@@ -148,13 +145,11 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   // real values where detected. A UNION with data's own detected
   // samples, not a straight swap: guarantees every real detection still
   // gets a point no matter what useAllSamples returns (still loading,
-  // empty, or an incomplete/malformed response) -- confirmed live this
-  // matters: a response missing `data` resolves useAllSamples to `[]`,
-  // and `[] ?? fallback` evaluates to `[]` (not the fallback, since ??
-  // only triggers on null/undefined), which would otherwise silently
-  // wipe out every real point already in hand. connectgaps is already
-  // false below; it just had nothing to act on before this had real
-  // null points to break the line at.
+  // empty, or an incomplete/malformed response) -- a response missing
+  // `data` resolves useAllSamples to `[]`, and `[] ?? fallback` evaluates
+  // to `[]` (?? only triggers on null/undefined), which would otherwise
+  // wipe out every real point already in hand. The null points are what
+  // connectgaps:false below breaks the line at.
   const allPoints = useMemo(() => {
     const bySample = new Map(
       data
@@ -235,7 +230,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
     }),
   [allPoints, dateFrom, dateTo, selectedDates, allSelected, selectedTimes, allTimesSelected])
 
-  // W27 (docs/AUDIT-2026-09-22.md): unsmoothed is the metric/standardize
+  // unsmoothed is the metric/standardize
   // pipeline WITHOUT LOWESS -- this is what statistics/detection-count
   // reads, so toggling Smooth never changes the reported numbers, only the
   // displayed curve. `processedPoints` (below) adds smoothing on top of
@@ -252,13 +247,13 @@ export const EgcChart = forwardRef<EgcChartHandle, {
     return pts
   }, [filteredPoints, metric, standardize])
 
-  // W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op with
+  // applyZScore is a silent no-op with
   // fewer than 2 real points -- this is whether it ACTUALLY standardized,
   // not just whether the toggle is on, so the axis/tooltip can stop
   // claiming "σ from mean" units for a value that's still raw EGC.
   const standardizeApplied = standardize && canApplyZScore(unsmoothedPoints.map(p => p.egc))
 
-  // F3 (docs/AUDIT-2026-10-05.md): applyLowess is a silent no-op with
+  // applyLowess is a silent no-op with
   // fewer than 3 real points -- this is whether it ACTUALLY smoothed,
   // not just whether the toggle is on, so the tooltip/CSV can stop
   // claiming "(smoothed)" for a curve that's still the raw sample value.
@@ -281,22 +276,19 @@ export const EgcChart = forwardRef<EgcChartHandle, {
     return processedPoints.map(p => ({ ...p, tide_wl: aligned.get(p.datetime) ?? null }))
   }, [processedPoints, showTide, tides])
 
-  // Tides (docs/AUDIT-2026-09-22.md): the VISUAL tide trace plots at its own
+  // The VISUAL tide trace plots at its own
   // native (6-min) resolution, not snapped onto EGC sample timestamps like
   // pointsWithTide.tide_wl above (that alignment still feeds the CSV export's
   // per-sample-row column, a different, legitimate need). See
   // nativeTideTrace's own doc comment in utils/solar.ts for why this doesn't
   // need to share an x-axis with the EGC trace.
   //
-  // F7 (docs/AUDIT-2026-10-05.md): bounded only by dateFrom/dateTo used to
-  // mean the Timepoints pill filter (selectedDates/selectedTimes, which
-  // filteredPoints below already applies) had no effect on this overlay --
-  // narrowing to a handful of pills still showed a tide trace spanning the
-  // whole loaded range. filteredPoints is already sorted chronologically
-  // (inherited from allPoints), so its own first/last entries are the real
-  // visible range under EVERY active filter at once, not just the two date
-  // inputs -- using them instead keeps this overlay in sync with whatever
-  // the EGC line itself is actually showing.
+  // Bounded by filteredPoints' first/last entries, not just dateFrom/dateTo,
+  // so the Timepoints pill filter (selectedDates/selectedTimes) narrows this
+  // overlay too. filteredPoints is already sorted chronologically
+  // (inherited from allPoints), so its first/last entries are the real
+  // visible range under EVERY active filter at once -- keeping this overlay
+  // in sync with whatever the EGC line itself is actually showing.
   const nativeTide = useMemo(
     () => (showTide && tides)
       ? nativeTideTrace(tides, filteredPoints[0]?.iso, filteredPoints[filteredPoints.length - 1]?.iso)
@@ -316,7 +308,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
 
   const resolvedColor = useMemo(() => resolveCssVar(color, '#4f8ef7'), [color])
 
-  // W27: stats/detection-count read the unsmoothed values -- toggling
+  // Stats/detection-count read the unsmoothed values -- toggling
   // Smooth must never change these numbers, only the drawn curve.
   const egcVals = useMemo(
     () => unsmoothedPoints.map(d => d.egc).filter((v): v is number => v !== null),
@@ -324,8 +316,8 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   )
 
   const yLabel      = getEgcYLabel(metric, standardizeApplied)
-  // W27: disclose in the tooltip itself when the shown value is a fitted
-  // LOWESS curve, not the real sample value -- previously indistinguishable.
+  // Disclose in the tooltip itself when the shown value is a fitted LOWESS
+  // curve, not the real sample value.
   const hoverYLabel = getEgcHoverYLabel(metric, standardizeApplied) + (smoothedApplied ? ' (smoothed)' : '')
 
   // ── Shapes: night/day bands positioned by real timestamps ─────────────────
@@ -537,15 +529,12 @@ export const EgcChart = forwardRef<EgcChartHandle, {
             {yLabel} · {processedPoints.length} of {allPoints.length} samples
             {egcVals.length < processedPoints.length && ` (detected in ${egcVals.length})`}
           </div>
-          {/* F5 (docs/AUDIT-2026-10-05.md): useAllSamples' error/loading
-              fields used to be destructured off and never read -- on a
-              failed /api/samples fetch, allPoints silently falls back to
-              just this annotation's own detected rows (no merged-in real
-              timeline), so the header above reads e.g. "70 of 70 samples"
-              with no "(detected in N)" qualifier whenever every detected
-              point happens to also be the only points on hand -- visually
-              identical to the genuinely-detected-everywhere case W21 was
-              written to tell apart from this one. */}
+          {/* On a failed /api/samples fetch, allPoints falls back to just
+              this annotation's own detected rows (no merged-in real
+              timeline), so the header above would read e.g. "70 of 70
+              samples" with no "(detected in N)" qualifier -- visually
+              identical to a genuinely-detected-everywhere annotation.
+              Warn instead. */}
           {allSamplesError && (
             <div style={{
               fontSize: 11, fontFamily: 'var(--mono)',

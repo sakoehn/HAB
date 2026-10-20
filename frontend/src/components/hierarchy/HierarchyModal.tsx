@@ -5,8 +5,8 @@
 // body: on open, fetches every real ancestor path for the annotation and
 // auto-expands the first (file-order-primary) one, highlighting the leaf.
 //
-// KEGG nodes can have multiple real parents (E14 -- e.g. K00844/hexokinase
-// has 14 real pathway parents); when that's the case (path_count > 1) a
+// KEGG nodes can have multiple real parents (e.g. K00844/hexokinase has 14
+// real pathway parents); when that's the case (path_count > 1) a
 // dropdown above the tree lists every real path, labelled by whichever
 // segment actually differs between them (its immediate parent) -- picking
 // one switches the tree to that path instead.
@@ -19,11 +19,9 @@ import { useHierarchyTree } from '../../hooks/useHierarchyTree'
 import { HierarchyTree } from './HierarchyTree'
 import { SkeletonTreeRows } from '../ui/Skeleton'
 
-// G7 (docs/AUDIT-2026-10-05.md): the multi-parent note below used to
-// hardcode "KEGG pathways" regardless of `source` -- genuinely wrong for
+// The multi-parent note below names the right kind of parent per source --
 // a multi-category COG (e.g. COG0028, real member of both category E and
-// H per P4/E17) or a multi-class Enzyme id, which would say "real KEGG
-// pathways" too.
+// H) has categories, not "KEGG pathways".
 const HIERARCHY_NODE_NOUN: Record<HierarchySource, string> = {
   kegg:   'KEGG pathways',
   cog:    'COG categories',

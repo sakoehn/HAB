@@ -86,12 +86,10 @@ async function fetchMemberSeries(
 // across members gives true depth-normalised group abundance, on the same
 // scale as any single annotation's norm_egc.
 //
-// Thin adapter over the shared sumMembersByTimestamp (utils/stats.ts) --
-// this used to be its own separate implementation with its own separate
-// bug (W9: sorted the output with a plain string compare on the raw
-// "M/D/YY H:MM" datetime, which sorts wrong -- "6/10/21" before "6/2/21").
-// AnalyzePage.tsx had an near-identical copy with the exact same bug;
-// both now go through the one, already-sorted-correctly implementation.
+// Thin adapter over the shared sumMembersByTimestamp (utils/stats.ts),
+// which sorts by real time -- a plain string compare on the raw
+// "M/D/YY H:MM" datetime would put "6/10/21" before "6/2/21". AnalyzePage.tsx
+// uses the same implementation.
 function sumMemberSeries(members: CompareEntryMember[], label: string): AnnotationItem[] {
   const seriesData: Record<string, AnnotationItem[]> = {}
   for (const m of members) {
@@ -177,11 +175,11 @@ export function ComparePage({
         ? nextColorForSource(ann.source)
         : nextColorForSource('kegg'), // group gets a fresh color slot
     )
-    // G1 (docs/AUDIT-2026-10-05.md): must be genuinely unique against
-    // whatever's already in state.entries (manually added before this
-    // load, or surviving a previous load+removal), not just unique WITHIN
-    // this one batch -- entry-${i} collided with an existing entry-${i}
-    // after a removal elsewhere shifted what "position i" meant. Generated
+    // Must be genuinely unique against whatever's already in state.entries
+    // (manually added before this load, or surviving a previous
+    // load+removal), not just unique WITHIN this one batch -- a
+    // position-derived id like entry-${i} would collide with an existing
+    // one after a removal shifts what "position i" means. Generated
     // once per slot here (not re-derived in the resolved-entry construction
     // below) so the optimistic and resolved versions of the same slot
     // still carry the identical id.
@@ -285,14 +283,11 @@ export function ComparePage({
         }
       }),
     ).then(results => {
-      // W29 (docs/AUDIT-2026-09-22.md): this used to replace `entries`
-      // wholesale with the resolved results -- if the user manually added
-      // their own annotation (search + add) while this Promise.all was
-      // still in flight, that entry silently disappeared the moment this
-      // load finished, since it wasn't part of `results` at all. Merging
-      // by `id` instead only updates the slots THIS load actually owns
-      // (entry-0..entry-N-1), leaving anything the user added (or removed)
-      // in the meantime untouched.
+      // Merge by `id` rather than replacing `entries` wholesale: if the user
+      // manually added their own annotation (search + add) while this
+      // Promise.all was still in flight, a wholesale replace would drop it.
+      // Merging only updates the slots THIS load actually owns, leaving
+      // anything the user added (or removed) in the meantime untouched.
       const resolvedById = new Map(results.map(r => [r.entry.id, r.entry]))
       setState(prev => ({
         ...prev,
@@ -308,7 +303,7 @@ export function ComparePage({
   const [searchTotal, setSearchTotal] = useState<number | null>(null)
   // The overlay chart's active metric (reported via onMetricChange), so each
   // entry chip's mean is labelled and computed in the same metric -- same
-  // behavior as Analyze's card-header mean (E4).
+  // behavior as Analyze's card-header mean.
   const [chartMetric, setChartMetric] = useState<ChartMetric>('norm_egc')
   const { allSamples } = useAllSamples()
 
@@ -355,12 +350,11 @@ export function ComparePage({
     if (!toAdd.length) return
 
     const colors = toAdd.map(ann => nextColorForSource(ann.source))
-    // G1 (docs/AUDIT-2026-10-05.md): startIndex (state.entries.length) is
-    // not collision-safe -- after removing an entry, the next add's
-    // length-derived id can match a surviving entry's id exactly, and
-    // since `.id` is the only field used for internal lookups (CSV rows,
-    // chart keying, state updates), that collision silently mutates the
-    // wrong entry rather than just mislabeling one.
+    // A length-derived id (state.entries.length) isn't collision-safe --
+    // after removing an entry, the next add's id can match a surviving
+    // entry's id exactly, and since `.id` is the only field used for
+    // internal lookups (CSV rows, chart keying, state updates), that
+    // collision would silently mutate the wrong entry.
     const newEntries: CompareEntry[] = toAdd.map((ann, i) => ({
       id:           crypto.randomUUID(),
       annotationId: ann.annotation_id,
@@ -413,8 +407,7 @@ export function ComparePage({
     )) return
 
     const color = nextColorForSource(ann.source)
-    // G1 (docs/AUDIT-2026-10-05.md): same length-derived-id collision as
-    // addSelectedAnnotations above.
+    // randomUUID for the same reason as addSelectedAnnotations above.
     const id    = crypto.randomUUID()
     setState(prev => ({
       ...prev,
@@ -758,13 +751,12 @@ export function ComparePage({
                           {e.members?.length ?? 0} annotations summed
                         </span>
                         {/*
-                          W (2.6, docs/AUDIT-2026-09-22.md): this entry's
-                          top-level status stays 'ok' as long as ONE member
-                          succeeded (summedData.length > 0 further up), so a
-                          partial failure was otherwise only visible after
-                          expanding "▼ members" -- the always-visible chip
-                          badge claimed the full member count summed with no
-                          hint some of it silently failed.
+                          This entry's top-level status stays 'ok' as long
+                          as ONE member succeeded (summedData.length > 0
+                          further up), so without this badge a partial
+                          failure would only be visible after expanding
+                          "▼ members" -- the always-visible chip would claim
+                          the full member count was summed.
                         */}
                         {e.status === 'ok' && e.members?.some(m => m.status === 'error') && (
                           <span
@@ -852,7 +844,7 @@ export function ComparePage({
                     <button
                       className="chip-remove"
                       onClick={() => setState(prev => {
-                        // W26: match by id, not annotationId+source -- two
+                        // Match by id, not annotationId+source -- two
                         // different groups can share the same label, and
                         // matching by label would remove BOTH when the user
                         // meant to remove just one.
@@ -975,15 +967,13 @@ export function ComparePage({
                   />
                 </div>
 
-                {/* W18: no page-level CSV export here -- MultiEgcChart
-                    below has its own "↓ CSV" button, which (unlike this
-                    page's former one) actually reflects the chart's
+                {/* No page-level CSV export here -- MultiEgcChart below has
+                    its own "↓ CSV" button, which reflects the chart's
                     current metric/standardize/smoothed state. This page
                     has no access to that state (it lives inside
                     MultiEgcChart, not lifted up), so a page-level export
-                    could only ever re-derive raw EGC regardless of what
-                    the chart was actually showing -- always wrong
-                    whenever the chart wasn't in plain raw-EGC mode. */}
+                    could only re-derive raw EGC, which is wrong whenever
+                    the chart isn't in plain raw-EGC mode. */}
                 <ChartErrorBoundary label="Compare overlay">
                   <MultiEgcChart
                     series={readyEntries.map(e => ({

@@ -1,15 +1,12 @@
 /**
  * dataset-overview-chart-date-filter.component.test.tsx
  * =========================================================
- * E3 (docs/AUDIT-2026-10-05.md): DatasetOverviewPanel's temporal chart
- * passed the live dateFrom/dateTo state into MultiEgcChart instead of
- * loadedParams (the snapshot of what was actually requested) -- every
+ * DatasetOverviewPanel's temporal chart must pass loadedParams (the
+ * snapshot of what was actually requested) into MultiEgcChart, like every
  * sibling render site in this panel (the summary line, CSV filename,
- * yLabel) already reads loadedParams for the same W29 reason, but this
- * one call was still reading live state. Editing the date picker after
- * loading, without reloading, silently clipped the chart to the new
- * (unloaded) range while the summary line right above it still correctly
- * said "all dates".
+ * yLabel) -- not the live dateFrom/dateTo state. Otherwise editing the date
+ * picker after loading, without reloading, would clip the chart to the new
+ * (unloaded) range while the summary line above it still says "all dates".
  *
  * Needs its own file (not dataset-overview-panel.component.test.tsx)
  * because it mocks react-plotly.js/factory to capture the real `x` array
@@ -70,7 +67,7 @@ beforeEach(() => {
   })
 })
 
-describe('DatasetOverviewPanel — temporal chart stays at the loaded date range, not the live picker (E3)', () => {
+describe('DatasetOverviewPanel — temporal chart stays at the loaded date range, not the live picker', () => {
   it('does not clip the chart when the date picker is edited after loading, without reloading', async () => {
     const user = userEvent.setup()
     render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)

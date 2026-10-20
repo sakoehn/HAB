@@ -6,11 +6,10 @@
 //   vals:   number[]                        -- one set of values, one stats row.
 //   series: { label, vals: number[] }[]      -- multiple series, one row each.
 //
-// W25 (docs/AUDIT-2026-09-22.md): MultiEgcChart used to pool every series'
-// values into one flat array before this existed, so comparing e.g. COG0055
-// against K02568 reported a single meaningless blended mean (mixing a 4.8e-4
-// series with a 7.8e-6 series into one 2.4e-4 "mean" that describes neither).
-// `series` mode gives each annotation its own row instead.
+// `series` mode gives each annotation its own row -- pooling every series'
+// values into one flat array would report a single meaningless blended mean
+// (e.g. COG0055 vs K02568: a 4.8e-4 series and a 7.8e-6 series blend into
+// one 2.4e-4 "mean" that describes neither).
 //
 // Statistics computed per row:
 //   n, mean, median, std dev (sample, ÷n-1), CV, min, Q1, Q3, max

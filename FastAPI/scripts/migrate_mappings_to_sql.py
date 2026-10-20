@@ -9,7 +9,7 @@ many samples.
 
 Deliberately reads phylodist, not the mapping TSVs' own taxonomy column:
 phylodist is the richer upstream source (more unique paths, zero blank
-rate; see project memory for the real numbers). The mapping-TSV ingestion
+rate). The mapping-TSV ingestion
 script (not yet written) will resolve each mapping row's own taxon_path_id
 by matching its taxonomy string against this table.
 

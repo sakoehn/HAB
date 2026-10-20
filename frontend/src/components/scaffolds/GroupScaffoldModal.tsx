@@ -92,15 +92,13 @@ export function GroupScaffoldModal({
   const [rows, setRows]           = useState<MergedRow[]>([])
   const [status, setStatus]       = useState<ApiStatus>('loading')
   const [failedMembers, setFailedMembers] = useState<Member[]>([])
-  // G10 (docs/AUDIT-2026-10-05.md): retryFailed was never guarded against
-  // being called again while an earlier retry is still in flight -- a
-  // double-click fired two overlapping fetch rounds for the same failed
-  // members, and the merge below appended both rounds' rows rather than
-  // replacing, double-counting every member in both the table and the
-  // summed stat strip.
+  // Guards retryFailed against being called again while an earlier retry
+  // is still in flight -- a double-click would fire two overlapping fetch
+  // rounds for the same failed members, double-counting every member in
+  // both the table and the summed stat strip.
   const [retrying, setRetrying] = useState(false)
-  // G2 (docs/AUDIT-2026-10-05.md): same overcounting bug W22 already fixed
-  // in ScaffoldExplorePanel -- a group can contain nested (ancestor/
+  // Same overcounting guard as ScaffoldExplorePanel -- a group can contain
+  // nested (ancestor/
   // descendant) annotations (e.g. a taxonomy genus and its own parent
   // phylum, both picked as separate "members"), and summing both
   // double-counts every scaffold/gene that was already inside the
@@ -246,7 +244,7 @@ export function GroupScaffoldModal({
     return Object.values(dateMap).sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date))
   }, [rows])
 
-  // G2: how many of the group's original members actually contributed to
+  // How many of the group's original members actually contributed to
   // the sums below -- the ones dropped as redundant were deliberately never
   // fetched, so they must not count toward "terms summed" or the
   // failed-to-load denominator (which only covers members that were
@@ -257,12 +255,12 @@ export function GroupScaffoldModal({
   const totalSamples   = useMemo(() => new Set(rows.map(r => r.sample)).size, [rows])
   const totalScaffolds = useMemo(() => rows.reduce((s, r) => s + r.scaffold_count, 0), [rows])
   const totalGenes     = useMemo(() => rows.reduce((s, r) => s + r.gene_count, 0), [rows])
-  // W (2.6, docs/AUDIT-2026-09-22.md): "peak scaffolds"/"peak genes" must be
+  // "peak scaffolds"/"peak genes" must be
   // the peak of the SUMMED-per-date series (chartData, what the chart above
   // actually plots), not the single largest per-member row in `rows` --
   // those are two different numbers once a group has >1 member, and the
   // per-member max understates the real peak (e.g. two members each with
-  // 50 scaffolds on the same date sum to 100, but the old code reported 50).
+  // 50 scaffolds on the same date sum to 100, not 50).
   const maxScaffolds   = useMemo(() => Math.max(0, ...chartData.map(r => r.scaffold_count)), [chartData])
   const maxGenes       = useMemo(() => Math.max(0, ...chartData.map(r => r.gene_count)), [chartData])
 
@@ -451,7 +449,7 @@ export function GroupScaffoldModal({
                   data-testid="group-fetch-warning"
                 >
                   <span style={{ flex: 1 }}>
-                    {/* G2: denominator is effectiveMemberCount, not members.length --
+                    {/* Denominator is effectiveMemberCount, not members.length --
                         a member dropped as redundant was never attempted, so it
                         can't be counted alongside the ones that genuinely failed. */}
                     {failedMembers.length} of {effectiveMemberCount} terms failed to
@@ -464,8 +462,7 @@ export function GroupScaffoldModal({
                 </div>
               )}
 
-              {/* G2 (docs/AUDIT-2026-10-05.md): same disclosure
-                  ScaffoldExplorePanel already shows for the identical
+              {/* Same disclosure ScaffoldExplorePanel shows for the same
                   overcounting case -- a nested (ancestor/descendant) member
                   is excluded from every sum below, not silently double-
                   counted. */}
@@ -568,9 +565,8 @@ export function GroupScaffoldModal({
                     </button>
                     {showChart && (
                       <span style={{ font: '10px var(--mono)', color: 'var(--text-dim)' }}>
-                        {/* G2: must match what's actually in the sum, not the
-                            pre-filter group size (G3's exact bug shape in
-                            ScaffoldExplorePanel, deliberately not repeated here). */}
+                        {/* Must match what's actually in the sum, not the
+                            pre-filter group size. */}
                         summed across all {effectiveMemberCount} terms
                       </span>
                     )}

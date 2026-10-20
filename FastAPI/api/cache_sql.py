@@ -125,12 +125,10 @@ def get_taxonomy_children_sql(conn: sqlite3.Connection, parent: str | None, dept
     """
     if parent is None:
         # domain roots, no depth needed
-        # A9 (docs/AUDIT-2026-10-05.md): sorted() here too, matching the
-        # non-root branch below -- this docstring's own "sorted by
-        # annotation_id" claim used to be false for the root case,
-        # which came back in whatever order SQLite's table scan happened
-        # to produce (confirmed live: Bacteria, Archaea, Viruses,
-        # Eukaryota -- not alphabetical).
+        # sorted() here too, matching the non-root branch below -- without
+        # an ORDER BY the roots come back in whatever order SQLite's table
+        # scan produces (Bacteria, Archaea, Viruses, Eukaryota on the real
+        # db), not alphabetically as the docstring promises.
         query = "SELECT DISTINCT domain AS annotation_id, domain AS name, 1 AS depth, domain AS category FROM taxon_paths"
         cursor = conn.execute(query)
         rows = cursor.fetchall()
@@ -211,11 +209,9 @@ def get_kegg_children_sql(conn: sqlite3.Connection, parent_id: str | None, depth
         an unknown id, or has no children.
     """
     if parent_id is None:
-        # A9 (docs/AUDIT-2026-10-05.md): sorted() here too -- see
-        # get_taxonomy_children_sql's root branch for the full reasoning.
-        # This source's own root ids happen to already come back in
-        # ascending order from SQLite's table scan, but that's never been
-        # a real ORDER BY guarantee, just incidental.
+        # sorted() here too -- see get_taxonomy_children_sql's root branch.
+        # This source's root ids happen to come back in ascending order from
+        # SQLite's table scan, but that's incidental, not guaranteed.
         query = "SELECT DISTINCT a_id AS annotation_id, a_name AS name, 1 AS depth, a_name AS category FROM kegg_paths"
         cursor = conn.execute(query)
         return sorted(
@@ -259,8 +255,8 @@ def get_kegg_path_sql(conn: sqlite3.Connection, annotation_id: str) -> dict | No
     auto-expanding/highlighting a node in the hierarchy popup -- and for
     letting the user switch between real paths when there's more than one.
 
-    A KEGG node can have multiple real parents (E14 -- e.g. K00844/
-    hexokinase has 14 real pathway occurrences in ko00001.keg), so
+    A KEGG node can have multiple real parents (e.g. K00844/hexokinase
+    has 14 real pathway occurrences in ko00001.keg), so
     annotation_catalog.parent alone isn't enough here: it stores one
     last-occurrence-wins "display" parent per node, which for a
     multi-parent KO is often an incidental catch-all (e.g. "Brite
@@ -320,7 +316,7 @@ def get_kegg_path_sql(conn: sqlite3.Connection, annotation_id: str) -> dict | No
 def get_kegg_immediate_parents_bulk_sql(conn: sqlite3.Connection, annotation_ids: list[str]) -> dict[str, list[dict]]:
     """Return every real IMMEDIATE parent (one level up) for each of
     `annotation_ids`, for bucketing a list of KEGG nodes by parent group
-    (W30a, docs/AUDIT-2026-09-22.md) -- a single id-at-a-time call to
+    -- a single id-at-a-time call to
     get_kegg_path_sql for every row in a 200-row list would be 200 round
     trips; this does it in at most 3 queries total (one per non-root
     depth), regardless of how many ids are passed.
@@ -430,8 +426,7 @@ def get_enzyme_children_sql(conn: sqlite3.Connection, parent_id: str | None, dep
         (depth=4), an unknown id, or has no children.
     """
     if parent_id is None:
-        # A9 (docs/AUDIT-2026-10-05.md): sorted() here too -- see
-        # get_taxonomy_children_sql's root branch for the full reasoning.
+        # sorted() here too -- see get_taxonomy_children_sql's root branch.
         query = "SELECT DISTINCT a_id AS annotation_id, a_name AS name, 1 AS depth, a_name AS category FROM enzyme_paths"
         cursor = conn.execute(query)
         return sorted(
@@ -559,10 +554,9 @@ def get_cog_children_sql(conn: sqlite3.Connection, parent_id: str | None, depth:
         (depth=2), an unknown id, or has no children.
     """
     if parent_id is None:
-        # A9 (docs/AUDIT-2026-10-05.md): sorted() here too -- confirmed
-        # live, COG's 25 category-letter roots came back in apparent
-        # insertion order (J, E, H, Q, K, L, ...), not alphabetical. See
-        # get_taxonomy_children_sql's root branch for the full reasoning.
+        # sorted() here too -- without it COG's 25 category-letter roots
+        # come back in insertion order (J, E, H, Q, K, L, ...), not
+        # alphabetical. See get_taxonomy_children_sql's root branch.
         query = "SELECT DISTINCT a_id AS annotation_id, a_name AS name, 1 AS depth, a_name AS category FROM cog_paths"
         cursor = conn.execute(query)
         return sorted(
@@ -605,8 +599,8 @@ def get_cog_path_sql(conn: sqlite3.Connection, annotation_id: str) -> dict | Non
     """Return every real ancestor path (root to node) for a COG node, for
     auto-expanding/highlighting a node in the hierarchy popup. Same
     GROUP BY-deduplicated shape as get_kegg_path_sql for response parity --
-    a COG id can have multiple real categories (E17,
-    docs/AUDIT-2026-09-22.md; e.g. COG0028 is real under both E and H), so
+    a COG id can have multiple real categories (e.g. COG0028 is real
+    under both E and H), so
     `paths` can have more than 1 entry, same as KEGG's multi-parent case.
 
     Args:
@@ -777,7 +771,7 @@ def get_top_annotations_sql(conn: sqlite3.Connection, source: str, sample_names:
     # value is deterministic in GROUP BY when the query has exactly one
     # MIN()/MAX() -- this one has four (two AVG, two MAX on egc/norm_egc).
     # depth included for the same reason as get_top_annotations_from_catalog_sql
-    # (A8, docs/AUDIT-2026-10-05.md) -- this is the date-filtered sibling path.
+    # -- this is the date-filtered sibling path.
     query = f"""
         SELECT annotation_id,
                MIN(name) AS name,
@@ -812,7 +806,7 @@ def get_top_annotations_sql(conn: sqlite3.Connection, source: str, sample_names:
     ]
 
 def get_top_annotations_from_catalog_sql(conn: sqlite3.Connection, source: str) -> list[dict]:
-    # A8 (docs/AUDIT-2026-10-05.md): depth must be included -- a parent's
+    # depth must be included -- a parent's
     # EGC is the sum of its descendants, so parents always outrank leaves by
     # mean_egc. Without depth, the frontend has no way to rank-filter down
     # to real leaf annotations for kegg/cog/enzyme (it already does this for
@@ -947,7 +941,7 @@ def _sort_group_concat(value: str | None) -> str | None:
     (search_mappings, FastAPI/api/routes.py) builds a `unique_pairs` dedup
     key directly from these fields, so an order difference on otherwise-
     identical values would make it treat two real duplicates as distinct
-    and let them both through (W11). Sorting here, once, at the source,
+    and let them both through. Sorting here, once, at the source,
     makes both the dedup key and the value shown to the user deterministic.
     """
     return ",".join(sorted(value.split(","))) if value else value
@@ -960,7 +954,7 @@ def _sort_group_concat(value: str | None) -> str | None:
 # clamps how many samples it will scan regardless of the caller's
 # requested sample count, the same way /annotations/top's sample_count
 # already reports back the effective count rather than assuming the
-# requested one was honored (W24, docs/AUDIT-2026-09-22.md). Sized from
+# requested one was honored. Sized from
 # direct measurement: a single leaf (COG0055) is 29,663 raw rows across
 # all 128 samples and already completes in ~0.85-2.3s (see below); a
 # 269-member category is 3,015,883 rows at 128 samples but a comparable
@@ -1055,20 +1049,13 @@ def strip_source_prefix(source: str, annotation_id: str) -> str:
     """Strip kegg's "KO:" / enzyme's "EC:" prefix, if present, so an id
     resolves the same way regardless of which form a caller passes.
 
-    A1 (docs/AUDIT-2026-10-05.md): this used to live ONLY inside
-    get_mappings_sql, called right before ITS OWN _expand_to_leaf_ids
-    call -- but routes.py's own cap-check (in search_mappings, before
-    get_mappings_sql ever runs) calls _expand_to_leaf_ids directly with
-    the UNSTRIPPED id. kegg_paths/enzyme_paths store bare ids at every
-    level, so a prefixed id (e.g. "KO:K02014") resolved to zero real
-    leaves there -- not because it isn't real, but because the lookup
-    never stripped the prefix first. With leaf_count=0, every cap check
-    in search_mappings sees nothing to cap, so the uncapped query below
-    it runs in full -- reproducing the exact 271,284-row/249.8s
-    production incident (K02014, prefixed) the cap exists to prevent,
-    for a prefixed form the API explicitly documents/tests as
-    supported. Both call sites now share this one function instead of
-    routes.py's own copy silently drifting from get_mappings_sql's.
+    Shared by get_mappings_sql and routes.py's cap-check (search_mappings),
+    which both call _expand_to_leaf_ids. kegg_paths/enzyme_paths store bare
+    ids at every level, so an unstripped prefixed id (e.g. "KO:K02014")
+    would resolve to zero leaves -- and with leaf_count=0 every cap check
+    in search_mappings sees nothing to cap, so the uncapped query runs in
+    full (271,284 rows / ~250s for KO:K02014). Keeping one function means
+    the two call sites can't drift apart.
 
     Args:
         source: "kegg", "cog", "enzyme", or "taxonomy".
@@ -1091,9 +1078,7 @@ def _expand_to_leaf_ids(conn: sqlite3.Connection, source: str, annotation_id: st
     if it's already a leaf, or every descendant leaf if it's a pathway/
     class/category node. Unifies the leaf and non-leaf cases: a leaf id
     only ever matches its own leaf column, so this returns exactly [id]
-    for a leaf without needing a separate branch (W24,
-    docs/AUDIT-2026-09-22.md -- the pre-fix code only ever matched a leaf
-    id, so a pathway/class/category id always resolved to zero rows).
+    for a leaf without needing a separate branch.
 
     Args:
         conn: Open SQLite connection.
@@ -1132,9 +1117,8 @@ def get_mappings_sql(
 
     For kegg/enzyme/cog, annotation_id no longer has to be a leaf id --
     a pathway, EC class, or COG category expands to every real leaf id
-    beneath it via _expand_to_leaf_ids and matches any of them (W24,
-    docs/AUDIT-2026-09-22.md). A leaf id still matches only itself, same
-    as before.
+    beneath it via _expand_to_leaf_ids and matches any of them. A leaf id
+    matches only itself.
 
     Args:
         conn: Open SQLite connection.
@@ -1156,15 +1140,11 @@ def get_mappings_sql(
             is additionally clamped to at most _MAX_SAMPLES_FOR_MANY_LEAVES
             entries regardless of how many were passed in -- see the
             module-level comment above _MANY_LEAVES_THRESHOLD.
-        bypass_cap: A2 (docs/AUDIT-2026-10-05.md): skip the clamp just
-            above. Before this flag existed, routes.py already computed an
-            uncapped `samples` list when its own bypass_cap query param was
-            set, but this function re-clamped it anyway -- the route's
-            response metadata (sample_count, samples_were_capped) reflected
-            the route's untouched list while the actual query silently used
-            only 5 samples, so a "bypass_cap=true" CSV export was quietly
-            25x smaller than its own label claimed. Defaults to False so
-            every other caller keeps the existing safety net.
+        bypass_cap: Skip the clamp just above, so the samples actually
+            queried match the uncapped `samples` list routes.py reports in
+            its response metadata when its own bypass_cap query param is
+            set (the full CSV export). Defaults to False so every other
+            caller keeps the safety net.
 
     Returns:
         List of dicts keyed sample, gene_id, contig_id, kegg_id, cog_id,
@@ -1179,9 +1159,8 @@ def get_mappings_sql(
     if source in ("kegg", "cog", "enzyme"):
         # kegg_paths/enzyme_paths store bare ids at every level (no "KO:"/
         # "EC:" prefix, same as e.g. a bare pathway code) -- strip it here
-        # (A1, docs/AUDIT-2026-10-05.md: via the shared strip_source_prefix,
-        # not a local copy -- routes.py's own cap-check needs the exact
-        # same stripping before ITS OWN _expand_to_leaf_ids call) so a
+        # (via the shared strip_source_prefix -- routes.py's cap-check needs
+        # the exact same stripping before its own _expand_to_leaf_ids call) so a
         # caller passing either form (both are real call patterns, see
         # test_bare_id_normalizes_to_prefixed_storage_form) resolves the
         # same way. The prefix is re-added below when matching against
@@ -1224,17 +1203,16 @@ def get_mappings_sql(
         where_params = tuple(kegg_ids) + sample_filter_params
     elif source == "cog":
         placeholders = ", ".join("?" * len(leaf_ids))
-        # A3 (docs/AUDIT-2026-10-05.md): DISTINCT, not a bare SELECT -- a
-        # gene matching more than one of several searched cog_ids (a real
-        # case for a multi-category search) produces duplicate mapping_ids
-        # in this junction-table subquery. Without DISTINCT, LIMIT counts
-        # those raw duplicate rows, not real genes, so the subquery can hit
-        # the limit while still returning fewer than _MAPPINGS_ROW_LIMIT
-        # DISTINCT ids once the outer GROUP BY collapses them -- the exact
-        # mechanism that let real truncation go undetected (routes.py's
-        # `len(mappings) >= _MAPPINGS_ROW_LIMIT` check reads false). kegg/
-        # taxonomy's subqueries select mappings.id directly (already
-        # unique per row), so they never had this gap.
+        # DISTINCT, not a bare SELECT -- a gene matching more than one of
+        # several searched cog_ids (a real case for a multi-category
+        # search) produces duplicate mapping_ids in this junction-table
+        # subquery. Without DISTINCT, LIMIT counts those raw duplicate rows,
+        # not real genes, so the subquery can hit the limit while returning
+        # fewer than _MAPPINGS_ROW_LIMIT distinct ids once the outer GROUP BY
+        # collapses them -- and routes.py's `len(mappings) >=
+        # _MAPPINGS_ROW_LIMIT` truncation check would read false. kegg/
+        # taxonomy's subqueries select mappings.id directly (already unique
+        # per row), so they don't need this.
         where_sql = f"""
             SELECT DISTINCT gene_cog.mapping_id AS id
             FROM gene_cog
@@ -1245,7 +1223,7 @@ def get_mappings_sql(
     elif source == "enzyme":
         ec_ids = [f"EC:{leaf}" for leaf in leaf_ids]
         placeholders = ", ".join("?" * len(ec_ids))
-        # A3: same DISTINCT fix as cog above.
+        # DISTINCT for the same reason as cog above.
         where_sql = f"""
                 SELECT DISTINCT gene_enzyme.mapping_id AS id
                 FROM gene_enzyme

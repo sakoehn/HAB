@@ -21,8 +21,7 @@ Covers every function in that module:
                                        /{source}/path (auto-expand+highlight
                                        in the hierarchy popup).
 
-Since the taxonomy_egc_homonym_bug fix (2026-09-02), taxonomy annotation_id
-is the full lineage-prefix (e.g. "Bacteria;Bacteroidetes"), not a bare taxon
+Taxonomy annotation_id is the full lineage-prefix (e.g. "Bacteria;Bacteroidetes"), not a bare taxon
 name -- several tests below (BOSEA_OLD_LINEAGE/BOSEA_NEW_LINEAGE) exercise a
 real, confirmed cross-lineage homonym to prove that fix holds at this layer.
 
@@ -89,8 +88,8 @@ def conn():
 EXPECTED_BACTEROIDETES_PHYLUM_COUNT = 2561
 EXPECTED_BACTERIA_DOMAIN_COUNT = 39237
 
-# "Bosea" is a REAL confirmed cross-lineage homonym -- the exact class of
-# bug the full-lineage-prefix rekeying fixed (see taxonomy_egc_homonym_bug):
+# "Bosea" is a REAL confirmed cross-lineage homonym -- the reason taxonomy
+# is keyed by full lineage-prefix rather than bare name:
 # the bare genus name "Bosea" exists under two entirely different families,
 # reflecting a real taxonomic reclassification (Rhizobiales/Bradyrhizobiaceae
 # is the older scheme, Hyphomicrobiales/Boseaceae the newer one). A
@@ -140,7 +139,7 @@ def test_disambiguates_a_real_cross_lineage_homonym(conn):
     """Full-lineage-prefix matching must keep BOSEA_OLD_LINEAGE and
     BOSEA_NEW_LINEAGE's species completely separate, even though both
     lineages share the same bare genus name "Bosea" -- this is the core
-    guarantee the taxonomy_egc_homonym_bug fix depends on: a bare-name
+    guarantee full-lineage keying depends on: a bare-name
     lookup for "Bosea" would have silently merged these two into one
     node with an arbitrary parent."""
     old_rows = taxon_paths_under(conn, BOSEA_OLD_LINEAGE)
@@ -179,8 +178,8 @@ def test_row_shape_matches_the_annotation_series_contract(conn):
     assert row == {
         "sample_name":    "3300060358",
         "name":           "FoF1-type ATP synthase, beta subunit",
-        # Post-E15: category holds the real descriptive name, never the
-        # bare category letter -- reconfirmed live before fixing this.
+        # category holds the real descriptive name, never the bare
+        # category letter.
         "category":       "Energy production and conversion",
         "egc":            7092.0,
         "norm_egc":       0.00043946025951950113,
@@ -203,8 +202,7 @@ def test_does_not_cross_source_with_a_shared_annotation_id_string(conn):
 
 
 def test_taxonomy_homonym_lineages_return_distinct_uncollapsed_series(conn):
-    """The core regression test for taxonomy_egc_homonym_bug at the SQL
-    layer: BOSEA_OLD_LINEAGE and BOSEA_NEW_LINEAGE (see the taxon_paths_under
+    """The core cross-lineage homonym test at the SQL layer: BOSEA_OLD_LINEAGE and BOSEA_NEW_LINEAGE (see the taxon_paths_under
     section above) share the bare name "Bosea" but are unrelated organisms
     under different families. Each must return its OWN 128-sample series
     with its OWN egc values -- not be merged into one, and not silently
@@ -321,13 +319,11 @@ def test_root_case_returns_the_four_domains(conn):
 
 
 def test_root_case_is_itself_sorted_not_just_sortable(conn):
-    """A9 (docs/AUDIT-2026-10-05.md): the test above pre-sorts before
-    comparing, which would pass even if the function's own real return
-    order were wrong -- that's exactly how this bug went unnoticed.
-    Confirmed live before this fix: the raw order was Bacteria, Archaea,
-    Viruses, Eukaryota (SQLite's table-scan order), not alphabetical,
-    even though every deeper level already returns sorted(). Checks the
-    function's own raw order directly, no pre-sorting."""
+    """The test above pre-sorts before comparing, which would pass even if
+    the function's own return order were wrong. SQLite's table-scan order
+    for the real roots is Bacteria, Archaea, Viruses, Eukaryota -- not
+    alphabetical -- so this checks the function's own raw order directly,
+    no pre-sorting."""
     children = get_taxonomy_children_sql(conn, None)
     ids = [c["annotation_id"] for c in children]
     assert ids == sorted(ids)
@@ -413,7 +409,7 @@ def test_homonym_lineages_have_disjoint_children(conn):
 
 # ═══════════════════════════════════════════════════════════════════════════
 # get_kegg_children_sql / _kegg_node_depth / kegg_paths -- built to back the
-# BRITE hierarchy popup (E14 follow-on). Unlike taxonomy, a KEGG id carries
+# BRITE hierarchy popup. Unlike taxonomy, a KEGG id carries
 # no depth information in its own text ("00010" doesn't look any different
 # from "K00844"), so depth has to come from which kegg_paths column
 # actually contains the id -- verified disjoint across all four columns
@@ -448,12 +444,10 @@ def test_kegg_root_case_returns_the_eight_top_level_branches(conn):
 
 
 def test_kegg_root_case_is_itself_sorted_not_just_sortable(conn):
-    """A9 (docs/AUDIT-2026-10-05.md): see
-    test_root_case_is_itself_sorted_not_just_sortable's comment --
-    same pre-sorting blind spot, same fix. KEGG's real root ids happen
-    to already come back in ascending order from SQLite's table scan,
-    but that was never a real ORDER BY guarantee -- this pins down the
-    function's own output is actually sorted now, not just coincidence."""
+    """See test_root_case_is_itself_sorted_not_just_sortable. KEGG's real
+    root ids happen to come back in ascending order from SQLite's table
+    scan, but that's not an ORDER BY guarantee -- this pins down that the
+    function's own output is sorted, not just by coincidence."""
     children = get_kegg_children_sql(conn, None)
     ids = [c["annotation_id"] for c in children]
     assert ids == sorted(ids)
@@ -560,8 +554,8 @@ def test_kegg_node_depth_returns_none_for_unknown_id(conn):
 def test_kegg_paths_k00844_has_all_real_occurrences(conn):
     """K00844 (hexokinase) is confirmed (by direct inspection of
     ko00001.keg, independent of this migration's own code) to appear
-    under 14 distinct real parents -- the exact case E14's rollup fix and
-    this table both exist because of."""
+    under 14 distinct real parents -- the multi-parent case this table
+    exists to represent."""
     rows = conn.execute("SELECT COUNT(*) FROM kegg_paths WHERE d_id = ?", ("K00844",)).fetchone()
     assert rows[0] == EXPECTED_K00844_OCCURRENCE_COUNT
 
@@ -619,9 +613,7 @@ def test_enzyme_root_case_returns_the_seven_top_level_classes(conn):
 
 
 def test_enzyme_root_case_is_itself_sorted_not_just_sortable(conn):
-    """A9 (docs/AUDIT-2026-10-05.md): see
-    test_root_case_is_itself_sorted_not_just_sortable's comment -- same
-    pre-sorting blind spot, same fix."""
+    """See test_root_case_is_itself_sorted_not_just_sortable."""
     children = get_enzyme_children_sql(conn, None)
     ids = [c["annotation_id"] for c in children]
     assert ids == sorted(ids)
@@ -747,10 +739,10 @@ def test_enzyme_paths_every_intermediate_node_has_real_children(conn):
     are strictly nested the same way ko00001.keg's are -- a D-level line
     can't exist without a real C-level ancestor on that occurrence.
 
-    E18 (docs/AUDIT-2026-09-22.md) added exactly one real exception at the
-    c_id level: a gene whose only EC annotation is a 3-level partial/
-    wildcard id ("class.subclass.-", e.g. "3.1.27.-") is now correctly
-    attributed to its c_id node directly (resolve_partial_ec(), see
+    There is exactly one real exception at the c_id level: a gene whose
+    only EC annotation is a 3-level partial/wildcard id
+    ("class.subclass.-", e.g. "3.1.27.-") is attributed to its c_id node
+    directly (resolve_partial_ec(), see
     EGC_ENZYME_TREE.ipynb) instead of being silently dropped -- but a
     wildcard id never names a specific d_id leaf, so that c_id can be
     real and populated with NO real d_id child at all. Confirmed directly
@@ -789,12 +781,8 @@ def test_enzyme_paths_every_intermediate_node_has_real_children(conn):
 # subdivision the way KEGG pathways or EC numbers do, so there's no
 # "intermediate node" case to test the way kegg_paths/enzyme_paths have.
 #
-# `cog_paths` was found completely empty (0 rows) during the audit that
-# added this section -- migrate_cog_paths_to_sql.py existed but had never
-# actually been run. Re-ran it (4,612 rows, matching annotation_catalog's
-# real depth=2 COG count exactly) before writing these tests, so every
-# value below is confirmed against the now-correctly-populated table, not
-# assumed from the migration script's own docstring.
+# Every value below is confirmed against the real populated cog_paths
+# table, not assumed from migrate_cog_paths_to_sql.py's own docstring.
 # ═══════════════════════════════════════════════════════════════════════════
 
 EXPECTED_COG_ROOT_IDS = [
@@ -814,11 +802,9 @@ def test_cog_root_case_returns_the_25_real_categories(conn):
 
 
 def test_cog_root_case_is_itself_sorted_not_just_sortable(conn):
-    """A9 (docs/AUDIT-2026-10-05.md): see
-    test_root_case_is_itself_sorted_not_just_sortable's comment -- same
-    pre-sorting blind spot, same fix. Confirmed live before this fix:
-    COG's 25 category roots came back as J, E, H, Q, K, L, ... (apparent
-    insertion order), not alphabetical."""
+    """See test_root_case_is_itself_sorted_not_just_sortable. Without
+    sorting, COG's 25 category roots come back as J, E, H, Q, K, L, ...
+    (insertion order), not alphabetical."""
     children = get_cog_children_sql(conn, None)
     ids = [c["annotation_id"] for c in children]
     assert ids == sorted(ids)
@@ -892,9 +878,9 @@ def test_cog_paths_every_node_id_is_a_real_annotation(conn):
 
 
 def test_cog_paths_distinct_leaf_count_matches_annotation_catalog_depth2_count(conn):
-    """cog_paths can have MORE than one row per real COG id now (E17,
-    docs/AUDIT-2026-09-22.md -- a COG can belong to several NCBI
-    categories), so total row count is no longer the right invariant.
+    """cog_paths can have MORE than one row per real COG id (a COG can
+    belong to several NCBI categories), so total row count isn't the
+    right invariant.
     What must still hold: every real COG id has at least one row, and no
     id appears that isn't real -- i.e. the set of distinct b_id values
     exactly matches annotation_catalog's real depth=2 COG ids."""
@@ -912,8 +898,8 @@ def test_cog_paths_distinct_leaf_count_matches_annotation_catalog_depth2_count(c
 def test_cog_paths_has_one_row_per_membership_for_a_real_multi_category_cog(conn):
     """COG0028 is confirmed real under both category E (Amino acid
     transport and metabolism) and category H (Coenzyme transport and
-    metabolism) on NCBI's own site -- before the E17 fix, cog_paths could
-    only ever hold one of those two rows (last-scraped-page-wins). Skips
+    metabolism) on NCBI's own site, so cog_paths must hold both rows.
+    Skips
     if this dataset doesn't happen to have COG0028 annotated (not every
     real COG id is necessarily observed in every 128-sample dataset)."""
     catalog_has_it = conn.execute(
@@ -929,7 +915,7 @@ def test_cog_paths_has_one_row_per_membership_for_a_real_multi_category_cog(conn
     assert categories == {"E", "H"}, (
         f"expected COG0028 under both E and H, got {categories} -- "
         "if this is {{'H'}} or {{'E'}} alone, cog_paths hasn't been "
-        "regenerated from the E17-fixed notebook yet (Phase 3)"
+        "regenerated from the multi-category COG notebook yet"
     )
 
 
@@ -939,7 +925,7 @@ def test_cog_paths_has_one_row_per_membership_for_a_real_multi_category_cog(conn
 #
 # K00844 is the deliberate choice for the KEGG case: it's the same known
 # multi-parent example (14 real occurrences in kegg_paths) used throughout
-# this audit's E14 work. annotation_catalog.parent alone would resolve it
+# these tests. annotation_catalog.parent alone would resolve it
 # to an arbitrary last-occurrence-wins parent ("Brite Hierarchies", id
 # 04131 -- confirmed by direct query while designing this function); these
 # tests confirm get_kegg_path_sql instead returns the file-order-first
@@ -1111,9 +1097,8 @@ def test_sample_scoping_excludes_other_samples_real_rows(conn):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_false_for_a_bare_name_no_longer_a_valid_identifier(conn):
-    """Post taxonomy_egc_homonym_bug fix, a bare rank name is no longer a
-    valid identifier on its own -- only a full lineage-prefix is. This is
-    the load-bearing behavior change the fix depends on: if a bare name
+    """A bare rank name is not a valid identifier on its own -- only a full
+    lineage-prefix is. Full-lineage keying depends on this: if a bare name
     still resolved, it could still silently conflate two lineages that
     happen to share a name (see the Bosea homonym tests above)."""
     assert taxon_exists_sql(conn, "Bacteroidetes") is False
@@ -1163,10 +1148,9 @@ def test_homonym_lineages_both_exist_but_bare_genus_does_not(conn):
 # ═══════════════════════════════════════════════════════════════════════════
 
 TWO_SAMPLES = ["3300060358", "3300060359"]
-# Post-E15 (COG category rollup): 4594 real COG#### leaf ids across these
-# two samples, plus 25 real category-letter (depth=1) rows now registered
-# alongside them -- 4619 total, reconfirmed live against the resynced
-# annotation_series before writing this.
+# 4594 real COG#### leaf ids across these two samples, plus 25 real
+# category-letter (depth=1) rows registered alongside them -- 4619 total,
+# confirmed against the real annotation_series.
 EXPECTED_DISTINCT_COG_ANNOTATION_COUNT = 4619
 
 
@@ -1182,9 +1166,8 @@ def test_sorted_by_mean_egc_descending(conn):
 
 
 def test_top_result_matches_independently_recomputed_stats(conn):
-    """Post-E15: COG category rollups (e.g. "J") now compete in this
-    ranking the same way KEGG/Enzyme's pathway/class rollups always have
-    -- reconfirmed live: kegg's own top results are ALSO entirely
+    """COG category rollups (e.g. "J") compete in this ranking the same way
+    KEGG/Enzyme's pathway/class rollups do -- kegg's own top results are ALSO entirely
     top-level category nodes (09180, 09100, ...), never leaf KOs, for the
     same reason -- a category's EGC is the sum of its members', so it
     always dominates any single leaf. "J" (Translation, ribosomal
@@ -1192,12 +1175,9 @@ def test_top_result_matches_independently_recomputed_stats(conn):
     samples; mean/max independently computed in plain Python from the raw
     rows, not assumed.
 
-    Values updated post-E17 (docs/AUDIT-2026-09-22.md, Phase 3
-    regeneration, 2026-09-24): category J itself was one of the
-    undercounted categories -- some of its real member COGs belong to a
-    second NCBI category too and were previously only registered there.
-    J's true mean_egc for these two samples is higher than before
-    (902813.5 -> 1027092.5), independently re-verified directly against
+    Category J includes COGs that also belong to a second NCBI category
+    (each COG counts toward every category it belongs to). The expected
+    values are verified directly against
     DataStructures/COG/{3300060358,3300060359}.cog.json's own 'J' entries
     (1228876.0 and 825309.0 -> mean 1027092.5, max 1228876.0), not just
     trusted from the SQL layer."""
@@ -1222,8 +1202,8 @@ def test_known_leaf_annotation_matches_independently_recomputed_stats(conn):
     results = get_top_annotations_sql(conn, "cog", TWO_SAMPLES)
     row = next(r for r in results if r["annotation_id"] == "COG1028")
     assert row["name"] == "NAD(P)-dependent dehydrogenase, short-chain alcohol dehydrogenase family"
-    # CR3: parent is now the category's own id/letter ("I" = Lipid
-    # transport and metabolism), not its display name.
+    # parent is the category's own id/letter ("I" = Lipid transport and
+    # metabolism), not its display name.
     assert row["parent"] == "I"
     assert row["mean_egc"] == 70109.5
     assert row["max_egc"] == 83265.0
@@ -1244,7 +1224,7 @@ def test_sample_count_reflects_how_many_of_the_given_samples_actually_have_it(co
 
 def test_parent_comes_from_parent_id_for_kegg(conn):
     """K09014, real kegg example -- parent is parent_id ("99996"), not
-    parent_name (see CR3, docs/AUDIT.md)."""
+    parent_name."""
     results = get_top_annotations_sql(conn, "kegg", TWO_SAMPLES)
     row = next(r for r in results if r["annotation_id"] == "K09014")
     assert row["parent"] == "99996"
@@ -1300,12 +1280,10 @@ def test_row_shape_matches_get_top_annotations_sql(conn):
     assert set(rows[0].keys()) == EXPECTED_ROW_KEYS
 
 
-# A8 (docs/AUDIT-2026-10-05.md): depth was previously omitted from this
-# SELECT entirely. Since a parent's EGC is the sum of its descendants, the
-# real top-25 by mean_egc for kegg/cog/enzyme is 100% branch/rollup nodes --
-# with no depth in the response, the frontend had no way to rank-filter
-# those out, unlike taxonomy (where depth is derivable client-side from the
-# lineage-prefix id itself).
+# Since a parent's EGC is the sum of its descendants, the real top-25 by
+# mean_egc for kegg/cog/enzyme is 100% branch/rollup nodes -- depth must be
+# in the response so the frontend can rank-filter those out (for taxonomy
+# it's also derivable client-side from the lineage-prefix id itself).
 def test_depth_is_present_and_matches_annotation_catalog(conn):
     rows = get_top_annotations_from_catalog_sql(conn, "cog")
     by_id = {r["annotation_id"]: r["depth"] for r in rows}
@@ -1317,8 +1295,8 @@ def test_depth_is_present_and_matches_annotation_catalog(conn):
 
 
 def test_without_depth_filtering_the_real_top_25_is_entirely_non_leaf_kegg_nodes(conn):
-    """Reproduces the exact bug A8 describes, as a measured fact about the
-    real catalog, not an assumption: kegg's top 25 rows by mean_egc are
+    """A measured fact about the real catalog, not an assumption: kegg's
+    top 25 rows by mean_egc are
     every one a depth-1/2/3 branch node, never a real depth-4 leaf KO --
     confirming depth is the right (and only) signal available to fix this,
     and that the fix must be applied by a caller, not by re-sorting here

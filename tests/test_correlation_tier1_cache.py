@@ -166,12 +166,11 @@ class TestCacheMiss:
         assert rows == 1
 
     def test_constant_candidate_returns_none_not_crash(self, conn):
-        # CR4: a candidate with the same value at every co-observed
-        # timepoint used to crash the whole request -- pearsonr's NaN
-        # silently binds as SQL NULL, trips correlations_cache's NOT NULL
-        # constraint, and the IntegrityError handler wrongly assumed a
-        # concurrent-write race and crashed re-reading a row that was
-        # never written. Must now fail gracefully for just this pair.
+        # A candidate with the same value at every co-observed timepoint
+        # gives pearsonr a NaN, which would silently bind as SQL NULL, trip
+        # correlations_cache's NOT NULL constraint, and send the
+        # IntegrityError handler looking for a concurrent writer's row that
+        # was never written. Must fail gracefully for just this pair.
         insert_catalog(conn, 1, "kegg", "K00001")
         insert_catalog(conn, 2, "kegg", "K00002")
         insert_series(conn, "kegg", "K00001", {s: 10.0 + i for i, s in enumerate(SAMPLES)})
@@ -199,12 +198,10 @@ class TestCacheMiss:
 
 
 class TestLagSignDependsOnCallersReference:
-    # CR1: scoring/caching always treats the numerically LOWER catalog id
-    # as the reference series, regardless of which id the caller actually
-    # asked about as their reference. Before the fix, whichever id the
-    # caller passed as catalog_id_a was ignored for sign purposes -- the
-    # returned lag was silently backwards whenever the caller's reference
-    # had the higher id. ref/cand values below are squared sequences (not
+    # Scoring/caching always treats the numerically LOWER catalog id as
+    # the reference series, regardless of which id the caller asked about,
+    # so the returned lag must be flipped whenever the caller's reference
+    # has the higher id -- otherwise it would be silently backwards. ref/cand values below are squared sequences (not
     # a straight line), so only the true offset produces r == 1.0 exactly
     # -- same trick as test_correlation_math.py's test_picks_the_correct_lag,
     # confirming lag=+2 (not some other value) is what's actually found.
@@ -364,12 +361,11 @@ class TestConcurrentInsertRace:
         assert rows == 1  # exactly one row survives -- no duplicate, no crash
 
     def test_integrity_error_with_nothing_to_read_back_returns_none_not_crash(self, conn):
-        # CR4's actual failure mode: the IntegrityError handler assumed
-        # every IntegrityError means "a concurrent request already won,"
-        # but a NOT NULL violation (e.g. from a NaN score) means nothing
-        # was ever written by anyone -- the re-read finds no row, and
-        # indexing into None used to raise TypeError instead of failing
-        # this one pair gracefully.
+        # Not every IntegrityError means "a concurrent request already
+        # won": a NOT NULL violation (e.g. from a NaN score) means nothing
+        # was ever written by anyone, so the re-read finds no row. That
+        # must fail this one pair gracefully, not raise TypeError indexing
+        # into None.
         insert_catalog(conn, 1, "kegg", "K00001")
         insert_catalog(conn, 2, "kegg", "K00002")
         identical_values = {s: 10.0 + i for i, s in enumerate(SAMPLES)}
@@ -401,12 +397,11 @@ class TestConcurrentInsertRace:
 
 
 class TestOperationalErrorDuringCacheWrite:
-    # C5 (docs/AUDIT-2026-10-05.md): a lock-timeout mid-write (plausible
-    # against a large, heavily-contended real db) used to raise an
-    # uncaught sqlite3.OperationalError -- only IntegrityError was ever
-    # caught -- which would 500 the whole family request and discard
-    # every other candidate's already-computed result along with it,
-    # potentially minutes to hours of circular_shift work. A different
+    # A lock-timeout mid-write (plausible against a large,
+    # heavily-contended real db) raises sqlite3.OperationalError. Left
+    # uncaught it would 500 the whole family request and discard every
+    # other candidate's already-computed result, potentially minutes to
+    # hours of circular_shift work. A different
     # failure mode from the IntegrityError race above: nobody else won
     # here, nothing was ever actually written by anyone, so there's no
     # winner row to read back -- the fix is to roll back the failed
@@ -448,20 +443,19 @@ class TestOperationalErrorDuringCacheWrite:
 
 
 class TestCircularShiftMethod:
-    # CR2 (docs/AUDIT.md): "circular_shift" through the real read-through
+    # "circular_shift" through the real read-through
     # cache -- confirms the stored p_value is the raw permutation
     # fraction (never Bonferroni-scaled, unlike every other method -- see
     # score_pair), and that it shares the cache table safely alongside
     # the other 3 methods without ever colliding on the same row.
     #
-    # CR8 (docs/AUDIT-2026-09-22.md): the module-level SAMPLES (12 points)
-    # that every other test class in this file uses is deliberately too
-    # short for circular_shift's fixed null post-fix -- max|lag|=6 leaves
+    # The module-level SAMPLES (12 points) that every other test class in
+    # this file uses is too short for circular_shift's null -- max|lag|=6 leaves
     # NO valid interior shift at n=12 (see test_correlation_math.py's
     # TestCircularShiftPvalue for the exact boundary), so a meaningful
     # permutation p-value needs its own larger sample set here.
 
-    BIG_SAMPLES = [f"s{i:02d}" for i in range(1, 31)]  # 30 -- 5 valid shifts (corrected 2*max_lag margin, C1)
+    BIG_SAMPLES = [f"s{i:02d}" for i in range(1, 31)]  # 30 -- 5 valid shifts (2*max_lag margin)
 
     def test_computes_and_caches_a_real_result(self, conn):
         insert_catalog(conn, 1, "kegg", "K00001")
@@ -487,19 +481,18 @@ class TestCircularShiftMethod:
         ).fetchone()
         assert row is not None
         assert row[2] == "circular_shift"
-        # CR8's exact formula at this fixture's real size (30 samples, 5
-        # valid shifts under the corrected 2*max_lag margin -- C1,
-        # docs/AUDIT-2026-10-05.md): a near-perfect, non-monotonic
+        # The exact formula at this fixture's real size (30 samples, 5
+        # valid shifts under the 2*max_lag margin): a near-perfect, non-monotonic
         # relationship should hit the floor, (1+0)/(1+5) = 1/6 -- not just
         # "some small p".
         assert row[1] == pytest.approx(1 / 6)
-        # C2 (docs/AUDIT-2026-10-05.md): this p IS the floor (no shift
+        # This p IS the floor (no shift
         # scored as extreme as the real alignment) -- at_p_floor must say
         # so, through the cache-write path, not just the fresh-compute one.
         assert result["at_p_floor"] is True
 
     def test_too_few_samples_for_any_valid_shift_returns_p_one_not_a_bogus_fraction(self, conn):
-        """CR8's other edge, exercised through the real cache layer this
+        """The no-valid-shift edge, exercised through the real cache layer this
         time: with the module-level 12-sample fixture every other test
         class in this file relies on, there is no valid interior shift at
         all (lo=7 > hi=5) -- the pre-fix code would have still drawn 1000
@@ -518,14 +511,13 @@ class TestCircularShiftMethod:
         assert result is not None
         assert result["r"] > 0.9  # the r statistic itself is unaffected -- only p defaults to 1.0
         assert result["p"] == 1.0
-        # C2: this 1.0 means "no valid shift to test against," not "hit
+        # This 1.0 means "no valid shift to test against," not "hit
         # the floor" -- at_p_floor must stay False here, not True.
         assert result["at_p_floor"] is False
 
     def test_constant_candidate_returns_none_not_crash(self, conn):
-        """CR4 x CR2 composition, at the cache layer: the same
-        NaN-guard/graceful-None behavior other methods get must hold for
-        circular_shift too."""
+        """At the cache layer, the same NaN-guard/graceful-None behavior
+        other methods get must hold for circular_shift too."""
         insert_catalog(conn, 1, "kegg", "K00001")
         insert_catalog(conn, 2, "kegg", "K00002")
         insert_series(conn, "kegg", "K00001", {s: 10.0 + i for i, s in enumerate(SAMPLES)})

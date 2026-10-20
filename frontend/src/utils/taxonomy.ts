@@ -16,7 +16,7 @@ import { extractEgc, extractNormEgc } from './stats'
 // equals the sum of its direct child phyla's egc, no rounding gap).
 // Excluding a taxon therefore already zeroes out every one of its
 // descendants' contributions; also excluding one of those descendants
-// separately would subtract that descendant's egc a second time (W19).
+// separately would subtract that descendant's egc a second time.
 // Both helpers use the same rule (a taxonomy annotation_id IS its full
 // lineage-prefix, so "is X a descendant of Y" is just a prefix check) --
 // isCoveredByAnotherExclusion answers it for one id (used to decide
@@ -179,7 +179,7 @@ export function computeInclusionSeries(
 // annotation_id for taxonomy is the full lineage-prefix (e.g.
 // "Bacteria;Proteobacteria;Alphaproteobacteria") — the bare rank label is
 // always its last segment, by construction of the full-lineage-prefix
-// keying scheme (see taxonomy_egc_homonym_bug). Domain-level ids have no
+// keying scheme. Domain-level ids have no
 // semicolon at all, so they pass through unchanged.
 
 export function bareTaxonName(taxonId: string): string {
@@ -188,9 +188,8 @@ export function bareTaxonName(taxonId: string): string {
 }
 
 // immediateParentSegment
-// G9 (docs/AUDIT-2026-10-05.md): two genuine cross-lineage homonyms (same
-// bare name, different ancestry -- the repo's own documented Bosea case,
-// see taxonomy_egc_homonym_bug) render identically wherever only
+// Two genuine cross-lineage homonyms (same bare name, different ancestry,
+// e.g. Bosea under two different families) render identically wherever only
 // bareTaxonName is shown, with nothing inviting the user to notice they're
 // different taxa. The immediate parent (the lineage-prefix's second-to-
 // last segment) is the cheapest real disambiguator available without
@@ -216,7 +215,7 @@ export function taxonomyDepthFromId(taxonId: string): number {
 // The domain root ("Bacteria" | "Archaea" | "Eukaryota" | "Viruses") is
 // always the lineage-prefix's first segment. Used to pass the right domain
 // into taxonomyRankLabel() wherever a taxon id is available but a
-// dedicated `category` field isn't (W7) -- e.g. row.annotation_id itself
+// dedicated `category` field isn't -- e.g. row.annotation_id itself
 // works, since it IS the full lineage prefix.
 
 export function taxonomyDomainFromId(taxonId: string): string {

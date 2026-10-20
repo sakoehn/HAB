@@ -31,7 +31,7 @@ def populate_annotation_catalog(conn: sqlite3.Connection) -> int:
     Returns:
         Number of rows inserted.
     """
-    # CR11 (docs/AUDIT-2026-09-22.md): annotation_catalog.id has no
+    # annotation_catalog.id has no
     # AUTOINCREMENT, so this DELETE+reinsert can renumber every row (ids
     # restart at 1, in GROUP BY's own output order). correlations_cache is
     # keyed on bare catalog_id_a/catalog_id_b integers, so a stale cached

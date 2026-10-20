@@ -23,7 +23,7 @@ Scope
 Removed 2026-09-24: this file used to also have a TestPerSampleStructure
 class checking /samples/<id>/<source> (structure only, not value
 comparison against JGI). Those 8 per-sample routes were deliberately
-deleted as W20 (docs/AUDIT.md, dead-route cleanup) — this class was
+deleted as dead routes — this class was
 never updated to match and had been failing on every run since. The one
 property it checked that isn't redundant with the series tests above --
 COG and KEGG per-sample entries sharing the same depth denominator -- is

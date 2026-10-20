@@ -150,8 +150,7 @@ const DEFAULT_SERIES = {
     value: { egc: 100 + i * 10, norm_egc: 0.00001 + i * 0.000001 },
   })),
 }
-// E4 (docs/AUDIT-2026-10-05.md): 12 real samples vs. DEFAULT_SERIES'
-// 10 detected points -- lets a test distinguish the detected-only count
+// 12 real samples vs. DEFAULT_SERIES' 10 detected points -- lets a test distinguish the detected-only count
 // (n) from the real total (allSamples.length) in the card header.
 const DEFAULT_SAMPLES = {
   data: Array.from({ length: 12 }, (_, i) => ({
@@ -451,11 +450,9 @@ describe('AnalyzePage — search', () => {
     })
   })
 
-  // W29 (docs/AUDIT-2026-09-22.md): the audit's own live example -- "type
-  // 'zinc' over 'iron' results and the tab says 'zinc'." Tabs used to read
-  // the live text box (state.queryFields), not what was actually searched,
-  // so editing the box after a search instantly relabelled the
-  // still-showing results.
+  // Typing "zinc" over "iron" results must not relabel the tab "zinc" --
+  // tabs read what was actually searched, not the live text box
+  // (state.queryFields).
   it('editing the search box after a search does not relabel the still-showing results tab', async () => {
     render(<App />)
     const input = await getAnalyzeSearchInput()
@@ -476,8 +473,7 @@ describe('AnalyzePage — search', () => {
     expect(screen.queryByText('zinc', { selector: '.al-term-tab' })).not.toBeInTheDocument()
   })
 
-  // W29 (docs/AUDIT-2026-09-22.md): same root cause as the tab-label test
-  // above, but baked into a PERSISTENT chart card rather than a transient
+  // Same rule as the tab-label test above, but baked into a PERSISTENT chart card rather than a transient
   // tab -- addSelectedAsGroup's `termLabel = displayTerms[termIdx] ?? 'group'`
   // must also read what was actually searched, not the live text box, or a
   // group created after editing the box (without re-searching) would be
@@ -515,10 +511,9 @@ describe('AnalyzePage — search', () => {
     expect(screen.queryByText(/^Grouped: zinc/)).not.toBeInTheDocument()
   })
 
-  // E10 (docs/AUDIT-2026-10-05.md): checkedByTerm used to be keyed by the
-  // raw search TEXT -- two tabs that happen to search the exact same
-  // text (e.g. both "iron") shared one checkbox set, since the text
-  // itself was the key, not each tab's own position.
+  // checkedByTerm is keyed by each tab's own position, not the raw search
+  // TEXT -- otherwise two tabs that happen to search the exact same text
+  // (e.g. both "iron") would share one checkbox set.
   it('two tabs searching the exact same text do not share checkbox state', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/search/annotations'))
@@ -558,10 +553,9 @@ describe('AnalyzePage — search', () => {
     })
   })
 
-  // E10 (docs/AUDIT-2026-10-05.md): group card keys used to be
-  // `group::${termLabel}::${Date.now()}` -- two groups created from the
-  // same term within the same millisecond collided on an identical key.
-  // Date.now() is frozen here to force that exact collision window.
+  // A group card key built from `group::${termLabel}::${Date.now()}` would
+  // collide for two groups created from the same term within the same
+  // millisecond. Date.now() is frozen here to force that exact window.
   it('two groups created in the same millisecond still get distinct keys', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/search/annotations'))
@@ -822,7 +816,7 @@ describe('AnalyzePage — group card member failure', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AnalyzePage — W22 (docs/AUDIT-2026-09-22.md): grouping an annotation with
+// AnalyzePage — grouping an annotation with
 // one of its own ancestors/descendants double-counts the contained one's
 // value, since egc is a hierarchical rollup. addSelectedAsGroup must drop
 // the redundant member(s) before creating the group card.
@@ -859,7 +853,7 @@ const TAXONOMY_ANCESTOR_DESCENDANT_PLUS_UNRELATED_SEARCH = {
   total: 3,
 }
 
-describe('AnalyzePage — W22 redundant group members', () => {
+describe('AnalyzePage — redundant group members', () => {
   beforeEach(() => {
     vi.spyOn(window, 'alert').mockImplementation(() => {})
   })
@@ -1098,22 +1092,20 @@ describe('EgcChart — decoupled metric/standardize controls', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AnalyzePage — chart card header mean matches the chart's active metric (E4)
+// AnalyzePage — chart card header mean matches the chart's active metric
 // ─────────────────────────────────────────────────────────────────────────────
-// The card header used to always compute a raw-EGC mean and a bare
-// detected-only sample count, regardless of which metric (EGC vs.
-// Relative Abundance, the chart's own default) the chart right below it
-// was actually displaying, and with no "of N" denominator the way
-// LeftResultList's equivalent count already has.
+// The card header's mean must be in whichever metric (EGC vs. Relative
+// Abundance, the chart's own default) the chart right below it is actually
+// displaying, with an "of N" denominator like LeftResultList's count.
 //
 // useAllSamples caches its /api/samples result at MODULE scope -- every
 // earlier test above that successfully renders a chart card never mocks
 // /api/samples, so by the time a normal test would run here that cache
 // is already poisoned to an empty list. vi.resetModules() + a fresh
 // dynamic re-import of App gives this block its own clean copy, the
-// same fix egc-chart.component.test.tsx's own W21 block uses for this
-// exact hook.
-describe("AnalyzePage — chart header mean matches the chart's active metric (E4)", () => {
+// same approach egc-chart.component.test.tsx's detection-gap block uses for
+// this exact hook.
+describe("AnalyzePage — chart header mean matches the chart's active metric", () => {
   let FreshApp: React.ComponentType
 
   beforeEach(async () => {
@@ -1246,10 +1238,10 @@ describe('LeftResultList — help tooltips', () => {
     const { container } = render(
       <LeftResultList {...baseProps} rows={[makeRow('kegg', 'K00001')]} total={1} />,
     )
-    // Scoped to the bulk-action bar specifically -- W21 (docs/AUDIT-2026-09-22.md)
-    // added a second, separate "Help" button elsewhere on this same render
-    // (the detection-count caveat next to "sorted by mean EGC"), so a bare
-    // screen.getByTitle('Help') is now ambiguous between the two.
+    // Scoped to the bulk-action bar specifically -- there's a second,
+    // separate "Help" button elsewhere on this same render (the
+    // detection-count caveat next to "sorted by mean EGC"), so a bare
+    // screen.getByTitle('Help') is ambiguous between the two.
     const bulkBar = container.querySelector('.al-bulk-bar') as HTMLElement
     await userEvent.click(within(bulkBar).getByTitle('Help'))
     await waitFor(() => {
@@ -1762,13 +1754,9 @@ describe('MappingsPanel', () => {
     // DEFAULT_SEARCH's result card is source=kegg, so the default
     // renderWithChartAndWait() flow already exercises the kegg case.
     //
-    // Pre-W24 (docs/AUDIT-2026-09-22.md), a category/pathway-level kegg
-    // id could never return mappings at all (only leaf ids matched), so
-    // this state carried a help tooltip explaining that limitation. W24
-    // fixed the underlying search to resolve non-leaf ids too, so an
-    // empty result here now genuinely means "no mappings in the selected
-    // samples" for any source -- the tooltip explaining a limitation
-    // that no longer exists was removed, not just for kegg specifically.
+    // The mappings search resolves non-leaf (category/pathway) ids too, so
+    // an empty result here genuinely means "no mappings in the selected
+    // samples" for any source -- no limitation tooltip needed.
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/mappings/search'))
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [], total: 0 }) })
@@ -2032,8 +2020,7 @@ describe('CorrelatesPanel', () => {
   })
 
   it('Retry button refetches after the first request fails', async () => {
-    // CR2 (docs/AUDIT-2026-09-22.md): the panel now defaults to
-    // method=circular_shift, which has its OWN automatic-retry-on-timeout
+    // The panel defaults to method=circular_shift, which has its OWN automatic-retry-on-timeout
     // behavior (tested separately in correlates-panel.component.test.tsx)
     // -- a single rejection there doesn't surface "Correlation failed"
     // immediately. Let that initial default-method fetch succeed, then
@@ -2134,7 +2121,7 @@ describe('AnnotationInfoDrawer', () => {
     })
   })
 
-  // W32 (docs/AUDIT-2026-09-22.md): the drawer's own `name` prop must reach
+  // The drawer's own `name` prop must reach
   // ExternalLinks so a taxonomy card's NCBI Taxonomy link is built from the
   // bare leaf name, not the full `;`-joined lineage (which returns "No
   // items found" on the real site) -- this exercises that plumbing through
@@ -2490,8 +2477,8 @@ describe('ExplorePage — Dataset Overview happy path', () => {
     // p1 (2 annotations) and p2 (1 annotation) are the two parent groups
     // that should fall out of grouping THREE_ROW_TOP by `parent`. ExplorePage
     // defaults to source: 'taxonomy' (no source picked in this test), and
-    // expandParentLabel appends a rank suffix for taxonomy parents — see
-    // taxonomy_egc_homonym_bug — so the label is "p1 (Domain)", not "p1".
+    // expandParentLabel appends a rank suffix for taxonomy parents, so the
+    // label is "p1 (Domain)", not "p1".
     await waitFor(() => {
       expect(screen.getByTitle('p1 (Domain)')).toBeInTheDocument()
     })
@@ -2562,9 +2549,8 @@ describe('ExplorePage — Annotation Lookup happy path', () => {
         return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
       if (url.includes('/api/status'))
         return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
-      // W30a (docs/AUDIT-2026-09-22.md): the lookup card's kegg Parent
-      // row now comes from the real /api/kegg/path data, not the row's
-      // own single `parent` field.
+      // The lookup card's kegg Parent row comes from the real
+      // /api/kegg/path data, not the row's own single `parent` field.
       if (url.includes('/api/kegg/path'))
         return Promise.resolve({
           ok: true, status: 200,
@@ -2596,8 +2582,8 @@ describe('ExplorePage — Annotation Lookup happy path', () => {
       expect(document.querySelector('.lookup-id')?.textContent).toBe('K02014')
     })
     expect(document.querySelector('.lookup-name')?.textContent).toBe('TonB-dependent receptor')
-    // Parent label comes from the real /api/kegg/path data (W30a), not
-    // the row's own single `parent` field / expandParentLabel anymore.
+    // Parent label comes from the real /api/kegg/path data, not the row's
+    // own single `parent` field / expandParentLabel.
     await waitFor(() => {
       expect(document.querySelector('.lookup-meta-grid')?.textContent).toContain('Membrane transport')
     })

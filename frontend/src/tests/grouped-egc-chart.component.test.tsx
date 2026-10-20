@@ -203,11 +203,10 @@ describe('GroupedEgcChart — date range filtering', () => {
   })
 })
 
-// W27 (docs/AUDIT-2026-09-22.md): stats used to be computed from the
-// smoothed values -- confirmed live, SD dropped 5.57e-5 -> 4.50e-5 (-19%)
-// purely from toggling Smooth on. Verify bar from the audit itself:
-// toggling Smooth must never change the reported statistics.
-describe('GroupedEgcChart — statistics are unaffected by the Smooth toggle (W27)', () => {
+// Toggling Smooth must never change the reported statistics (computed
+// from the smoothed values, SD would drop 5.57e-5 -> 4.50e-5, -19%, on
+// real data purely from toggling Smooth on).
+describe('GroupedEgcChart — statistics are unaffected by the Smooth toggle', () => {
   it('n/Mean/Std Dev read identically whether Smooth is on or off', async () => {
     const user = userEvent.setup()
     const points = Array.from({ length: 20 }, (_, i) =>
@@ -229,9 +228,9 @@ describe('GroupedEgcChart — statistics are unaffected by the Smooth toggle (W2
   })
 })
 
-// W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op with
-// fewer than 2 real summed points, but GroupedEgcChart's yLabel kept
-// claiming "(Z-score)" regardless -- same underlying bug as EgcChart (see
+// applyZScore is a silent no-op with fewer than 2 real summed points, so
+// GroupedEgcChart's yLabel must not claim "(Z-score)" then -- same check as
+// EgcChart (see
 // egc-chart.component.test.tsx), applied here to the SUMMED series
 // (summedPoints), not a single annotation's own points. GroupedEgcChart's
 // own label wording omits "σ from mean" (just "Summed EGC (Z-score)"),

@@ -12,9 +12,9 @@
 // already-excluded node can be separately excluded, so there's no reason to
 // let the user drill into it.
 //
-// That alone doesn't cover every path to a double-subtraction, though
-// (W19): a descendant can already be visible/expanded from BEFORE its
-// ancestor got excluded, and nothing stopped it from also being checked.
+// That alone doesn't cover every path to a double-subtraction, though: a
+// descendant can already be visible/expanded from BEFORE its ancestor got
+// excluded, and could still be checked.
 // Excluding an ancestor already zeroes out everything under it (taxonomy
 // egc values are hierarchical rollups), so also excluding one of its own
 // descendants would subtract that descendant a second time. Every row's
@@ -115,10 +115,9 @@ function TaxonomyNodeRow({
           {node.loadStatus === 'loading' ? '…' : node.expanded ? '▾' : '▸'}
         </button>
 
-        {/* G8/G12 (docs/AUDIT-2026-10-05.md): see HierarchyTree's matching
-            comment -- a failed child fetch left loadStatus:'error' with
-            nothing rendering it, indistinguishable from a row that was
-            simply never clicked. */}
+        {/* See HierarchyTree's matching comment -- without this, a
+            failed child fetch (loadStatus:'error') would look identical to
+            a row that was simply never clicked. */}
         {!isExcluded && node.loadStatus === 'error' && (
           <span className="tax-node-load-error" title="Failed to load children — click ▸ to retry">
             ⚠

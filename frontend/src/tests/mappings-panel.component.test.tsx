@@ -217,8 +217,8 @@ describe('MappingsPanel — pagination', () => {
 
 describe('MappingsPanel — controls trigger real re-fetches', () => {
   it('toggling "Unique pairs only" immediately re-fetches with the new value', async () => {
-    // COG0001 is a leaf id, so it defaults to unique_pairs=false (W24 --
-    // see the isLikelyLeafAnnotation default tests below); toggling the
+    // COG0001 is a leaf id, so it defaults to unique_pairs=false (see the
+    // isLikelyLeafAnnotation default tests below); toggling the
     // checkbox on should flip that to true.
     mockFetch.mockResolvedValue(jsonResponse({ data: [makeRow('5/27/21 8:00')] }))
     render(<MappingsPanel annotationId="COG0001" source="cog" />)
@@ -251,7 +251,7 @@ describe('MappingsPanel — controls trigger real re-fetches', () => {
   })
 })
 
-describe('MappingsPanel — broad-category cap (W24, docs/AUDIT-2026-09-22.md)', () => {
+describe('MappingsPanel — broad-category cap', () => {
   it('reflects the effective (capped) sample count back into the Samples field, not just the banner', async () => {
     mockFetch.mockResolvedValue(jsonResponse({
       data: [makeRow('5/27/21 8:00')],
@@ -341,16 +341,14 @@ describe('MappingsPanel — broad-category cap (W24, docs/AUDIT-2026-09-22.md)',
   })
 })
 
-// G6 (docs/AUDIT-2026-10-05.md): the capped-request disclosure banner
-// above the table is gated on `allRows.length > 0`, so a broad category
-// that got capped down to a handful of samples -- and happened to find
-// zero matching rows in that small real scope -- fell through to the
-// plain empty-state message instead, which names requestedSampleCount
-// (the full, un-capped ask) with no mention of the cap at all. A capped
-// 5-of-128 search with 0 hits read "No mappings found... in the
-// selected 128 samples", overstating the real (5-sample) search scope
-// by ~25x.
-describe('MappingsPanel — empty-state discloses the real cap scope (G6)', () => {
+// The capped-request disclosure banner above the table is gated on
+// `allRows.length > 0`, so a broad category capped down to a handful of
+// samples that finds zero rows in that small real scope needs its own
+// empty-state message -- the plain one names requestedSampleCount (the
+// full, un-capped ask), so a capped 5-of-128 search with 0 hits would read
+// "No mappings found... in the selected 128 samples", overstating the
+// real search scope by ~25x.
+describe('MappingsPanel — empty-state discloses the real cap scope', () => {
   it('names the real (capped) sample count, not the full request, when a capped search finds zero rows', async () => {
     mockFetch.mockResolvedValue(jsonResponse({
       data: [],

@@ -115,11 +115,9 @@ describe('EgcChart — basic rendering', () => {
   })
 })
 
-// W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op with
-// fewer than 2 real points, but the axis/tooltip kept showing "Z-score, σ
-// from mean" regardless -- confirmed live: nifH (K02588, 1 sample) plotted
-// its raw 1.13e-7 EGC value with the tooltip "0.000σ", a real number
-// presented as a standardized one it never actually was.
+// applyZScore is a silent no-op with fewer than 2 real points, so the
+// axis/tooltip must not claim "Z-score, σ from mean" then (e.g. nifH,
+// K02588, 1 sample, would show its raw 1.13e-7 EGC value as "0.000σ").
 describe('EgcChart — Z-score is a no-op with fewer than 2 real points', () => {
   it('does not claim "Z-score" units when the chart has only 1 real EGC value', async () => {
     const user = userEvent.setup()
@@ -170,14 +168,11 @@ describe('EgcChart — stats panel toggle', () => {
   })
 })
 
-// W27 (docs/AUDIT-2026-09-22.md): statistics used to be computed from the
-// SMOOTHED (LOWESS-fitted) values, so the SD/CV/etc. silently described a
-// fitted curve while the heading still just said "Descriptive Statistics"
-// -- confirmed live: SD dropped 5.57e-5 -> 4.50e-5 (-19%) purely from
-// toggling Smooth on, nothing about the underlying data changed. Verify
-// bar from the audit itself: toggling Smooth must never change the
-// reported statistics, only the drawn curve.
-describe('EgcChart — statistics are unaffected by the Smooth toggle (W27)', () => {
+// Statistics must describe the real values, not the SMOOTHED
+// (LOWESS-fitted) curve -- toggling Smooth must never change the reported
+// statistics, only the drawn curve (computed from the smoothed values, SD
+// would drop 5.57e-5 -> 4.50e-5, -19%, on real data).
+describe('EgcChart — statistics are unaffected by the Smooth toggle', () => {
   function statValue(label: string): string {
     return screen.getAllByText(label).find(el => el.className === 'stat-cell-label')!
       .closest('.stat-cell')!.querySelector('.stat-cell-value')!.textContent!
@@ -305,10 +300,10 @@ describe('EgcChart — date range filter', () => {
   })
 })
 
-// W21 (docs/AUDIT-2026-09-22.md): a chart's own data only has rows for
-// samples where this specific annotation was detected -- there's no row
-// at all for an undetected sample, so nothing previously told "not
-// detected" apart from "sample doesn't exist". useAllSamples supplies
+// A chart's own data only has rows for samples where this specific
+// annotation was detected -- there's no row at all for an undetected
+// sample, so its own data can't tell "not detected" apart from "sample
+// doesn't exist". useAllSamples supplies
 // the real, full sample timeline so a chart can merge in an explicit
 // gap for anything its own series is missing.
 //
@@ -319,7 +314,7 @@ describe('EgcChart — date range filter', () => {
 // run. vi.resetModules() + a fresh dynamic re-import of EgcChart gives
 // each test its own isolated copy of that cache, the same fix
 // use-all-samples.unit.test.ts already uses for the hook directly.
-describe('EgcChart — W21 detection gaps (useAllSamples merge)', () => {
+describe('EgcChart — detection gaps (useAllSamples merge)', () => {
   const mockFetch = vi.fn()
   vi.stubGlobal('fetch', mockFetch)
 
@@ -392,12 +387,11 @@ describe('EgcChart — W21 detection gaps (useAllSamples merge)', () => {
     expect(screen.queryByText(/detected in/)).not.toBeInTheDocument()
   })
 
-  // F5 (docs/AUDIT-2026-10-05.md): on a failed /api/samples fetch,
-  // allPoints has nothing to merge in but this annotation's own detected
-  // rows -- every one of them is "detected", so the header reads e.g.
-  // "2 of 2 samples" with no "(detected in N)" qualifier, visually
-  // identical to the genuinely-detected-everywhere case above. Nothing
-  // on screen told the user the real timeline failed to load at all.
+  // On a failed /api/samples fetch, allPoints has nothing to merge in but
+  // this annotation's own detected rows -- every one of them is
+  // "detected", so the header reads e.g. "2 of 2 samples" with no
+  // "(detected in N)" qualifier, visually identical to the
+  // genuinely-detected-everywhere case above. A warning must say so.
   it('surfaces a visible warning when /api/samples fails, instead of silently looking fully-detected', async () => {
     const FreshEgcChart = await freshEgcChart()
     mockFetch.mockImplementation(async (path: string) => {

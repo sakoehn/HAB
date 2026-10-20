@@ -2,20 +2,19 @@
  * correlates-panel.component.test.tsx
  * =====================================
  * Component tests for CorrelatesPanel (components/correlates/CorrelatesPanel.tsx)
- * -- covers the circular_shift "keep going" behavior added this session.
+ * -- covers the circular_shift "keep going" behavior.
  *
- * circular_shift runs a full permutation test (CR8, docs/AUDIT-2026-09-22.md:
- * exhaustively over every valid shift beyond the lag window, ~115 of them
- * at the real n=128, not a tunable sample count) and can still take real
+ * circular_shift runs a full permutation test (exhaustively over every
+ * valid shift beyond the lag window -- 103 of them at the real n=128) and
+ * can still take real
  * time on a large family -- long enough that the panel's 10-minute
  * client-side request timeout can fire while the server is still
  * legitimately computing in the
  * background (correlation_family_endpoint is a synchronous route, run in
  * a thread pool that keeps going even after the client gives up, caching
- * each candidate individually as it's scored). Before this fix, a single
- * timeout showed a dead-end "Correlation failed" error requiring the user
- * to notice and manually retry. Now, for circular_shift specifically, a
- * timeout automatically re-issues the request (up to
+ * each candidate individually as it's scored). So for circular_shift
+ * specifically, a timeout doesn't show a dead-end "Correlation failed"
+ * error -- it automatically re-issues the request (up to
  * MAX_CIRCULAR_SHIFT_RETRIES times) instead of surfacing an error --
  * each retry benefits from whatever the background computation already
  * cached, so it's strictly making progress, not just spinning.
@@ -36,10 +35,9 @@ function jsonResponse(data: unknown) {
   return { ok: true, status: 200, json: async () => data }
 }
 
-// G11 (docs/AUDIT-2026-10-05.md): what apiFetch's own AbortController
-// actually produces on a real timeout -- a plain `new Error('timed out')`
-// (this file's old fixture) is indistinguishable from a hard 4xx failure
-// to the retry logic post-fix, so it no longer retries. Tests that mean
+// What apiFetch's own AbortController actually produces on a real timeout
+// -- a plain `new Error('timed out')` is indistinguishable from a hard 4xx
+// failure to the retry logic, so it doesn't retry. Tests that mean
 // to simulate a genuine timeout must reject with this instead.
 function abortError() {
   return new DOMException('The operation was aborted.', 'AbortError')
@@ -57,8 +55,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-// CR2 (docs/AUDIT-2026-09-22.md): the panel now defaults to
-// method=circular_shift itself (not spearman) -- opening it fetches once
+// The panel defaults to method=circular_shift itself (not spearman) -- opening it fetches once
 // immediately under whatever the default is. This helper then explicitly
 // clicks 'spearman' to force a KNOWN, non-circular_shift baseline
 // regardless of what that default happens to be, so selectCircularShift
@@ -86,13 +83,10 @@ async function selectCircularShift(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'circular_shift' }))
 }
 
-// CR2 (docs/AUDIT-2026-09-22.md): the default method flipped from
-// spearman (parametric, ignores autocorrelation) to circular_shift
-// (CR8-fixed permutation test) -- confirmed <=5% false positives and
-// >=80% power by direct simulation (test_correlation_math.py), so every
-// user gets a statistically valid p-value by default now, not just the
-// ones who know to switch methods.
-describe('CorrelatesPanel — defaults to circular_shift (CR2)', () => {
+// The default method is circular_shift (a permutation test that
+// preserves each series' autocorrelation), not spearman (parametric,
+// ignores autocorrelation).
+describe('CorrelatesPanel — defaults to circular_shift', () => {
   it('fetches with method=circular_shift the first time the panel opens, before any method is explicitly selected', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse([]))
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
@@ -151,10 +145,9 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     expect(screen.queryByText(/still not done/i)).not.toBeInTheDocument()
   })
 
-  // G11 (docs/AUDIT-2026-10-05.md): the elapsed-time text now reflects
-  // real wall-clock time (Date.now()), not retryAttempt * 10 (which
-  // assumed every retry consumed the full 10-minute timeout regardless
-  // of how long it actually took) -- Date.now() is mocked to advance by
+  // The elapsed-time text reflects real wall-clock time (Date.now()), not
+  // retryAttempt * 10 (which would assume every retry consumed the full
+  // 10-minute timeout regardless of how long it actually took) -- Date.now() is mocked to advance by
   // exactly 10 real minutes across the one retry here, so "about 10 min"
   // is a genuine measurement, not a restated assumption.
   it('shows live elapsed-time text reflecting real wall-clock time, once a retry has happened', async () => {
@@ -193,7 +186,7 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     expect(screen.getByText(/try spearman/i)).toBeInTheDocument()
   }, 15000)
 
-  // G11: a real 4xx (not a timeout) is a hard, immediate failure -- must
+  // A real 4xx (not a timeout) is a hard, immediate failure -- must
   // not be retried 12 times back-to-back before giving up, and the real
   // HTTP status must be surfaced instead of a fabricated "hours of
   // trying" message that implies retries actually happened.
@@ -210,7 +203,7 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     expect(screen.queryByText(/still not done/i)).not.toBeInTheDocument()
   })
 
-  // G11: a 5xx IS worth retrying (a transient server-side issue, same as
+  // A 5xx IS worth retrying (a transient server-side issue, same as
   // a real timeout) -- distinct from the 4xx case above.
   it('does retry a 5xx error the same way as a timeout', async () => {
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
@@ -227,9 +220,8 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
   })
 
   it('still fails immediately (no retry) for a non-permutation method', async () => {
-    // CR2 (docs/AUDIT-2026-09-22.md): the panel now defaults to
-    // circular_shift itself, so this no-longer picks that behavior up
-    // "for free" by just opening the panel -- explicitly selects a
+    // The panel defaults to circular_shift itself, so this explicitly
+    // selects a
     // fast/parametric method first to exercise the real thing under test
     // (retry is circular_shift-specific, not a property of whichever
     // method happens to be the default).
@@ -249,7 +241,7 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
   })
 })
 
-describe('CorrelatesPanel — prescreen disclosure (CR8 follow-up)', () => {
+describe('CorrelatesPanel — prescreen disclosure', () => {
   it('shows the prescreen banner and explanatory tooltip when the family was screened', async () => {
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
     const user = await openPanel()
@@ -298,7 +290,7 @@ describe('CorrelatesPanel — prescreen disclosure (CR8 follow-up)', () => {
   })
 })
 
-describe('CorrelatesPanel — significant_count disclosure (CR10)', () => {
+describe('CorrelatesPanel — significant_count disclosure', () => {
   it('discloses the true total when `limit` cut the list shorter', async () => {
     render(<CorrelatesPanel annotationId="K00001" source="kegg" onAddAnnotation={vi.fn()} />)
     mockFetch.mockResolvedValueOnce(jsonResponse({

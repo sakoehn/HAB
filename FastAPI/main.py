@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
     """Open the SQLite connection and validate the sample time axis on startup."""
     app.state.sql_conn = connect_to_sql()
     index_module._INDEX_READY = True
-    # CR6: fail loudly at boot if the real sample time axis is broken
+    # Fail loudly at boot if the real sample time axis is broken
     # (a sample with no resolvable timepoint, or two samples colliding
     # on the same one) rather than silently scrambling every
     # correlation's lag_samples with no visible symptom.

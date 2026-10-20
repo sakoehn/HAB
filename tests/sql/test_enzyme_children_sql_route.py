@@ -73,11 +73,8 @@ def test_unknown_id_returns_404(client):
 
 
 def test_explicitly_empty_parent_returns_the_same_roots_as_omitting_it(client):
-    """A7 (docs/AUDIT-2026-10-05.md): parent="" (a real, explicitly empty
-    string) used to fail this route's `is not None` guard and 404 as
-    "Unknown Enzyme node ''" instead of being treated the same as
-    omission. Confirmed live before this fix: omitted gave a real root
-    count, parent="" gave a 404."""
+    """parent="" (a real, explicitly empty string) must be treated the
+    same as omission, not 404 as an unknown node."""
     omitted = client.get("/enzyme/children")
     empty   = client.get("/enzyme/children", params={"parent": ""})
     assert omitted.status_code == 200

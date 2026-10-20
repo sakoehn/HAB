@@ -33,11 +33,9 @@
  *   toExponential(3) on the normalised EGC values matches expected output.
  *
  * resolveLookupCategory / resolveLookupScaffoldCount / resolveLookupDepth
- *   (utils/stats.ts, real imports, not mirrored) -- W5 fix: the SQL
- *   backend exposes category/scaffold_count/depth as top-level fields on
- *   the row, while the JSON backend nests category/scaffolds inside
- *   `value` and never sets the top-level ones at all. These three read
- *   whichever shape is present so the detail card works on both backends.
+ *   (utils/stats.ts, real imports, not mirrored) -- read
+ *   category/scaffold_count/depth from the row's top-level fields, or from
+ *   the older nested `value` shape, whichever is present.
  *
  * Run: npx vitest run src/tests/lookup-detail.unit.test.ts
  */
@@ -439,7 +437,7 @@ describe('norm_egc number formatting', () => {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// resolveLookupCategory / resolveLookupScaffoldCount / resolveLookupDepth (W5)
+// resolveLookupCategory / resolveLookupScaffoldCount / resolveLookupDepth
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SQL_SHAPED_ROW: TopAnnotation = {

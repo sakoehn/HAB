@@ -96,7 +96,7 @@ describe('computeExclusionSeries', () => {
     expect(out[0].value).toEqual({ egc: 700, norm_egc: null })
   })
 
-  // ── W19: descendant of an already-excluded ancestor is not double-subtracted ──
+  // ── Descendant of an already-excluded ancestor is not double-subtracted ──
 
   it('does not double-subtract a descendant of an already-excluded ancestor', () => {
     // Real-world shape: excluding "Bacteria;Proteobacteria" (300) already
@@ -310,11 +310,9 @@ describe('taxonomyDomainFromId', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // taxonomyRankLabel -- all four domains (Bacteria, Archaea, Viruses,
 // Eukaryota) use the same fixed 8-level ladder (Domain..Strain). Confirmed
-// live (2026-09-22 re-audit) via /taxonomy/children: depth 2 under
-// Eukaryota is real phyla (Annelida, Arthropoda, Chordata, ...), same as
-// every other domain. An earlier fix pass special-cased Eukaryota to
-// "Level N" based on a premise that didn't hold up (W7 regression) --
-// reverted.
+// via /taxonomy/children: depth 2 under Eukaryota is real phyla (Annelida,
+// Arthropoda, Chordata, ...), same as every other domain, so Eukaryota is
+// not special-cased.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('taxonomyRankLabel', () => {
@@ -335,7 +333,7 @@ describe('taxonomyRankLabel', () => {
     expect(taxonomyRankLabel(8, 'Viruses')).toBe('Strain')
   })
 
-  it('Eukaryota: uses the same fixed ladder as every other domain (W7)', () => {
+  it('Eukaryota: uses the same fixed ladder as every other domain', () => {
     expect(taxonomyRankLabel(3, 'Eukaryota')).toBe('Class')
     expect(taxonomyRankLabel(6, 'Eukaryota')).toBe('Genus')
     expect(taxonomyRankLabel(1, 'Eukaryota')).toBe('Domain')
@@ -359,11 +357,11 @@ describe('taxonomyRankLabel', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// expandParentLabel — taxonomy branch (W7): uses the same fixed ladder for
+// expandParentLabel — taxonomy branch: uses the same fixed ladder for
 // every domain, including Eukaryota (see taxonomyRankLabel above).
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('expandParentLabel — taxonomy rank suffix (W7)', () => {
+describe('expandParentLabel — taxonomy rank suffix', () => {
   it('Bacteria ancestor gets its rank suffix', () => {
     expect(expandParentLabel('Bacteria;Proteobacteria;Alphaproteobacteria', 'taxonomy'))
       .toBe('Alphaproteobacteria (Class)')

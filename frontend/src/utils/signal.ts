@@ -44,13 +44,11 @@ export function applyZScore(
 }
 
 // ── canApplyZScore ─────────────────────────────────────────────────────────
-// W (2.6, docs/AUDIT-2026-09-22.md): applyZScore silently returns its input
-// UNCHANGED (real, raw values) when fewer than 2 real points exist -- but
-// callers kept showing the axis title/tooltip as if standardization had
-// happened regardless ("Z-score, σ from mean", a bare value + "σ" in the
-// tooltip). Confirmed live: nifH (K02588, 1 sample) plotted its raw
-// 1.13e-7 EGC value with the tooltip "0.000σ" -- a real number presented
-// as a standardized one it never actually was. Callers should check this
+// applyZScore silently returns its input UNCHANGED (real, raw values) when
+// fewer than 2 real points exist, so a caller showing the axis
+// title/tooltip as if standardization happened would mislabel a raw value
+// (e.g. nifH, K02588, 1 sample: its raw 1.13e-7 EGC value shown as
+// "0.000σ"). Callers should check this
 // (using the SAME array applyZScore was/would be given -- point count is
 // unaffected by whether standardization actually ran) and fall back to the
 // un-standardized label/tooltip format when it returns false, instead of
@@ -80,26 +78,19 @@ export function canApplyZScore(vals: (number | null)[]): boolean {
 //   Lower → tighter fit to local fluctuations.
 //   Higher → smoother global trend.
 //
-// W27 (docs/AUDIT-2026-09-22.md): this range used to be 0.01-0.05 -- for a
-// typical 128-sample series that's a span of only 2-7 points, and combined
-// with the tricube-weight bug below (fixed here), meant "0 of 128 points
-// change" at the two lowest slider settings, confirmed live on real COG0055
-// data before this fix.
+// The range starts at 0.1: at 0.01-0.05 a typical 128-sample series gets a
+// span of only 2-7 points, too few to smooth anything.
 //
 // Points with egc = null are excluded from the fit but retained in the
 // output array so the chart's x-axis alignment is preserved.
 //
 // Requires at least 3 non-null points; returns data unchanged otherwise.
 //
-// F3 (docs/AUDIT-2026-10-05.md): span used to floor at 2, not 3 -- a
-// weighted linear fit through exactly 2 points, evaluated at either one,
-// reproduces that point's own y-value EXACTLY regardless of the
-// weights, so span=2 is a mathematical no-op, not just "very light
-// smoothing." Measured live: any series with <=20 real points at the
-// minimum bandwidth (and <=15 at either of the two lowest slider
-// settings) changed zero values, while still drawing the "(smoothed)"
-// label. Reachable in ordinary use -- any date-filtered <=20-sample
-// range, or any sparsely-detected annotation. Flooring at 3 (the same
+// span floors at 3, not 2 -- a weighted linear fit through exactly 2
+// points, evaluated at either one, reproduces that point's own y-value
+// EXACTLY regardless of the weights, so span=2 is a mathematical no-op
+// (any series with <=20 real points at the minimum bandwidth would change
+// zero values while still labelled "(smoothed)"). Flooring at 3 (the same
 // floor applyLowess already requires to run at all, see the length
 // check below) means every fit uses at least 3 points, which can only
 // reproduce a point's own value by exact coincidence (real floating-
@@ -123,23 +114,17 @@ export function applyLowess(
     const dists    = pts.map(p => ({ p, d: Math.abs(p.x - pt.x) }))
     dists.sort((a, b) => a.d - b.d)
     const neighbors = dists.slice(0, span)
-    // W27 (docs/AUDIT-2026-09-22.md): the tricube weight w=(1-u^3)^3 is
-    // exactly 0 at u=1 -- so using the farthest INCLUDED point's own
-    // distance as maxDist always zeroed out that point's contribution,
-    // silently shrinking every window by one real point (worst for small
-    // spans: with span=2, the only other point in the window got weight 0,
-    // making the "fit" just return the point's own unweighted value
-    // unchanged). Using the distance to the next point just OUTSIDE the
-    // window instead means every included point gets a real, nonzero
-    // weight. Falls back to the old boundary behavior only when the
+    // The tricube weight w=(1-u^3)^3 is exactly 0 at u=1 -- so using the
+    // farthest INCLUDED point's own distance as maxDist would zero out that
+    // point's contribution, silently shrinking every window by one real
+    // point. maxDist is therefore the distance to the next point just
+    // OUTSIDE the window, so every included point gets a real, nonzero
+    // weight; it falls back to the included point's distance only when the
     // window already covers the entire series (no "next point" exists).
-    // F4 (docs/AUDIT-2026-10-05.md): dists[span].d alone isn't enough --
-    // on the real ~4h-uniform cadence, the farthest INCLUDED point often
-    // ties in distance with one or more points just outside the window
-    // (confirmed live: 9 of 15 real slider settings). When that happens,
-    // dists[span].d equals the included point's own distance, giving it
-    // u=1 and the exact same zero-weight bug W27 fixed, just recurring at
-    // the boundary. Advances past every tied distance to the first
+    // On the real ~4h-uniform cadence the farthest included point often
+    // ties in distance with points just outside the window (at 9 of 15
+    // slider settings), which would give it u=1 again -- so this advances
+    // past every tied distance to the first
     // genuinely farther point, so the farthest included point's own
     // distance can never equal maxDist.
     const includedMaxD = neighbors[neighbors.length - 1].d
@@ -175,7 +160,7 @@ export function applyLowess(
 }
 
 // ── canApplyLowess ─────────────────────────────────────────────────────────
-// F3 (docs/AUDIT-2026-10-05.md): same shape as canApplyZScore above --
+// Same shape as canApplyZScore above --
 // applyLowess is a silent, provable no-op with fewer than 3 real points
 // (its own early-return, mirrored here rather than duplicated), so this
 // is whether it could ACTUALLY smooth anything, not just whether the

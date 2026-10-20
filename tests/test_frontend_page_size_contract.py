@@ -1,13 +1,11 @@
 """
 test_frontend_page_size_contract.py
 =====================================
-A6 (4c5b19d) added an upper bound (Query(le=...)) to every paginated
-route's page_size, but the frontend was already requesting more than three
-of those bounds -- /search/annotations (5000 > 2000), /series/annotations
-(5000 > 500) and /mappings/search (200_000 > 50_000) all started returning
-422, breaking Analyze search, every time-series chart and the Mappings
-panel. Nothing caught it: frontend tests mock fetch, backend tests don't
-know what the frontend sends.
+Every paginated route's page_size has an upper bound (Query(le=...)). If
+the frontend requests more than a bound, the route returns 422 -- which
+would break e.g. Analyze search, every time-series chart, or the Mappings
+panel -- and nothing else would catch it: frontend tests mock fetch, and
+backend tests don't know what the frontend sends.
 
 This pins the contract between the two sides: every page_size the
 frontend's real source sends (a literal, or a `const NAME = <number>` in

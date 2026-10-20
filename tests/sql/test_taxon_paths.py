@@ -9,8 +9,7 @@ lineage, e.g. "Bacteria;Bacteroidetes;...;Wenyingzhuangia heitensis DSM
 Data-layer test: no database, no server -- just the parsing function in
 isolation, rather than going through a route.
 
-Design decisions this file locks in (see project memory / prior discussion
-for the reasoning):
+Design decisions this file locks in:
   - Ranks beyond the 8th are ABSORBED into `strain`, not dropped -- required
     by a real, NCBI-confirmed case (a BDGP reference strain whose actual
     name contains a semicolon: NCBI BioProject IDs 13812/164).

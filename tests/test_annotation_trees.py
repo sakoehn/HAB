@@ -128,11 +128,11 @@ def brite_dict() -> dict[str, dict]:
     """Parse ko00001.keg → {node_id: {name, depth, category, parent_id, parent_name}}.
 
     Deliberately single-parent, last-occurrence-wins (current_at_depth is
-    overwritten per node, same as the pre-E14-fix notebook parser) --
+    overwritten per node) --
     this matches .ko.json's own single-parent DISPLAY metadata fields, which
     are intentionally last-occurrence too. It is NOT a ground-truth
     multi-parent structure and must never be used to assert anything about
-    the EGC/scaffold rollup (E14) -- see TestKEGGHierarchyRollup for that."""
+    the EGC/scaffold rollup -- see TestKEGGHierarchyRollup for that."""
     if not BRITE_FILE.exists():
         pytest.skip(f"BRITE file not found: {BRITE_FILE}")
 
@@ -414,18 +414,17 @@ class TestKEGGFormat:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 2b. KEGG hierarchy correctness (E14 regression)
+# 2b. KEGG hierarchy correctness (multi-parent rollup)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestKEGGHierarchyRollup:
     """
-    Regression coverage for E14: the BRITE parser kept only the last parent
-    seen per KO (plain dict keyed by node_id, each occurrence overwriting the
-    last), so a KO belonging to several real pathways got filed under
-    whichever pathway happened to be listed last in ko00001.keg -- usually
-    the "Brite Hierarchies" catch-all, since it comes near the end of the
-    file. Pathway/category totals, built by summing only each node's
-    last-recorded members, were therefore missing most of their real members.
+    A KO can belong to several real pathways. A BRITE parser that keeps
+    only the last parent seen per KO (a plain dict keyed by node_id, each
+    occurrence overwriting the last) files it under whichever pathway is
+    listed last in ko00001.keg -- usually the "Brite Hierarchies" catch-all
+    near the end of the file -- so pathway/category totals would be missing
+    most of their real members.
 
     K00844 (hexokinase) is the known case: it appears 14 times in
     ko00001.keg under 14 different parents, the first of which is Glycolysis
@@ -576,15 +575,11 @@ class TestCOGFormat:
 
 class TestCOGHierarchyRollup:
     """
-    Regression coverage for E15: EGC_COG_TREE.ipynb registered each gene
-    at its own COG id only -- never at that COG's category letter -- so
-    category nodes didn't exist in the data at all (the notebook's own
-    printed output said so outright: "4612 COG nodes (flat -- no category
-    parent nodes)"). Fixed by registering every gene at both levels, the
-    same per-node gene-set dedup pattern KEGG/Enzyme already used.
+    EGC_COG_TREE.ipynb registers every gene at both its own COG id and
+    that COG's category letter(s), with the same per-node gene-set dedup
+    pattern KEGG/Enzyme use, so category nodes exist in the data.
 
-    Two things specific to this fix, beyond "category rollup exists at
-    all" (already covered generically by TestAncestorAggregation):
+    Two things specific to COG, beyond "category rollup exists at all" (already covered generically by TestAncestorAggregation):
     category's `category`/`name` fields must hold the real descriptive
     text (e.g. "Energy production and conversion"), not the bare letter
     id -- matching KEGG/Enzyme's convention that `category` is always a
@@ -752,8 +747,7 @@ class TestEnzymeFormat:
 
 class TestTaxonomyFormat:
     """
-    Taxonomy .tax.json schema (as of the 2026-09-02 full-lineage rekeying,
-    see taxonomy_egc_homonym_bug):
+    Taxonomy .tax.json schema (full-lineage keying):
 
       - The dict KEY is the full lineage prefix through this rank
         (e.g. "Bacteria;Bacteroidetes"), NOT the bare taxon name — the same
@@ -878,13 +872,12 @@ class TestTaxonomyFormat:
 
 class TestTaxonomyLineageCollapseRemoved:
     """
-    Regression coverage for E16 (docs/AUDIT.md): EGC_TAX_TREE.ipynb used to
-    collapse every consecutive repeated name in a raw lineage, not just a
-    trailing one -- checked directly against all 128 real .a.phylodist.txt
-    files before this fix: 7.6M of 71.1M lineage observations (10.7%) have
-    an internal (non-trailing) repeat, e.g. genus AND species both
-    "unclassified Flavobacteriaceae". Collapsing those silently deleted a
-    real rank position, shifting every rank below it one level too shallow.
+    EGC_TAX_TREE.ipynb must not collapse consecutive repeated names in a
+    raw lineage: across all 128 real .a.phylodist.txt files, 7.6M of 71.1M
+    lineage observations (10.7%) have an internal (non-trailing) repeat,
+    e.g. genus AND species both "unclassified Flavobacteriaceae".
+    Collapsing those would delete a real rank position, shifting every rank
+    below it one level too shallow.
 
     Real anchor example, sample 3300060358 (independently confirmed present
     in the raw .a.phylodist.txt before writing this test, not assumed):
@@ -892,7 +885,7 @@ class TestTaxonomyLineageCollapseRemoved:
       Flavobacteriaceae;unclassified Flavobacteriaceae;
       unclassified Flavobacteriaceae;Flavobacteriaceae bacterium AU392
     Genus (rank 6) and species (rank 7) are both "unclassified
-    Flavobacteriaceae" -- the exact internal-repeat shape this fix targets.
+    Flavobacteriaceae" -- the internal-repeat shape in question.
     """
 
     SPOT_SAMPLE = "3300060358"
@@ -992,15 +985,14 @@ class TestKEGGBriteHierarchy:
     consistent and matches the BRITE file under that same last-occurrence
     convention.
 
-    This class does NOT and CANNOT catch E14 (the multi-parent EGC/scaffold
-    rollup bug) -- `brite_dict` deliberately re-implements the same
-    single-parent-wins parsing the pre-fix notebook used, so a node's
+    This class does NOT and CANNOT check the multi-parent EGC/scaffold
+    rollup -- `brite_dict` deliberately re-implements single-parent-wins
+    parsing, so a node's
     metadata will always "match" it regardless of whether the real rollup
     (which needs EVERY parent, not just the last one) is correct. That
     real regression coverage lives in TestKEGGHierarchyRollup, which checks
     real gene/scaffold ground truth instead of re-deriving from the same
-    parser being tested. Audit docs/AUDIT.md Part 4/T1 flagged this
-    distinction explicitly.
+    parser being tested.
 
     K00844 (hexokinase) is the canonical spot-check because its chain is in
     the first lines of the .keg file:
@@ -1367,21 +1359,13 @@ class TestCOGEGCVsJGI:
         Every COG entry in the spot sample must match JGI exactly (within
         egc_within_tolerance's near-zero float/int noise floor).
 
-        Historical note (audit Part 4/T1): this test used to allow a 20%
-        divergence tolerance with an 80% pass-rate gate, on the theory that
-        paralog-heavy COGs (multiple genes on one scaffold) would legitimately
-        diverge from JGI's per-gene coverage due to this pipeline's
-        scaffold-level averaging (see conftest.py's EGC methodology note).
-        That gate silently tolerated up to 20% of COG values being wrong,
-        which could mask a real regression (e.g. a wrong depth denominator)
-        as long as it didn't affect more than 20% of entries.
-
-        Re-verified directly against real data before tightening this:
-        COG_ABS_FLOOR/PCT_TOLERANCE (conftest.py) already reflect exact-match
-        expectations, and checking the spot sample plus 4 others gives 0
-        mismatches out of 4,475-4,545 COG entries each (100% match) -- the
-        20%-divergence paralog scenario this test's old docstring described
-        does not actually occur in the current, regenerated dataset. Zero
+        No divergence tolerance: one might expect paralog-heavy COGs
+        (multiple genes on one scaffold) to diverge from JGI's per-gene
+        coverage due to this pipeline's scaffold-level averaging (see
+        conftest.py's EGC methodology note), but checking the spot sample
+        plus 4 others gives 0 mismatches out of 4,475-4,545 COG entries each
+        (100% match). A loose gate would let a real regression (e.g. a wrong
+        depth denominator) through as long as it affected few entries. Zero
         tolerance for failures is therefore the correct gate: any future
         mismatch here is a real regression, not expected paralog noise.
         """

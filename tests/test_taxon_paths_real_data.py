@@ -1,7 +1,7 @@
 """
 test_taxon_paths_real_data.py
 ================================
-E16 remaining issue (docs/AUDIT-2026-09-22.md): EGC_TAX_TREE.ipynb's
+EGC_TAX_TREE.ipynb's
 lineage-parsing cell (`taxpath = [p.strip() for p in raw_parts if p.strip()]`)
 DROPS every empty segment, shifting every rank after it left by one
 position. `parse_taxon_path()` (FastAPI/scripts/migrate_mappings_to_sql.py),

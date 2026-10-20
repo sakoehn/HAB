@@ -1,8 +1,7 @@
 """
 enzyme_ec_utils.py
 ====================
-Shared helper for EGC_ENZYME_TREE.ipynb's partial/wildcard EC resolution
-(E18, docs/AUDIT-2026-09-22.md).
+Shared helper for EGC_ENZYME_TREE.ipynb's partial/wildcard EC resolution.
 
 Extracted out of the notebook (same pattern as weighted_totals.py /
 All_Coverages.py -- imported via sys.path.append, not copy-pasted) so
@@ -20,8 +19,8 @@ def resolve_partial_ec(ec_id: str, brite: dict) -> str | None:
     which only contains fully-named nodes parsed from ko01000.keg's
     A/B/C/D lines -- but its ancestors often are. Checked directly
     against all 135 real partial ids seen across the full dataset: 132
-    resolve one level up, but 3 (e.g. "3.6.3.-", the audit's own cited
-    K03924 moxR example) need two levels, because even the immediate
+    resolve one level up, but 3 (e.g. "3.6.3.-", K03924 moxR's EC) need
+    two levels, because even the immediate
     parent isn't its own separate BRITE entry -- so this always walks up
     as far as needed, not just one fixed step.
 
@@ -44,16 +43,12 @@ def resolve_partial_ec(ec_id: str, brite: dict) -> str | None:
 def resolve_or_drop_ec(ec_id: str, brite: dict) -> str | None:
     """Decide which real `brite` node a gene's EC id should register under.
 
-    P1 (docs/AUDIT-2026-10-05.md): `resolve_partial_ec` used to only be
-    called for ids containing a literal "-" (a partial/wildcard EC like
-    "1.1.1.-"). But a FULLY-specified EC that's simply absent from this
-    ko01000.keg download (e.g. "3.6.4.99") has a real, structural parent
-    too -- an EC number's position in the hierarchy is fixed by its own
-    digits, not something to infer -- so it deserves the exact same
-    walk-up instead of being dropped outright. This wraps both cases
-    (and the "already a real node" case) in one place so the notebook
-    doesn't hand-roll the branching inline, where E18's original fix
-    nearly missed this exact case.
+    Handles three cases in one place: an id that's already a real node,
+    a partial/wildcard EC containing a literal "-" (e.g. "1.1.1.-"), and a
+    FULLY-specified EC that's simply absent from this ko01000.keg download
+    (e.g. "3.6.4.99"). The last two both walk up to their nearest real
+    ancestor -- an EC number's position in the hierarchy is fixed by its
+    own digits -- instead of being dropped outright.
 
     Args:
         ec_id: A bare EC id (no "EC:" prefix), fully-specified or partial.

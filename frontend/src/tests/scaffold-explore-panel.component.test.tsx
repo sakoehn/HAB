@@ -173,7 +173,7 @@ describe('ScaffoldExplorePanel — empty state & suggestions', () => {
   })
 
   it('banner keeps reporting the suggested terms\' real source after the user changes the dropdown (which no longer refreshes them)', async () => {
-    // W (2.6, docs/AUDIT-2026-09-22.md): suggestions load for the default
+    // Suggestions load for the default
     // source (taxonomy) -- each suggested term's own `.source` is set from
     // the live searchSrc AT FETCH TIME (addTerm(ann.annotation_id,
     // searchSrc, true)), so it stays "taxonomy" even after the dropdown
@@ -580,11 +580,10 @@ describe('ScaffoldExplorePanel — initialTerms', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// W22 (docs/AUDIT-2026-09-22.md): the default "All terms" aggregated view
-// sums every tracked term together with zero ancestor/descendant awareness
-// -- scaffold/gene counts are hierarchical rollups, so tracking a category
-// (H) and one of its own member COGs (COG0055) together double-counts
-// COG0055's contribution.
+// The default "All terms" aggregated view sums every tracked term --
+// scaffold/gene counts are hierarchical rollups, so tracking a category (H)
+// and one of its own member COGs (COG0055) together would double-count
+// COG0055's contribution unless the redundant one is dropped.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function mockCogPath(url: string) {
@@ -612,7 +611,7 @@ function mockCogPath(url: string) {
   return null
 }
 
-describe('ScaffoldExplorePanel — W22 redundant terms', () => {
+describe('ScaffoldExplorePanel — redundant terms', () => {
   it('drops a redundant descendant from the aggregated "All terms" line and discloses it', async () => {
     mockFetch.mockImplementation((url: string) => {
       const cogPath = mockCogPath(url)
@@ -642,7 +641,7 @@ describe('ScaffoldExplorePanel — W22 redundant terms', () => {
     })
     expect(screen.getByText('All terms (1)')).toBeInTheDocument()
 
-    // G3 (docs/AUDIT-2026-10-05.md): the subtitle below the legend must
+    // The subtitle below the legend must
     // agree with the legend's own post-redundancy-filter count (1), not
     // recompute its own pre-filter count (2) and contradict the banner
     // right above it that already names COG0055 as dropped.

@@ -6,8 +6,7 @@
  * playwright.config.ts's webServer entries -- both auto-start).
  *
  * Covers the flagship scenario this feature was built for: K00844
- * (hexokinase) has 14 real KEGG pathway parents (the E14 multi-parent bug
- * fixed earlier this audit) -- opening the popup from a real chart must
+ * (hexokinase) has 14 real KEGG pathway parents -- opening the popup from a real chart must
  * auto-expand to the Glycolysis path specifically (not an arbitrary one),
  * disclose the multi-parent count via a picker, and let the user switch to
  * a different real path (e.g. Fructose and mannose metabolism).
@@ -38,7 +37,7 @@ test('Hierarchy popup auto-expands to K00844\'s Glycolysis path and highlights i
   const modal = page.getByTestId('hierarchy-modal')
   await expect(modal).toBeVisible()
 
-  // Real E14 multi-parent disclosure.
+  // Real multi-parent disclosure.
   await expect(page.getByTestId('multi-parent-note')).toContainText('14 real KEGG pathways')
 
   // Auto-expanded down the real, file-order-first path. Scoped to the tree

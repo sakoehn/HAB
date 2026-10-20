@@ -2,7 +2,7 @@
  * explore-page.component.test.tsx
  * ==================================
  * Focused component tests for ExplorePage (pages/ExplorePage.tsx) covering
- * W29 (docs/AUDIT-2026-09-22.md): request-sequence races in the Top EGC
+ * request-sequence races in the Top EGC
  * Annotations and Annotation Lookup sections, which share one big
  * ExploreState object owned by the parent (App.tsx). Not a general
  * ExplorePage coverage pass -- just the two race scenarios this file's
@@ -22,7 +22,7 @@
  *     label (kegg/cog/enzyme/taxonomy each have a different depth->label
  *     map) both read what was actually searched
  *   Lookup: a taxonomy result's External Databases link uses the bare
- *     leaf name, not the full lineage (W32, docs/AUDIT-2026-09-22.md)
+ *     leaf name, not the full lineage
  *
  * Run: npx vitest run src/tests/explore-page.component.test.tsx
  */
@@ -82,7 +82,7 @@ function Harness({ initial }: { initial: Partial<ExploreState> }) {
   )
 }
 
-describe('ExplorePage — Top EGC Annotations source race (W29)', () => {
+describe('ExplorePage — Top EGC Annotations source race', () => {
   it('switching source while the request is in flight does not relabel the still-loading rows', async () => {
     const user = userEvent.setup()
     let resolveKegg!: () => void
@@ -110,11 +110,8 @@ describe('ExplorePage — Top EGC Annotations source race (W29)', () => {
       expect(screen.getByText('K00001')).toBeInTheDocument()
     })
 
-    // The audit's own live example: the Hierarchy button's title read
-    // "View Bacteria;Proteobacteria in the kegg hierarchy" for rows that
-    // were switched to a different source before the button rendered.
-    // Real kegg data must say "kegg" here, never "cog" (the live dropdown
-    // at the time the stale response landed).
+    // Real kegg data must say "kegg" in the Hierarchy button's title, never
+    // "cog" (the live dropdown at the time the stale response landed).
     expect(screen.getByTitle('View K00001 in the kegg hierarchy')).toBeInTheDocument()
     expect(screen.queryByTitle('View K00001 in the cog hierarchy')).not.toBeInTheDocument()
 
@@ -132,14 +129,14 @@ describe('ExplorePage — Top EGC Annotations source race (W29)', () => {
   })
 })
 
-// E1 (docs/AUDIT-2026-10-05.md): the "Based on N samples" date suffix
+// The "Based on N samples" date suffix
 // below the Top EGC table must describe the request that actually
 // produced the displayed rows/sampleCount, not whatever is currently
 // sitting in the live date picker -- clearing/editing the date fields
-// after loading, without clicking Load again, used to flip just this
+// after loading, without clicking Load again, must not flip just this
 // suffix to the live (unloaded) value while sampleCount and the table
-// kept describing the real, still-dated request.
-describe('ExplorePage — Top EGC date suffix describes what was loaded, not the live picker (E1)', () => {
+// still describe the real, still-dated request.
+describe('ExplorePage — Top EGC date suffix describes what was loaded, not the live picker', () => {
   it('keeps the loaded date range in the suffix after the date picker is cleared without reloading', async () => {
     const user = userEvent.setup()
     mockFetch.mockImplementation((url: string) => {
@@ -171,12 +168,10 @@ describe('ExplorePage — Top EGC date suffix describes what was loaded, not the
   })
 })
 
-// E9 (docs/AUDIT-2026-10-05.md): the "Filter by ID, name, or parent
-// group…" box tested only the raw stored r.parent code (e.g. bare "E"),
-// never the expanded label actually shown in the Group column (e.g.
-// "Amino acid transport and metabolism") -- typing the visible text
-// returned 0 rows.
-describe('ExplorePage — Top EGC filter box matches the displayed Group label, not just the raw stored code (E9)', () => {
+// The "Filter by ID, name, or parent group…" box must match the expanded
+// label actually shown in the Group column (e.g. "Amino acid transport and
+// metabolism"), not just the raw stored r.parent code (e.g. bare "E").
+describe('ExplorePage — Top EGC filter box matches the displayed Group label, not just the raw stored code', () => {
   it('matches a row by its expanded Group label even though the stored parent is a bare code', async () => {
     const user = userEvent.setup()
     mockFetch.mockImplementation((url: string) => {
@@ -209,14 +204,12 @@ describe('ExplorePage — Top EGC filter box matches the displayed Group label, 
   })
 })
 
-// E11 (docs/AUDIT-2026-10-05.md): the "Relative" bar's width used to
-// scale against the UNFILTERED rows' max mean_egc, even when a rank
-// filter narrowed the visible rows to a subset that no longer includes
-// whichever row set that max -- every visible bar then read as far
-// shorter than its real share of what's actually on screen (e.g. every
-// leaf-level bar scaled against an since-hidden category rollup's much
-// larger sum).
-describe('ExplorePage — Top EGC "Relative" bars scale to the filtered rows, not the unfiltered max (E11)', () => {
+// The "Relative" bar's width must scale against the VISIBLE rows' max
+// mean_egc -- scaled against the unfiltered max, a rank filter that hides
+// whichever row set it would make every visible bar read as far shorter
+// than its real share of what's on screen (e.g. every leaf-level bar
+// scaled against a hidden category rollup's much larger sum).
+describe('ExplorePage — Top EGC "Relative" bars scale to the filtered rows, not the unfiltered max', () => {
   it('rescales every visible bar to the filtered max once a rank filter hides the row that set the unfiltered max', async () => {
     const user = userEvent.setup()
     mockFetch.mockImplementation((url: string) => {
@@ -264,14 +257,12 @@ describe('ExplorePage — Top EGC "Relative" bars scale to the filtered rows, no
   })
 })
 
-// E8 (docs/AUDIT-2026-10-05.md): the Lookup result list showed only a
-// bare mean_egc number, with no (N/128) detection-count disclosure, no
-// "mean when detected" tooltip, and no sort-method label -- all three
-// of which the Analyze page's own equivalent list (LeftResultList)
-// already has, for the same reason: a 9-sample mean and a 128-sample
+// The Lookup result list shows a (N/128) detection-count disclosure, a
+// "mean when detected" tooltip, and a sort-method label, like the Analyze
+// page's own equivalent list (LeftResultList), for the same reason: a 9-sample mean and a 128-sample
 // mean otherwise look identical, and a sparse detection can outrank a
 // fully-detected one with nothing to warn the reader.
-describe('ExplorePage — Annotation Lookup detection-count disclosure (E8)', () => {
+describe('ExplorePage — Annotation Lookup detection-count disclosure', () => {
   it('shows (N/128) and a detection tooltip for a partially-detected result, but not for a fully-detected one', async () => {
     const user = userEvent.setup()
     mockFetch.mockImplementation((url: string) => {
@@ -299,7 +290,7 @@ describe('ExplorePage — Annotation Lookup detection-count disclosure (E8)', ()
   })
 })
 
-describe('ExplorePage — Annotation Lookup source race (W29)', () => {
+describe('ExplorePage — Annotation Lookup source race', () => {
   it('switching source before the search resolves does not tag the result under the new source', async () => {
     const user = userEvent.setup()
     let resolveKegg!: () => void
@@ -341,12 +332,12 @@ describe('ExplorePage — Annotation Lookup source race (W29)', () => {
   })
 })
 
-// W30(a) (docs/AUDIT-2026-09-22.md): a KEGG KO's stored `parent` is
-// last-occurrence-wins -- only ONE of its possibly-many real immediate
-// parents. The lookup card now fetches /api/kegg/path directly (the same
+// A KEGG KO's stored `parent` is last-occurrence-wins -- only ONE of its
+// possibly-many real immediate parents. The lookup card fetches
+// /api/kegg/path directly (the same
 // real ancestor data the hierarchy popup uses) instead of trusting the
 // single stored value.
-describe('ExplorePage — Annotation Lookup shows every real KEGG parent (W30a)', () => {
+describe('ExplorePage — Annotation Lookup shows every real KEGG parent', () => {
   function mockSearchAndPath(searchRow: object, pathResponse: object | null) {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/search/annotations') && url.includes('sources=kegg')) {
@@ -462,15 +453,13 @@ describe('ExplorePage — Annotation Lookup shows every real KEGG parent (W30a)'
   })
 })
 
-// E5 (docs/AUDIT-2026-10-05.md): the Category row used to show the single
-// stored (last-occurrence-wins, P3) `category` field, directly contradicting
-// the (already-fixed, W30a) Parent row beneath it. Live example the audit
-// cited: K00134/GAPDH's Category read "Brite Hierarchies" while Parents
-// correctly listed Glycolysis among its real pathways. Category now comes
-// from the SAME /api/kegg/path response Parents already uses, reading the
+// The single stored (last-occurrence-wins) `category` field would
+// contradict the Parent row beneath it (e.g. "Brite Hierarchies" for
+// K00134/GAPDH, whose real pathways include Glycolysis). Category comes
+// from the SAME /api/kegg/path response Parents uses, reading the
 // depth-1 (top-level category) end of each real path instead of the
 // immediate-parent end.
-describe('ExplorePage — Annotation Lookup shows every real KEGG category (E5)', () => {
+describe('ExplorePage — Annotation Lookup shows every real KEGG category', () => {
   function mockSearchAndPath(searchRow: object, pathResponse: object | null) {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/search/annotations') && url.includes('sources=kegg')) {
@@ -600,15 +589,13 @@ describe('ExplorePage — Annotation Lookup shows every real KEGG category (E5)'
   })
 })
 
-// E5 (cog parity, docs/AUDIT-2026-10-05.md): P4 confirmed the identical bug
-// shape for cog -- a COG id's single stored `parent`/`category` field can
+// Same for cog -- a COG id's single stored `parent`/`category` field can
 // only ever hold ONE of its possibly-many real categories (340 real
 // multi-category COGs, e.g. COG0028 real under both E and H). Unlike kegg,
 // cog has no separate "parent" vs. "category" distinction (only 2 real
-// levels total), so this fixes both rows at once via a single new
-// cogCategoryNames row, reading the same /api/cog/path data the hierarchy
-// popup already uses -- no new backend endpoint needed, it already existed.
-describe('ExplorePage — Annotation Lookup shows every real COG category (E5, cog parity)', () => {
+// levels total), so a single cogCategoryNames row covers both, reading the
+// same /api/cog/path data the hierarchy popup uses.
+describe('ExplorePage — Annotation Lookup shows every real COG category', () => {
   function mockSearchAndPath(searchRow: object, pathResponse: object | null) {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/search/annotations') && url.includes('sources=cog')) {
@@ -694,7 +681,7 @@ describe('ExplorePage — Annotation Lookup shows every real COG category (E5, c
   })
 })
 
-// W32 (docs/AUDIT-2026-09-22.md): the lookup card's `name={r.name}` prop on
+// The lookup card's `name={r.name}` prop on
 // ExternalLinks must actually reach the NCBI Taxonomy link -- exercised
 // through the real lookup card, not ExternalLinks in isolation (which
 // already has its own direct unit coverage in external-links.component.test.tsx).
@@ -702,7 +689,7 @@ describe('ExplorePage — Annotation Lookup shows every real COG category (E5, c
 // test can tell whether `name` really reached ExternalLinks -- otherwise
 // taxonomyAwarePrimaryLabel's id-derived fallback produces the same value
 // either way and the test would pass without proving the wiring works.
-describe('ExplorePage — Lookup External Databases link (W32)', () => {
+describe('ExplorePage — Lookup External Databases link', () => {
   it('a taxonomy result\'s NCBI Taxonomy link uses the real name prop, not just the id-derived fallback', async () => {
     const user = userEvent.setup()
     mockFetch.mockImplementation((url: string) => {
@@ -730,13 +717,12 @@ describe('ExplorePage — Lookup External Databases link (W32)', () => {
   })
 })
 
-// A8 (docs/AUDIT-2026-10-05.md): /api/annotations/top previously omitted
-// `depth` for kegg/cog/enzyme entirely, so the Top EGC table had no way to
-// rank-filter down to real leaf annotations -- since a parent's EGC is the
-// sum of its descendants, the unfiltered top list is otherwise dominated by
-// branch/rollup nodes. Confirms the rank-filter pills now appear for a
+// /api/annotations/top returns `depth` for every source so the Top EGC
+// table can rank-filter down to real leaf annotations -- since a parent's
+// EGC is the sum of its descendants, the unfiltered top list is dominated
+// by branch/rollup nodes. Confirms the rank-filter pills appear for a
 // non-taxonomy source and actually narrow the table by the row's real depth.
-describe('ExplorePage — Top EGC rank filter works for non-taxonomy sources (A8)', () => {
+describe('ExplorePage — Top EGC rank filter works for non-taxonomy sources', () => {
   it('filters kegg rows by real depth once it is present on the response', async () => {
     const user = userEvent.setup()
     mockFetch.mockImplementation((url: string) => {
@@ -776,14 +762,11 @@ describe('ExplorePage — Top EGC rank filter works for non-taxonomy sources (A8
   })
 })
 
-// E6 (docs/AUDIT-2026-10-05.md): the Group column used to show only
-// row.parent, the single stored (last-occurrence-wins, P3) value -- live
-// example the audit cited: K00134/GAPDH filed under "Exosome" (a rare real
-// category) in this table while the (already-fixed, W30a) Lookup card for
-// the same KO correctly lists Glycolysis among 9 real parents. Now reuses
-// the same bulk /api/kegg/parents lookup AnnotationsByParentPanel already
-// calls.
-describe('ExplorePage — Top EGC Group column shows every real KEGG parent (E6)', () => {
+// The Group column must not show only row.parent, the single stored
+// (last-occurrence-wins) value -- e.g. "Exosome" (a rare real category)
+// for K00134/GAPDH, whose 9 real parents include Glycolysis. It uses the
+// same bulk /api/kegg/parents lookup AnnotationsByParentPanel calls.
+describe('ExplorePage — Top EGC Group column shows every real KEGG parent', () => {
   function mockTopAndParents(rows: object[], parentsResponse: object | null) {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/annotations/top') && url.includes('source=kegg')) {

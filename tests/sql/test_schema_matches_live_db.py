@@ -1,10 +1,9 @@
 """
 test_schema_matches_live_db.py
 ================================
-P5 (docs/AUDIT-2026-10-05.md): create_sql_schema.py is the blueprint for a
-from-scratch rebuild, but the real hab_mappings.db picked up later changes
-(ALTER TABLE backfills, column re-adds) the blueprint never recorded. This
-builds a fresh in-memory database from the blueprint and compares every
+create_sql_schema.py is the blueprint for a from-scratch rebuild, but the
+real hab_mappings.db can pick up later changes (ALTER TABLE backfills,
+column re-adds) the blueprint never records. This builds a fresh in-memory database from the blueprint and compares every
 table's columns (name, type, NOT NULL, primary key, AND position) against
 the real database's PRAGMA table_info.
 

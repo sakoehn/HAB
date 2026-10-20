@@ -8,8 +8,8 @@
  * annotation has multiple real parents, a picker must let the user switch
  * between them.
  *
- * Uses the real K00844/hexokinase example from this session's E14 work:
- * a KEGG node with 14 real pathway parents. GET /kegg/path must resolve
+ * Uses the real K00844/hexokinase example: a KEGG node with 14 real
+ * pathway parents. GET /kegg/path must resolve
  * (by default) to the Metabolism > Carbohydrate metabolism > Glycolysis
  * chain, and switching the picker to "Fructose and mannose metabolism"
  * must move the tree's expanded/highlighted branch to match.
@@ -97,9 +97,9 @@ describe('HierarchyModal — auto-expand to path', () => {
     expect(screen.getByTestId('path-picker')).toBeInTheDocument()
   })
 
-  // G7 (docs/AUDIT-2026-10-05.md): this note used to hardcode "KEGG
-  // pathways" regardless of `source` -- genuinely wrong for a real
-  // multi-category COG like COG0028 (category E and H, per P4/E17).
+  // The note must name the source's own kind of parent -- a real
+  // multi-category COG like COG0028 (category E and H) has categories, not
+  // "KEGG pathways".
   it('names the real source-specific noun, not "KEGG pathways", for a multi-category COG', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/cog/path')) {
@@ -159,14 +159,13 @@ describe('HierarchyModal — auto-expand to path', () => {
     expect(await screen.findByTestId('error-state')).toBeInTheDocument()
   })
 
-  // G8/G12 (docs/AUDIT-2026-10-05.md): /kegg/path (the fetch pathStatus
+  // /kegg/path (the fetch pathStatus
   // tracks) is a SEPARATE request from the root /kegg/children fetch
   // goToPath triggers internally to resolve the ancestor chain -- the
   // path lookup itself can succeed (pathStatus 'ok') while that root
-  // fetch independently fails, leaving `nodes` empty. Before this fix,
-  // that rendered the exact same "No entries under this node." message
-  // as a genuinely childless root, with pathStatus giving no hint
-  // anything had actually failed.
+  // fetch independently fails, leaving `nodes` empty. That must not render
+  // the same "No entries under this node." message as a genuinely
+  // childless root.
   it('shows a distinct tree-load error when the root fetch fails even though the path lookup succeeded', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/kegg/path')) {

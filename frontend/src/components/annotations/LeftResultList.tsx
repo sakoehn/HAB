@@ -26,14 +26,13 @@ import { HelpTooltip } from '../ui/HelpTooltip'
 const EMPTY_FILTER = new Set<string>()
 const EMPTY_RANK_FILTER = new Set<number>()
 
-// W21 (docs/AUDIT-2026-09-22.md): mean_egc here is a mean OVER THE
+// mean_egc here is a mean OVER THE
 // SAMPLES WHERE THE ANNOTATION WAS DETECTED, not an aggregate across all
 // 128 -- annotation_catalog's own AVG(egc) only ever sees detected rows,
 // since a sample without a detection has no annotation_series row to
-// average in the first place. A 9-sample mean and a 128-sample mean were
-// otherwise shown identically, with nothing here to tell them apart --
-// confirmed against the audit's own live example (a 9-sample mean
-// outranking dozens of 128-sample means with no visible difference).
+// average in the first place. Without the detection count, a 9-sample
+// mean and a 128-sample mean would look identical (and a 9-sample mean can
+// outrank dozens of 128-sample means).
 const TOTAL_SAMPLE_COUNT = 128
 
 export function LeftResultList({
@@ -329,7 +328,7 @@ export function LeftResultList({
                 >
                   {ann.name ?? '—'}
                   {ann.source === 'taxonomy' && immediateParentSegment(ann.annotation_id) && (
-                    // G9 (docs/AUDIT-2026-10-05.md): the cheapest real
+                    // The cheapest real
                     // disambiguator for two cross-lineage homonyms (same
                     // bare name, different ancestry) short of showing the
                     // full lineage inline -- hovering the row still shows

@@ -5,7 +5,7 @@
 // re-requesting per chart instance. Same "fetch once, share everywhere"
 // pattern as useSolarTideData.
 //
-// Exists for W21 (docs/AUDIT-2026-09-22.md): a chart's own /series/
+// A chart's own /series/
 // annotations response only has rows for samples where that specific
 // annotation was actually detected, so a chart can't tell "no data at
 // this timepoint" from "this timepoint doesn't exist" using its own data

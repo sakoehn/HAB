@@ -3,8 +3,7 @@ test_samples_and_timepoints_route.py
 ======================================
 Live-HTTP tests for /samples and /timepoints under DATA_BACKEND=sql.
 
-Found during a JSON-backend-retirement coverage audit: these two routes had
-NO working test coverage. Their only existing tests (test_unit_backend.py's
+These two routes need their own coverage here: the other tests (test_unit_backend.py's
 TestRoutesViaTestClient, via the `patched_client` fixture) always 500 under
 the real DATA_BACKEND=sql config, because `patched_client` builds a plain
 `TestClient(app, raise_server_exceptions=False)` without entering it as a
@@ -133,11 +132,10 @@ def test_samples_and_timepoints_report_the_same_sample_set(client):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# A6 (docs/AUDIT-2026-10-05.md): page/page_size had no input bounds --
-# page_size=0 divides by zero in paginate() (a real HTTP 500), and a
-# negative page/page_size produces a negative slice start, which Python
-# silently reinterprets as an index from the end of the list rather than
-# raising. Both routes now reject an out-of-range value with FastAPI's
+# page/page_size must be bounded -- page_size=0 divides by zero in
+# paginate() (a real HTTP 500), and a negative page/page_size produces a
+# negative slice start, which Python silently reinterprets as an index from
+# the end of the list rather than raising. Both routes reject an out-of-range value with FastAPI's
 # own 422, before paginate() ever runs.
 # ═══════════════════════════════════════════════════════════════════════════
 

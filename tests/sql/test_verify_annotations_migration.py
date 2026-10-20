@@ -1,10 +1,9 @@
 """
 test_verify_annotations_migration.py
 ======================================
-P6 (docs/AUDIT-2026-10-05.md): verify_annotations_migration_against_json.py
-used to compare only ROW COUNTS between the source JSON and the database,
-so it would print "ALL SOURCES MATCH" even if every egc/norm_egc value were
-wrong. These tests pin its per-value comparison: hand-built JSON + db rows,
+verify_annotations_migration_against_json.py compares values, not just
+ROW COUNTS -- counts alone would print "ALL SOURCES MATCH" even if every
+egc/norm_egc value were wrong. These tests pin its per-value comparison: hand-built JSON + db rows,
 each with one known defect, must each be reported.
 
 Pure in-memory fixtures -- never touches the real hab_mappings.db or the

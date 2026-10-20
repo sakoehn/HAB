@@ -6,12 +6,9 @@ Shared data-loading helpers for the live correlation endpoints
 vectors read from `annotation_series`, plus the taxonomy candidate depth
 cutoff.
 
-Split out of the old migrate_correlations_to_sql.py (CR7, see
-docs/AUDIT.md): that file was an abandoned all-pairs batch job writing to
-a `correlations` table create_sql_schema.py drops and never recreates --
-never actually run -- but the live endpoint imported these three names
-from it, which made the dead job read as load-bearing. It wasn't; only
-these three pieces were.
+These used to live in an all-pairs batch job (migrate_correlations_to_sql.py)
+that was never run and has since been deleted; only these three pieces
+were ever used by the live endpoint.
 """
 
 import sqlite3
@@ -42,8 +39,7 @@ def assert_sample_order_is_trustworthy(sample_order: list[str]) -> None:
     One-time startup check (see main.py's lifespan) that every sample
     resolves to a real timepoint and no two distinct samples collide on
     the exact same one -- either failure lets correlation scoring fall
-    back to an arbitrary tie order with no visible symptom (CR6, see
-    docs/AUDIT.md).
+    back to an arbitrary tie order with no visible symptom.
 
     Deliberately NOT enforced inside load_sample_order itself: many tests
     intentionally score synthetic, non-resolving sample names against an
@@ -53,9 +49,7 @@ def assert_sample_order_is_trustworthy(sample_order: list[str]) -> None:
     contract load_sample_order's every caller would have to satisfy.
 
     Deliberately does NOT require uniform 4-hour spacing between every
-    consecutive pair, despite that being CR6's originally suggested fix --
-    checked against the real 128-sample dataset before writing this, and
-    real gaps of 8h and 12h exist from missing samples, so a hard "must be
+    consecutive pair -- in the real 128-sample dataset, real gaps of 8h and 12h exist from missing samples, so a hard "must be
     exactly 4h apart" assertion would false-positive on legitimate data
     and take the server down at boot. lag_hours (lag_samples *
     LAG_HOURS_PER_SAMPLE) is therefore only exact across a gap-free

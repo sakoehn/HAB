@@ -31,8 +31,7 @@ intentionally excluded.
 Known limitation
 -----------------
 Taxonomy nodes are keyed by bare rank name, not full lineage path, so two
-different lineages that share a leaf name collide in the built JSON (see
-memory: taxonomy_egc_homonym_bug). A Taxonomy mismatch here may reflect that
+different lineages that share a leaf name collide in the built JSON. A Taxonomy mismatch here may reflect that
 pre-existing, documented issue rather than a new scaffold-parsing bug --
 check whether the reconstructed lineage is one of the known homonyms before
 treating a failure as new.
@@ -271,7 +270,7 @@ class TestTaxonomyScaffoldsMatchRawFile:
 
     @pytest.mark.xfail(
         reason=(
-            "Known homonym bug (see memory: taxonomy_egc_homonym_bug): bare-name "
+            "Known homonym bug: bare-name "
             "tree keying collides distinct lineages that share a leaf name (e.g. "
             "'Bacteroides sp. AR20' picking up scaffolds from a second, different "
             "lineage). Affects ~0.0145% of leaf taxa across all 128 samples. "

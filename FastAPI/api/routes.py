@@ -104,16 +104,12 @@ router = APIRouter()
 
 # ── Pagination helpers ────────────────────────────────────────────────────────
 
-# A6 (docs/AUDIT-2026-10-05.md): paginate() itself has no input guards --
-# page_size=0 divides by zero computing total_pages (a real HTTP 500,
-# ZeroDivisionError), and page<1 or page_size<1 produces a negative slice
-# start, which Python silently reinterprets as an index from the END of
-# the list instead of raising -- "page -1" returning a real (wrong)
-# page's worth of data rather than an error. Only /annotations/scaffolds
-# already guarded its own page/page_size with Query(ge=1); the 5 routes
-# below that call this function through FastAPI's own Query(..., ge=1,
-# le=...) now reject an out-of-range value with a 422 before paginate()
-# ever runs, matching that one already-correct route's convention.
+# paginate() itself has no input guards -- page_size=0 divides by zero
+# computing total_pages, and page<1 or page_size<1 produces a negative
+# slice start, which Python silently reads as an index from the END of the
+# list ("page -1" would return a real, wrong page). Every route that calls
+# it declares page/page_size as Query(..., ge=1, le=...), so FastAPI
+# rejects an out-of-range value with a 422 before paginate() ever runs.
 def paginate(data: list, page: int, page_size: int) -> dict:
     """Generic pagination for any list."""
     total = len(data)
@@ -131,22 +127,13 @@ def paginate(data: list, page: int, page_size: int) -> dict:
 
 # ── Top-annotations cache ─────────────────────────────────────────────────────
 
-# A4 (docs/AUDIT-2026-10-05.md): this cache used to be a plain unbounded
-# dict -- no size cap, no expiry, no way to clear it short of restarting
-# the process. One real taxonomy entry measured 51.7 MB, and (before A5's
-# fix, below) an unparseable date_from/date_to string was silently
-# ignored but still used as the cache key, so every distinct junk string
-# minted a fresh multi-MB entry. A5 already closes off the junk-string
-# growth vector by rejecting bad dates before a cache key is ever built,
-# but the cache still needs its own bound: a legitimate server lifetime
-# can accumulate one entry per (source, date_from, date_to) combination
-# a user has ever actually requested, and this process has no hook to
-# learn a catalog rebuild happened (the in-process analog of CR11,
-# docs/AUDIT-2026-09-22.md, which solved the equivalent problem for the
-# SQL-table-backed correlations_cache by invalidating rows directly --
-# not an option here, since this cache lives in THIS process's memory,
-# not a table a separate migration script's process can reach into).
-# An LRU size cap (an OrderedDict, oldest-accessed evicted first) bounds
+# One real taxonomy entry measures ~52 MB, and a server lifetime can
+# accumulate one entry per (source, date_from, date_to) combination ever
+# requested (unparseable dates are rejected before a key is built, see
+# top_annotations_by_egc). This process also has no hook to learn that a
+# catalog rebuild happened: unlike the SQL-table-backed correlations_cache,
+# which the migration script invalidates directly, this cache lives in
+# THIS process's memory. An LRU size cap (an OrderedDict, oldest-accessed evicted first) bounds
 # memory; a TTL bounds how long a pre-rebuild result can keep being
 # served -- 30 minutes is long enough that a user paging through results
 # never pays for the same (source, date range) aggregation twice in one
@@ -301,9 +288,8 @@ def search_mappings(
 
     For kegg/enzyme/cog, annotation_id can be a pathway/class/category
     node, not just a leaf id -- it's expanded to every real leaf id
-    beneath it (W24, docs/AUDIT-2026-09-22.md; e.g. source=kegg,
-    annotation_id=00910 now returns every gene mapped to any KO under
-    Nitrogen metabolism, not zero rows).
+    beneath it (e.g. source=kegg, annotation_id=00910 returns every gene
+    mapped to any KO under Nitrogen metabolism).
 
     Results are deduplicated (if unique_pairs), sorted chronologically,
     then paginated. sample_count is clamped to _MAX_SAMPLES_FOR_MANY_LEAVES
@@ -341,13 +327,11 @@ def search_mappings(
         leaf_count = None
         samples_were_capped = False
         if source.value in ("kegg", "cog", "enzyme"):
-            # A1 (docs/AUDIT-2026-10-05.md): must strip the same KO:/EC:
-            # prefix get_mappings_sql strips internally, or a prefixed id
-            # (a documented/tested supported form) resolves to zero real
-            # leaves here -- every cap check below then sees nothing to
-            # cap, so the uncapped query runs in full, reproducing the
-            # exact 271,284-row/249.8s production incident this cap
-            # exists to prevent.
+            # Must strip the same KO:/EC: prefix get_mappings_sql strips
+            # internally, or a prefixed id (a supported form) resolves to
+            # zero leaves here -- every cap check below then sees nothing
+            # to cap, and the uncapped query runs in full (a real
+            # 271,284-row / 250s query, which this cap exists to prevent).
             leaf_ids = _expand_to_leaf_ids(conn, source.value, strip_source_prefix(source.value, annotation_id))
             leaf_count = len(leaf_ids)
             if leaf_count > _MANY_LEAVES_THRESHOLD and not bypass_cap:
@@ -391,12 +375,11 @@ def search_mappings(
         # primary key, so kegg/taxonomy's per-row subqueries can never
         # produce duplicates the later GROUP BY would collapse, and
         # cog/enzyme's junction-table subqueries now select DISTINCT
-        # mapping ids (A3, docs/AUDIT-2026-10-05.md) -- previously a bare
-        # SELECT, which let a gene matching more than one of several
-        # searched leaf ids produce duplicate ids inside the LIMIT, so the
-        # post-GROUP-BY count could land under _MAPPINGS_ROW_LIMIT even
-        # though real data was dropped (measured live: 100,275 real genes,
-        # 49,969 (49.8%) returned, flagged results_were_truncated=False).
+        # mapping ids -- a bare SELECT would let a gene matching more than
+        # one of several searched leaf ids produce duplicate ids inside the
+        # LIMIT, so the post-GROUP-BY count could land under
+        # _MAPPINGS_ROW_LIMIT even though real data was dropped (e.g.
+        # cog/H over 5 samples: 100,275 real genes, only 49,969 returned).
         results_were_truncated = len(mappings) >= _MAPPINGS_ROW_LIMIT
     finally:
         close_sql_connection(conn)
@@ -431,15 +414,12 @@ def search_annotations(
     q:             str | None = Query(None, min_length=1),
     annotation_id: str | None = Query(None),
     name_exact:    str | None = Query(None),
-    # A10 (docs/AUDIT-2026-10-05.md): was list[str] -- an unknown source
-    # name (e.g. "bogus") silently matched nothing (source IN (...) with
-    # a value no row ever has) and came back 200/total:0, indistinguishable
-    # from "real sources, genuinely no results". Typed as the real enum so
-    # FastAPI rejects it with a 422 up front instead.
+    # Typed as the real enum so FastAPI rejects an unknown source name with
+    # a 422 -- as plain strings, "bogus" would silently match nothing and
+    # come back 200/total:0, indistinguishable from "no results".
     sources: list[AnnotationSource] = Query(...),
     # le=5000: AnalyzePage fetches every match for a term in one call
-    # (page_size=5000) -- A6's original le=2000 rejected that with a 422 and
-    # broke Analyze search. Real broad terms exceed 2000 ("protein" matches
+    # (page_size=5000), and real broad terms exceed 2000 ("protein" matches
     # 6,117). tests/test_frontend_page_size_contract.py pins this pairing.
     page: int = Query(1, ge=1), page_size: int = Query(500, ge=1, le=5000),
 ):
@@ -536,16 +516,13 @@ def taxonomy_children(request: Request, parent: str | None = Query(None)):
 
     parent omitted/empty -> the 4 domain roots (value['parent'] is None).
     """
-    # A7 (docs/AUDIT-2026-10-05.md): an explicitly empty `parent=` query
-    # value arrives here as "" (a real string), not None -- FastAPI only
-    # supplies the None default when the param is omitted entirely.
-    # Confirmed live: every one of the four hierarchy routes mishandled
-    # this, not just this one -- taxonomy's own truthiness check below
-    # treated "" as falsy and skipped straight to a lineage-prefix match
-    # against it, which matches nothing, so it silently returned 0
-    # children instead of the 4 real domain roots the docstring promises.
-    # Normalizing here, before anything else runs, makes "" behave
-    # exactly like omission for every check and lookup below.
+    # An explicitly empty `parent=` query value arrives here as "" (a real
+    # string), not None -- FastAPI only supplies the None default when the
+    # param is omitted entirely. Left as "", it would be matched as a
+    # lineage prefix that matches nothing, returning 0 children instead of
+    # the 4 domain roots. Normalizing here makes "" behave exactly like
+    # omission for every check and lookup below (same in the other three
+    # hierarchy routes).
     parent = parent or None
     db = connect_to_sql()
     try:
@@ -569,17 +546,14 @@ def kegg_children(request: Request, parent: str | None = Query(None)):
     SQL backend only. `kegg_paths` (built from ko00001.keg, capturing every
     real multi-parent occurrence — see migrate_kegg_paths_to_sql.py) has no
     JSON-backend equivalent: the old per-sample .ko.json format only ever
-    stored a single parent_id per node, which is the E14 bug this table
-    exists to get past.
+    stored a single parent_id per node, which can't represent a
+    multi-parent KO.
     """
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="KEGG hierarchy browsing requires DATA_BACKEND=sql")
 
-    # A7 (docs/AUDIT-2026-10-05.md): an explicitly empty `parent=` query
-    # value arrives as "" (a real string), not None -- confirmed live,
-    # this `is not None` guard still 404'd on it as "Unknown KEGG node
-    # ''" instead of treating it the same as omission, same root cause
-    # as the other 3 hierarchy routes.
+    # An explicitly empty `parent=` arrives as "", not None -- treat it as
+    # omission (see taxonomy_children), not as an unknown node to 404 on.
     parent = parent or None
     db = connect_to_sql()
     try:
@@ -618,8 +592,7 @@ def kegg_path(request: Request, id: str = Query(...)):
 def kegg_parents_bulk(request: Request, ids: str = Query(...)):
     """
     Every real IMMEDIATE parent (one level up) for each of a comma-separated
-    list of KEGG node ids, in one request -- W30a (docs/AUDIT-2026-09-22.md):
-    "Annotations by Parent" groups up to 200 rows at once, and a KO's
+    list of KEGG node ids, in one request. "Annotations by Parent" groups up to 200 rows at once, and a KO's
     stored `parent` is last-occurrence-wins (only one of its possibly-many
     real parents), so the panel needs every real parent for every row to
     bucket a multi-parent KO into every group it actually belongs to --
@@ -657,8 +630,8 @@ def enzyme_children(request: Request, parent: str | None = Query(None)):
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="Enzyme hierarchy browsing requires DATA_BACKEND=sql")
 
-    # A7 (docs/AUDIT-2026-10-05.md): see kegg_children's comment -- same
-    # "" vs None mishandling, confirmed live.
+    # An explicitly empty `parent=` arrives as "" -- treat it as omission
+    # (see taxonomy_children).
     parent = parent or None
     db = connect_to_sql()
     try:
@@ -700,21 +673,20 @@ def cog_children(request: Request, parent: str | None = Query(None)):
     the same BRITE-hierarchy-popup feature as /kegg/children.
 
     parent omitted/empty -> the 25 top-level category letters (Energy
-    production and conversion, etc.) -- A9 (docs/AUDIT-2026-10-05.md):
-    confirmed live against the real db, not 26.
+    production and conversion, etc.) -- 25 in the real db, not 26.
 
     SQL backend only, same reasoning as /kegg/children -- cog_paths (see
     migrate_cog_paths_to_sql.py) has no JSON-backend equivalent. A COG id
-    can belong to more than one category, same as KEGG (E17,
-    docs/AUDIT-2026-09-22.md) -- cog_paths has one row per real
+    can belong to more than one category, same as KEGG -- cog_paths has one
+    row per real
     (category, COG) membership. The hierarchy is only 2 levels deep
     (category -> specific COG id), not 4.
     """
     if DATA_BACKEND != 'sql':
         raise HTTPException(status_code=501, detail="COG hierarchy browsing requires DATA_BACKEND=sql")
 
-    # A7 (docs/AUDIT-2026-10-05.md): see kegg_children's comment -- same
-    # "" vs None mishandling, confirmed live.
+    # An explicitly empty `parent=` arrives as "" -- treat it as omission
+    # (see taxonomy_children).
     parent = parent or None
     db = connect_to_sql()
     try:
@@ -763,16 +735,14 @@ def top_annotations_by_egc(
 
     Cached per (source, date_from, date_to). date_from/date_to, if given,
     must parse as a real date (see _parse_any_datetime) -- a bound that
-    doesn't parse is rejected with 400 rather than silently ignored (A5,
-    docs/AUDIT-2026-10-05.md): it used to fall through to the FULL
-    unfiltered dataset while still being echoed back in the response as
-    if it had been applied, so e.g. a US-format "06/10/2021" or a typo'd
-    "2021-13-99" looked like a successful filter that just happened to
-    match everything.
+    doesn't parse is rejected with 400 rather than silently ignored --
+    ignoring it would fall through to the FULL unfiltered dataset while
+    still echoing the bound back as if it had been applied (e.g. a
+    US-format "06/10/2021" or a typo'd "2021-13-99").
     """
-    # A5: validate before anything else -- a bad bound must never reach
-    # the cache key (that was A4's own worst symptom: a fresh junk string
-    # minting a fresh multi-MB cache entry) or the per-sample scan below.
+    # Validate before anything else -- a bad bound must never reach the
+    # cache key (each distinct junk string would mint a fresh multi-MB
+    # cache entry) or the per-sample scan below.
     if date_from is not None and _parse_any_datetime(date_from) is None:
         raise HTTPException(status_code=400, detail=f"date_from is not a recognized date: {date_from!r}")
     if date_to is not None and _parse_any_datetime(date_to) is None:

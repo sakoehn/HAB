@@ -6,7 +6,7 @@
 //
 // Features:
 //   - Adjustable sample count (1–128), clamped server-side for a broad
-//     category (W24, docs/AUDIT-2026-09-22.md) -- reflected back into the
+//     category -- reflected back into the
 //     field itself once a load reports it was capped, not just a banner
 //   - Unique pairs toggle (deduplicates taxonomy|kegg|enzyme|cog combinations)
 //     -- defaults to OFF for a leaf id (one specific gene: every sample it
@@ -70,13 +70,10 @@ export function sortMappingRows(
   sortDir: SortDir,
 ): MappingSearchRow[] {
   // 'date' and 'time' sort by full datetime, numerically via parseDateTime
-  // -- NOT a plain string compare (W17). The API returns unpadded
-  // "M/D/YY H:MM" (e.g. "6/10/21 8:00"), which does not sort correctly as
-  // text: "6/10/21" sorts before "6/2/21" lexically, even though June 10
-  // is AFTER June 2. A plain string sort opened the table with "page one"
-  // showing 5/27, 6/1, 6/10, 6/18, 6/2, 6/9 -- not the earliest rows -- and
-  // the CSV export (which reuses this same sorted list) was in the same
-  // wrong order.
+  // -- NOT a plain string compare. The API returns unpadded "M/D/YY H:MM"
+  // (e.g. "6/10/21 8:00"), which does not sort correctly as text: "6/10/21"
+  // sorts before "6/2/21" lexically, even though June 10 is AFTER June 2.
+  // The CSV export reuses this same sorted list.
   if (sortCol === 'date' || sortCol === 'time') {
     return [...rows].sort((a, b) => {
       const av = parseDateTime(a.timepoint?.datetime ?? '')
@@ -105,11 +102,10 @@ export function totalPages(rowCount: number, pageSize: number = MAPPINGS_PAGE_SI
 // additionally clamps sample_count for broad categories -- see
 // SAMPLES_CAPPED_NOTE below -- so even a worst-case broad-category result
 // stays well under this) so the panel keeps fetching everything in one
-// call and sorting/paginating client-side, same as it always has, rather
-// than needing a page-by-page rewrite (W24, docs/AUDIT-2026-09-22.md).
+// call and sorting/paginating client-side.
 // 50_000 = the backend's own page_size cap on /mappings/search, which is
 // also its hard row limit (_MAPPINGS_ROW_LIMIT), so asking for more could
-// never return more -- and since A6 it's rejected with a 422 instead.
+// never return more -- and the route rejects anything larger with a 422.
 const MAPPINGS_FETCH_PAGE_SIZE = 50_000
 
 export function buildMappingsUrl(
@@ -412,15 +408,13 @@ export function MappingsPanel({
               <div className="state-icon">∅</div>
               <span>
                 {samplesCapped ? (
-                  // G6 (docs/AUDIT-2026-10-05.md): the non-empty branch's
-                  // own cap-disclosure banner below is gated on
-                  // `allRows.length > 0`, so a capped request that happens
-                  // to find zero rows in its real (small) scanned scope
-                  // used to fall through to the plain empty-state message
-                  // below instead, which names requestedSampleCount (the
-                  // full ask, e.g. 128) -- silently overstating how much
-                  // was actually searched (e.g. the real 5-sample scope,
-                  // ~25x less) instead of disclosing the cap at all.
+                  // The non-empty branch's cap-disclosure banner below is
+                  // gated on `allRows.length > 0`, so a capped request that
+                  // finds zero rows in its real (small) scanned scope needs
+                  // its own message here -- the plain empty-state message
+                  // names requestedSampleCount (the full ask, e.g. 128),
+                  // which would overstate how much was actually searched
+                  // (e.g. the real 5-sample scope, ~25x less).
                   <>
                     No mappings found for <strong>{annotationId}</strong> in
                     the {usedSampleCount ?? '—'} sample{usedSampleCount === 1 ? '' : 's'} actually

@@ -84,9 +84,9 @@ export function ExternalLinks({
         </button>,
       )
     } else {
-      // G4 (docs/AUDIT-2026-10-05.md): the numeric >=9000 threshold W32
-      // used (see superseded comment this replaces) got this wrong in both
-      // directions -- real BRITE-only hierarchy files like 02000
+      // A numeric id threshold (e.g. >=9000) can't tell pathways, BRITE
+      // files and in-file category codes apart -- real BRITE-only
+      // hierarchy files like 02000
       // (Transporters), 03000 (Transcription factors), and 04131 (Membrane
       // trafficking) fall well under 9000; and 09101 (Carbohydrate
       // metabolism), 99980 (Enzymes with EC numbers) etc. are bare CATEGORY
@@ -141,7 +141,7 @@ export function ExternalLinks({
 
   if (source === 'enzyme') {
     const ec = id.replace(/^EC:/i, '')
-    // W32: a partial EC (e.g. "2.7") isn't a valid genome.jp entry on its
+    // A partial EC (e.g. "2.7") isn't a valid genome.jp entry on its
     // own -- KEGG's own convention for an EC class page pads the missing
     // levels with dashes ("ec:2.7.-.-").
     const parts   = ec.split('.')
@@ -164,7 +164,7 @@ export function ExternalLinks({
   }
 
   if (source === 'taxonomy') {
-    // W32: NCBI Taxonomy search has no match for a full `;`-joined lineage
+    // NCBI Taxonomy search has no match for a full `;`-joined lineage
     // string -- it needs just the leaf-most rank's bare name, the same
     // value already shown as this annotation's own display label elsewhere.
     const leafName = taxonomyAwarePrimaryLabel(source, id, name)

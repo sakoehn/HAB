@@ -69,11 +69,11 @@ def insert(conn, id, source, annotation_id, parent=None, depth=None, name=None):
 
 
 def insert_kegg_path(conn, a_id=None, b_id=None, c_id=None, d_id=None):
-    """One real occurrence-path row for kegg_paths -- CR3's fix
-    (_kegg_family_exclusions in correlation_sql.py) reads this table
+    """One real occurrence-path row for kegg_paths --
+    _kegg_family_exclusions in correlation_sql.py reads this table
     instead of annotation_catalog.parent for same-source kegg families,
     since a KEGG node can have multiple real parents (annotation_catalog's
-    single `parent` column can't represent that -- see E14/CR3)."""
+    single `parent` column can't represent that)."""
     full_path = "|".join(v for v in (a_id, b_id, c_id, d_id) if v is not None)
     conn.execute(
         "INSERT INTO kegg_paths (a_id, b_id, c_id, d_id, full_path) VALUES (?, ?, ?, ?, ?)",
@@ -83,12 +83,11 @@ def insert_kegg_path(conn, a_id=None, b_id=None, c_id=None, d_id=None):
 
 
 def insert_cog_path(conn, a_id=None, b_id=None):
-    """One real category-membership row for cog_paths -- P4's fix
-    (_cog_family_exclusions in correlation_sql.py) reads this table
+    """One real category-membership row for cog_paths --
+    _cog_family_exclusions in correlation_sql.py reads this table
     instead of annotation_catalog.parent for same-source cog families,
     since a COG id can have multiple real categories (annotation_catalog's
-    single `parent` column can't represent that -- see E17/P4,
-    docs/AUDIT-2026-10-05.md)."""
+    single `parent` column can't represent that)."""
     full_path = "|".join(v for v in (a_id, b_id) if v is not None)
     conn.execute(
         "INSERT INTO cog_paths (a_id, b_id, full_path) VALUES (?, ?, ?)",
@@ -113,7 +112,7 @@ class TestFamilyEnumeration:
         assert {c["id"] for c in family} == {2, 3, 4}
 
     def test_ref_excluded_from_its_own_same_source_family(self, conn):
-        # Distinct categories -- post-P4, cog's exclusion walk reads
+        # Distinct categories -- cog's exclusion walk reads
         # cog_paths (see TestExclusionRules.test_cog_hierarchy_siblings_and_ancestors_excluded
         # for the specific sibling/ancestor behavior); giving these three
         # different categories keeps this test focused on plain
@@ -145,13 +144,12 @@ class TestFamilyEnumeration:
 
 class TestExclusionRules:
     def test_cog_hierarchy_siblings_and_ancestors_excluded(self, conn):
-        # P4 (docs/AUDIT-2026-10-05.md): cog's same-source exclusion now
-        # reads cog_paths (_cog_family_exclusions), not
-        # annotation_catalog.parent -- a COG id can have multiple real
-        # categories (E17; e.g. COG0028 is real under both E and H), which
-        # the single `parent` column can never represent. This case has
-        # only single-category ids, confirming the simple case still
-        # works via the new path, not just the multi-category case below.
+        # cog's same-source exclusion reads cog_paths
+        # (_cog_family_exclusions), not annotation_catalog.parent -- a COG
+        # id can have multiple real categories (e.g. COG0028 is real under
+        # both E and H), which the single `parent` column can never
+        # represent. This case has only single-category ids, confirming
+        # the simple case works too, not just the multi-category case below.
         insert(conn, 1, "cog", "C", depth=1)       # category (ancestor of ref)
         insert(conn, 2, "cog", "COG0055", depth=2)  # ref
         insert(conn, 3, "cog", "COG1028", depth=2)  # sibling (same category)
@@ -188,18 +186,18 @@ class TestExclusionRules:
         assert {c["id"] for c in family} == {5}
 
     def test_cog_multi_category_excluded_from_every_real_categorys_family(self, conn):
-        # P4's actual fix target: annotation_catalog.parent can only ever
-        # hold ONE of a multi-category COG's real categories --
+        # annotation_catalog.parent can only ever hold ONE of a
+        # multi-category COG's real categories --
         # specifically the alphabetically-first one
         # (EGC_COG_TREE.ipynb's `primary_cat_letter = categories[0]`,
         # confirmed 340 real multi-category COGs affected, e.g. COG0028
         # really in both E and H but stored with parent="E" only) -- but
         # cog_paths records every real membership. COG0028's `parent`
         # below is deliberately set to "E" (matching the real migrated
-        # shape) to prove this isn't fixed by accident: under the OLD
-        # by_id/children_of walk (keyed on this very `parent` column),
-        # COG0028 is only ever findable as a descendant of E, so it would
-        # have silently stayed IN H's family -- the real bug.
+        # shape) to prove this isn't passing by accident: a
+        # by_id/children_of walk keyed on this `parent` column could only
+        # ever find COG0028 as a descendant of E, so it would wrongly stay
+        # IN H's family.
         insert(conn, 20, "cog", "E", depth=1)                           # category E
         insert(conn, 21, "cog", "H", depth=1)                           # category H -- unrelated to E
         insert(conn, 22, "cog", "COG0028", parent="E", depth=2)         # real member of BOTH E and H
@@ -305,9 +303,9 @@ class TestExclusionRules:
         assert {c["id"] for c in family} == {2, 3}
 
     def test_kegg_hierarchy_siblings_and_ancestors_excluded(self, conn):
-        # Single-real-parent case (the common one) -- CR3's kegg_paths-based
-        # walk (_kegg_family_exclusions) must still get this right, not
-        # just the new multi-parent case below. Reads kegg_paths, not
+        # Single-real-parent case (the common one) -- the kegg_paths-based
+        # walk (_kegg_family_exclusions) must get this right too, not
+        # just the multi-parent case below. Reads kegg_paths, not
         # annotation_catalog.parent, for kegg same-source families -- the
         # `insert(...)` rows below deliberately don't even set `parent`.
         insert(conn, 10, "kegg", "A1", depth=1)  # grandparent
@@ -326,9 +324,9 @@ class TestExclusionRules:
         assert {c["id"] for c in family} == {14, 15}
 
     def test_kegg_multi_parent_ko_excluded_from_every_real_parents_family(self, conn):
-        # CR3's actual fix target: annotation_catalog.parent can only ever
-        # hold ONE of a multi-parent KO's real parents (E14 confirmed KOs
-        # like hexokinase have up to 14), but kegg_paths records every
+        # annotation_catalog.parent can only ever hold ONE of a
+        # multi-parent KO's real parents (KOs like hexokinase have up to
+        # 14), but kegg_paths records every
         # real occurrence. A KO genuinely belonging to two different
         # pathways must be excluded from BOTH pathways' families, not just
         # whichever one its single recorded parent happened to be.
@@ -349,7 +347,7 @@ class TestExclusionRules:
         assert 24 in family_p1_ids      # KUnrelated stays -- real member of neither
 
         family_p2_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=21, target_source="kegg")}
-        assert 22 not in family_p2_ids  # KMulti excluded from P2's family too -- the actual bug this fixes
+        assert 22 not in family_p2_ids  # KMulti excluded from P2's family too -- its other real parent
 
     def test_kegg_multi_parent_ko_as_ref_excludes_all_its_real_parents(self, conn):
         # The reverse direction: when the multi-parent KO itself is ref,
@@ -419,26 +417,19 @@ class TestTaxonomyDepthCutoff:
         assert {c["id"] for c in family} == {2, 3}
 
 
-class TestCR9StrainSelfCorrelation:
-    # CR9 (docs/AUDIT-2026-09-22.md): the ancestor walk in
-    # get_family_candidates keys off `by_id`, which is built only from
-    # target_rows -- itself already capped at depth <= TAXONOMY_DEPTH_CUTOFF
-    # (see TestTaxonomyDepthCutoff above). For a STRAIN reference (depth 8),
-    # ref_parent is the species (depth 7) -- one level past the cutoff, so
-    # it's not a key in by_id and the walk stops on its very first lookup.
-    # Every real ancestor from genus (depth 6) up through domain (depth 1)
-    # then stays unexcluded, despite each one genuinely containing every
-    # gene the strain has. Confirmed live against the real local database
-    # before writing this fix: a real depth-8 strain reference leaked
-    # exactly 6 real ancestors (depths 1-6) as "significant correlates" of
-    # itself.
-    #
-    # A SPECIES reference (depth 7) doesn't hit this bug under the old code
-    # -- ref_parent is the genus (depth 6), which *is* in by_id, so the walk
-    # continues correctly all the way to domain. Both cases are covered here
-    # since the fix replaces the whole ancestor-computation mechanism for
-    # taxonomy (a direct ';'-prefix check against ref_annotation_id, not a
-    # walk through the depth-truncated by_id map), not just the strain path.
+class TestTaxonomyReferenceExcludesItsAncestors:
+    # A walk up `by_id` can't find a deep reference's ancestors: by_id is
+    # built only from target_rows, which are capped at depth <=
+    # TAXONOMY_DEPTH_CUTOFF (see TestTaxonomyDepthCutoff above). For a
+    # STRAIN reference (depth 8), ref_parent is the species (depth 7) --
+    # past the cutoff, so not a key in by_id -- and every real ancestor
+    # from genus up to domain would stay unexcluded, despite each one
+    # containing every gene the strain has (on the real database, a strain
+    # reference would list exactly its 6 ancestors as "significant
+    # correlates" of itself). get_family_candidates instead excludes every
+    # ';'-prefix of ref_annotation_id directly. Both a strain and a species
+    # reference are covered, since that check replaces the whole
+    # ancestor computation for taxonomy, not just the strain path.
 
     def test_strain_reference_excludes_every_real_ancestor_past_the_depth_cutoff(self, conn):
         insert(conn, 1, "taxonomy", "D", depth=1)                                                            # domain

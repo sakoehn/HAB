@@ -66,23 +66,15 @@ TIDE_SHIFT_HOURS = 1
 
 # ── Correlation tuning ────────────────────────────────────────────────────────
 
-# Lag window in sample units: every offset from 0 to ±6 (0-24h at the
-# dataset's 4-hour sampling cadence).
-#
-# C8 (docs/AUDIT-2026-10-05.md): this used to skip ±4/±5 (jumping
-# straight from ±3 to ±6), forcing a real 4- or 5-sample lead/lag onto
-# whichever of the 3- or 6-sample buckets was closer -- confirmed
-# directly, up to 8h of avoidable lag-label error. Filling the gap
-# makes this a complete, non-skipping sweep of every real offset up to
-# a full day, not an arbitrary subset of them.
+# Lag window in sample units: every offset from 0 to ±6 with none skipped
+# (0-24h at the dataset's 4-hour sampling cadence), so a real lead/lag is
+# never forced onto a neighboring bucket.
 CORRELATION_LAGS    = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6]
 LAG_HOURS_PER_SAMPLE = 4
 
-# CR8 (docs/AUDIT-2026-09-22.md): circular_shift's null used to be built
-# from PERMUTATION_N=1000 randomly-drawn shifts -- replaced by enumerating
-# the valid shift range exhaustively (see _circular_shift_pvalue in
-# correlation_sql.py), so there is no longer a sample count or seed to
-# configure here.
+# circular_shift's null enumerates every valid shift exactly once (see
+# _circular_shift_pvalue in correlation_sql.py), so there is no sample
+# count or random seed to configure here.
 
 # ── Data backend selection ────────────────────────────────────────────────────
 #

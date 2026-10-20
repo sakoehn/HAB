@@ -1,11 +1,10 @@
 /**
  * egc-chart-tide-timepoints-filter.component.test.tsx
  * =======================================================
- * F7 (docs/AUDIT-2026-10-05.md): EgcChart's native tide overlay used to be
- * bounded only by dateFrom/dateTo, never by the separate Timepoints pill
- * filter (selectedDates/selectedTimes) -- narrowing via pills (without
- * touching the date range inputs at all) still showed a tide trace
- * spanning the whole loaded range, out of sync with the EGC line itself.
+ * EgcChart's native tide overlay must be bounded by the Timepoints pill
+ * filter (selectedDates/selectedTimes) too, not just dateFrom/dateTo --
+ * otherwise narrowing via pills would still show a tide trace spanning the
+ * whole loaded range, out of sync with the EGC line itself.
  *
  * In its own file, not alongside tide-trace-native-resolution.component.
  * test.tsx's other tide tests: useSolarTideData caches its /api/tides
@@ -75,7 +74,7 @@ mockFetch.mockImplementation((url: string) => {
   return Promise.resolve(jsonResponse({}))
 })
 
-describe('EgcChart — Timepoints pill filter also bounds the tide trace (F7)', () => {
+describe('EgcChart — Timepoints pill filter also bounds the tide trace', () => {
   it('narrows the tide trace to the selected dates, with dateFrom/dateTo left untouched', async () => {
     const user = userEvent.setup()
     render(

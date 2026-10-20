@@ -713,10 +713,9 @@ describe('ScaffoldModal — detail pagination', () => {
     expect(mockFetch.mock.calls.length).toBe(2)
   })
 
-  // W29 (docs/AUDIT-2026-09-22.md): the audit's own live example -- click
-  // sample A (slow response), then sample B before A resolves. B's
-  // drill-down used to show A's scaffolds once A's stale response finally
-  // landed and overwrote B's real data.
+  // Click sample A (slow response), then sample B before A resolves. B's
+  // drill-down must not show A's scaffolds once A's stale response finally
+  // lands.
   it('clicking sample A (slow), then sample B before A resolves, ends up showing B\'s real scaffolds, not A\'s stale ones', async () => {
     mockApiSuccess({ data: MOCK_SUMMARY })
     render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)
@@ -930,7 +929,7 @@ describe('GroupScaffoldModal', () => {
     expect(screen.queryByTestId('group-retry-btn')).toBeNull()
   })
 
-  // W (2.6, docs/AUDIT-2026-09-22.md): "peak scaffolds"/"peak genes" must be
+  // "peak scaffolds"/"peak genes" must be
   // the peak of the summed-per-date series the chart actually plots, not
   // the single largest per-member row -- two members each contributing a
   // smaller count on the SAME date sum to something bigger than either one
@@ -996,12 +995,11 @@ describe('GroupScaffoldModal', () => {
     expect(screen.getByText('18', { selector: '.scaffold-stat-val' })).toBeTruthy()
   })
 
-  // G10 (docs/AUDIT-2026-10-05.md): the retry button was never disabled
-  // while a retry was already in flight, and the merge appended new rows
-  // rather than replacing by (annotationId, sample) -- two overlapping
-  // clicks fired two overlapping fetch rounds for the same failed
-  // member, both of which got appended, inflating the total (9+9+9=27
-  // instead of the real 9+9=18).
+  // The retry button is disabled while a retry is in flight, and the merge
+  // replaces by (annotationId, sample) rather than appending -- otherwise
+  // two overlapping clicks would append two fetch rounds for the same
+  // failed member, inflating the total (9+9+9=27 instead of the real
+  // 9+9=18).
   it('double-clicking retry does not duplicate rows or inflate the total', async () => {
     mockPartialFailure()
     render(
@@ -1040,14 +1038,13 @@ describe('GroupScaffoldModal', () => {
     expect(screen.queryByText('27', { selector: '.scaffold-stat-val' })).toBeNull()
   })
 
-  // G2 (docs/AUDIT-2026-10-05.md): same overcounting bug W22 already fixed
-  // in ScaffoldExplorePanel -- a group containing both a taxonomy node and
-  // its own descendant double-counted every scaffold/gene already inside
-  // the ancestor's own total. Taxonomy's redundancy check is a free
+  // Same overcounting guard as ScaffoldExplorePanel -- a group containing
+  // both a taxonomy node and its own descendant would double-count every
+  // scaffold/gene already inside the ancestor's own total. Taxonomy's redundancy check is a free
   // string-prefix test (utils/annotationHierarchy.ts) -- no extra fetch to
   // mock, so this also proves the descendant is never even requested, not
   // just excluded from the sum after the fact.
-  describe('GroupScaffoldModal — nested (redundant) members are excluded, not double-counted (G2)', () => {
+  describe('GroupScaffoldModal — nested (redundant) members are excluded, not double-counted', () => {
     function mockAncestorOnly() {
       mockFetch.mockImplementation((url: string) => {
         if (url.includes('annotation_id=Bacteria%3BProteobacteria')) {

@@ -175,12 +175,11 @@ export function TaxonomyPage({
     }
   }, [state.rootId, state.excludedIds, state.seriesCache, fetchSeries])
 
-  // G5 (docs/AUDIT-2026-10-05.md): the effect above only fetches a taxon
-  // that has NO cache entry yet -- once a fetch resolves to 'error', the
-  // entry exists (just with that status), so the effect's own `!cache[key]`
-  // guard never fires again for it. A transient failure (one timeout) was
-  // therefore permanent for the rest of the session, with no way to try
-  // again short of a full page reload. Evicting the entry makes the next
+  // The effect above only fetches a taxon that has NO cache entry yet --
+  // once a fetch resolves to 'error', the entry exists (just with that
+  // status), so the effect's own `!cache[key]` guard never fires again for
+  // it, and a transient failure (one timeout) would be permanent for the
+  // rest of the session. Evicting the entry makes the next
   // render see it as missing again, which the existing effect above picks
   // right back up -- no separate fetch path needed.
   const retrySeries = useCallback((annotationId: string) => {
@@ -199,11 +198,11 @@ export function TaxonomyPage({
 
   const excludedList     = [...state.excludedIds]
   const excludedStatuses = excludedList.map(id => cache[`${id}::taxonomy`]?.status ?? 'idle')
-  // W19: 'loading' and 'error' were previously both just "not ready", so a
-  // failed exclusion fetch was visually indistinguishable from one still in
-  // flight -- the chart silently fell back to the unmodified full series
-  // while the title still claimed the exclusion was applied. These are now
-  // tracked separately so a failure can be surfaced explicitly instead.
+  // 'loading' and 'error' are tracked separately so a failed exclusion
+  // fetch can be surfaced explicitly -- treated as one "not ready" state, a
+  // failure would look like one still in flight while the chart fell back
+  // to the unmodified full series and the title still claimed the
+  // exclusion was applied.
   const excludedLoaded = excludedList.filter((_, i) => excludedStatuses[i] === 'ok')
   const excludedFailed = excludedList.filter((_, i) => excludedStatuses[i] === 'error')
   const excludedPending = excludedList.filter((_, i) =>
@@ -229,7 +228,7 @@ export function TaxonomyPage({
 
     // Only wait on exclusions still genuinely in flight -- a failed one
     // never becomes 'ok', so waiting on it too would hang the chart on
-    // [full] forever with no explanation (the actual W19 bug). Once every
+    // [full] forever with no explanation. Once every
     // exclusion has settled (ok or error), show whatever succeeded.
     if (excludedList.length === 0 || excludedPending.length > 0) return [full]
     if (excludedLoaded.length === 0) return [full] // every exclusion failed
@@ -496,11 +495,10 @@ export function TaxonomyPage({
                     />
                   </div>
 
-                  {/* W19: explicit, visible error state -- without this, a
-                      failed exclusion fetch looked identical to "still
-                      loading" and the chart silently fell back to the
-                      unmodified total while the title kept claiming the
-                      exclusion. */}
+                  {/* Explicit, visible error state -- without this, a
+                      failed exclusion fetch would look identical to "still
+                      loading" while the chart fell back to the unmodified
+                      total and the title kept claiming the exclusion. */}
                   {excludedFailed.length > 0 && (
                     <div className="state-box error" style={{ padding: '10px 14px', marginBottom: 12 }}>
                       Failed to load {excludedFailed.length} exclusion{excludedFailed.length !== 1 ? 's' : ''}:

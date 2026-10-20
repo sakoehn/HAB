@@ -71,10 +71,9 @@ def test_search_returns_correct_shape(client):
     assert resp.status_code == 200
     body = resp.json()
 
-    # W24 (docs/AUDIT-2026-09-22.md) added samples_were_capped/leaf_count
-    # (non-leaf-id disclosure) and real page/page_size/total_pages
-    # pagination alongside the pre-existing keys. results_were_truncated
-    # (2026-09-25) discloses get_mappings_sql's hard row-count safety
+    # samples_were_capped/leaf_count disclose a non-leaf id's sample cap,
+    # alongside real page/page_size/total_pages pagination.
+    # results_were_truncated discloses get_mappings_sql's hard row-count safety
     # limit separately from samples_were_capped -- a different failure
     # mode with a different cause (see search_mappings's docstring).
     assert set(body.keys()) == {
@@ -85,9 +84,8 @@ def test_search_returns_correct_shape(client):
     assert body["annotation_id"] == "COG0055"
     assert body["source"] == "cog"
     # total is the full match count across all pages; data is just page 1
-    # (default page_size=100) -- these legitimately differ once real
-    # pagination exists (W24), unlike the pre-pagination response where
-    # `data` always held everything.
+    # (default page_size=100) -- these legitimately differ with real
+    # pagination.
     assert len(body["data"]) == min(body["total"], body["page_size"])
     assert body["data"], "expected at least one matching row"
     assert body["samples_were_capped"] is False, "a single real leaf id must never trigger the broad-category cap"
@@ -236,8 +234,8 @@ def test_exact_match_rejects_substring_query(client):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# W24 (docs/AUDIT-2026-09-22.md): non-leaf (pathway/class/category) ids
-# now resolve to their member leaves' mappings at the route level, and a
+# Non-leaf (pathway/class/category) ids resolve to their member leaves'
+# mappings at the route level, and a
 # broad category clamps sample_count with a disclosed leaf_count/
 # samples_were_capped rather than silently fetching millions of rows.
 # ═══════════════════════════════════════════════════════════════════════════
@@ -294,27 +292,25 @@ def test_bypass_cap_honors_the_full_requested_sample_count(client):
 
 
 def test_bypass_cap_actually_changes_the_real_data_not_just_the_metadata(client):
-    """A2 (docs/AUDIT-2026-10-05.md): the metadata-only assertions above
-    (samples_were_capped/sample_count) are computed from routes.py's own
-    allowed_samples list, which was already correct before this fix --
-    get_mappings_sql had its own SEPARATE internal clamp that re-capped to
-    5 samples regardless of bypass_cap, so the metadata could claim
-    "bypassed, sample_count=10" while the actual query silently still only
-    scanned 5. This compares the real row data/total between the two calls
-    directly -- they must differ, not just the self-reported metadata.
+    """The metadata-only assertions above (samples_were_capped/
+    sample_count) are computed from routes.py's own allowed_samples list,
+    but get_mappings_sql has its own SEPARATE internal clamp -- if it
+    ignored bypass_cap, the metadata could claim "bypassed,
+    sample_count=10" while the actual query still only scanned 5. This
+    compares the real row data/total between the two calls directly --
+    they must differ, not just the self-reported metadata.
 
     Category A (leaf_count=22, just over _MANY_LEAVES_THRESHOLD), not H --
     H's own real row count is broad enough to hit _MAPPINGS_ROW_LIMIT at
-    BOTH 5 and 10 samples once A3's DISTINCT fix (below) is also in place,
-    which would make capped/bypassed totals identical for an unrelated
+    BOTH 5 and 10 samples (see the DISTINCT subquery tests below), which
+    would make capped/bypassed totals identical for an unrelated
     reason (both legitimately truncated to the same limit) and mask the
     very difference this test exists to catch. A's real counts (measured
     directly: 4,000 rows at 5 samples, 8,397 at 10) stay comfortably under
     the row limit at both sizes, so only the sample-cap mechanism is live."""
-    # page_size=20000 (not the old 100000): A6 (docs/AUDIT-2026-10-05.md)
-    # capped page_size at le=50_000 (matching _MAPPINGS_ROW_LIMIT, the
-    # real ceiling get_mappings_sql's own hard row limit already
-    # imposes) -- 20000 still comfortably exceeds this test's real row
+    # page_size=20000: the route caps page_size at le=50_000 (matching
+    # _MAPPINGS_ROW_LIMIT, get_mappings_sql's own hard row limit), and
+    # 20000 comfortably exceeds this test's real row
     # counts at both sizes (4,000 / 8,397), so every row still lands on
     # page 1 either way.
     capped = client.get(
@@ -381,21 +377,17 @@ def test_high_volume_leaf_id_is_capped_by_row_count_not_leaf_count(client):
 
 
 def test_high_volume_leaf_id_is_capped_the_same_way_in_its_prefixed_form(client):
-    """A1 (docs/AUDIT-2026-10-05.md): the exact sibling test above
+    """The sibling test above
     (test_high_volume_leaf_id_is_capped_by_row_count_not_leaf_count), but
-    for the "KO:K02014" form -- a real, documented/tested supported call
-    pattern (see test_bare_id_normalizes_to_prefixed_storage_form,
-    tests/sql/test_mappings_sql.py). search_mappings' own cap-check used
-    to call _expand_to_leaf_ids directly with this unstripped id, which
-    resolved to zero real leaves there (kegg_paths stores bare ids only)
-    -- leaf_count=0 skipped every cap, and the route fell through to the
-    same uncapped, 271,284-row/249.8s query this cap exists to prevent.
-    Deliberately NOT run at sample_count=128 against the pre-fix code to
-    confirm this (that's the real multi-minute query the bug causes) --
-    the root-cause mechanism is already confirmed directly, cheaply, and
-    fast in test_expand_to_leaf_ids_needs_the_prefix_stripped_first. This
-    test only needs to pass FAST against the fix, which it does once the
-    cap actually fires."""
+    for the "KO:K02014" form -- a supported call pattern (see
+    test_bare_id_normalizes_to_prefixed_storage_form,
+    tests/sql/test_mappings_sql.py). If search_mappings' cap-check passed
+    this id to _expand_to_leaf_ids unstripped, it would resolve to zero
+    leaves (kegg_paths stores bare ids only), leaf_count=0 would skip every
+    cap, and the route would run the uncapped 271,284-row / ~250s query
+    the cap exists to prevent. The mechanism itself is checked cheaply in
+    test_expand_to_leaf_ids_needs_the_prefix_stripped_first; this test
+    passes fast because the cap fires."""
     resp = client.get(
         "/mappings/search",
         params={"annotation_id": "KO:K02014", "source": "kegg", "sample_count": 128},
@@ -489,18 +481,16 @@ def test_single_abundant_leaf_taxon_is_row_limited_even_though_never_capped(clie
 
 
 def test_cog_broad_category_truncation_is_correctly_flagged(client):
-    """A3 (docs/AUDIT-2026-10-05.md): cog/enzyme's junction-table subquery
-    used to select a bare (non-DISTINCT) mapping_id -- a gene matching
-    more than one of the leaf ids a broad category expands to (a real
-    case for a multi-category search) produced duplicate raw ids inside
+    """cog/enzyme's junction-table subquery must select DISTINCT
+    mapping_ids -- a gene matching more than one of the leaf ids a broad
+    category expands to would otherwise produce duplicate raw ids inside
     the LIMIT, so the post-GROUP-BY distinct count could land under
-    _MAPPINGS_ROW_LIMIT even though real data was dropped.
-    results_were_truncated read False while the response was, measured
-    live before this fix: cog category H at 5 samples, true answer
-    100,275 distinct genes; the API returned only 49,969 (49.8%). kegg/
-    taxonomy's per-row subqueries never had this gap (mappings.id is
-    already unique per row) -- see test_broad_taxonomy_node_is_capped_too
-    above for that sibling case, already correct before this fix."""
+    _MAPPINGS_ROW_LIMIT even though real data was dropped, and
+    results_were_truncated would read False (cog category H at 5 samples
+    has 100,275 distinct genes; a non-DISTINCT subquery returns only
+    49,969). kegg/taxonomy's per-row subqueries don't need this
+    (mappings.id is already unique per row) -- see
+    test_broad_taxonomy_node_is_capped_too above."""
     resp = client.get(
         "/mappings/search",
         params={"annotation_id": "H", "source": "cog", "sample_count": 5, "page_size": 1},
@@ -512,8 +502,8 @@ def test_cog_broad_category_truncation_is_correctly_flagged(client):
 
 
 def test_enzyme_broad_category_truncation_is_correctly_flagged(client):
-    """Same A3 fix, enzyme side -- gene_enzyme's junction-table subquery
-    had the identical non-DISTINCT gap as gene_cog's above. Enzyme class 1
+    """Same check, enzyme side -- gene_enzyme's junction-table subquery
+    needs DISTINCT for the same reason as gene_cog's above. Enzyme class 1
     (Oxidoreductases) is real and broad enough to exceed
     _MAPPINGS_ROW_LIMIT at a capped 5 samples (measured directly against
     the real db before writing this test)."""
@@ -565,8 +555,8 @@ def test_concurrent_requests_do_not_hang_or_corrupt_the_shared_connection(client
     assert all(s == 200 for s in statuses), f"Expected all 200, got: {statuses}"
 
 
-# A6 (docs/AUDIT-2026-10-05.md): page/page_size had no input bounds --
-# page_size=0 divides by zero in paginate() (a real HTTP 500), and a
+# page/page_size must be bounded -- page_size=0 divides by zero in
+# paginate() (a real HTTP 500), and a
 # negative page/page_size produces a negative slice start, which Python
 # silently reinterprets as an index from the end of the list rather than
 # raising.

@@ -44,7 +44,7 @@ export function DateRangePicker({
         className="field date-field"
         value={from}
         min={minDate}
-        // G14 (docs/AUDIT-2026-10-05.md): also capped at `to` (when set),
+        // Also capped at `to` (when set),
         // not just the dataset's own max -- without this, picking a
         // `from` after the already-selected `to` silently produces an
         // inverted range that empties every chart/table reading it, with

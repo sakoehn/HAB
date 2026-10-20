@@ -2,8 +2,7 @@
 add_at_p_floor_column.py
 ===========================
 One-time migration for a database created BEFORE correlations_cache
-gained its `at_p_floor` column (C2, docs/AUDIT-2026-10-05.md;
-create_sql_schema.py). A fresh schema creates the column directly --
+gained its `at_p_floor` column (see create_sql_schema.py). A fresh schema creates the column directly --
 this script is only for a database that already has correlations_cache
 without it.
 

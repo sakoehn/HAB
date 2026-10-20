@@ -11,8 +11,7 @@ Why not the live-server pattern its siblings use: TestClient only runs
 main.py's lifespan() (which sets up app.state.sql_conn) when entered as a
 context manager. tests/test_unit_backend.py's patched_client fixture
 skips that step, which is the exact root cause of a large pre-existing
-gap where every DATA_BACKEND=sql route 500s under that fixture (see
-project memory "test-suite-triage", Category 1). Using the context-manager
+gap where every DATA_BACKEND=sql route 500s under that fixture. Using the context-manager
 form here means this test always actually runs -- no server to remember
 to start, no silent skip if one isn't up.
 
@@ -88,11 +87,8 @@ def test_unknown_id_returns_404(client):
 
 
 def test_explicitly_empty_parent_returns_the_same_roots_as_omitting_it(client):
-    """A7 (docs/AUDIT-2026-10-05.md): parent="" (a real, explicitly empty
-    string) used to fail this route's `is not None` guard and 404 as
-    "Unknown COG node ''" instead of being treated the same as omission.
-    Confirmed live before this fix: omitted gave a real root count,
-    parent="" gave a 404."""
+    """parent="" (a real, explicitly empty string) must be treated the
+    same as omission, not 404 as an unknown node."""
     omitted = client.get("/cog/children")
     empty   = client.get("/cog/children", params={"parent": ""})
     assert omitted.status_code == 200

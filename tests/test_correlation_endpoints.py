@@ -80,15 +80,14 @@ def client(tmp_path, monkeypatch):
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id, name, depth) VALUES (2, 'kegg', 'K00002', 'Nitrogenase', 3)")
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (3, 'kegg', 'K00003')")
 
-    # CR4 regression: a fourth candidate, cache-MISS, whose value never
-    # changes across samples -- pearsonr returns NaN for it, which used to
-    # crash the whole family request instead of just omitting this one
-    # candidate. Deliberately not pre-seeded into correlations_cache, so
+    # A fourth candidate, cache-MISS, whose value never changes across
+    # samples -- pearsonr returns NaN for it, which must omit just this one
+    # candidate rather than crash the whole family request. Deliberately not pre-seeded into correlations_cache, so
     # scoring it exercises the real compute-on-miss path, not a cache hit.
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (4, 'kegg', 'K00004')")
-    # CR5 regression: a fifth candidate, also significant but weaker than
-    # (1,2)'s r=0.9 -- used to prove results come back sorted by |r|
-    # descending, not in catalog-id/insertion order.
+    # A fifth candidate, also significant but weaker than (1,2)'s r=0.9 --
+    # proves results come back sorted by |r| descending, not in
+    # catalog-id/insertion order.
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (5, 'kegg', 'K00005')")
     samples = [f"s{i:02d}" for i in range(1, 13)]  # 12 samples, above the 10-point floor
     for i, sample in enumerate(samples):
@@ -143,8 +142,8 @@ class TestCorrelationEndpoint:
         assert body["r"] == 0.9
         assert body["p"] == 0.0001
 
-    # C4 (docs/AUDIT-2026-10-05.md): same allowlist-up-front fix as the
-    # family endpoint, for this single-pair endpoint too.
+    # Same allowlist-up-front validation as the family endpoint, for this
+    # single-pair endpoint too.
 
     def test_invalid_method_returns_400(self, client):
         response = client.get(
@@ -177,17 +176,18 @@ def circular_shift_client(tmp_path, monkeypatch):
     # cache-miss compute against empty data (must return null, not crash
     # or accidentally reuse an unrelated cached row).
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (2, 'kegg', 'K00002')")
-    # id 4: constant across every sample -- CR4 x CR2 composition check.
+    # id 4: constant across every sample -- the NaN guard must hold for
+    # circular_shift too.
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (4, 'kegg', 'K00004')")
     # id 6: real, strongly-correlated data -- the positive-path case.
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (6, 'kegg', 'K00006')")
 
-    # CR8 (docs/AUDIT-2026-09-22.md): 30, not 12 -- max|lag|=6 leaves no
-    # valid interior shift at n=12 post-fix (see test_correlation_math.py's
-    # TestCircularShiftPvalue), which would make every p-value in this
-    # fixture a trivial, uninformative 1.0 regardless of how strong the
-    # real relationship is. 30 gives 17 valid shifts, enough for this
-    # fixture's near-noiseless copy to demonstrate a real low p.
+    # 30, not 12 -- max|lag|=6 leaves no valid interior shift at n=12 (see
+    # test_correlation_math.py's TestCircularShiftPvalue), which would make
+    # every p-value in this fixture a trivial, uninformative 1.0 regardless
+    # of how strong the real relationship is. 30 gives 5 valid shifts,
+    # enough for this fixture's near-noiseless copy to demonstrate a real
+    # low p.
     samples = [f"s{i:02d}" for i in range(1, 31)]
     for i, sample in enumerate(samples):
         wobble = 3.0 * ((i % 3) - 1)  # non-monotonic, avoids the shift/re-lag self-similarity pitfall
@@ -223,11 +223,10 @@ def circular_shift_client(tmp_path, monkeypatch):
 
 
 class TestCorrelationEndpointCircularShift:
-    # CR2 (docs/AUDIT.md): end-to-end coverage for method="circular_shift"
-    # through the real HTTP layer and cache-miss compute path -- the pure
-    # math is already covered in test_correlation_math.py, this confirms
-    # it's actually wired up and reachable, and composes correctly with
-    # CR4 (the constant-candidate crash fix), not just in isolation.
+    # End-to-end coverage for method="circular_shift" through the real
+    # HTTP layer and cache-miss compute path -- the pure math is covered in
+    # test_correlation_math.py; this confirms it's wired up and reachable,
+    # and that the constant-candidate NaN guard holds for it too.
 
     def test_computes_a_real_result_end_to_end(self, circular_shift_client):
         response = circular_shift_client.get(
@@ -239,17 +238,14 @@ class TestCorrelationEndpointCircularShift:
         body = response.json()
         assert body is not None
         assert body["r"] > 0.9  # near-noiseless copy, ids 1 and 6 -- see fixture
-        # CR8 (docs/AUDIT-2026-09-22.md), floor corrected by the C1 re-audit
-        # (docs/AUDIT-2026-10-05.md -- the exclusion margin is 2*max_lag, not
-        # max_lag, see _circular_shift_pvalue): with 30 samples (5 valid
-        # shifts under the corrected margin), a near-noiseless copy should
+        # With 30 samples (5 valid shifts under the 2*max_lag exclusion
+        # margin, see _circular_shift_pvalue), a near-noiseless copy should
         # hit the real permutation floor, (1+0)/(1+5) = 1/6 -- not just "some
-        # value between 0 and 1", which would also trivially pass if p were
-        # always the unfixed 1.0 default this fixture used to be too small
-        # to tell apart from.
+        # value between 0 and 1", which would also pass if p were always
+        # the 1.0 no-valid-shift default.
         assert body["p"] == pytest.approx(1 / 6)
         assert body["n_pairs"] == 24  # best lag=6 trims the 30-sample window to 24
-        # C2 (docs/AUDIT-2026-10-05.md): this p IS the resolution limit --
+        # This p IS the resolution limit --
         # end-to-end confirmation the flag reaches the HTTP response, not
         # just the internal dict _get_or_compute_correlation returns.
         assert body["at_p_floor"] is True
@@ -297,7 +293,7 @@ class TestCorrelationEndpointCircularShift:
         assert response.json() is None
 
     def test_constant_candidate_is_omitted_here_too(self, circular_shift_client):
-        # CR4 x CR2 composition: the same constant-candidate protection
+        # The same constant-candidate protection
         # must hold for circular_shift, not just the other 3 methods --
         # id 4 (K00004) is constant across every sample in the fixture.
         response = circular_shift_client.get(
@@ -321,15 +317,12 @@ class TestCorrelationFamilyEndpoint:
 
         assert response.status_code == 400
 
-    # C4 (docs/AUDIT-2026-10-05.md): method/metric used to only ever get
-    # validated deep inside the per-candidate scoring loop -- a typo
-    # reached that check only after resolving the whole family (and, for
-    # circular_shift, running the full prescreening pass), so it 500'd
-    # only after real work was already done, not immediately. These must
-    # 400 before any of that work starts -- confirmed by asking for a
-    # real reference that genuinely has family candidates (not an empty
-    # or unknown one), so a slow/wasted-work path would actually have
-    # been reachable if validation didn't happen first.
+    # A bad method/metric must 400 before any work starts, not 500 deep
+    # inside the per-candidate scoring loop after resolving the whole
+    # family (and, for circular_shift, running the full prescreening pass).
+    # Uses a real reference that genuinely has family candidates (not an
+    # empty or unknown one), so a slow/wasted-work path would actually be
+    # reachable if validation didn't happen first.
 
     def test_invalid_method_returns_400_before_any_scoring(self, client):
         response = client.get(
@@ -398,7 +391,7 @@ class TestCorrelationFamilyEndpoint:
         assert entry["lag_hours"] == 12  # 3 samples * LAG_HOURS_PER_SAMPLE (4)
 
     def test_results_are_sorted_by_absolute_r_descending(self, client):
-        # CR5: (1,5) was inserted into correlations_cache AFTER (1,2), with
+        # (1,5) was inserted into correlations_cache AFTER (1,2), with
         # a higher catalog id but a weaker |r| (0.5 vs 0.9) -- catalog-id
         # order and |r| order disagree here on purpose, so this only
         # passes if the endpoint actually sorts rather than returning
@@ -429,7 +422,7 @@ class TestCorrelationFamilyEndpoint:
         assert results[0]["catalog_id"] == 2  # the stronger of the two significant matches
 
     def test_significant_count_reflects_the_true_total_even_when_limit_cuts_it_shorter(self, client):
-        # CR10 (docs/AUDIT-2026-09-22.md): a request that caps `results` at
+        # A request that caps `results` at
         # 1 must still disclose that there were really 2 significant
         # candidates -- otherwise "1 result" and "1 of 2,847 results" render
         # identically and a real cap looks like the whole answer.
@@ -447,10 +440,9 @@ class TestCorrelationFamilyEndpoint:
         assert body["significant_count"] == 2  # pairs (1,2) and (1,5) -- (1,3) isn't significant
 
     def test_constant_candidate_is_omitted_not_a_crash(self, client):
-        # CR4: candidate 4 (K00004) is constant across every sample -- must
-        # come back 200 with candidate 4 simply absent from the results,
-        # not a 500 from the old NaN -> IntegrityError -> None-subscript
-        # crash chain.
+        # Candidate 4 (K00004) is constant across every sample -- must come
+        # back 200 with candidate 4 simply absent from the results, not a
+        # 500 from a NaN -> IntegrityError -> None-subscript crash chain.
         response = client.get(
             "/correlations/family",
             params={
@@ -542,19 +534,13 @@ def prescreen_client(tmp_path, monkeypatch):
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (2, 'kegg', 'K00002')")  # strong
     conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (3, 'kegg', 'K00003')")  # weak/none
 
-    # CR8 (docs/AUDIT-2026-09-22.md): 50, not 12 -- same reasoning as
-    # circular_shift_client above, but these prescreen tests additionally
-    # gate on the q<0.05 SIGNIFICANCE of the surviving candidate after
-    # circular_shift scores it, not just on which candidate the fast
-    # pre-screen keeps. At n=12 (no valid shift) or even n=30 K00002 would
-    # be correctly prescreened-in but could never clear q<0.05 regardless.
-    # Re-audit (docs/AUDIT-2026-10-05.md, C1): the corrected, coarser
-    # 2*max_lag exclusion margin raised the floor at any given n (fewer
-    # evaluable shifts), so n=40 -- which cleared the gate at p=0.036 under
-    # the old margin -- now only reaches p=0.0625 and no longer clears it.
-    # Measured directly: n=50 gives this fixture's near-noiseless copy a
-    # real p=0.038, the smallest n (in steps of 10) that still clears the
-    # gate under the corrected margin.
+    # 50, not 12 -- same reasoning as circular_shift_client above, but
+    # these prescreen tests additionally gate on the q<0.05 SIGNIFICANCE of
+    # the surviving candidate after circular_shift scores it, not just on
+    # which candidate the fast pre-screen keeps. With the 2*max_lag
+    # exclusion margin, n=12 has no valid shift and n=40 only reaches
+    # p=0.0625; n=50 gives this fixture's near-noiseless copy p=0.038, the
+    # smallest n (in steps of 10) that clears the gate.
     samples = [f"s{i:02d}" for i in range(1, 51)]
     for i, sample in enumerate(samples):
         wobble = 3.0 * ((i % 3) - 1)
@@ -583,7 +569,7 @@ def prescreen_client(tmp_path, monkeypatch):
 
 @pytest.fixture
 def prescreen_n_aware_client(tmp_path, monkeypatch):
-    # C3 (docs/AUDIT-2026-10-05.md): the real failure case -- a SPARSE
+    # The real failure case -- a SPARSE
     # candidate at a near-perfect raw |r| must NOT beat a FULLY-SAMPLED
     # candidate at a real, substantial |r| just because raw |r| ignores
     # how much data backs each one. Exact construction verified directly
@@ -644,9 +630,9 @@ def prescreen_n_aware_client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
-# C6 (docs/AUDIT-2026-10-05.md): _family_locks used to grow by one entry
-# per distinct family ever requested, for the life of the process, with
-# no eviction at all. These test _get_family_lock/_evict_idle_family_locks
+# _family_locks would otherwise grow by one entry per distinct family ever
+# requested, for the life of the process. These test
+# _get_family_lock/_evict_idle_family_locks
 # directly (no HTTP/DB needed), isolated from the real module-level dict
 # via monkeypatch so they can't interfere with each other or with
 # TestCorrelationFamilyLock above.
@@ -736,10 +722,9 @@ class TestFamilyLockEviction:
 
 class TestCorrelationFamilyPrescreen:
     # circular_shift is ~120x slower per candidate than a parametric
-    # method (measured directly against the real db, post-CR8 -- was
-    # ~900x pre-fix), so a real family (thousands of candidates) is still
-    # real work if scored in full, just not the hours-scale cost it used
-    # to be. correlation_family_endpoint pre-filters to the strongest
+    # method (measured directly against the real db), so a real family
+    # (thousands of candidates) is real work if scored in full.
+    # correlation_family_endpoint pre-filters to the strongest
     # CIRCULAR_SHIFT_SCREEN_TOP_N candidates by a fast method first, then
     # only runs the expensive permutation test on those -- monkeypatched
     # down to 1 here so a 2-real-candidate fixture can exercise the real
@@ -809,7 +794,7 @@ class TestCorrelationFamilyPrescreen:
     def test_prescreen_keeps_the_fully_sampled_candidate_over_the_sparse_one(
         self, prescreen_n_aware_client, monkeypatch,
     ):
-        # C3 (docs/AUDIT-2026-10-05.md): the actual bug -- candidate 4
+        # Candidate 4
         # (sparse, n=10, raw |r|=1.0) must NOT survive prescreening over
         # candidate 5 (fully-sampled, n=50, raw |r|=0.48) just because its
         # raw |r| looks stronger. Spies on which candidates reach the

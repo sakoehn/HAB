@@ -184,10 +184,10 @@ def test_unique_constraint_allows_same_annotation_id_different_source(conn):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_round_trip_cog_leaf_row_has_parent_and_depth(conn):
-    """Post-E15 + CR3: COG leaf rows (COG#### ids) DO populate parent/depth
-    -- parent holds the category's own id/letter ("C"), matching KEGG/
-    Enzyme's parent-falls-back-to-parent_id convention (see CR3,
-    docs/AUDIT.md), NOT the category's display name. depth=2. Real values
+    """COG leaf rows (COG#### ids) populate parent/depth -- parent holds
+    the category's own id/letter ("C"), matching KEGG/Enzyme's
+    parent-falls-back-to-parent_id convention, NOT the category's display
+    name. depth=2. Real values
     from sample 3300060358's COG0055."""
     conn.execute(
         """INSERT INTO annotation_series
@@ -227,8 +227,8 @@ def test_round_trip_taxonomy_row_with_parent_and_depth(conn):
     """Taxonomy is the one source that populates parent/depth for real --
     confirms those columns actually round-trip real values, not just
     NULL (real numbers from sample 3300060358's "Bacteria;Bacteroidetes"
-    node -- annotation_id is the full lineage-prefix post
-    taxonomy_egc_homonym_bug, `name` holds the bare rank label)."""
+    node -- annotation_id is the full lineage-prefix, `name` holds the
+    bare rank label)."""
     conn.execute(
         """INSERT INTO annotation_series
            (source, sample, annotation_id, name, category, parent, depth, egc, norm_egc, scaffold_count, gene_count)

@@ -397,10 +397,10 @@ function makeMemberItem(
 }
 
 describe('sumMembersByTimestamp', () => {
-  it('sums three members at the same timestamp instead of overwriting (W14 regression)', () => {
-    // The audit's own real-data repro: kegg "Brite Hierarchies" group has
-    // three members whose values at the first timepoint sum to 4,854,154;
-    // the pre-fix chart plotted 823,158 -- exactly the last member's value.
+  it('sums three members at the same timestamp instead of overwriting', () => {
+    // Real-data shape: a kegg "Brite Hierarchies" group has three members
+    // whose values at the first timepoint sum to 4,854,154; overwriting
+    // instead of summing would plot 823,158 -- just the last member's value.
     const seriesData: Record<string, AnnotationItem[]> = {
       m1: [makeMemberItem('m1', 't1', 2_000_000)],
       m2: [makeMemberItem('m2', 't1', 2_030_996)],
@@ -457,12 +457,11 @@ describe('sumMembersByTimestamp', () => {
     expect((result[0].value as { norm_egc: number | null }).norm_egc).toBeNull()
   })
 
-  // ── W9: chronological sort against the real raw "M/D/YY H:MM" format ──────
+  // ── Chronological sort against the real raw "M/D/YY H:MM" format ──────────
   // A plain string sort on this format is wrong: "6/10/21" sorts before
-  // "6/2/21" lexically, even though June 10 is after June 2. Two separate
-  // near-duplicate copies of this summing logic (ComparePage.tsx,
-  // AnalyzePage.tsx) each had exactly this bug before being unified to call
-  // this one function, which sorts by parseDateTime instead.
+  // "6/2/21" lexically, even though June 10 is after June 2. ComparePage.tsx
+  // and AnalyzePage.tsx both rely on this function, which sorts by
+  // parseDateTime instead.
 
   it('sorts output chronologically, not by insertion order or string comparison', () => {
     const seriesData: Record<string, AnnotationItem[]> = {
@@ -552,12 +551,10 @@ describe('applyZScore', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// canApplyZScore -- W (2.6, docs/AUDIT-2026-09-22.md): applyZScore's own
-// <2-points no-op was previously invisible to callers, which kept showing
-// "Z-score, σ from mean" axis titles/tooltips over still-raw EGC values
-// (confirmed live: nifH, K02588, 1 sample, tooltip read "0.000σ" on a real
-// 1.13e-7 EGC value). This is the check callers now use to know whether
-// standardization will actually take effect before claiming it did.
+// canApplyZScore -- applyZScore silently no-ops below 2 points, so callers
+// use this to know whether standardization will actually take effect
+// before labelling a value "Z-score, σ from mean" (otherwise e.g. nifH,
+// K02588, 1 sample, would show its raw 1.13e-7 EGC value as "0.000σ").
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('canApplyZScore', () => {
@@ -613,16 +610,14 @@ describe('applyLowess', () => {
     expect(applyLowess(data, LOWESS_BANDWIDTH_MIN)).toHaveLength(20)
   })
 
-  // F3 (docs/AUDIT-2026-10-05.md): the audit's own measured example --
-  // span = Math.max(2, Math.ceil(bandwidth*n)) gave span=2 at n=20,
-  // bandwidth=LOWESS_BANDWIDTH_MIN (0.1*20=2.0, no rounding needed), and
-  // a weighted linear fit through exactly 2 points, evaluated at either
-  // one, reproduces that point's own y-value EXACTLY regardless of the
-  // weights -- 0 of 20 points changed, while the chart still labeled the
-  // curve "(smoothed)". Reachable in ordinary use: any date-filtered
-  // <=20-sample range, or any sparsely-detected annotation. Flooring the
-  // span at 3 means this can no longer happen structurally.
-  it('at least some points change at the minimum slider bandwidth on a 20-point series (the audit\'s own no-op case)', () => {
+  // At n=20 and bandwidth=LOWESS_BANDWIDTH_MIN, 0.1*20 = a span of 2, and a
+  // weighted linear fit through exactly 2 points, evaluated at either one,
+  // reproduces that point's own y-value EXACTLY regardless of the weights
+  // -- 0 of 20 points would change while the chart still labeled the curve
+  // "(smoothed)". Reachable in ordinary use: any date-filtered <=20-sample
+  // range, or any sparsely-detected annotation. The span floor of 3
+  // prevents this structurally.
+  it('at least some points change at the minimum slider bandwidth on a 20-point series', () => {
     const n = 20
     const data = Array.from({ length: n }, (_, ts) => ({
       egc: 5 + 4 * Math.sin(ts / 3) + (ts % 2 === 0 ? 3 : -3),
@@ -633,14 +628,11 @@ describe('applyLowess', () => {
     expect(changed).toBeGreaterThan(0)
   })
 
-  // W27 (docs/AUDIT-2026-09-22.md): confirmed live before this fix, on real
-  // COG0055 data (128 samples) -- the OLD bandwidth range (0.01-0.05) gave
-  // spans of only 2-7 points, and a 2-point window is mathematically
-  // guaranteed to reproduce the raw value exactly regardless of weighting
-  // (a line through 2 points, evaluated at one of those points, always
-  // passes through it) -- 0 of 128 points changed at the two lowest
-  // settings. This is the audit's own explicit "Verify" bar: at the
-  // lowest real slider setting, more than 0 points must actually change.
+  // A bandwidth range of 0.01-0.05 would give a 128-sample series spans of
+  // only 2-7 points, and a 2-point window always reproduces the raw value
+  // exactly regardless of weighting (a line through 2 points, evaluated at
+  // one of those points, passes through it). At the lowest real slider
+  // setting, more than 0 points must actually change.
   it('at the real minimum slider bandwidth, most points change on a realistic 128-sample series', () => {
     const n = 128
     const data = Array.from({ length: n }, (_, ts) => ({
@@ -677,13 +669,11 @@ describe('applyLowess', () => {
     expect(Math.abs((result[2].egc as number) - 10)).toBeGreaterThan(0.01)
   })
 
-  // F4 (docs/AUDIT-2026-10-05.md): W27's own fix above only advanced ONE
-  // step past the window (dists[span]) to find maxDist -- on the real
-  // ~4h-uniform cadence, that one step can ALSO be tied with the farthest
-  // INCLUDED point's own distance (symmetric distances around a center
-  // point are inherently tie-prone), recreating the exact same zero-
-  // weight bug one tier deeper. Confirmed live: 9 of 15 real slider
-  // settings hit this.
+  // Advancing only ONE step past the window (dists[span]) to find maxDist
+  // isn't enough -- on the real ~4h-uniform cadence, that one step can ALSO
+  // tie with the farthest INCLUDED point's own distance (symmetric
+  // distances around a center point are inherently tie-prone), zeroing its
+  // weight again. 9 of 15 real slider settings hit this.
   it('still gives the farthest included point a real nonzero weight when the very next point outside the window ties with it', () => {
     // 7 evenly-spaced points (4h apart), query at the center (ts=12).
     // Distances from center: 12, 8, 4, 0, 4, 8, 12 -- two real ties (at 4
@@ -700,7 +690,7 @@ describe('applyLowess', () => {
     // If the farthest included point (y=100) still got zeroed out, every
     // other neighbor in the window is y=10 and the fit reproduces the
     // query point's own raw value (10) exactly, same degeneracy as the
-    // W27 case above.
+    // 2-point case above.
     expect(Math.abs((result[3].egc as number) - 10)).toBeGreaterThan(0.01)
   })
 
@@ -730,7 +720,7 @@ describe('applyLowess', () => {
   })
 
   // ── Regression: LOWESS must smooth by real elapsed time, not array index ──
-  // (docs/AUDIT.md "also noted" item). A date-range filter can leave a large
+  // A date-range filter can leave a large
   // real-world gap between two adjacent array entries; the smoother must not
   // treat that gap as if it were a normal, uniform step.
   it('produces different output for the same values at the same index positions when only the timestamps differ', () => {
@@ -784,7 +774,7 @@ describe('applyLowess', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // canApplyLowess
 // ─────────────────────────────────────────────────────────────────────────────
-// F3 (docs/AUDIT-2026-10-05.md): mirrors canApplyZScore above -- callers
+// Mirrors canApplyZScore above -- callers
 // should use this instead of the raw `smoothed` toggle state when
 // deciding whether to label a curve "(smoothed)", since applyLowess is
 // a silent, provable no-op below its own 3-point floor.
@@ -847,7 +837,7 @@ describe('parseDateTime', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// toPlotlyDate (W16) -- must render local wall-clock time as a plain,
+// toPlotlyDate -- must render local wall-clock time as a plain,
 // timezone-less string. new Date(ts).toISOString() renders in UTC with a
 // "Z" suffix instead; Plotly reads that "Z" and re-converts for display, so
 // on a browser west of UTC (e.g. US Pacific) every point shifts LATER by
@@ -874,10 +864,10 @@ describe('toPlotlyDate', () => {
     expectMatchesLocalDateTime('6/9/21 8:00')
   })
 
-  it('evening time: date and time match fmtDate/fmtTime exactly (the actual W16 case)', () => {
-    // The audit's own example: an evening sample is the one that crosses
-    // a calendar-day boundary under the buggy UTC-shifting version on a
-    // Pacific-time browser (UTC-7/8).
+  it('evening time: date and time match fmtDate/fmtTime exactly', () => {
+    // An evening sample is the one that would cross a calendar-day
+    // boundary under a UTC-shifting conversion on a Pacific-time browser
+    // (UTC-7/8).
     expectMatchesLocalDateTime('6/9/21 21:00')
   })
 
@@ -1145,10 +1135,10 @@ describe('computeDayBands', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// formatRelativeAbundancePercent — W23 (docs/AUDIT-2026-09-22.md): tooltips
-// showed "0.000%" for the many real annotations whose norm_egc is far below
-// 0.1% (a fixed .toFixed(3/4) rounds them all down to indistinguishable
-// zero). Real production example: K24448's mean norm_egc is 6.328e-8.
+// formatRelativeAbundancePercent — many real annotations have a norm_egc far
+// below 0.1%, which a fixed .toFixed(3/4) would round down to an
+// indistinguishable "0.000%". Real example: K24448's mean norm_egc is
+// 6.328e-8.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('formatRelativeAbundancePercent', () => {
@@ -1156,7 +1146,7 @@ describe('formatRelativeAbundancePercent', () => {
     expect(formatRelativeAbundancePercent(0.05165)).toBe('5.17%')
   })
 
-  it('a real rare-annotation value does NOT collapse to "0.000%" (the W23 bug)', () => {
+  it('a real rare-annotation value does NOT collapse to "0.000%"', () => {
     // K24448, real local database: mean_norm_egc = 6.328266950938043e-08
     const result = formatRelativeAbundancePercent(6.328266950938043e-08)
     expect(result).not.toBe('0.000%')
@@ -1369,7 +1359,6 @@ describe('alignTideToChartPoints', () => {
 // nativeTideTrace — the VISUAL tide trace at its own resolution, unlike
 // alignTideToChartPoints above (which snaps/downsamples onto sparse EGC
 // sample timestamps -- still used for CSV export, not for this).
-// Tides (docs/AUDIT-2026-09-22.md).
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('nativeTideTrace', () => {
@@ -1494,10 +1483,9 @@ describe('buildCsvString', () => {
 // expandParentLabel
 // ─────────────────────────────────────────────────────────────────────────────
 
-// W30 (docs/AUDIT-2026-09-22.md): KEGG_BRITE_CODES was regenerated as a
-// 449-entry table (every real bare-code kegg `parent` value in the local
-// db, cross-checked against kegg_paths) replacing a 41-entry hand-typed
-// one. The `expandParentLabel` tests below only spot-check 4 individual
+// KEGG_BRITE_CODES is a 449-entry table (every real bare-code kegg `parent`
+// value in the local db, cross-checked against kegg_paths). The
+// `expandParentLabel` tests below only spot-check 4 individual
 // codes -- none of them would catch a future edit that silently dropped or
 // duplicated OTHER entries (e.g. a bad merge, a copy-paste truncation).
 // These guard the table's own shape instead of any one value.
@@ -1559,11 +1547,8 @@ describe('expandParentLabel', () => {
     expect(expandParentLabel('01000 Enzymes', 'kegg')).toBe('Enzymes')
   })
 
-  // W30 (docs/AUDIT-2026-09-22.md): KEGG_BRITE_CODES was regenerated from
-  // real kegg_paths data (every value independently verified against the
-  // local db) rather than hand-typed -- 09100 is a real, common top-level
-  // BRITE category code (confirmed: 09100 -> 'Metabolism'). '00001' (used
-  // by the old table) was never actually a real stored kegg parent value.
+  // KEGG_BRITE_CODES is generated from real kegg_paths data -- 09100 is a
+  // real, common top-level BRITE category code (09100 -> 'Metabolism').
   it('KEGG resolves a real pure 5-digit BRITE code (09100)', () => {
     expect(expandParentLabel('09100', 'kegg')).toBe('Metabolism')
   })
@@ -1572,8 +1557,8 @@ describe('expandParentLabel', () => {
     expect(expandParentLabel('99123', 'kegg')).toBe('BRITE group 99123')
   })
 
-  // W30: the audit's own 3 cited examples of the old hand-table being wrong
-  // -- each independently confirmed against the real kegg_paths table.
+  // Codes a hand-typed table would plausibly get wrong -- each checked
+  // against the real kegg_paths table.
   it('KEGG 02024 resolves to its real name, not the old table\'s wrong guess', () => {
     expect(expandParentLabel('02024', 'kegg')).toBe('Quorum sensing')
     expect(expandParentLabel('02024', 'kegg')).not.toBe('Transporters')
@@ -1595,7 +1580,7 @@ describe('expandParentLabel', () => {
 
   it('taxonomy multi-segment parent is reduced to its bare rank label', () => {
     // parent is the ancestor's own full lineage-prefix — too crowded to
-    // print as-is (see taxonomy_egc_homonym_bug); only the last segment
+    // print as-is; only the last segment
     // (the bare name) plus its rank should show.
     expect(expandParentLabel('Bacteria;Proteobacteria;Alphaproteobacteria', 'taxonomy'))
       .toBe('Alphaproteobacteria (Class)')
@@ -1606,13 +1591,13 @@ describe('expandParentLabel', () => {
     expect(expandParentLabel('', 'kegg')).toBe('')
   })
 
-  // W (2.6, docs/AUDIT-2026-09-22.md): 'Ungrouped' is ExplorePage.tsx's own
+  // 'Ungrouped' is ExplorePage.tsx's own
   // shared cross-source sentinel for "this annotation has no real parent"
   // (e.g. every taxonomy domain root -- Bacteria/Archaea/Eukaryota/Viruses
   // -- has parent=NULL in annotation_catalog, confirmed against the real
-  // db). Before this fix, taxonomy's branch treated it as a real 1-segment
-  // lineage and appended a fake rank suffix, merging all 4 real domains
-  // into one group literally labelled "Ungrouped (Domain)".
+  // db). Treated as a real 1-segment lineage, taxonomy's branch would append
+  // a fake rank suffix, merging all 4 real domains into one group literally
+  // labelled "Ungrouped (Domain)".
   it('the shared "Ungrouped" sentinel is returned as-is for taxonomy, not given a fake rank suffix', () => {
     expect(expandParentLabel('Ungrouped', 'taxonomy')).toBe('Ungrouped')
   })
@@ -1665,12 +1650,10 @@ describe('nextColorForSource', () => {
     expect(CHART_COLORS).toContain(color)
   })
 
-  // F6 (docs/AUDIT-2026-10-05.md): every family only had 4 shades, cycled
-  // modulo 4 -- a 5th same-source Compare series got the exact same
-  // color as the 1st, making the two indistinguishable in both the
-  // chart and the legend. Each family now has at least 8 shades, so a
-  // 5th (and up to an 8th) same-source series still gets a genuinely
-  // distinct color.
+  // With only 4 shades cycled modulo 4, a 5th same-source Compare series
+  // would get the exact same color as the 1st. Each family has at least 8
+  // shades, so a 5th (and up to an 8th) same-source series still gets a
+  // genuinely distinct color.
   it('a 5th same-source call no longer repeats the 1st color (every family has more than 4 shades)', () => {
     for (const source of Object.keys(SOURCE_SHADES)) {
       expect(SOURCE_SHADES[source].length).toBeGreaterThan(4)

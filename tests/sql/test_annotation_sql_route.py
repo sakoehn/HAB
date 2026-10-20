@@ -109,8 +109,8 @@ def test_series_annotations_nonexistent_annotation_returns_404(client):
     assert "COG_DOES_NOT_EXIST" in resp.json()["detail"]
 
 
-# A6 (docs/AUDIT-2026-10-05.md): page/page_size had no input bounds --
-# page_size=0 divides by zero in paginate() (a real HTTP 500), and a
+# page/page_size must be bounded -- page_size=0 divides by zero in
+# paginate() (a real HTTP 500), and a
 # negative page/page_size produces a negative slice start, which Python
 # silently reinterprets as an index from the end of the list rather than
 # raising.

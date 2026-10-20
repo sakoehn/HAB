@@ -21,7 +21,7 @@ Standalone utility -- it only fetches and saves the file; both
 EGC_ENZYME_TREE.ipynb and migrate_enzyme_paths_to_sql.py read the saved
 copy.
 
-P9 (docs/AUDIT-2026-10-05.md): a 200 response isn't proof of a real file
+A 200 response isn't proof of a real file
 (an HTML error page or a truncated body also come back as 200), so the
 download is checked by validate_brite_text() BEFORE it replaces the good
 cached copy, and written via a temp file + os.replace() so a crash mid-

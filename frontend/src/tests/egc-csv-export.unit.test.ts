@@ -2,20 +2,14 @@
  * egc-csv-export.unit.test.ts
  * ============================
  * Unit tests for the CSV row-builder functions behind each EGC chart's
- * "↓ CSV" button (W18 fix).
+ * "↓ CSV" button.
  *
- * Before this fix, every chart's CSV export hardcoded its value column
- * name (usually "egc", once "egc_normalized") regardless of which metric
- * was actually selected, and none of them recorded which transforms
- * (metric swap, standardize/z-score, LOWESS smoothing) were active on the
- * exported values -- a file labelled "egc" could silently hold relative
- * abundance fractions, z-scores, or a smoothed fit. The Compare page also
- * had its own separate, always-wrong CSV button that re-derived raw EGC
- * from scratch regardless of what MultiEgcChart (rendered right below it)
- * was actually displaying; that button was removed rather than fixed,
- * since MultiEgcChart's own (now-correct) export already covers the case
- * -- covered here by testing buildMultiEgcCsvRows, not anything from
- * ComparePage.tsx.
+ * Each chart's CSV export names its value column from the active metric
+ * and records which transforms (metric swap, standardize/z-score, LOWESS
+ * smoothing) are active on the exported values -- otherwise a file
+ * labelled "egc" could silently hold relative abundance fractions,
+ * z-scores, or a smoothed fit. The Compare page's export is MultiEgcChart's
+ * own, covered here by testing buildMultiEgcCsvRows.
  *
  * Tests import directly from the production chart component files (each
  * function was extracted out of an inline handleExportCsv closure
@@ -115,7 +109,7 @@ describe('buildMultiEgcCsvRows', () => {
     { date: '05/27/21', _dt: '5/27/21 12:00', K00001: null, COG0001: 60 },
   ]
 
-  it('raw egc mode: value column is named "egc", not the old hardcoded "egc_normalized" (W18 bug)', () => {
+  it('raw egc mode: value column is named "egc", not "egc_normalized"', () => {
     const rows = buildMultiEgcCsvRows(chartData, series, 'egc', false, false, false)
     expect(rows.every(r => 'egc' in r)).toBe(true)
     expect(rows.some(r => 'egc_normalized' in r)).toBe(false)
@@ -160,16 +154,14 @@ describe('buildMultiEgcCsvRows', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// W26 (docs/AUDIT-2026-09-22.md): two different groups can share the exact
-// same user-typed label (annotationId, for a group) while summing
-// completely different, unrelated members. Before `id` existed as a
-// separate field, chartData's rows were keyed by `annotationId`, so the
-// second same-labelled group's data silently overwrote the first's at
-// every shared datetime -- this reproduces the audit's own live example
-// (two different "iron (2)" groups, one kegg/one cog).
+// Two different groups can share the exact same user-typed label
+// (annotationId, for a group) while summing completely different, unrelated
+// members -- chartData rows are keyed by `id`, so the second same-labelled
+// group's data must not overwrite the first's (e.g. two different
+// "iron (2)" groups, one kegg/one cog).
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('buildMultiEgcCsvRows — W26 same-label groups', () => {
+describe('buildMultiEgcCsvRows — same-label groups', () => {
   it('two series sharing the same annotationId (label) export their own distinct values, keyed by id', () => {
     const series = [
       { id: 'group::iron::1000', annotationId: 'iron (2)', source: 'kegg' },
@@ -208,7 +200,7 @@ describe('buildGroupedEgcCsvRows', () => {
     { datetime: '5/27/21 12:00', egc: 400 },
   ]
 
-  it('raw egc mode: value column is named "egc", not always literally "egc" regardless of mode (W18 bug)', () => {
+  it('raw egc mode: value column is named "egc" because the mode is egc, not as a fixed literal', () => {
     // The bug was a column ALWAYS named "egc" even in norm_egc mode --
     // this pins that raw mode is still correctly "egc" (the un-buggy case).
     const rows = buildGroupedEgcCsvRows(points, 'Brite Hierarchies', 'egc', false, false, false)

@@ -319,12 +319,12 @@ describe('mapping row sorting', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// W17 regression: date/time sort against the REAL raw datetime format.
+// Date/time sort against the REAL raw datetime format.
 //
 // Every fixture above this point uses ISO datetimes ("2021-05-27T08:00:00"),
-// which happen to sort correctly as plain text -- that's exactly why the
-// original bug (a plain string compare on date/time) passed every existing
-// test while still being wrong against the real API, which returns
+// which happen to sort correctly as plain text -- so they can't catch a
+// plain string compare on date/time, which is wrong against the real API,
+// which returns
 // unpadded "M/D/YY H:MM" (e.g. "6/10/21 8:00"). These fixtures use the
 // real format so the sort logic is actually put to the test.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -338,11 +338,11 @@ function rawFormatRow(sample: string, datetime: string): MappingSearchRow {
   }
 }
 
-describe('mapping row sorting — real raw "M/D/YY H:MM" date format (W17)', () => {
-  // The audit's own example: unsorted, these should open in page order
-  // 5/27, 6/1, 6/10, 6/18, 6/2, 6/9 under the old text-comparison bug --
-  // "6/10/21" and "6/18/21" sort before "6/2/21" and "6/9/21" as plain text.
-  const AUDIT_EXAMPLE_ROWS: MappingSearchRow[] = [
+describe('mapping row sorting — real raw "M/D/YY H:MM" date format', () => {
+  // A text comparison would open these in page order 5/27, 6/1, 6/10, 6/18,
+  // 6/2, 6/9 -- "6/10/21" and "6/18/21" sort before "6/2/21" and "6/9/21"
+  // as plain text.
+  const TEXT_SORT_EXAMPLE_ROWS: MappingSearchRow[] = [
     rawFormatRow('may27', '5/27/21 8:00'),
     rawFormatRow('jun1',  '6/1/21 8:00'),
     rawFormatRow('jun10', '6/10/21 8:00'),
@@ -351,13 +351,13 @@ describe('mapping row sorting — real raw "M/D/YY H:MM" date format (W17)', () 
     rawFormatRow('jun9',  '6/9/21 8:00'),
   ]
 
-  it('sorts into true chronological order, not the text-sort order the audit found', () => {
-    const result = sortMappingRows(AUDIT_EXAMPLE_ROWS, 'date', 'asc')
+  it('sorts into true chronological order, not text-sort order', () => {
+    const result = sortMappingRows(TEXT_SORT_EXAMPLE_ROWS, 'date', 'asc')
     expect(result.map(r => r.sample)).toEqual(['may27', 'jun1', 'jun2', 'jun9', 'jun10', 'jun18'])
   })
 
   it('page one is genuinely the earliest rows after sorting (not 5/27, 6/1, 6/10... as the old bug produced)', () => {
-    const result = sortMappingRows(AUDIT_EXAMPLE_ROWS, 'date', 'asc')
+    const result = sortMappingRows(TEXT_SORT_EXAMPLE_ROWS, 'date', 'asc')
     expect(result[0].sample).toBe('may27')
     expect(result[1].sample).toBe('jun1')
     // The old bug's page-one order put jun10 third; the fix puts jun2 third.
@@ -365,7 +365,7 @@ describe('mapping row sorting — real raw "M/D/YY H:MM" date format (W17)', () 
   })
 
   it('desc sort reverses the same true chronological order', () => {
-    const result = sortMappingRows(AUDIT_EXAMPLE_ROWS, 'date', 'desc')
+    const result = sortMappingRows(TEXT_SORT_EXAMPLE_ROWS, 'date', 'desc')
     expect(result.map(r => r.sample)).toEqual(['jun18', 'jun10', 'jun9', 'jun2', 'jun1', 'may27'])
   })
 
@@ -374,7 +374,7 @@ describe('mapping row sorting — real raw "M/D/YY H:MM" date format (W17)', () 
     // sortedRows (sortMappingRows' own output) when building the CSV, so
     // fixing the sort fixes the CSV order for free. This test pins that
     // sortMappingRows' output is what a correct CSV must be built from.
-    const result = sortMappingRows(AUDIT_EXAMPLE_ROWS, 'date', 'asc')
+    const result = sortMappingRows(TEXT_SORT_EXAMPLE_ROWS, 'date', 'asc')
     const csvRows = result.map(r => buildMappingCsvRow(r, 'K00010', 'kegg'))
     expect(csvRows.map(r => r.date)).toEqual(['05/27/21', '06/01/21', '06/02/21', '06/09/21', '06/10/21', '06/18/21'])
   })
@@ -551,11 +551,10 @@ describe('mappings API URL construction', () => {
     expect(url).toContain('Tenacibaculum%20maritimum')
   })
 
-  it('requests a page_size far above any realistic result count, so the panel keeps fetching everything in one call (W24)', () => {
-    // The backend now supports real page/page_size (docs/AUDIT-2026-09-22.md),
-    // but the panel still does its own client-side sort/paginate over the
-    // full result set -- passing a large page_size here is what keeps that
-    // existing behavior working instead of silently truncating to the
+  it('requests a page_size far above any realistic result count, so the panel keeps fetching everything in one call', () => {
+    // The backend supports real page/page_size, but the panel does its own
+    // client-side sort/paginate over the full result set -- passing a large
+    // page_size here is what keeps that working instead of silently truncating to the
     // backend's own default (100).
     const url = buildMappingsUrl('K02014', 'kegg', 128, false)
     // 50000 = /mappings/search's page_size cap (and its hard row limit);
@@ -570,7 +569,7 @@ describe('mappings API URL construction', () => {
   })
 })
 
-describe('isLikelyLeafAnnotation (W24 default for "Unique pairs only")', () => {
+describe('isLikelyLeafAnnotation (default for "Unique pairs only")', () => {
   it('recognizes real leaf ids for each source', () => {
     expect(isLikelyLeafAnnotation('cog', 'COG0055')).toBe(true)
     expect(isLikelyLeafAnnotation('kegg', 'K02014')).toBe(true)

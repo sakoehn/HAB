@@ -4,16 +4,15 @@
  * Component tests for StatsPanel (components/ui/StatsPanel.tsx) -- zero
  * prior direct coverage (only exercised indirectly through chart tests).
  *
- * W25 (docs/AUDIT-2026-09-22.md): two related bugs fixed together --
- *   (a) MultiEgcChart pooled every series' values into one flat array
- *       before computing stats, so comparing e.g. a 4.8e-4 series against a
- *       7.8e-6 series gave one meaningless blended mean/CV describing
- *       neither. StatsPanel now supports a `series` prop (one row per
- *       annotation) as an alternative to the original single-set `vals`.
+ * Two related behaviors:
+ *   (a) A `series` prop (one row per annotation), as an alternative to the
+ *       single-set `vals` -- pooling every series' values into one flat
+ *       array would give e.g. a 4.8e-4 series and a 7.8e-6 series one
+ *       meaningless blended mean/CV describing neither.
  *   (b) CV = std/mean blows up once the mean is negligible relative to the
- *       spread -- confirmed live: pooling two Z-scored series (mean forced
- *       to ~0 by construction) gave CV "-57308638803537928192.0%". Fixed
- *       with a `standardize` flag (always suppress CV) plus a general
+ *       spread -- pooling two Z-scored series (mean forced to ~0 by
+ *       construction) gives CV "-57308638803537928192.0%". Handled with a
+ *       `standardize` flag (always suppress CV) plus a general
  *       relative-magnitude guard (suppress CV whenever |mean| is negligible
  *       next to |std|, regardless of whether standardize is set).
  *
@@ -57,7 +56,7 @@ describe('StatsPanel — single vals mode', () => {
   })
 })
 
-describe('StatsPanel — CV suppression (W25)', () => {
+describe('StatsPanel — CV suppression', () => {
   it('CV shows "—" when standardize is true, even with a real non-zero mean', () => {
     // Values with a real, non-negligible mean -- if the standardize flag
     // weren't checked directly, this CV would compute to a real (if
@@ -72,8 +71,8 @@ describe('StatsPanel — CV suppression (W25)', () => {
     // The actual output of Z-scoring a real 10-value dataset ((x-mean)/std,
     // computed independently in Node) -- std is exactly 1 by construction,
     // mean is a genuine floating-point residual (-1.998e-16), not exactly
-    // 0. This is the real mechanism behind the audit's live example ("CV
-    // -57308638803537928192.0%"): mean isn't 0, it's just 16 orders of
+    // 0. This is the real mechanism behind a CV like
+    // "-57308638803537928192.0%": mean isn't 0, it's just 16 orders of
     // magnitude smaller than std, which is exactly what the relative-
     // magnitude guard (not an exact `mean !== 0` check) needs to catch.
     const zScoredValues = [
@@ -102,7 +101,7 @@ describe('StatsPanel — CV suppression (W25)', () => {
   })
 })
 
-describe('StatsPanel — series mode (W25)', () => {
+describe('StatsPanel — series mode', () => {
   it('renders one row per series with independent, un-pooled stats', () => {
     render(
       <StatsPanel
@@ -119,7 +118,7 @@ describe('StatsPanel — series mode (W25)', () => {
     const cog = blocks.find(b => b.textContent === 'COG0055')!.closest('.stats-panel-series')!
     const k02 = blocks.find(b => b.textContent === 'K02568')!.closest('.stats-panel-series')!
 
-    // Each series' own mean -- if pooled together (the pre-W25 bug), both
+    // Each series' own mean -- if pooled together, both
     // would instead show one blended mean around 2.4e-4 describing neither.
     expect(cellValue(cog, 'Mean')).toMatch(/^4\.8/)
     expect(cellValue(k02, 'Mean')).toMatch(/^7\.8/)

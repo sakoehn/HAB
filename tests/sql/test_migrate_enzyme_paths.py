@@ -9,11 +9,10 @@ Data-layer test: no database, no server -- just the parser against a
 small, hand-written .keg fixture written to a temp file, same spirit as
 test_migrate_annotations.py testing build_annotation_series_row().
 
-Covers the W (2.6, docs/AUDIT-2026-09-22.md) bare-C-line fix: a line like
-"C    7.2.3" (digits only, no trailing name -- the real shape of
-ko01000.keg line 17308) used to fail the required-name regex entirely and
-get skipped, leaving current_at_depth stale at the PREVIOUS named C-line.
-The next D-line then inherited the wrong parent.
+Covers bare C-lines: a line like "C    7.2.3" (digits only, no trailing
+name -- the real shape of ko01000.keg line 17308) must still be parsed.
+Skipping it would leave current_at_depth stale at the PREVIOUS named
+C-line, so the next D-line would inherit the wrong parent.
 
 Run:
     pytest tests/sql/test_migrate_enzyme_paths.py -v

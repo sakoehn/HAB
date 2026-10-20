@@ -3,16 +3,16 @@ test_annotation_catalog_migration.py
 =======================================
 Tests for populate_annotation_catalog() (FastAPI/scripts/migrate_annotation_catalog_sql.py).
 
-CR11 (docs/AUDIT-2026-09-22.md): annotation_catalog.id has no AUTOINCREMENT,
-so a DELETE+reinsert rebuild can renumber every row -- ids restart at 1, in
-whatever order the GROUP BY happens to emit them. correlations_cache is
-keyed on bare catalog_id_a/catalog_id_b integers, so a cached pair computed
-against the OLD ids would silently be served as a DIFFERENT pair's r/p/q
-after a rebuild. Before this fix, only migrate_annotations_to_sql.py's own
-run cleared correlations_cache -- running migrate_annotation_catalog_sql.py
-on its own (the documented recovery procedure after a COG/KEGG-only path
-rebuild, per migrate_cog_paths_to_sql.py's and migrate_kegg_paths_to_sql.py's
-own docstrings) left a stale cache behind.
+annotation_catalog.id has no AUTOINCREMENT, so a DELETE+reinsert rebuild
+can renumber every row -- ids restart at 1, in whatever order the GROUP BY
+happens to emit them. correlations_cache is keyed on bare
+catalog_id_a/catalog_id_b integers, so a cached pair computed against the
+OLD ids would silently be served as a DIFFERENT pair's r/p/q after a
+rebuild. populate_annotation_catalog must therefore clear correlations_cache
+itself -- running migrate_annotation_catalog_sql.py on its own is the
+documented recovery procedure after a COG/KEGG-only path rebuild (see
+migrate_cog_paths_to_sql.py's and migrate_kegg_paths_to_sql.py's
+docstrings).
 
 Data-layer test: an in-memory sqlite connection with the real schema for
 the three tables involved, no server.
@@ -112,7 +112,7 @@ def test_rebuild_clears_correlations_cache(conn):
 
     remaining = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
     assert remaining == 0, \
-        "a catalog rebuild must wipe correlations_cache -- its keys can be renumbered by the rebuild (CR11)"
+        "a catalog rebuild must wipe correlations_cache -- its keys can be renumbered by the rebuild"
 
 
 def test_rebuild_still_clears_cache_when_cache_was_already_empty(conn):
@@ -143,7 +143,7 @@ def test_rebuild_still_produces_correct_catalog_rows(conn):
 
 
 def test_ids_can_be_renumbered_across_a_rebuild(conn):
-    # The real CR11 trigger: with no AUTOINCREMENT, a DELETE+reinsert can
+    # The real trigger: with no AUTOINCREMENT, a DELETE+reinsert can
     # hand out a previously-used id to a DIFFERENT annotation. We don't pin
     # down *which* annotation gets which id (SQLite's GROUP BY emission
     # order isn't a contract this test should assert on), but the id *set*
@@ -176,7 +176,7 @@ def test_ids_can_be_renumbered_across_a_rebuild(conn):
         "SELECT id FROM annotation_catalog WHERE annotation_id = 'K00000'"
     ).fetchone()[0]
     # Same id set reused for an entirely different pair of annotations --
-    # this IS the CR11 precondition: whichever annotation now holds
+    # this IS the stale-cache precondition: whichever annotation now holds
     # first_id_k1 is guaranteed not to be K00001 (it no longer exists), so
     # a stale correlations_cache row keyed on first_id_k1 would silently
     # be served against the wrong annotation if the cache weren't wiped.

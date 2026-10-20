@@ -1,10 +1,9 @@
 """
 test_download_enzyme_brite.py
 ===============================
-P9 (docs/AUDIT-2026-10-05.md): download_enzyme_brite.py used to write the
-HTTP response straight over the good cached ko01000.keg after only
-raise_for_status() -- a 200 response carrying an HTML error page or a
-truncated body would silently replace it. These tests fake the download
+download_enzyme_brite.py must not write the HTTP response straight over
+the good cached ko01000.keg after only raise_for_status() -- a 200 response
+carrying an HTML error page or a truncated body would silently replace it. These tests fake the download
 (no network) and point the script at a temp dir (the real cached file is
 never touched).
 

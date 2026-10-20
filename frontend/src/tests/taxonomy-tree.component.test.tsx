@@ -68,8 +68,8 @@ describe('TaxonomyTree — rendering', () => {
     expect(screen.getByText('Phylum')).toBeInTheDocument()
   })
 
-  it('W7: Eukaryota uses the same rank ladder as every other domain', async () => {
-    // Confirmed live (2026-09-22 re-audit) via /taxonomy/children: depth 2
+  it('Eukaryota uses the same rank ladder as every other domain', async () => {
+    // Confirmed via /taxonomy/children: depth 2
     // under Eukaryota is real phyla (Annelida, Arthropoda, Chordata, ...),
     // and a full lineage like Eukaryota;Annelida;...;Helobdella robusta has
     // exactly 8 segments -- the same Domain..Strain ladder Bacteria uses.
@@ -101,12 +101,11 @@ describe('TaxonomyTree — expand/collapse', () => {
     expect(await screen.findByText('Alphaproteobacteria')).toBeInTheDocument()
   })
 
-  // G8/G12 (docs/AUDIT-2026-10-05.md): a failed CHILD fetch (as opposed
-  // to the root-level failure the "states" describe above already
-  // covers) reverted the row to the exact same look as a never-clicked
+  // A failed CHILD fetch (as opposed to the root-level failure the
+  // "states" describe above covers) must not look like a never-clicked
   // collapsed row -- clicking the chevron again does retry (loadStatus
-  // never auto-resets), but nothing on screen told the user the previous
-  // click had actually failed.
+  // never auto-resets), but the user needs to see the previous click
+  // failed.
   it('shows a warning marker on a node whose child fetch failed, not just a reverted chevron', async () => {
     const user = userEvent.setup()
     mockFetch.mockResolvedValueOnce(jsonResponse({
@@ -152,7 +151,7 @@ describe('TaxonomyTree — exclusion', () => {
     expect(screen.getByTitle('Cannot drill into an excluded taxon')).toBeDisabled()
   })
 
-  it('W19: a descendant of an already-excluded ancestor has its checkbox disabled', async () => {
+  it('a descendant of an already-excluded ancestor has its checkbox disabled', async () => {
     // Simulates the real gap the chevron-disable alone doesn't cover: this
     // child was already visible/loaded from before its ancestor
     // ("Bacteria;Proteobacteria") got excluded, so nothing else stops the
@@ -177,7 +176,7 @@ describe('TaxonomyTree — exclusion', () => {
     )).toBeDisabled()
   })
 
-  it('W19: a sibling of an excluded taxon (not a descendant) keeps its checkbox enabled', async () => {
+  it('a sibling of an excluded taxon (not a descendant) keeps its checkbox enabled', async () => {
     mockFetch.mockResolvedValue(jsonResponse({
       data: [{ annotation_id: 'Bacteria;Firmicutes', name: 'Firmicutes', depth: 2, category: 'Bacteria' }],
     }))

@@ -100,13 +100,12 @@ def iter_enzyme_path_rows(keg_file_path: str, valid_ids: set[str]):
         if not rest:
             continue
 
-        # W (2.6, docs/AUDIT-2026-09-22.md): the trailing name group used to
-        # be required (`\s+(.+)$`), silently dropping any bare "<id>" line
-        # with no name text -- ko01000.keg line 17308 ("C    7.2.3") is
-        # exactly that (confirmed the only such line in the file). Skipping
-        # it left current_at_depth[3] stale at the PREVIOUS named C-line, so
-        # the next D-line ("7.2.3.1") inherited the WRONG parent. The name
-        # group is now optional, falling back to the bare id as its own name.
+        # The trailing name group is optional: ko01000.keg line 17308
+        # ("C    7.2.3") is a bare "<id>" line with no name text (the only
+        # one in the file). Skipping it would leave current_at_depth[3]
+        # stale at the PREVIOUS named C-line, so the next D-line ("7.2.3.1")
+        # would inherit the WRONG parent. A nameless node uses its bare id
+        # as its name.
         m = re.match(r"^(\d+(?:\.\d+){0,3})\.?(?:\s+(.+))?$", rest)
         if not m:
             continue

@@ -107,9 +107,8 @@ def test_correct_values(conn):
     assert results
     expected_a = {
         "name":          "FoF1-type ATP synthase, beta subunit",
-        # Post-E15 + CR3: cog DOES populate parent now, as the category's
-        # own id/letter ("C"), not its display name -- reconfirmed live
-        # before fixing this.
+        # cog populates parent as the category's own id/letter ("C"), not
+        # its display name.
         "parent":        "C",
         "mean_egc":      8759.3203125,
         "max_egc":       25563.0,
@@ -142,11 +141,9 @@ def test_correct_values(conn):
     assert actual['sample_count'] == cog0055['sample_count']
 
 
-# W5: category/scaffold_count were entirely missing from get_search_annotations
-# (annotation_catalog has no such columns -- they live per-sample on
-# annotation_series), so the frontend's Annotation Lookup card silently
-# rendered those fields blank on the SQL backend. Fixed with correlated
-# subqueries against annotation_series.
+# category/scaffold_count aren't columns of annotation_catalog -- they live
+# per-sample on annotation_series -- so get_search_annotations fills them
+# with correlated subqueries for the frontend's Annotation Lookup card.
 
 def test_category_matches_the_known_cog_functional_category(conn):
     """COG0055's category is the expanded functional-category name for its
@@ -211,7 +208,8 @@ def test_category_and_scaffold_count_present_across_all_four_sources(conn):
 @pytest.mark.slow
 def test_broad_taxonomy_search_completes_quickly(conn):
     """Regression guard for the slow ORDER BY variant considered and
-    rejected during W5 (minutes for the full taxonomy catalog vs ~8s
+    rejected for category/scaffold_count (minutes for the full taxonomy
+    catalog vs ~8s
     unordered) -- a realistic broad taxonomy search must stay fast.
 
     Marked slow: this is a wall-clock threshold assertion (5s), not a
@@ -251,8 +249,7 @@ def test_results_deduplicated_across_samples(conn):
 
 
 def test_taxonomy_homonym_search_returns_both_distinct_lineages(conn):
-    """Real, confirmed case matching the taxonomy_egc_homonym_bug fix this
-    search sits on top of: searching taxonomy for the genus name "Bosea"
+    """Real, confirmed cross-lineage homonym: searching taxonomy for the genus name "Bosea"
     must surface it as TWO separate annotations -- same name, but
     different rank/lineage (parent). A pre-fix, bare-name-keyed search
     would have shown only one, silently hiding the second lineage."""

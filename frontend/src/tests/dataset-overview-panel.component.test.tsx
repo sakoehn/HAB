@@ -2,18 +2,16 @@
  * dataset-overview-panel.component.test.tsx
  * ===========================================
  * Component tests for DatasetOverviewPanel (pages/ExplorePage.tsx),
- * covering two "Also noted" fixes from docs/AUDIT.md's Part 3 audit:
+ * covering two truncation disclosures:
  *
- *   1. The "showing first N" truncation warning checked `rows.length === 500`
- *      while the actual fetch used `limit=200` -- the check could never
- *      fire, so a truncated "top annotations" list looked like a complete
- *      one with no indication of truncation.
+ *   1. The "showing first N" truncation warning must match the actual
+ *      fetch's `limit=200`, or a truncated "top annotations" list would
+ *      look complete.
  *
  *   2. The top-5-groups temporal chart fetches at most 40 member
- *      annotations' series combined across all 5 groups, silently dropping
- *      any past that -- a later group whose members all got cut could show
- *      a summed total of zero with no explanation. Now surfaced as an
- *      explicit warning instead of being silent.
+ *      annotations' series combined across all 5 groups -- a later group
+ *      whose members all got cut could otherwise show a summed total of
+ *      zero with no explanation, so an explicit warning is shown.
  *
  * Run: npx vitest run src/tests/dataset-overview-panel.component.test.tsx
  */
@@ -164,13 +162,12 @@ describe('DatasetOverviewPanel — 40-annotation temporal-chart fetch cap', () =
   })
 })
 
-// W29 (docs/AUDIT-2026-09-22.md): switching the source dropdown while a
-// Load Overview request is still in flight used to relabel the eventually-
-// returned rows under the NEW source, even though they were really fetched
-// under the OLD one -- the summary line, CSV export, and the follow-up
-// "Load time series" request all read the live dropdown, not what was
-// actually requested.
-describe('DatasetOverviewPanel — labels reflect what was actually loaded, not the live dropdown (W29)', () => {
+// Switching the source dropdown while a Load Overview request is still in
+// flight must not relabel the eventually-returned rows under the NEW
+// source -- the summary line, CSV export, and the follow-up "Load time
+// series" request must all read what was actually requested, not the live
+// dropdown.
+describe('DatasetOverviewPanel — labels reflect what was actually loaded, not the live dropdown', () => {
   it('switching source while the request is in flight does not relabel the still-loading rows', async () => {
     const user = userEvent.setup()
     const rows = [makeRow('K00001', 'groupA', 100)]
@@ -221,14 +218,13 @@ describe('DatasetOverviewPanel — labels reflect what was actually loaded, not 
   })
 })
 
-// E7 (docs/AUDIT-2026-10-05.md): groups here are formed purely by each
+// Groups here are formed purely by each
 // row's own immediate parent, with no regard for hierarchy depth -- a
 // broad category and one of its own sub-categories can both appear as
-// separate "peer" groups in the same bar chart/top-5 list (live example:
-// KEGG groups 09182 and 09183 are themselves both members of group 09180,
-// plotted as three independent peers). Scoped to a visible disclosure
-// rather than changing the grouping/ranking behavior itself.
-describe('DatasetOverviewPanel — discloses that groups can be nested, not independent peers (E7)', () => {
+// separate "peer" groups in the same bar chart/top-5 list (e.g. KEGG groups
+// 09182 and 09183 are themselves both members of group 09180, plotted as
+// three independent peers), so the panel discloses it.
+describe('DatasetOverviewPanel — discloses that groups can be nested, not independent peers', () => {
   it('shows a help tooltip next to the groups heading explaining nested groups are not additive peers', async () => {
     mockFetch.mockResolvedValue(jsonResponse({
       data: [makeRow('K00001', '09180', 100), makeRow('K00002', '09182', 50)],

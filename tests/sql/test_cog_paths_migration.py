@@ -4,15 +4,12 @@ test_cog_paths_migration.py
 Tests for iter_cog_path_rows() (FastAPI/scripts/migrate_cog_paths_to_sql.py),
 which builds cog_paths rows from DataStructures/COG/cog_categories.json.
 
-E17 (docs/AUDIT-2026-09-22.md): a COG id can belong to more than one of
-NCBI's 26 categories (confirmed live: 400 of ~5,000 COGs, e.g. COG0028 is
-listed under both category E and category H). The pre-fix version of this
-migration script read annotation_catalog.parent -- a single TEXT column --
-so it could only ever produce one row per COG id, by construction, no
-matter how the notebook's own tree-building logic behaved. This file tests
-the rewritten version, which reads cog_categories.json directly (the same
-pattern migrate_kegg_paths_to_sql.py already uses for ko00001.keg) and can
-express real multi-category membership.
+A COG id can belong to more than one of NCBI's 26 categories (400 of
+~5,000 COGs, e.g. COG0028 is listed under both category E and category H).
+annotation_catalog.parent is a single TEXT column that can only express
+one, so the script reads cog_categories.json directly (the same pattern
+migrate_kegg_paths_to_sql.py uses for ko00001.keg) to express real
+multi-category membership.
 
 Data-layer test: no database, no server -- just the row-generation
 function in isolation, against a synthetic cog_categories.json.
@@ -57,7 +54,7 @@ def test_multi_category_cog_produces_one_row_per_membership(tmp_path):
 
     cog0028_rows = [r for r in rows if r["b_id"] == "COG0028"]
     assert len(cog0028_rows) == 2, \
-        "COG0028 belongs to 2 real NCBI categories -- must produce 2 rows, not 1 (E17)"
+        "COG0028 belongs to 2 real NCBI categories -- must produce 2 rows, not 1"
     assert {r["a_id"] for r in cog0028_rows} == {"E", "H"}
 
 
@@ -74,7 +71,8 @@ def test_single_category_cog_produces_exactly_one_row(tmp_path):
 
 def test_ids_not_in_annotation_catalog_are_dropped(tmp_path):
     # COG0031 is a real membership in the file but not a real leaf in this
-    # dataset (e.g. dropped by E9, or from a stale scrape) -- must not
+    # dataset (e.g. absent from the reference file, or from a stale
+    # scrape) -- must not
     # appear in cog_paths.
     path = _write_categories_file(tmp_path, MULTI_CATEGORY_ROWS)
     valid_leaf_ids = {"COG0028"}

@@ -5,7 +5,7 @@
  *
  * Tests import directly from production source files where possible.
  * filterSummaryForChart and buildAggregatedChartRows are imported from the
- * real component (exported for testing, W15 fix). Other pure logic helpers
+ * real component (exported for testing). Other pure logic helpers
  * are still defined inline -- they have no production export because they
  * live inside component functions and aren't otherwise reused.
  *
@@ -99,11 +99,11 @@ import type { ScaffoldSummaryRow, ScaffoldDetailRow } from '../types'
 // Pure helpers (mirror component-internal logic)
 //
 // filterSummaryForChart and buildAggregatedChartRows are imported directly
-// from the real component (W15 fix) rather than reimplemented here -- a
-// local duplicate using synthetic ISO-format ("YYYY-MM-DD HH:MM") fixtures
-// is exactly how W15 (date filter compares dates as text) went undetected:
-// ISO strings happen to compare correctly as plain text, so the duplicate
-// never exercised the real bug, which only shows up with the API's actual
+// from the real component rather than reimplemented here -- a local
+// duplicate using synthetic ISO-format ("YYYY-MM-DD HH:MM") fixtures can't
+// catch a date filter that compares dates as text: ISO strings happen to
+// compare correctly as plain text, so it would never exercise the real
+// failure mode, which only shows up with the API's actual
 // unpadded "M/D/YY H:MM" format. See the "real raw date format" describe
 // blocks below for fixtures that use the real format.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -540,11 +540,11 @@ describe('filterSummaryForChart', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// W15 regression: date_from/date_to against the REAL raw date format
+// date_from/date_to against the REAL raw date format
 //
 // Every fixture above this point uses padded ISO "YYYY-MM-DD HH:MM" dates,
-// which happen to compare correctly as plain text -- so they never actually
-// exercised the W15 bug. The scaffold summary endpoint really returns
+// which happen to compare correctly as plain text -- so they can't catch a
+// text-comparison date filter. The scaffold summary endpoint really returns
 // unpadded "M/D/YY H:MM" (e.g. "5/27/21 13:00", see
 // FastAPI/api/index.py's _parse_any_datetime docstring), while date_from/
 // date_to are bare "YYYY-MM-DD" from <input type="date">. These fixtures
@@ -558,7 +558,7 @@ const RAW_FORMAT_SUMMARY: ScaffoldSummaryRow[] = [
   { sample: 's4', date: '6/18/21 5:00',  scaffold_count: 9, gene_count: 22 },
 ]
 
-describe('filterSummaryForChart — real raw "M/D/YY H:MM" date format (W15)', () => {
+describe('filterSummaryForChart — real raw "M/D/YY H:MM" date format', () => {
   it('date_to no longer empties every row', () => {
     // Pre-fix: "5/27/21 13:00" > "2021-06-05" as plain text (raw string
     // starts with a digit character greater than "2"), so EVERY row was
@@ -587,7 +587,7 @@ describe('filterSummaryForChart — real raw "M/D/YY H:MM" date format (W15)', (
   })
 })
 
-describe('buildAggregatedChartRows — real raw "M/D/YY H:MM" date format (W15)', () => {
+describe('buildAggregatedChartRows — real raw "M/D/YY H:MM" date format', () => {
   it('date_to no longer empties the aggregated series', () => {
     const rows = buildAggregatedChartRows([{ summary: RAW_FORMAT_SUMMARY }], '', '2021-06-05')
     expect(rows.length).toBeGreaterThan(0)

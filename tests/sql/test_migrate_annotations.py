@@ -23,10 +23,9 @@ from scripts.migrate_annotations_to_sql import build_annotation_series_row
 
 
 # Real COG leaf entry, sample 3300060358, DataStructures/COG/3300060358.cog.json.
-# Post-E15 shape (see project memory): registered at both its own COG id
-# (depth=2, this entry) and its category letter (depth=1, COG_CATEGORY_ENTRY
-# below). `category` holds the real descriptive text, never the bare
-# letter -- but `parent` (post-CR3, docs/AUDIT.md) DOES hold parent_id
+# Registered at both its own COG id (depth=2, this entry) and its category
+# letter (depth=1, COG_CATEGORY_ENTRY below). `category` holds the real
+# descriptive text, never the bare letter -- but `parent` DOES hold parent_id
 # ("C"), not parent_name, same as KEGG/Enzyme (see
 # test_kegg_and_enzyme_do_not_store_parent_name).
 COG_ENTRY = {
@@ -60,9 +59,8 @@ COG_CATEGORY_ENTRY = {
 }
 
 # Real Taxonomy entry, sample 3300060358, DataStructures/Taxonomy/3300060358.tax.json,
-# keyed "Bacteria;Bacteroidetes" post taxonomy_egc_homonym_bug's full-lineage
-# rekeying. Unlike the old format, taxonomy entries now DO carry a "name"
-# field (the bare rank label) alongside the lineage-prefix key.
+# keyed "Bacteria;Bacteroidetes" (full-lineage keying). Taxonomy entries
+# carry a "name" field (the bare rank label) alongside the lineage-prefix key.
 TAXONOMY_ENTRY = {
     "name": "Bacteroidetes",
     "depth": 2,
@@ -116,8 +114,8 @@ ENZYME_ENTRY = {
 
 
 def test_cog_leaf_row_carries_depth_and_parent_from_parent_id():
-    """Post-E15 + CR3: a COG leaf row (COG#### id) DOES carry depth and
-    parent now -- parent falls back to parent_id ("C") exactly like
+    """A COG leaf row (COG#### id) carries depth and parent -- parent
+    falls back to parent_id ("C") exactly like
     KEGG/Enzyme, parent_name ("Energy production and conversion") is
     dropped the same way theirs is."""
     row = build_annotation_series_row("cog", "3300060358", "COG0055", COG_ENTRY)
@@ -189,10 +187,9 @@ def test_row_has_no_id_key():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Taxonomy's "name" field (added by the taxonomy_egc_homonym_bug fix's
-# full-lineage rekeying -- annotation_id is now the lineage-prefix, e.g.
+# Taxonomy's "name" field (annotation_id is the lineage-prefix, e.g.
 # "Bacteria;Bacteroidetes", so a separate bare-label "name" field is
-# required for display; see taxonomy_egc_homonym_bug)
+# required for display)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_taxonomy_row_uses_its_own_name_field():
@@ -231,7 +228,7 @@ def test_taxonomy_root_node_parent_is_explicitly_none_not_missing():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_kegg_row_parent_falls_back_to_parent_id():
-    """CR3 (docs/AUDIT.md): parent must be parent_id ("99996"), not
+    """parent must be parent_id ("99996"), not
     parent_name ("General function prediction only") -- parent_id is what
     matches another row's own annotation_id, which the correlation
     family-exclusion tree-walk and the frontend's expandParentLabel() both
@@ -251,7 +248,7 @@ def test_kegg_row_depth_is_kept_even_though_its_not_a_taxonomic_rank():
 
 
 def test_enzyme_row_parent_falls_back_to_parent_id():
-    """Same CR3 fix as KEGG: parent must be parent_id ("3.6.1"), not
+    """Same as KEGG: parent must be parent_id ("3.6.1"), not
     parent_name ("In phosphorus-containing anhydrides")."""
     row = build_annotation_series_row("enzyme", "3300060358", "3.6.1.23", ENZYME_ENTRY)
     assert row["parent"] == "3.6.1"
@@ -265,9 +262,7 @@ def test_kegg_and_enzyme_do_not_store_parent_name():
     own -- a deliberate, documented gap (display code re-derives it from
     parent_id per source instead), not an oversight. Confirms the real
     parent_name VALUE isn't silently leaking into some other field (like
-    `parent`, which should only ever hold parent_id -- see CR3, this is
-    the inverse of the pre-CR3 contract, which stored parent_name and
-    dropped parent_id)."""
+    `parent`, which should only ever hold parent_id)."""
     kegg_row = build_annotation_series_row("kegg", "3300060358", "K09014", KEGG_ENTRY)
     enzyme_row = build_annotation_series_row("enzyme", "3300060358", "3.6.1.23", ENZYME_ENTRY)
     assert KEGG_ENTRY["parent_name"] not in kegg_row.values()

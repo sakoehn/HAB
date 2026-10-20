@@ -48,13 +48,12 @@ import { SkeletonChart } from '../components/ui/Skeleton'
 
 export type AnalyzeState = {
   queryFields:   string[]
-  // W29 (docs/AUDIT-2026-09-22.md): the terms that actually produced
+  // The terms that actually produced
   // resultsByTerm/totalsByTerm, snapshotted at the moment runSearch() fired
   // -- distinct from queryFields, which keeps changing as the user types.
   // Tabs, labels, and any lookup indexed by term must all read this, not
   // the live text boxes, or e.g. typing "zinc" over "iron" results (without
-  // re-searching) instantly relabels the still-showing iron results as
-  // "zinc".
+  // re-searching) would relabel the still-showing iron results as "zinc".
   searchedTerms: string[]
   resultsByTerm: AnnotationItem[][]
   totalsByTerm:  number[]
@@ -137,7 +136,7 @@ function RightSingleCard({
 }) {
   const cached = seriesCache[card.key]
   const chartRef = useRef<EgcChartHandle>(null)
-  // E4 (docs/AUDIT-2026-10-05.md): the chart below defaults to Relative
+  // The chart below defaults to Relative
   // Abundance (norm_egc), not raw EGC -- this tracks which one it's
   // actually showing right now (via EgcChart's own onMetricChange), so
   // the header mean below can report the same metric instead of always
@@ -489,13 +488,10 @@ function CompareDrawer({
       //
       // All member data is already in seriesCache — no new fetches.
       //
-      // Delegates to the shared sumMembersByTimestamp (utils/stats.ts) --
-      // this used to be its own separate implementation with its own
-      // separate bug (W9: sorted with a plain string compare on the raw
-      // "M/D/YY H:MM" datetime, wrong against the real API format --
-      // "6/10/21" sorts before "6/2/21" as text). ComparePage.tsx had a
-      // near-identical copy with the exact same bug; both now go through
-      // the one, already-sorted-correctly implementation. annotation_id is
+      // Delegates to the shared sumMembersByTimestamp (utils/stats.ts),
+      // which sorts by real time -- a plain string compare on the raw
+      // "M/D/YY H:MM" datetime would put "6/10/21" before "6/2/21".
+      // ComparePage.tsx uses the same implementation. annotation_id is
       // overridden to c.key afterward since this card wants a different
       // annotation_id (c.key) than display name (c.label), which
       // sumMembersByTimestamp's single groupLabel param doesn't support.
@@ -510,14 +506,13 @@ function CompareDrawer({
 
       if (!summedData.length) return []
 
-      // W26 (docs/AUDIT-2026-09-22.md): id is c.key (genuinely unique, see
-      // addSelectedAsGroup's `group::${termLabel}::${Date.now()}`), NOT
-      // c.label -- two different groups can share the exact same
-      // user-typed label (e.g. two "iron (2)" searches with different
-      // members), and MultiEgcChart keys every internal row/lookup by
-      // `id`, not `annotationId`. Before `id` existed, this used label for
-      // both roles and the second same-labelled group's data silently
-      // overwrote the first's, in both the chart and the CSV export.
+      // id is c.key (genuinely unique, see addSelectedAsGroup's
+      // `group::${termLabel}::${crypto.randomUUID()}`), NOT c.label -- two
+      // different groups can share the exact same user-typed label (e.g.
+      // two "iron (2)" searches with different members), and MultiEgcChart
+      // keys every internal row/lookup by `id`, not `annotationId`. Keyed
+      // by label, the second same-labelled group's data would overwrite
+      // the first's, in both the chart and the CSV export.
       return [{
         id:           c.key,
         annotationId: c.label,
@@ -755,7 +750,7 @@ export function AnalyzePage({
 }) {
   const { copiedId, copy } = useCopyId()
   const firstInputRef      = useRef<HTMLInputElement>(null)
-  // W29: guards against a slower, superseded search response landing after
+  // Guards against a slower, superseded search response landing after
   // a newer one and overwriting it.
   const searchRequestSeqRef = useRef(0)
 
@@ -805,11 +800,11 @@ export function AnalyzePage({
   // activeTerms: the LIVE text box contents -- used only to know what to
   // search for when the user clicks Search/hits Enter (runSearch below).
   const activeTerms = state.queryFields.map(q => q.trim()).filter(q => q.length > 0)
-  // displayTerms: what was actually searched (W29, docs/AUDIT-2026-09-22.md)
-  // -- every tab/label/lookup indexed into already-fetched results
+  // displayTerms: what was actually searched -- every tab/label/lookup
+  // indexed into already-fetched results
   // (resultsByTerm/totalsByTerm/checkedByTerm/uniqueByTerm) must read this,
-  // not activeTerms, or editing the text box after a search instantly
-  // relabels the still-showing results under the new, not-yet-searched text.
+  // not activeTerms, or editing the text box after a search would relabel
+  // the still-showing results under the new, not-yet-searched text.
   const displayTerms = state.searchedTerms
   const activeTermIdx = Math.min(
     state.activeTermIdx,
@@ -838,12 +833,10 @@ export function AnalyzePage({
     [state.rightCards],
   )
 
-  // E10 (docs/AUDIT-2026-10-05.md): keyed by tab POSITION, not the raw
-  // search text -- two tabs that happen to search the exact same text
-  // (e.g. both "iron") used to share one checkbox set, since the text
-  // itself was the key. resultsByTerm/totalsByTerm are already
-  // positionally indexed for the same reason (W29); this just applies
-  // the same rule to checkedByTerm.
+  // Keyed by tab POSITION, not the raw search text -- two tabs that happen
+  // to search the exact same text (e.g. both "iron") would otherwise share
+  // one checkbox set. resultsByTerm/totalsByTerm are positionally indexed
+  // for the same reason.
   const activeChecked = state.checkedByTerm[String(activeTermIdx)] ?? new Set<string>()
 
   // ── Series fetcher ───────────────────────────────────────────────────
@@ -985,7 +978,7 @@ export function AnalyzePage({
       state.activeTermIdx,
       Math.max(0, displayTerms.length - 1),
     )
-    // E10: index-based, not text-based -- see activeChecked's own comment above.
+    // Index-based, not text-based -- see activeChecked's own comment above.
     const termKey = String(termIdx)
     const checked = state.checkedByTerm[termKey] ?? new Set<string>()
     const rows    = (uniqueByTerm[termIdx] ?? []).filter(
@@ -996,7 +989,7 @@ export function AnalyzePage({
       return
     }
 
-    // W22 (docs/AUDIT-2026-09-22.md): summing an annotation together with
+    // Summing an annotation together with
     // one of its own ancestors/descendants double-counts the contained
     // one's value, since egc/scaffold counts are hierarchical rollups (a
     // parent's value already includes everything under it). Drop the
@@ -1037,10 +1030,9 @@ export function AnalyzePage({
 
     const termLabel = displayTerms[termIdx] ?? 'group'
     const label     = `${termLabel} (${capped.length})`
-    // E10 (docs/AUDIT-2026-10-05.md): Date.now() alone collides for two
-    // groups created in the same millisecond (same shape G1 already
-    // fixed for ComparePage's entry ids) -- crypto.randomUUID() is
-    // genuinely unique regardless of timing.
+    // crypto.randomUUID(), not Date.now() -- two groups created in the same
+    // millisecond would otherwise collide (ComparePage's entry ids use
+    // randomUUID for the same reason).
     const key       = `group::${termLabel}::${crypto.randomUUID()}`
     const card: RightCard = {
       kind:          'group',

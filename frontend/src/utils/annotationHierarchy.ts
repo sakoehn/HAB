@@ -3,22 +3,21 @@
 // SUM together, drops any that are already contained inside another one in
 // the same list -- summing both double-counts the contained one's value.
 //
-// W22 (docs/AUDIT-2026-09-22.md): egc/scaffold/gene counts are hierarchical
-// rollups (confirmed live: a parent's value exactly equals the sum of its
-// children's, no rounding gap -- same invariant W19's taxonomy-exclusion
-// version of this check already relies on). Summing e.g. Bacteria AND
+// egc/scaffold/gene counts are hierarchical rollups (a parent's value
+// exactly equals the sum of its children's, no rounding gap -- the same
+// invariant the taxonomy-exclusion version of this check relies on). Summing e.g. Bacteria AND
 // Proteobacteria together doesn't give "everything in either" -- it gives
 // Bacteria's total plus a second, redundant copy of everything under
 // Proteobacteria, since Proteobacteria's value was already inside
-// Bacteria's. The audit's own live example: summing just 3 nested taxonomy
-// terms (Bacteria ⊃ Proteobacteria ⊃ Alphaproteobacteria) gave 375,910
-// scaffolds where the true distinct count was 198,368.
+// Bacteria's. E.g. summing just 3 nested taxonomy terms (Bacteria ⊃
+// Proteobacteria ⊃ Alphaproteobacteria) gives 375,910 scaffolds where the
+// true distinct count is 198,368.
 //
 // Two detection strategies, dispatched per source:
 //   - taxonomy: annotation_id IS the full lineage-prefix, so "is A an
 //     ancestor of B" is a free string-prefix check -- no fetch needed.
 //     Mirrors utils/taxonomy.ts's isCoveredByAnotherExclusion (built for
-//     W19's exclusion case), generalized here for the sum case.
+//     the taxonomy-exclusion case), generalized here for the sum case.
 //   - kegg/cog/enzyme: no such shortcut -- a candidate only carries its
 //     immediate parent, not a full ancestor chain, and KEGG nodes can have
 //     multiple real parents (e.g. K00844/hexokinase has 14). Fetches each

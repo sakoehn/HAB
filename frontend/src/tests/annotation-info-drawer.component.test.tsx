@@ -8,12 +8,10 @@
  *
  * Coverage
  * --------
- *   G13 (docs/AUDIT-2026-10-05.md): the Parent row used to always show the
- *     single, last-occurrence-wins stored `parent` value -- Explore's own
- *     Lookup card already fetches every real parent for a multi-parent
- *     KEGG KO or multi-category COG (via kegg_paths/cog_paths, the same
- *     data the hierarchy popup uses), but this sibling drawer never got
- *     the same fix. Mirrors that exact fetch.
+ *   the Parent row shows every real parent for a multi-parent KEGG KO or
+ *     multi-category COG (via kegg_paths/cog_paths, the same data the
+ *     hierarchy popup uses), not just the single, last-occurrence-wins
+ *     stored `parent` value -- the same fetch Explore's Lookup card uses.
  *
  * Run: npx vitest run src/tests/annotation-info-drawer.component.test.tsx
  */
@@ -41,7 +39,7 @@ async function openDrawer() {
   return user
 }
 
-describe('AnnotationInfoDrawer — shows every real parent, not just the stored one (G13)', () => {
+describe('AnnotationInfoDrawer — shows every real parent, not just the stored one', () => {
   it('shows "Parents" (plural) with every real pathway parent for a multi-parent KEGG KO', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/kegg/path')) {

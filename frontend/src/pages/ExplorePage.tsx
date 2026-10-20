@@ -73,22 +73,20 @@ export type ExploreState = {
   rows:         TopAnnotation[]
   sampleCount:  number | null
   status:       ApiStatus
-  // W29 (docs/AUDIT-2026-09-22.md): the (source, dateFrom, dateTo) that
-  // actually produced `rows` -- distinct from the live `source`/`dateFrom`/
+  // The (source, dateFrom, dateTo) that actually produced `rows` -- distinct from the live `source`/`dateFrom`/
   // `dateTo` above, which the user can change (dropdown/date fields) while
   // a request is still in flight. Every label/link/follow-up-fetch derived
   // from `rows` must read this instead of the live fields, or switching the
-  // dropdown after loading silently mislabels the still-displayed rows
-  // under the new source. null until the first load completes.
+  // dropdown after loading would mislabel the still-displayed rows under
+  // the new source. null until the first load completes.
   loadedParams: { source: string; dateFrom: string; dateTo: string } | null
   sortCol:      ExploreSortCol
   sortDir:      SortDir
   parentSource: string
   topFilter:    string
   // Rank/depth multi-select filter for the Top EGC Annotations table, for
-  // any source — reads the row's real `depth` directly (A8,
-  // docs/AUDIT-2026-10-05.md: /annotations/top now returns it for
-  // kegg/cog/enzyme too, not just taxonomy).
+  // any source — reads the row's real `depth` directly (/annotations/top
+  // returns it for every source).
   topRankFilter: Set<number>
   // Lookup section
   lookupId:       string
@@ -97,9 +95,9 @@ export type ExploreState = {
   lookupSelected: TopAnnotation | null
   lookupTotal:    number
   lookupStatus:   ApiStatus
-  // W29: same rationale as loadedParams above, for the lookup card's own
-  // source -- switching lookupSource before a search resolves used to show
-  // the returned annotation tagged/linked under the NEW source.
+  // Same rationale as loadedParams above, for the lookup card's own
+  // source -- otherwise switching lookupSource before a search resolves
+  // would show the returned annotation tagged/linked under the NEW source.
   lookupLoadedSource: string | null
   // Same rank/depth filter, applied to the Lookup result list — reads
   // row.depth directly (from /api/search/annotations, real for every source).
@@ -162,8 +160,8 @@ export function ExploreSortTh({
 }
 
 // ── DatasetOverviewPanel ───────────────────────────────────────────────────
-// Exported for direct component testing (also-noted item, docs/AUDIT.md:
-// the 40-annotation fetch cap and the mismatched 200/500 truncation check).
+// Exported for direct component testing (the 40-annotation fetch cap and
+// the 200-row truncation check).
 
 export function DatasetOverviewPanel({
   resetKey,
@@ -184,15 +182,14 @@ export function DatasetOverviewPanel({
   const [seriesTruncatedFrom, setSeriesTruncatedFrom] = useState<number | null>(null)
   const [topLevelOpen, setTopLevelOpen] = useState(false)
 
-  // W29 (docs/AUDIT-2026-09-22.md): `rows` is only ever correct for whatever
-  // (source, dateFrom, dateTo) was actually sent with the request that
-  // produced it -- not necessarily what `source`/`dateFrom`/`dateTo` hold
-  // NOW, since the user can change the dropdown/date fields at any time,
-  // including while a request is still in flight. Every place that used to
-  // read the live `source`/`dateFrom`/`dateTo` for display, labeling, or a
-  // follow-up fetch (CSV export, the summary line, expandParentLabel,
-  // loadTemporalChart's own request) now reads `loadedParams` instead --
-  // the actual parameters snapshotted at the moment `rows` was set.
+  // `rows` is only ever correct for whatever (source, dateFrom, dateTo) was
+  // actually sent with the request that produced it -- not necessarily what
+  // `source`/`dateFrom`/`dateTo` hold NOW, since the user can change the
+  // dropdown/date fields at any time, including while a request is still
+  // in flight. Everything that displays, labels, or follow-up-fetches from
+  // `rows` (CSV export, the summary line, expandParentLabel,
+  // loadTemporalChart's own request) reads `loadedParams` instead -- the
+  // actual parameters snapshotted at the moment `rows` was set.
   const [loadedParams, setLoadedParams] = useState<{ source: string; dateFrom: string; dateTo: string } | null>(null)
   const requestSeqRef = useRef(0)
 
@@ -265,15 +262,14 @@ export function DatasetOverviewPanel({
     const allMembers = top5Groups.flatMap(g => g.items)
     const allAnns = allMembers.slice(0, 40)
     if (!allAnns.length) return
-    // W29: the actually-loaded source, not the live dropdown -- switching
+    // The actually-loaded source, not the live dropdown -- switching
     // the source after loading rows (but before clicking this) must not
     // silently fetch a different source's time series for rows still
     // labelled/grouped under the one that was really loaded.
     const loadedSource = loadedParams?.source ?? source
     // Silently dropping members past the 40-annotation fetch budget could
     // zero out an entire later group's summed total with no indication
-    // anything was cut -- surfaced explicitly instead (also-noted item,
-    // docs/AUDIT.md).
+    // anything was cut -- surfaced explicitly instead.
     setSeriesTruncatedFrom(allMembers.length > allAnns.length ? allMembers.length : null)
     setSeriesStatus('loading')
     const results = await Promise.all(
@@ -298,16 +294,14 @@ export function DatasetOverviewPanel({
 
   const temporalSeries = useMemo(() => {
     if (!Object.keys(seriesData).length) return []
-    // W29: seriesData was fetched under loadedSource (loadTemporalChart),
+    // seriesData was fetched under loadedSource (loadTemporalChart),
     // not necessarily whatever the dropdown shows right now -- everything
     // derived from it must agree, or a source-switch after loading would
     // silently mislabel real kegg data as e.g. cog.
     const loadedSource = loadedParams?.source ?? source
     return top5Groups.map((group, gi) => ({
-      // W26 (docs/AUDIT-2026-09-22.md): id must be unique per series --
-      // group.label alone isn't guaranteed to be (two different parent
-      // categories can share a display name, e.g. the W30 KEGG/Enzyme
-      // mislabeling case). gi is this group's fixed position in the
+      // id must be unique per series -- group.label alone isn't guaranteed
+      // to be (two different parent categories can share a display name). gi is this group's fixed position in the
       // top-5 list, safe to use since MultiEgcChart only uses id for
       // internal row-keying, never display.
       id:           `group-${gi}`,
@@ -316,7 +310,7 @@ export function DatasetOverviewPanel({
       color:        CHART_GROUP_COLORS[gi],
       source:       loadedSource,
       // Summed per timestamp across members, not raw per-member points --
-      // see sumMembersByTimestamp's docstring for why (W14).
+      // see sumMembersByTimestamp's docstring for why.
       data: sumMembersByTimestamp(
         group.items.map(ann => ann.annotation_id),
         seriesData,
@@ -370,7 +364,7 @@ export function DatasetOverviewPanel({
           <button
             className="btn sm"
             onClick={() => downloadCsv(
-              // W29: the source these rows were actually loaded under, not
+              // The source these rows were actually loaded under, not
               // whichever the dropdown currently shows.
               rows.map(r => ({ ...r, source: loadedParams?.source ?? source })),
               `overview_${loadedParams?.source ?? source}.csv`,
@@ -609,15 +603,12 @@ export function DatasetOverviewPanel({
                   Summed EGC over time — top 5 functional groups
                 </div>
                 <ChartErrorBoundary label="Explore temporal chart">
-                  {/* E3 (docs/AUDIT-2026-10-05.md): must read loadedParams,
-                      not the live dateFrom/dateTo above -- every sibling
-                      render site in this section (the summary line, CSV
-                      filename, yLabel) already reads loadedParams for the
-                      same W29 reason. This was the one site still reading
-                      live state: typing a new date into the picker after
-                      loading, without reloading, silently narrowed the
-                      chart while the summary line right above it still
-                      correctly said "all dates" (or the real loaded range). */}
+                  {/* Must read loadedParams, not the live dateFrom/dateTo
+                      above, like every sibling render site in this section
+                      (the summary line, CSV filename, yLabel) -- otherwise
+                      typing a new date into the picker after loading,
+                      without reloading, would narrow the chart while the
+                      summary line above it still describes what was loaded. */}
                   <MultiEgcChart
                     series={temporalSeries}
                     dateFrom={loadedParams?.dateFrom ?? ''}
@@ -658,7 +649,7 @@ export function AnnotationsByParentPanel({
     status: ApiStatus
   }>>({})
   const { copiedId, copy } = useCopyId()
-  // W29 (docs/AUDIT-2026-09-22.md): `source` is a prop that can change
+  // `source` is a prop that can change
   // (parent dropdown) while a previous source's request is still in
   // flight -- without a sequence guard, the slower (stale) response could
   // land after the newer one and get labelled under the new `source`,
@@ -668,21 +659,17 @@ export function AnnotationsByParentPanel({
   // only for the request itself and the dropdown's own display elsewhere.
   const [loadedSource, setLoadedSource] = useState(source)
   const requestSeqRef = useRef(0)
-  // W30a (docs/AUDIT-2026-09-22.md): a KEGG row's stored `parent` is
+  // A KEGG row's stored `parent` is
   // last-occurrence-wins -- only ONE of its possibly-many real immediate
   // parents. Resolved in bulk (one request for the whole batch, not 200
   // individual lookups) via /api/kegg/parents, keyed by annotation_id.
   // Never populated for non-kegg sources, which are never multi-parent.
   const [multiParents, setMultiParents] = useState<Record<string, { annotation_id: string; name: string }[]>>({})
-  // E2 (docs/AUDIT-2026-10-05.md): tracks specifically whether the
-  // /kegg/parents bulk lookup itself failed, as distinct from
-  // multiParents being legitimately empty (e.g. a non-kegg source, or a
-  // kegg source where every row happened to resolve zero real parents).
-  // Drives both the visible warning below and the single-parent
-  // fallback in parentGroups -- the catch block's old comment claimed
-  // that fallback already existed, but nothing actually consulted
-  // r.parent on failure; every row silently landed in one "Ungrouped"
-  // bucket instead, with no error shown to the user.
+  // Tracks specifically whether the /kegg/parents bulk lookup itself
+  // failed, as distinct from multiParents being legitimately empty (e.g. a
+  // non-kegg source, or a kegg source where every row happened to resolve
+  // zero real parents). Drives both the visible warning below and the
+  // single-parent fallback in parentGroups.
   const [multiParentsFetchFailed, setMultiParentsFetchFailed] = useState(false)
 
   function loadTop() {
@@ -741,21 +728,19 @@ export function AnnotationsByParentPanel({
       if (loadedSource === 'kegg' && !multiParentsFetchFailed) {
         const parents = multiParents[r.annotation_id]
         if (parents && parents.length > 0) {
-          // W30a: file under EVERY real parent (same precedent as the
-          // E17 COG multi-category fix) -- a multi-parent KO's EGC
-          // counts toward each real pathway/category it belongs to.
-          // Group totals summed ACROSS groups therefore won't equal a
-          // flat dataset total -- the same already-accepted tradeoff E17
-          // introduced for COG.
+          // File under EVERY real parent -- a multi-parent KO's EGC
+          // counts toward each real pathway/category it belongs to, the
+          // same as COG's multi-category rollup. Group totals summed
+          // ACROSS groups therefore won't equal a flat dataset total.
           for (const p of parents) addTo(p.annotation_id, p.name, r)
         } else {
           // No real parent at all = a top-level category (see TOP_LEVEL_TOOLTIP)
           addTo('Ungrouped', TOP_LEVEL_LABEL, r)
         }
       } else {
-        // E2 (docs/AUDIT-2026-10-05.md): also the real single-parent
-        // fallback for kegg when /kegg/parents itself failed -- every
-        // row still carries its own (last-occurrence-wins, W30a) single
+        // Also the single-parent fallback for kegg when /kegg/parents
+        // itself failed -- every row still carries its own
+        // (last-occurrence-wins) single
         // `parent` field from /annotations/top, which is strictly better
         // than dumping everything into one undifferentiated "Ungrouped"
         // bucket.
@@ -791,7 +776,7 @@ export function AnnotationsByParentPanel({
     setGroupSeriesData(prev => ({ ...prev, [parent]: { data: {}, failed: [], status: 'loading' } }))
     const results = await Promise.all(
       items.slice(0, 20).map(ann =>
-        // W29: loadedSource, not the live `source` prop -- these items came
+        // loadedSource, not the live `source` prop -- these items came
         // from allRows, which was loaded under loadedSource; fetching their
         // series under a source the user has since switched to would ask
         // for the wrong annotations entirely.
@@ -831,9 +816,8 @@ export function AnnotationsByParentPanel({
   )
 
   // Shown inline above the toggle row when results were clipped.
-  // W31 (docs/AUDIT-2026-09-22.md): this checked `=== 500` while the real
-  // fetch above uses `limit=200` -- the condition could never be true, so a
-  // truncated list looked complete. Matches the fetch's own limit now.
+  // Must match the fetch's own `limit=200` above, or a truncated list
+  // would look complete.
   const truncationNote = allRows.length === 200 ? (
     <div style={{
       font: '11px var(--mono)', color: 'var(--amber)',
@@ -843,8 +827,8 @@ export function AnnotationsByParentPanel({
     </div>
   ) : null
 
-  // E2 (docs/AUDIT-2026-10-05.md): visible now instead of a silent
-  // fallback -- every row below is grouped by its own single stored
+  // Shown when /kegg/parents failed -- every row below is then grouped by
+  // its own single stored
   // parent (expandParentLabel(r.parent, ...), the same as any non-kegg
   // source) rather than the real, possibly-multiple parents
   // /kegg/parents would have resolved, so a multi-parent KO only
@@ -1016,7 +1000,7 @@ export function AnnotationsByParentPanel({
                         data-testid="parent-group-trend-truncated-warning"
                       >
                         <span style={{ flex: 1 }}>
-                          {/* W31 (docs/AUDIT-2026-09-22.md): the summed trend
+                          {/* The summed trend
                               below only fetches the first 20 of this group's
                               {group.items.length} members -- disclosed here
                               instead of silently undercounting the total. */}
@@ -1146,31 +1130,29 @@ export function ExplorePage({
   onReset:             () => void
 }) {
   const { copiedId, copy } = useCopyId()
-  // W29 (docs/AUDIT-2026-09-22.md): request-sequence guards so a slower,
+  // Request-sequence guards so a slower,
   // superseded response (e.g. from a source the user has since switched
   // away from) can't land after a newer one and overwrite it.
   const topRequestSeqRef    = useRef(0)
   const lookupRequestSeqRef = useRef(0)
-  // W29: everything that labels/links/filters the lookup card's ALREADY-
+  // Everything that labels/links/filters the lookup card's ALREADY-
   // LOADED results reads this instead of the live `state.lookupSource` --
   // the dropdown itself is the one place that still needs the live value.
   const effectiveLookupSource = state.lookupLoadedSource ?? state.lookupSource
-  // W29: same rationale for the Top EGC Annotations table's already-loaded
+  // Same rationale for the Top EGC Annotations table's already-loaded
   // `state.rows` -- the source dropdown for THIS section is the one place
   // that still needs the live `state.source`.
   const effectiveTopSource = state.loadedParams?.source ?? state.source
 
-  // E6 (docs/AUDIT-2026-10-05.md): same W30a-style real-multi-parent bulk
-  // lookup AnnotationsByParentPanel already does (/api/kegg/parents), now
-  // for this table's own "Group" column -- it used to show only
-  // row.parent, the single last-occurrence-wins stored value (P3), e.g.
-  // K00134/GAPDH showing "Exosome" (one of its rarest real categories)
-  // while the Lookup card for the same KO (fixed) correctly lists
-  // Glycolysis among 9 real parents.
+  // The same real-multi-parent bulk lookup AnnotationsByParentPanel does
+  // (/api/kegg/parents), for this table's own "Group" column -- row.parent
+  // alone is the single last-occurrence-wins stored value, e.g. "Exosome"
+  // (one of its rarest real categories) for K00134/GAPDH, whose 9 real
+  // parents include Glycolysis.
   const [topKeggParents, setTopKeggParents]             = useState<Record<string, { annotation_id: string; name: string }[]>>({})
   const [topKeggParentsFailed, setTopKeggParentsFailed] = useState(false)
 
-  // W30(a) (docs/AUDIT-2026-09-22.md): a KEGG KO's stored `parent` is
+  // A KEGG KO's stored `parent` is
   // last-occurrence-wins -- only ONE of its possibly-many real immediate
   // parents (e.g. K00844/hexokinase has 14; GAPDH, pyruvate kinase and
   // enolase are also real multi-parent nodes). kegg_paths already has
@@ -1180,26 +1162,22 @@ export function ExplorePage({
   // directly against the real db: 0 of 7,333 real EC nodes are
   // multi-parent; taxonomy's `parent` is a full lineage-prefix, never
   // ambiguous), so only kegg and cog need this treatment. COG's version
-  // (below) reads /api/cog/path the same way -- P4 (docs/AUDIT-2026-10-05.md)
-  // confirmed 340 real multi-category COGs (e.g. COG0028 is real under
-  // both category E and H), the exact same shape of bug, already
-  // correctly recorded in cog_paths (same table the hierarchy popup
-  // already uses) despite the single stored `parent`/`category` column
-  // only ever holding one (the earlier-published entry) of them.
+  // (below) reads /api/cog/path the same way -- there are 340 real
+  // multi-category COGs (e.g. COG0028 is real under both category E and H),
+  // all recorded in cog_paths (the table the hierarchy popup uses), while
+  // the single stored `parent`/`category` column only ever holds one.
   const [lookupKeggParents, setLookupKeggParents] = useState<
     { annotation_id: string; name: string }[] | null
   >(null)
-  // E5 (docs/AUDIT-2026-10-05.md): same real-path data as lookupKeggParents
-  // above, just the OTHER end of each path (depth-1, the real top-level
-  // category) instead of the immediate parent -- the Category row used to
-  // show the single stored (last-occurrence-wins, P3) value, contradicting
-  // the Parent row directly beneath it. Live example the audit cited:
-  // K00134/GAPDH's Category read "Brite Hierarchies" while Parents
-  // correctly listed Glycolysis among its real pathways.
+  // Same real-path data as lookupKeggParents above, just the OTHER end of
+  // each path (depth-1, the real top-level category) instead of the
+  // immediate parent -- the single stored (last-occurrence-wins) category
+  // would contradict the Parent row beneath it (e.g. "Brite Hierarchies"
+  // for K00134/GAPDH, whose real pathways include Glycolysis).
   const [lookupKeggCategories, setLookupKeggCategories] = useState<
     { annotation_id: string; name: string }[] | null
   >(null)
-  // E5 (cog parity): a COG id's real categories (depth-1 is the ONLY level
+  // A COG id's real categories (depth-1 is the ONLY level
   // above a leaf COG id, so "category" and "immediate parent" are the same
   // single real value here -- unlike kegg's 4-level hierarchy, there's no
   // separate "parent" concept to also show).
@@ -1288,7 +1266,7 @@ export function ExplorePage({
       if (requestId !== topRequestSeqRef.current) return // superseded
       const rows = r.data ?? []
 
-      // E6: stays 'loading' until this resolves too (same reasoning as
+      // Stays 'loading' until this resolves too (same reasoning as
       // AnnotationsByParentPanel.loadTop) -- never flash the single wrong
       // stored parent before the real multi-parent data is known.
       if (params.source === 'kegg' && rows.length > 0) {
@@ -1352,10 +1330,9 @@ export function ExplorePage({
     setState(prev => ({ ...prev, lookupRankFilter: new Set() }))
   }
 
-  // A8 (docs/AUDIT-2026-10-05.md): depth is now real for every source, not
-  // just taxonomy (annotation_catalog/annotation_series both carry it for
-  // kegg/cog/enzyme too) -- rank-filtering no longer needs to be restricted
-  // to taxonomy.
+  // depth is real for every source, not just taxonomy
+  // (annotation_catalog/annotation_series carry it for kegg/cog/enzyme
+  // too), so rank-filtering works for every source.
   const availableLookupRanks = useMemo(
     () => [...new Set(
         state.lookupResults
@@ -1418,7 +1395,7 @@ export function ExplorePage({
     return depthLabel(row.depth, effectiveTopSource, domain)
   }
 
-  // E6 (docs/AUDIT-2026-10-05.md): the Group column's display -- real
+  // The Group column's display -- real
   // multi-parent data (topKeggParents) when it's available for this row,
   // falling back to the single stored `parent` field otherwise (a
   // non-kegg source, a kegg root with no real parent above it, or
@@ -1441,13 +1418,11 @@ export function ExplorePage({
   }
 
   // Ranks actually present among the loaded rows — mirrors LeftResultList's
-  // availableSources/availableRanks pattern on the Analyze page. A8
-  // (docs/AUDIT-2026-10-05.md): depth is now real for every source (see
-  // get_top_annotations_from_catalog_sql/get_top_annotations_sql), so this
-  // reads r.depth directly instead of being restricted to taxonomy — a
-  // parent's EGC is the sum of its descendants, so without this,
-  // kegg/cog/enzyme top lists could never be rank-filtered down to real
-  // leaf annotations and were 100% branch/rollup nodes by default.
+  // availableSources/availableRanks pattern on the Analyze page. depth is
+  // real for every source (see get_top_annotations_from_catalog_sql/
+  // get_top_annotations_sql), so this reads r.depth directly — a parent's
+  // EGC is the sum of its descendants, so without rank-filtering,
+  // kegg/cog/enzyme top lists are 100% branch/rollup nodes by default.
   const availableTopRanks = useMemo(
     () => [...new Set(
         state.rows.map(r => r.depth).filter((d): d is number => d != null),
@@ -1462,12 +1437,11 @@ export function ExplorePage({
         || r.annotation_id.toLowerCase().includes(q)
         || (r.name   ?? '').toLowerCase().includes(q)
         || (r.parent ?? '').toLowerCase().includes(q)
-        // E9 (docs/AUDIT-2026-10-05.md): also test the Group column's
-        // actual DISPLAYED label, not just the raw stored r.parent code
-        // -- typing "Glycolysis" (what's visibly shown) matched 0 rows
-        // before this, since the real text on screen is topGroupDisplay's
-        // expanded label (e.g. "Glycolysis / Gluconeogenesis" for the
-        // bare stored code "00010"), not the bare code itself.
+        // Also test the Group column's actual DISPLAYED label, not just
+        // the raw stored r.parent code -- the text on screen is
+        // topGroupDisplay's expanded label (e.g. "Glycolysis /
+        // Gluconeogenesis" for the bare stored code "00010"), which is
+        // what a user types.
         || topGroupDisplay(r).label.toLowerCase().includes(q),
       )
       .filter(r => state.topRankFilter.size === 0
@@ -1485,7 +1459,7 @@ export function ExplorePage({
       })
   }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter, topKeggParents, effectiveTopSource])
 
-  // E11 (docs/AUDIT-2026-10-05.md): must scale against `sorted` (what's
+  // Must scale against `sorted` (what's
   // actually visible after the rank/text filters), not the unfiltered
   // state.rows -- otherwise narrowing to e.g. a specific rank still
   // scales every visible bar against a since-filtered-out branch/rollup
@@ -1672,7 +1646,7 @@ export function ExplorePage({
                     All
                   </button>
                   <HelpTooltip text="Narrows the table below to the selected taxonomic rank(s) — doesn't re-fetch, just filters what's already loaded." />
-                  {/* W7: intentionally no domain passed here -- this pill represents
+                  {/* Intentionally no domain passed here -- this pill represents
                       every taxon at this depth across the whole result set, which can
                       span multiple domains (e.g. a Bacteria leaf and a Eukaryota leaf
                       both at depth 6) at once. There's no single correct domain for a
@@ -1698,15 +1672,12 @@ export function ExplorePage({
                 }}>
                   Based on {state.sampleCount} sample
                   {state.sampleCount !== 1 ? 's' : ''}
-                  {/* E1 (docs/AUDIT-2026-10-05.md): must read loadedParams, not the
-                      live dateFrom/dateTo above -- sampleCount describes what was
-                      actually loaded, and every sibling render site in this file
-                      already reads loadedParams for the same reason (see its own
-                      comment on the ExploreState type). This was the one missed
-                      site: editing/clearing the date picker after loading, without
-                      clicking Load again, used to flip this suffix to the live
-                      (unloaded) value while sampleCount kept describing the old
-                      request. */}
+                  {/* Must read loadedParams, not the live dateFrom/dateTo
+                      above -- sampleCount describes what was actually loaded
+                      (see the comment on the ExploreState type). Otherwise
+                      editing the date picker after loading, without clicking
+                      Load again, would flip this suffix to the unloaded value
+                      while sampleCount still describes the old request. */}
                   {state.loadedParams?.dateFrom || state.loadedParams?.dateTo
                     ? ` · ${state.loadedParams?.dateFrom || '…'} → ${state.loadedParams?.dateTo || '…'}`
                     : ' (all dates)'}
@@ -2031,7 +2002,7 @@ export function ExplorePage({
                         All
                       </button>
                       <HelpTooltip text="Narrows the result list below to the selected taxonomic rank(s) — doesn't re-search, just filters what's already loaded." />
-                      {/* W7: see the matching comment on availableTopRanks above --
+                      {/* See the matching comment on availableTopRanks above --
                           a depth-only aggregate can span multiple domains at once. */}
                       {availableLookupRanks.map(depth => (
                         <button
@@ -2121,13 +2092,10 @@ export function ExplorePage({
                                   flexShrink: 0,
                                 }}
                                 title={
-                                  // E8 (docs/AUDIT-2026-10-05.md): this
-                                  // list had no detection-count
-                                  // disclosure at all -- mean_egc is a
-                                  // mean over only the samples where the
-                                  // annotation was actually detected
-                                  // (see LeftResultList's own W21 note),
-                                  // and nothing here said so.
+                                  // mean_egc is a mean over only the
+                                  // samples where the annotation was
+                                  // actually detected (see
+                                  // LeftResultList's own note), so say so.
                                   row.sample_count != null
                                     ? `Mean when detected, across ${row.sample_count} of 128 samples`
                                     : undefined
@@ -2162,7 +2130,7 @@ export function ExplorePage({
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {state.lookupSelected ? (() => {
                       const r      = state.lookupSelected
-                      // W30(a): kegg's real (possibly multiple) parents come
+                      // kegg's real (possibly multiple) parents come
                       // from lookupKeggParents (fetched from /api/kegg/path,
                       // the real ancestor data), not r.parent -- the single
                       // stored value is last-occurrence-wins and often wrong
@@ -2177,16 +2145,15 @@ export function ExplorePage({
                       const keggParentNames = effectiveLookupSource === 'kegg' && lookupKeggParents
                         ? lookupKeggParents.map(p => p.name)
                         : null
-                      // E5 (docs/AUDIT-2026-10-05.md): same reasoning as
-                      // `parent` above -- kegg's real category is the SAME
-                      // kegg_paths data lookupKeggParents already uses, not
-                      // the single stored `category` field (also
-                      // last-occurrence-wins, P3). Suppressed here exactly
-                      // like `parent` is, so the generic row below never
-                      // shows the stale value for kegg OR cog -- P4
-                      // (docs/AUDIT-2026-10-05.md) confirmed the identical
-                      // bug shape for cog (340 real multi-category COGs,
-                      // e.g. COG0028 real under both E and H), and
+                      // Same reasoning as `parent` above -- kegg's real
+                      // category is the SAME kegg_paths data
+                      // lookupKeggParents already uses, not the single stored
+                      // `category` field (also last-occurrence-wins).
+                      // Suppressed here exactly like `parent` is, so the
+                      // generic row below never shows the stale value for
+                      // kegg OR cog -- cog has the same multi-category shape
+                      // (340 real multi-category COGs, e.g. COG0028 real
+                      // under both E and H), and
                       // cogCategoryNames below reads the same cog_paths
                       // data the hierarchy popup already uses instead.
                       const keggCategoryNames = effectiveLookupSource === 'kegg' && lookupKeggCategories

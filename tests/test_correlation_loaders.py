@@ -1,6 +1,6 @@
 """
 Tests for api/correlation_loaders.py's assert_sample_order_is_trustworthy
-(CR6, see docs/AUDIT.md) -- the one-time startup guard against a broken
+-- the one-time startup guard against a broken
 real sample time axis. Monkeypatches correlation_loaders.timepoint_sort_key
 directly rather than touching the real JGI_ID_Timepoints_128.csv lookup,
 so these tests are independent of that file's real contents.

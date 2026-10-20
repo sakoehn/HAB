@@ -41,7 +41,7 @@ const METRIC_LABEL: Record<ChartMetric, string> = {
   norm_egc: 'norm EGC',
 }
 
-// G11 (docs/AUDIT-2026-10-05.md): apiFetch throws a plain Error with the
+// apiFetch throws a plain Error with the
 // real HTTP status as the message's leading token (e.g. "404 Not Found")
 // on a non-2xx response -- extracts it so the retry logic and the error
 // message can tell a real 4xx apart from a timeout/5xx instead of
@@ -68,13 +68,13 @@ export function CorrelatesPanel({
   const [open,   setOpen]   = useState(false)
   const [data,   setData]   = useState<CorrelationFamilyResult[]>([])
   const [status, setStatus] = useState<ApiStatus>('idle')
-  // CR10 (docs/AUDIT-2026-09-22.md): the real total before `limit` cuts the
+  // The real total before `limit` cuts the
   // list -- null only in the idle/loading/error states before a real
   // response has landed.
   const [significantCount, setSignificantCount] = useState<number | null>(null)
   // Set only when method=circular_shift screened the family down before
-  // running the expensive permutation test (docs/AUDIT-2026-09-22.md,
-  // CR8 follow-up) -- null otherwise, including for every other method.
+  // running the expensive permutation test -- null otherwise, including
+  // for every other method.
   const [prescreen, setPrescreen] = useState<{ poolSize: number; topN: number } | null>(null)
 
   // Default to enzyme (the smallest real family, ~3.5k candidates) rather
@@ -84,23 +84,18 @@ export function CorrelatesPanel({
   // pre-selected when the panel first opens.
   const defaultTarget = source === 'enzyme' ? 'cog' : 'enzyme'
   const [targetSource, setTargetSource] = useState<string>(defaultTarget)
-  // CR2 (docs/AUDIT-2026-09-22.md): spearman's parametric p-value ignores
-  // autocorrelation -- real EGC series have lag-1 autocorrelation of
-  // 0.60-0.72, which let 22-51% of genuinely unrelated pairs pass q<0.05
-  // under the old default. circular_shift's own defects (CR8) are now
-  // fixed -- confirmed by simulation to hold <=5% false positives while
-  // still detecting >=80% of real relationships -- so it's the default
-  // now, not just an opt-in for users who know to switch to it. User can
-  // still pick spearman/log_pearson/raw_pearson for a faster, less
-  // rigorous look.
+  // spearman's parametric p-value ignores autocorrelation -- real EGC
+  // series have lag-1 autocorrelation of 0.60-0.72, which lets 22-51% of
+  // genuinely unrelated pairs pass q<0.05. circular_shift's permutation
+  // null preserves each series' autocorrelation, so it's the default. User
+  // can still pick spearman/log_pearson/raw_pearson for a faster look.
   const [method, setMethod] = useState<CorrMethod>('circular_shift')
   const [metric, setMetric] = useState<ChartMetric>('norm_egc')
   const requestSeqRef = useRef(0)
   const [retryAttempt, setRetryAttempt] = useState(0)
-  // G11: real wall-clock elapsed time for the "still working"/"gave up"
-  // messages, instead of assuming every retry actually consumed the full
-  // 10-minute timeout -- a run of immediate hard failures took nowhere
-  // near that. Set on the first attempt (attempt===0) of a fetch run,
+  // Real wall-clock elapsed time for the "still working"/"gave up"
+  // messages, instead of assuming every retry consumed the full 10-minute
+  // timeout -- a run of immediate hard failures takes nowhere near that. Set on the first attempt (attempt===0) of a fetch run,
   // read (not reset) on every subsequent retry within that same run.
   const fetchStartRef = useRef<number | null>(null)
   const [elapsedMinutes, setElapsedMinutes] = useState(0)
@@ -114,19 +109,15 @@ export function CorrelatesPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetSource, method, metric])
 
-  // circular_shift runs a real permutation test per candidate (CR8,
-  // docs/AUDIT-2026-09-22.md: exhaustively over every valid shift beyond
-  // the lag window, ~115 of them at the real n=128 x 9 lags each, not a
-  // tunable sample count) instead of one parametric pass -- measured
-  // directly against the real db at ~120x slower per candidate than a
-  // fast parametric method (spearman: ~3ms/pair, circular_shift: ~0.38s/pair
-  // -- down from ~3.6s/pair pre-CR8, since enumerating only the real valid
-  // shifts is both more correct and cheaper than the old 1000-draw random
-  // sample). With prescreening capping this to the strongest 200
-  // candidates, a worst-case family now finishes in well under 2 minutes,
-  // not hours -- the retry affordance below still exists as a safety net
-  // for a slow cold cache, not because this is routinely multi-hour work
-  // anymore. correlation_family_endpoint is a synchronous route, which
+  // circular_shift runs a real permutation test per candidate
+  // (exhaustively over every valid shift beyond the lag window -- 103 of
+  // them at the real n=128, each re-running the 13-lag search) instead of
+  // one parametric pass -- measured directly against the real db at ~120x
+  // slower per candidate than a fast parametric method (spearman:
+  // ~3ms/pair, circular_shift: ~0.38s/pair). With prescreening capping
+  // this to the strongest 200 candidates, a worst-case family finishes in
+  // well under 2 minutes -- the retry affordance below is a safety net for
+  // a slow cold cache. correlation_family_endpoint is a synchronous route, which
   // FastAPI runs in a background thread -- so even after this request's
   // own timeout fires, the server keeps scoring candidates and caching
   // each one individually. A client-side timeout here is therefore not a
@@ -177,13 +168,10 @@ export function CorrelatesPanel({
       setStatus('ok')
     } catch (err) {
       if (requestId !== requestSeqRef.current) return
-      // G11 (docs/AUDIT-2026-10-05.md): a 404/422/500 used to be
-      // indistinguishable from a timeout/abort here -- ALL of them
-      // retried identically, firing up to 13 attempts back-to-back in
-      // under a second for a genuinely dead endpoint before finally
-      // giving up. Only a real timeout/abort or a 5xx (a transient
-      // server-side issue, worth another try) should trigger a retry; a
-      // 4xx is a real, immediate failure right now, not "still working".
+      // Only a real timeout/abort or a 5xx (a transient server-side issue,
+      // worth another try) triggers a retry; a 4xx is a real, immediate
+      // failure, not "still working" -- retrying it would fire up to 13
+      // attempts back-to-back in under a second for a dead endpoint.
       const httpStatus = httpStatusFromError(err)
       setLastErrorStatus(httpStatus)
       const isRetryable = isAbortError(err) || (httpStatus != null && httpStatus >= 500)
@@ -304,7 +292,7 @@ export function CorrelatesPanel({
                   }}>
                     {retryAttempt === 0
                       ? 'This method is slower and can take a while on a large family. It keeps trying on its own, so feel free to leave this open.'
-                      // G11: real elapsed time, not retryAttempt * 10 --
+                      // Real elapsed time, not retryAttempt * 10 --
                       // that assumed every retry consumed the full
                       // 10-minute timeout, which a run of genuinely slow
                       // (not failed) retries roughly does, but is still
@@ -327,15 +315,11 @@ export function CorrelatesPanel({
             {status === 'error' && (
               <div className="corr-empty corr-empty-error">
                 <span className="corr-empty-icon">⚠</span>
-                {/* G11 (docs/AUDIT-2026-10-05.md): retryAttempt > 0 here
-                    means retries actually happened and were genuinely
-                    exhausted (the "still working" message above was
-                    showing) -- a hard, non-retryable error (4xx) stops
-                    on attempt 0 instead, with nothing to call "hours of
-                    trying" (that used to be shown unconditionally,
-                    fabricated from MAX_CIRCULAR_SHIFT_RETRIES regardless
-                    of how long -- or how little -- time had actually
-                    passed). */}
+                {/* retryAttempt > 0 here means retries actually happened
+                    and were genuinely exhausted (the "still working"
+                    message above was showing) -- a hard, non-retryable
+                    error (4xx) stops on attempt 0 instead, with no
+                    elapsed-time message to show. */}
                 {method === 'circular_shift' && retryAttempt > 0 ? (
                   <>
                     Still not done after about {elapsedMinutes} minute{elapsedMinutes === 1 ? '' : 's'} of

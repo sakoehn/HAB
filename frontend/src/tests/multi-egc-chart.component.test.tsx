@@ -10,22 +10,21 @@
  * distinctive, easy-to-get-backwards logic is what these tests target:
  * the scaleMismatch heuristic (a real >10x mean-ratio threshold, not a
  * cosmetic check) and StatsPanel receiving one independent value array PER
- * series (W25, docs/AUDIT-2026-09-22.md -- used to pool every series into
- * one flat array, giving one meaningless blended mean/CV for the whole
- * group; now each series gets its own row).
+ * series (pooling every series into one flat array would give one
+ * meaningless blended mean/CV for the whole group).
  *
  * Coverage
  * --------
  *   empty state when the date range excludes every point
  *   scaleMismatch warning: fires above the real >10x mean-ratio threshold,
- *     not below it, stays on in Relative Abundance mode (W33,
- *     docs/AUDIT-2026-09-22.md -- that metric doesn't actually resolve a
- *     raw-EGC scale gap), and is suppressed only once Z-score standardize
+ *     not below it, stays on in Relative Abundance mode (that metric
+ *     doesn't actually resolve a raw-EGC scale gap), and is suppressed only
+ *     once Z-score standardize
  *     is on (which does resolve it)
  *   legend: taxonomy-aware label, italic styling for taxonomy, and
  *     scaffoldsDisabled hides the per-series Scaffold/Hierarchy buttons
- *   stats are per-series (W25), not pooled together -- and same-labelled
- *     groups' data doesn't collide (W26)
+ *   stats are per-series, not pooled together -- and same-labelled
+ *     groups' data doesn't collide
  *   dateFrom/dateTo props actually exclude out-of-range points, not just
  *     from the chart but from what feeds the stats too
  *
@@ -53,7 +52,7 @@ function statValue(label: string): number {
   return Number(cell.querySelector('.stat-cell-value')!.textContent!)
 }
 
-// W25 (docs/AUDIT-2026-09-22.md): StatsPanel now renders one labelled block
+// StatsPanel renders one labelled block
 // per series (`.stats-panel-series`), not one pooled set of numbers -- this
 // finds a specific stat within a specific series' own block.
 function statValueForSeries(seriesLabel: string, statLabel: string): number {
@@ -140,8 +139,8 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
 
   it('is suppressed once Z-score standardization is on, even with a >10x raw gap', async () => {
     const user = userEvent.setup()
-    // 2 points per series -- Z-score is a no-op below 2 real points (W
-    // 2.6, docs/AUDIT-2026-09-22.md), so this needs enough for
+    // 2 points per series -- Z-score is a no-op below 2 real points, so
+    // this needs enough for
     // standardization to actually take effect on BOTH series for
     // suppression to correctly apply; a 1-point fixture would (correctly)
     // leave the warning visible instead of exercising the case this test
@@ -161,7 +160,7 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
     expect(screen.queryByText(/very different EGC scales/i)).not.toBeInTheDocument()
   })
 
-  // W (2.6, docs/AUDIT-2026-09-22.md): applyZScore silently no-ops for a
+  // applyZScore silently no-ops for a
   // series with fewer than 2 real points -- if that leaves even ONE
   // compared series still on its raw EGC scale, the mismatch this warning
   // exists to catch hasn't actually been resolved, so it must stay visible
@@ -183,7 +182,7 @@ describe('MultiEgcChart — scale-mismatch warning', () => {
     expect(screen.getByText(/very different EGC scales/i)).toBeInTheDocument()
   })
 
-  // W33 (docs/AUDIT-2026-09-22.md): Relative Abundance divides every series
+  // Relative Abundance divides every series
   // by the same per-sample total, so a raw-EGC scale gap survives it
   // unchanged -- the warning must still fire on this metric. Only Z-score
   // (covered above) actually resolves the mismatch.
@@ -255,16 +254,15 @@ describe('MultiEgcChart — legend', () => {
   })
 })
 
-// W28 (docs/AUDIT-2026-09-22.md): the legend swatch and the plotted trace
-// used to compute their colors independently and could disagree. Two real
-// live examples: (a) a non-grouped series' color is often a raw CSS
-// `var(--chart-1)` string (from SOURCE_COLORS/CHART_COLORS) -- real CSS
-// (the legend dot) resolves that correctly, but Plotly's SVG renderer
-// can't parse var() at all and silently fell back to black; (b) a grouped
+// The legend swatch and the plotted trace must agree on color, in both
+// cases where they could diverge: (a) a non-grouped series' color is often
+// a raw CSS `var(--chart-1)` string (from SOURCE_COLORS/CHART_COLORS) --
+// real CSS (the legend dot) resolves that, but Plotly's SVG renderer can't
+// parse var() at all and silently falls back to black; (b) a grouped
 // series' PLOTTED line is deliberately recolored for visual hierarchy
-// (near-black for the first group, a CB-safe palette for extras), but the
-// legend dot kept showing the series' own original, unrelated color.
-describe('MultiEgcChart — legend color matches the plotted trace (W28)', () => {
+// (near-black for the first group, a CB-safe palette for extras), so the
+// legend dot must show that color, not the series' own original one.
+describe('MultiEgcChart — legend color matches the plotted trace', () => {
   function legendDotColor(labelText: string): string {
     return screen.getByText(labelText).closest('.legend-item')!
       .querySelector('.legend-dot')!.style.background
@@ -328,7 +326,7 @@ describe('MultiEgcChart — legend color matches the plotted trace (W28)', () =>
   })
 })
 
-describe('MultiEgcChart — stats are per-series, not pooled (W25)', () => {
+describe('MultiEgcChart — stats are per-series, not pooled', () => {
   it('each series gets its own n/Mean row -- not blended into one pooled set', async () => {
     const user = userEvent.setup()
     render(
@@ -349,7 +347,7 @@ describe('MultiEgcChart — stats are per-series, not pooled (W25)', () => {
     await selectRawEgc(user)
     await user.click(screen.getByRole('button', { name: /Σ Stats/i }))
     // A's own mean is 20, B's own mean is 200 -- if these were pooled into
-    // one blended set (the pre-W25 behavior), there would be only one "n"
+    // one blended set, there would be only one "n"
     // (4) and one "Mean" (~137.5) describing neither series correctly.
     expect(statValueForSeries('A', 'n')).toBe(2)
     expect(statValueForSeries('A', 'Mean')).toBeCloseTo(20)
@@ -357,12 +355,10 @@ describe('MultiEgcChart — stats are per-series, not pooled (W25)', () => {
     expect(statValueForSeries('B', 'Mean')).toBeCloseTo(200)
   })
 
-  // W26 (docs/AUDIT-2026-09-22.md): two different groups sharing the same
-  // user-typed label (annotationId) must not collide -- their real,
-  // different data must both survive the full render pipeline
-  // (baseRows/dtMap, which is keyed internally by `id`, not annotationId).
-  // Before `id` existed, the second same-labelled series' points silently
-  // overwrote the first's at every shared datetime.
+  // Two different groups sharing the same user-typed label (annotationId)
+  // must not collide -- their real, different data must both survive the
+  // full render pipeline (baseRows/dtMap, which is keyed internally by
+  // `id`, not annotationId).
   it('two series sharing the same annotationId (label) both survive -- keyed internally by id, not annotationId', async () => {
     const user = userEvent.setup()
     render(
@@ -386,13 +382,11 @@ describe('MultiEgcChart — stats are per-series, not pooled (W25)', () => {
   })
 })
 
-// F7 (docs/AUDIT-2026-10-05.md): the scale-mismatch warning's own mean
-// computation read every point in s.data directly, completely ignoring
-// dateFrom/dateTo -- unlike the Stats panel right next to it (which
-// already correctly reads the date-filtered unsmoothedRows), the warning
-// could fire (or stay silent) based on data that isn't even visible on
-// screen once a date range narrows what's actually shown.
-describe('MultiEgcChart — scale-mismatch respects the active date filter (F7)', () => {
+// The scale-mismatch warning's own mean computation must respect
+// dateFrom/dateTo, like the Stats panel next to it -- otherwise it could
+// fire (or stay silent) based on data that isn't even visible on screen
+// once a date range narrows what's actually shown.
+describe('MultiEgcChart — scale-mismatch respects the active date filter', () => {
   it('does not fire once filtered to a date range where the two series are actually close in scale', async () => {
     const user = userEvent.setup()
     render(
@@ -449,11 +443,10 @@ describe('MultiEgcChart — date range props', () => {
   })
 })
 
-// W27 (docs/AUDIT-2026-09-22.md): stats used to be computed from the
-// smoothed values -- confirmed live, SD dropped 5.57e-5 -> 4.50e-5 (-19%)
-// purely from toggling Smooth on. Verify bar from the audit itself:
-// toggling Smooth must never change the reported statistics.
-describe('MultiEgcChart — statistics are unaffected by the Smooth toggle (W27)', () => {
+// Toggling Smooth must never change the reported statistics (computed
+// from the smoothed values, SD would drop 5.57e-5 -> 4.50e-5, -19%, on
+// real data purely from toggling Smooth on).
+describe('MultiEgcChart — statistics are unaffected by the Smooth toggle', () => {
   it('n/Mean/Std Dev read identically whether Smooth is on or off', async () => {
     const user = userEvent.setup()
     const points = Array.from({ length: 20 }, (_, i) =>
@@ -476,10 +469,9 @@ describe('MultiEgcChart — statistics are unaffected by the Smooth toggle (W27)
   })
 })
 
-// W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op with
-// fewer than 2 real points, but the chart-wide yLabel (and tooltip, via
-// fmtVal) kept claiming "Z-score (σ from mean)" regardless -- same
-// underlying bug as EgcChart/GroupedEgcChart, checked here against
+// applyZScore is a silent no-op with fewer than 2 real points, so the
+// chart-wide yLabel (and tooltip, via fmtVal) must not claim "Z-score (σ
+// from mean)" then -- same check as EgcChart/GroupedEgcChart, here against
 // MultiEgcChart's own per-series canStandardizeSeries/standardizeApplied
 // ("any series qualifies" chart-wide semantics).
 describe('MultiEgcChart — Z-score is a no-op with fewer than 2 real points', () => {

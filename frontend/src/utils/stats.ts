@@ -40,23 +40,16 @@ export function extractNormEgc(value: unknown): number | null {
   return null
 }
 
-// ── Annotation Lookup detail-card field resolution (W5) ─────────────────────
-// /search/annotations' SQL branch exposes category/scaffold_count/depth as
-// top-level fields on the row; the JSON branch nests the first two inside a
-// `value` object instead (`value.category`, `value.scaffolds`) and never
-// returns them top-level. These three helpers read whichever shape is
-// present so the same UI code works on both backends without caring which
-// one answered the request.
+// ── Annotation Lookup detail-card field resolution ──────────────────────────
+// /search/annotations exposes category/scaffold_count/depth as top-level
+// fields on the row; these helpers also accept the older nested shape
+// (`value.category`, `value.scaffolds`) so the UI works with either.
 //
-// scaffold_count carries slightly different meaning per backend: the JSON
-// backend's value.scaffolds reflects one specific sample (whichever the
-// in-memory index happened to build first), while the SQL backend's
 // scaffold_count is a real count from *a* sample chosen by an unordered
-// SQL LIMIT 1 -- neither promises "the earliest sample," despite older UI
-// copy implying that (see W5 in docs/AUDIT.md for why "earliest" wasn't
-// pursued: it would require a per-row correlated subquery ordered by
-// sample date, which isn't stored in SQL at all -- sample chronology lives
-// only in the separate TIMEPOINTS lookup on the Python side).
+// SQL LIMIT 1 -- not "the earliest sample". Picking the earliest would need
+// a per-row correlated subquery ordered by sample date, which isn't stored
+// in SQL at all (sample chronology lives only in the separate TIMEPOINTS
+// lookup on the Python side).
 
 export function resolveLookupCategory(r: TopAnnotation): string | null {
   return r.category ?? r.value?.category ?? null
@@ -214,7 +207,7 @@ export function minMeanMax(
 // it was never meant to receive more than one raw datapoint per group per
 // timestamp. Handing it every member's raw datapoint under the same group
 // label/annotationId makes each overwrite the last, silently dropping every
-// member but one (W14). This function does the actual summation up front so
+// member but one. This function does the actual summation up front so
 // callers pass one already-aggregated datapoint per timestamp.
 //
 // memberAnnotationIds: the annotation_ids belonging to this group.
@@ -223,11 +216,9 @@ export function minMeanMax(
 // source: passed through onto each returned point.
 //
 // Output is sorted chronologically by real parsed timestamp, not by
-// insertion/Map order (W9: a naive `.datetime.localeCompare(...)` string
-// sort -- the bug two near-duplicate copies of this summing logic each had
-// before being unified into this one function -- sorts wrong against the
-// real unpadded "M/D/YY H:MM" API format, e.g. "6/10/21" sorts before
-// "6/2/21" as text). Downstream chart code happens to re-sort again
+// insertion/Map order (a naive `.datetime.localeCompare(...)` string sort
+// is wrong against the real unpadded "M/D/YY H:MM" API format, e.g.
+// "6/10/21" sorts before "6/2/21" as text). Downstream chart code happens to re-sort again
 // defensively, but a caller reading this function's return value directly
 // (e.g. a CSV export) must not depend on that -- the data is sorted here,
 // at the source, once.

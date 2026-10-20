@@ -9,11 +9,10 @@
  * --------
  *   renders from/to date inputs with the dataset min/max
  *   clear button shown only when a date is set
- *   G14 (docs/AUDIT-2026-10-05.md): each input's min/max is also
- *     constrained by the OTHER input's current value, not just the
- *     dataset's own range -- prevents ever selecting an inverted range
- *     via the native date picker, which silently emptied every chart/
- *     table reading it with no error shown
+ *   each input's min/max is also constrained by the OTHER input's current
+ *     value, not just the dataset's own range -- prevents selecting an
+ *     inverted range via the native date picker, which would silently
+ *     empty every chart/table reading it
  *
  * Run: npx vitest run src/tests/date-range-picker.component.test.tsx
  */
@@ -55,11 +54,10 @@ describe('DateRangePicker — rendering', () => {
   })
 })
 
-// G14 (docs/AUDIT-2026-10-05.md): an inverted range (from after to, or to
-// before from) silently emptied every chart/table reading it, with no
-// error shown anywhere -- each input only enforced the dataset's own
-// overall min/max, never the other input's current selection.
-describe('DateRangePicker — from/to cross-constraint (G14)', () => {
+// An inverted range (from after to, or to before from) would silently empty
+// every chart/table reading it, so each input enforces the other input's
+// current selection, not just the dataset's own overall min/max.
+describe('DateRangePicker — from/to cross-constraint', () => {
   it("caps the FROM input's max at the already-selected TO date, not just the dataset max", () => {
     render(
       <DateRangePicker

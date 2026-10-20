@@ -548,17 +548,15 @@ describe('ComparePage — entries panel', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ComparePage — entry id collision after a removal (G1, docs/AUDIT-2026-10-05.md)
+// ComparePage — entry id collision after a removal
 //
-// entry ids used to be derived from state.entries.length at the moment of
-// add -- after removing an entry, the next add's length-derived id could
-// exactly match a surviving entry's id. `.id` is the only field the remove
-// button's own filter (`entries.filter(x => x.id !== e.id)`) uses, so a
-// collision meant clicking × on the NEW entry silently removed the OLD
-// surviving one too (both matched the same id). Reproduces the exact
-// sequence: add 2 (K02014=slot 0, K00001=slot 1), remove slot 0, re-add
-// K02014 (its length-derived id would have been slot 1 again under the old
-// scheme -- colliding with K00001, still sitting in that same slot).
+// An entry id derived from state.entries.length at the moment of add could,
+// after a removal, exactly match a surviving entry's id. `.id` is the only
+// field the remove button's own filter (`entries.filter(x => x.id !== e.id)`)
+// uses, so a collision would make clicking × on the NEW entry remove the OLD
+// surviving one too. Reproduces that sequence: add 2 (K02014, K00001),
+// remove the first, re-add K02014 (a length-derived id would equal
+// K00001's).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // The comparison chart renders its own real-DOM legend (.legend-item) once
@@ -578,7 +576,7 @@ function queryChip(label: string): HTMLElement | null {
     .find((el): el is HTMLElement => el !== null) ?? null
 }
 
-describe('ComparePage — entry id collision after a removal (G1)', () => {
+describe('ComparePage — entry id collision after a removal', () => {
   it('removing a newly re-added entry does not also remove an unrelated surviving one', async () => {
     render(<ManagedComparePage />)
     const input = await screen.findByPlaceholderText(/search annotation id or name/i)
@@ -728,11 +726,8 @@ describe('ComparePage — initialAnnotations from Analyze page', () => {
     })
   })
 
-  // W29 (docs/AUDIT-2026-09-22.md): "an annotation added while the
-  // annotations sent from Analyze are still loading disappears when that
-  // load finishes." Manually searching+adding a new annotation while the
-  // initialAnnotations series fetch is still in flight used to get wiped
-  // out the moment that fetch's `.then()` replaced `entries` wholesale.
+  // An annotation added manually while the annotations sent from Analyze
+  // are still loading must not disappear when that load finishes.
   it('an annotation added manually while the initial (Analyze) load is still in flight is not wiped out when that load finishes', async () => {
     let resolveInitial!: (v: unknown) => void
     const initialPending = new Promise(resolve => { resolveInitial = resolve })
@@ -811,12 +806,11 @@ describe('ComparePage — CSV export', () => {
   }]
 
   it('CSV button present when entries are ready', async () => {
-    // W18: ComparePage no longer has its own page-level CSV button (it
-    // always re-derived raw EGC regardless of the chart's actual
-    // metric/standardize/smoothed state, so it was always wrong whenever
-    // the chart wasn't in plain raw-EGC mode) -- only the one inside
-    // MultiEgcChart's own card header remains, which reflects the chart's
-    // real current state (see egc-csv-export.unit.test.ts).
+    // ComparePage has no page-level CSV button of its own (it could only
+    // re-derive raw EGC, regardless of the chart's actual
+    // metric/standardize/smoothed state) -- only the one inside
+    // MultiEgcChart's own card header, which reflects the chart's real
+    // current state (see egc-csv-export.unit.test.ts).
     render(<ManagedComparePage initialState={{ entries: readyEntries }} />)
     await waitFor(() => {
       expect(screen.getAllByText(/↓ CSV/i)).toHaveLength(1)
@@ -1006,10 +1000,10 @@ describe('ComparePage — group entry from Analyze handoff', () => {
     expect(screen.queryByTestId('compare-entry-partial-failure')).toBeNull()
   })
 
-  // W (2.6, docs/AUDIT-2026-09-22.md): the entry's top-level status only
-  // flips to 'error' when EVERY member fails (summedData.length > 0 still
-  // counts as 'ok') -- so a real partial failure (one member down, one up)
-  // used to be invisible unless the user manually expanded "▼ members".
+  // The entry's top-level status only flips to 'error' when EVERY member
+  // fails (summedData.length > 0 still counts as 'ok') -- so a real partial
+  // failure (one member down, one up) must be disclosed on the chip itself,
+  // not only after manually expanding "▼ members".
   it('one member failing while another succeeds discloses the partial failure on the always-visible chip', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('annotation_id=K00002')) return Promise.reject(new Error('fail'))

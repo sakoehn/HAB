@@ -2,7 +2,7 @@
 staleness_utils.py
 =====================
 Shared helper for detecting derived EGC outputs (e.g. `.ko.json`) that
-predate the intermediate they were built from (P2, docs/AUDIT-2026-10-05.md).
+predate the intermediate they were built from.
 
 Extracted out of EGC_KEGG_TREE.ipynb's write cell (same pattern as
 weighted_totals.py / enzyme_ec_utils.py -- imported via sys.path.append,

@@ -140,7 +140,7 @@ describe('TaxonomyPage — exclusion series has no scaffold button', () => {
   })
 })
 
-describe('TaxonomyPage — W19 failed exclusion fetch', () => {
+describe('TaxonomyPage — failed exclusion fetch', () => {
   it('shows an explicit error banner instead of silently falling back to the unmodified total', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/series/annotations') && url.includes('annotation_id=Bacteria&')) {
@@ -256,13 +256,11 @@ describe('TaxonomyPage — W19 failed exclusion fetch', () => {
   })
 })
 
-// G5 (docs/AUDIT-2026-10-05.md): a failed series fetch is cached as
-// {status: 'error'} with nothing ever evicting it -- the page's own
-// fetch effect only fetches a taxon with NO cache entry at all, so
-// once that error entry exists it's permanent for the rest of the
-// session, with no way to recover from what might be a one-off
-// transient failure short of a full page reload.
-describe('TaxonomyPage — G5 retry after a failed series fetch', () => {
+// A failed series fetch is cached as {status: 'error'}, and the page's own
+// fetch effect only fetches a taxon with NO cache entry at all -- so Retry
+// must evict that entry, or a one-off transient failure would be permanent
+// for the rest of the session.
+describe('TaxonomyPage — retry after a failed series fetch', () => {
   it('retrying a failed root series clears the error and loads the real data', async () => {
     let seriesCalls = 0
     mockFetch.mockImplementation((url: string) => {

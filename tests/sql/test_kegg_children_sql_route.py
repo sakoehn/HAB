@@ -74,13 +74,10 @@ def test_unknown_id_returns_404(client):
 
 
 def test_explicitly_empty_parent_returns_the_same_roots_as_omitting_it(client):
-    """A7 (docs/AUDIT-2026-10-05.md): parent="" (a real, explicitly empty
-    string -- FastAPI only supplies the None default when the query
-    param is omitted entirely) used to fail this route's own `is not
-    None` guard (empty string IS not None) and 404 as "Unknown KEGG node
-    ''" instead of being treated the same as omission. Confirmed live
-    before this fix: omitted gave count=8 (the real top-level branches),
-    parent="" gave a 404."""
+    """parent="" (a real, explicitly empty string -- FastAPI only supplies
+    the None default when the query param is omitted entirely) must be
+    treated the same as omission (the 8 top-level branches), not 404 as an
+    unknown node -- an empty string IS `not None`."""
     omitted = client.get("/kegg/children")
     empty   = client.get("/kegg/children", params={"parent": ""})
     assert omitted.status_code == 200

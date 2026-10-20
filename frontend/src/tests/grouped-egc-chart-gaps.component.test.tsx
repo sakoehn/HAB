@@ -1,15 +1,12 @@
 /**
  * grouped-egc-chart-gaps.component.test.tsx
  * =============================================
- * F2 (docs/AUDIT-2026-10-05.md): GroupedEgcChart's summedPoints used to
- * build its row map only from timepoints where at least one member had
- * data -- so a timepoint where every member was undetected didn't exist at
- * all (the trace silently connects across it, header's point count
- * silently shrinks), AND a SURVIVING timepoint's sum was actually over
- * whichever subset of members happened to be detected there, presented
- * identically to a timepoint where every member was detected. The audit's
- * own example: members A (detected 0:00, 16:00) and B (detected 0:00,
- * 8:00) -- the 8:00 value is B alone, indistinguishable from 0:00's A+B.
+ * GroupedEgcChart's summedPoints must include every real timepoint, even
+ * one where every member was undetected (otherwise the trace would connect
+ * across it and the header's point count would shrink), and must disclose
+ * how many members each sum covers. E.g. members A (detected 0:00, 16:00)
+ * and B (detected 0:00, 8:00): the 8:00 value is B alone, which would
+ * otherwise look the same as 0:00's A+B.
  *
  * Needs its own file (not grouped-egc-chart.component.test.tsx, which has
  * no fetch/Plotly mocking and relies on that absence to keep its own
@@ -78,7 +75,7 @@ beforeEach(() => {
   })
 })
 
-describe('GroupedEgcChart — real detection gaps and the shifting member set are disclosed (F2)', () => {
+describe('GroupedEgcChart — real detection gaps and the shifting member set are disclosed', () => {
   it('unions the full timeline, nulls a zero-detection timepoint, and never equates a partial sum with a full one', async () => {
     const user = userEvent.setup()
     render(
@@ -108,8 +105,7 @@ describe('GroupedEgcChart — real detection gaps and the shifting member set ar
 
     const trace = capturedData.find(t => t.name === 'Test Group')!
     // 0:00 = A+B (10+5=15), 8:00 = B alone (15), 16:00 = A alone (30),
-    // next-day 0:00 = nobody detected (null) -- the exact shape the audit
-    // measured: 0:00 and 8:00 are both "15", but one is a 2-member sum and
+    // next-day 0:00 = nobody detected (null) -- 0:00 and 8:00 are both "15", but one is a 2-member sum and
     // the other is 1-member, which only the customdata member count below
     // can actually tell apart.
     expect(trace.y).toEqual([15, 15, 30, null])

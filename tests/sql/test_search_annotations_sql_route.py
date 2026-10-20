@@ -26,11 +26,9 @@ values, never real per-search-result data) plus a "value" field (which nests
 its own category/scaffolds/depth instead of exposing them top-level).
 Confirmed the frontend's LeftResultList.tsx never reads sample/timepoint/value
 for search results, so this is a real but low-risk shape difference between
-backends, not something this test pretends doesn't exist. `depth` was
-added alongside the taxonomy_egc_homonym_bug fix so search results can
-show taxonomic rank. `category`/`scaffold_count` were added for W5 (the
-Annotation Lookup detail card read them from a nested `value` object the
-SQL branch never populated, so those two fields silently rendered blank).
+backends, not something this test pretends doesn't exist. `depth` lets
+search results show taxonomic rank. `category`/`scaffold_count` are top-level fields for
+the Annotation Lookup detail card.
 
 Run:
     # in FastAPI/.env or as an env var: DATA_BACKEND=sql
@@ -180,12 +178,11 @@ def test_results_sorted_by_mean_egc_descending(client):
     assert is_descending
 
 
-# A6 (docs/AUDIT-2026-10-05.md): page/page_size had no input bounds --
-# page_size=0 divides by zero in paginate() (a real HTTP 500), and a
+# page/page_size must be bounded -- page_size=0 divides by zero in
+# paginate() (a real HTTP 500), and a
 # negative page/page_size produces a negative slice start, which Python
 # silently reinterprets as an index from the end of the list rather than
-# raising -- measured live: page_size=-5 used to return 200 with the
-# tail silently dropped instead of an error.
+# raising (page_size=-5 would return 200 with the tail silently dropped).
 
 def test_page_size_zero_is_rejected_not_a_500(client):
     resp = client.get(
@@ -211,12 +208,10 @@ def test_negative_page_is_rejected(client):
     assert resp.status_code == 422
 
 
-# A10 (docs/AUDIT-2026-10-05.md): `sources` used to be typed list[str] --
-# an unknown source name silently matched zero rows (source IN (...) with
-# a value no real row has) and came back 200/total:0, indistinguishable
+# `sources` is typed list[AnnotationSource] so an unknown source name is
+# rejected with a 422 before the query runs -- as plain strings it would
+# silently match zero rows and come back 200/total:0, indistinguishable
 # from "these are real sources, there just happened to be no matches".
-# Now typed as list[AnnotationSource] so an unknown name is rejected with
-# a 422 before the query ever runs.
 
 def test_unknown_source_name_is_rejected_not_a_silent_empty_result(client):
     resp = client.get(

@@ -3,8 +3,8 @@ test_kegg_immediate_parents_bulk.py
 ======================================
 Tests for get_kegg_immediate_parents_bulk_sql() in FastAPI/api/cache_sql.py
 -- resolves every real IMMEDIATE parent (one level up) for a batch of
-KEGG node ids in a handful of queries, for W30a (docs/AUDIT-2026-09-22.md):
-"Annotations by Parent" bucketing a multi-parent KO into every real
+KEGG node ids in a handful of queries, for "Annotations by Parent"
+bucketing a multi-parent KO into every real
 parent group it belongs to, not just the single last-occurrence-wins
 `annotation_catalog.parent`.
 
@@ -49,7 +49,7 @@ def conn():
 
     rows = [
         # K01 is multi-parent: two real full paths, different B/C ancestors,
-        # same D-level leaf -- the W30a scenario (K00844 in real data).
+        # same D-level leaf -- the multi-parent case (K00844 in real data).
         ("09100", "Metabolism",             "09101", "Carbohydrate metabolism", "00010", "Glycolysis",      "K01", "enzyme one"),
         ("09180", "Brite Hierarchies",       "09181", "Protein families",       "00099", "Other",           "K01", "enzyme one"),
         # K02 is single-parent.

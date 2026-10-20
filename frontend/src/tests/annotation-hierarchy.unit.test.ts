@@ -3,7 +3,7 @@
  * ===================================
  * Unit tests for filterRedundantAnnotations (utils/annotationHierarchy.ts).
  *
- * W22 (docs/AUDIT-2026-09-22.md): summing an annotation together with one
+ * Summing an annotation together with one
  * of its own ancestors/descendants double-counts the contained one's
  * value, since annotation values are hierarchical rollups.
  *
@@ -66,7 +66,7 @@ describe('filterRedundantAnnotations — taxonomy (free prefix check)', () => {
     expect(dropped).toHaveLength(0)
   })
 
-  it('drops every non-root level of a 3-level nested chain, matching the audit\'s own live example', async () => {
+  it('drops every non-root level of a 3-level nested chain', async () => {
     const { kept, dropped } = await filterRedundantAnnotations([
       { annotationId: 'Bacteria', source: 'taxonomy' },
       { annotationId: 'Bacteria;Proteobacteria', source: 'taxonomy' },

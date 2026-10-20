@@ -28,13 +28,10 @@ export const CHART_COLORS = [
 // Per-source shade palettes — used to give each new card a distinct hue
 // within its source family rather than repeating the same color.
 //
-// F6 (docs/AUDIT-2026-10-05.md): each family only had 4 shades, cycled
-// modulo 4 (see nextColorForSource below) -- a 5th same-source Compare
-// series got the exact same color as the 1st, with no visual way to
-// tell them apart in the chart or legend. Extended to 8 per family
-// (doubling real headroom before any repeat), each new shade still
-// within the same family's hue so it reads as "another kegg series",
-// not an unrelated color.
+// 8 shades per family, cycled modulo 8 (see nextColorForSource below), so
+// up to 8 same-source Compare series get distinct colors. Every shade stays
+// within the same family's hue so it reads as "another kegg series", not
+// an unrelated color.
 export const SOURCE_SHADES: Record<string, string[]> = {
   kegg:     ['#56B4E9', '#0090C5', '#89D4F5', '#2B8FC4', '#003D56', '#B3E5FC', '#1C7A9E', '#6FCCF0'],  // sky-blue family
   cog:      ['#CC79A7', '#A0407A', '#E8A8C8', '#B55090', '#6E2452', '#F5CBE0', '#8A3368', '#D98FB8'],  // reddish-purple family
@@ -107,12 +104,7 @@ export const ENZYME_CLASS_LABELS: Record<string, string> = {
 // bare 5-digit code with no embedded name (confirmed live: 449/449 distinct
 // values), so this table is the ONLY source of a readable label for them.
 //
-// W30 (docs/AUDIT-2026-09-22.md): this used to be a small, hand-typed table
-// -- wrong for many entries (e.g. '99976' was guessed as "Unclassified
-// metabolism"; the real ko00001.keg name is "Replication and repair", a
-// different category entirely) and missing most real codes outright (any
-// code not in it fell back to a raw "BRITE group 09101" string). Regenerated
-// from the real kegg_paths table instead of hand-maintained -- every value
+// Generated from the real kegg_paths table, not hand-maintained -- every value
 // below is each code's own real ko00001.keg name (its ' [PATH:koNNNNN]' /
 // ' [BR:koNNNNN]' suffix stripped for display), independently verified
 // against every one of the 449 real kegg parent codes in the local db.
@@ -581,16 +573,14 @@ export const KEGG_BRITE_CODES: Record<string, string> = {
 export function expandParentLabel(parent: string, source: string): string {
   if (!parent) return parent
 
-  // W (2.6, docs/AUDIT-2026-09-22.md): 'Ungrouped' is a shared cross-source
+  // 'Ungrouped' is a shared cross-source
   // sentinel (ExplorePage.tsx's `r.parent ?? 'Ungrouped'` fallback for a
   // root annotation with no real parent), not a real lineage/category
   // value from any source -- must be handled uniformly BEFORE any
   // source-specific branch below, or a branch that treats its input as a
-  // real value (e.g. taxonomy's rank-suffix logic) can mangle it. Real
-  // bug this caused: taxonomy's branch treated 'Ungrouped' as a 1-segment
-  // lineage and appended a fake rank suffix, showing domain roots
-  // (Bacteria, Archaea, ...) as literally "Ungrouped (Domain)" instead of
-  // their real domain name.
+  // real value (e.g. taxonomy's rank-suffix logic) can mangle it --
+  // taxonomy's branch would treat 'Ungrouped' as a 1-segment lineage and
+  // show it as "Ungrouped (Domain)".
   if (parent === 'Ungrouped') return parent
 
   if (source === 'cog') {
@@ -628,7 +618,7 @@ export function expandParentLabel(parent: string, source: string): string {
     // goes. Eukaryota uses the same 8-position Domain..Strain ladder as
     // every other domain (confirmed live via /taxonomy/children — depth 2
     // under Eukaryota is real phyla like Annelida, Arthropoda), so it is
-    // not special-cased here (W7).
+    // not special-cased here.
     const segments = parent.split(';')
     const bareName = segments[segments.length - 1]
     const rank = TAXONOMY_RANK_NAMES[segments.length]
@@ -642,7 +632,7 @@ export function expandParentLabel(parent: string, source: string): string {
 // depth -> rank name. All four domains (Bacteria, Archaea, Viruses,
 // Eukaryota) use the same 8-position Domain..Strain ladder -- confirmed
 // live via /taxonomy/children: depth 2 under Eukaryota is real phyla
-// (Annelida, Arthropoda, Chordata, ...), same as every other domain (W7).
+// (Annelida, Arthropoda, Chordata, ...), same as every other domain.
 
 export const TAXONOMY_RANK_NAMES: Record<number, string> = {
   1: 'Domain',

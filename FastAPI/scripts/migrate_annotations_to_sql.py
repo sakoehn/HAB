@@ -63,7 +63,7 @@ def build_annotation_series_row(source: str, sample: str, annotation_id: str, en
             the name instead) and a "parent" field already holding another
             row's own annotation_id (a lineage-prefix string); KEGG/Enzyme/
             COG instead have "parent_id"/"parent_name" -- parent_id is what
-            gets kept here (see CR3, docs/AUDIT.md): it matches another
+            gets kept here: it matches another
             row's annotation_id the same way taxonomy's "parent" always
             has, which both the correlation family-exclusion tree-walk
             (get_family_candidates) and the frontend's expandParentLabel()

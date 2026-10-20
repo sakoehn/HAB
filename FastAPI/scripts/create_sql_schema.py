@@ -11,16 +11,17 @@ Creates the two SQLite tables for the mapping-data SQL backend:
                  by a small integer FK instead of repeating a ~90-character
                  lineage string on every one of ~50M mapping rows, and so
                  rank-scoped lookups ("everything under Bacteroidetes") are
-                 a plain indexed column filter -- see project memory
-                 (taxonomy_egc_homonym_bug) for why this table is
-                 deliberately NOT a parent-pointer tree.
+                 a plain indexed column filter. Deliberately NOT a
+                 parent-pointer tree: the same bare taxon name can appear
+                 under more than one lineage, so a name is not an
+                 identifier.
 
   mappings    -- one row per gene (~50M total across all samples, matching
                  the regenerated Mappings_by_Sample/*.tsv row counts).
                  taxon_path_id is NULL for genes with no taxonomy hit.
                  kegg_id keeps its raw "KO:" prefix and stays a plain
                  column here -- confirmed every gene has at most one KEGG
-                 hit, never multi-valued (see project memory). cog_id and
+                 hit, never multi-valued. cog_id and
                  enzyme are NOT columns here -- see gene_cog/gene_enzyme
                  below.
 
@@ -186,7 +187,7 @@ CREATE TABLE IF NOT EXISTS correlations_cache(
     lag_samples     INTEGER NOT NULL,
     p_value     REAL NOT NULL,
     n_pairs     INTEGER NOT NULL,
-    -- C2 (docs/AUDIT-2026-10-05.md): for method='circular_shift' only,
+    -- For method='circular_shift' only,
     -- whether p_value was forced to this specific pair's resolution limit
     -- (no permuted shift was ever as extreme as the real alignment, so
     -- p is already the smallest value that pair's permutation test could

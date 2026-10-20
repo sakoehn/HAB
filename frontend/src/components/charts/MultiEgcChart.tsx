@@ -35,18 +35,15 @@ function resolveCssVar(value: string, fallback: string): string {
 const CB_EXTRA_GROUPS = ['#E69F00', '#56B4E9', '#D55E00', '#CC79A7', '#0072B2', '#009E73']
 
 type SeriesEntry = {
-  // W26 (docs/AUDIT-2026-09-22.md): `id` is the ONLY field used to key rows
+  // `id` is the ONLY field used to key rows
   // internally (dtMap/chartData columns, CSV lookups, React list keys) --
   // it must be genuinely unique per series. `annotationId` is display-only
   // (shown in the legend, hover text, trace name) and is NOT guaranteed
   // unique: for a grouped series it's the user-typed label (e.g. "iron
   // (2)"), and two different groups can easily share that same label while
-  // summing completely different, unrelated members. Before this field
-  // existed, `annotationId` was used for both roles, so two same-labeled
-  // groups silently overwrote each other's data at every shared datetime
-  // (confirmed live: grouping 2 kegg hits vs. 2 cog hits both labelled
-  // "iron (2)" made the CSV export read the cog group's sum, 170000, for
-  // BOTH rows).
+  // summing completely different, unrelated members -- keyed by label, two
+  // same-labeled groups would overwrite each other's data at every shared
+  // datetime.
   id:           string
   annotationId: string
   name:         string | null
@@ -58,10 +55,9 @@ type SeriesEntry = {
 }
 
 // buildMultiEgcCsvRows
-// Exported so tests can exercise the real CSV row shape directly (W18).
-// The value column is named from the active metric (was hardcoded
-// "egc_normalized" even in raw egc mode), with metric/standardized/smoothed
-// recorded on every row.
+// Exported so tests can exercise the real CSV row shape directly.
+// The value column is named from the active metric, with
+// metric/standardized/smoothed recorded on every row.
 export function buildMultiEgcCsvRows(
   chartData:   Record<string, unknown>[],
   series:      { id: string; annotationId: string; source?: string }[],
@@ -117,7 +113,7 @@ export function MultiEgcChart({
   useEffect(() => { onMetricChange?.(metric) }, [metric, onMetricChange])
   const [standardize, setStandardize]         = useState(defaultStandardize)
   const [smoothed, setSmoothed]               = useState(false)
-  const [smoothBandwidth, setSmoothBandwidth] = useState(0.3) // W27: within the real [0.1, 0.8] slider range
+  const [smoothBandwidth, setSmoothBandwidth] = useState(0.3) // within the real [0.1, 0.8] slider range
   const [showStats, setShowStats]             = useState(false)
   const [showNightShading, setShowNightShading] = useState(false)
   const [showTide, setShowTide]                 = useState(false)
@@ -134,16 +130,13 @@ export function MultiEgcChart({
   // Wide-format row: one row per datetime, each series has its own column.
   type ChartRow = { date: string; _dt: string; _ts: number } & Record<string, number | null | string>
 
-  // F1 (docs/AUDIT-2026-10-05.md): a timepoint where no displayed series was
-  // detected used to not exist in dtMap at all, and an undetected series at
-  // a timepoint that DID exist (because some other series had data there)
-  // was left as an absent key rather than an explicit null -- combined with
-  // connectgaps:true below, the line ran straight across any stretch of
-  // non-detection, silently implying steady presence (same W21 failure mode
-  // EgcChart already fixed). Unions in the full real sample timeline first
-  // (a UNION with each series' own detected samples, not a swap -- same
-  // reasoning as EgcChart's own allPoints), then explicit-nulls every
-  // series not detected at a timepoint that ends up in dtMap.
+  // A line must break at a non-detection, not run straight across it
+  // (which would imply steady presence). So every timepoint in the full
+  // real sample timeline gets a row -- a UNION with each series' own
+  // detected samples, not a swap, same reasoning as EgcChart's own
+  // allPoints -- and every series not detected at a timepoint gets an
+  // explicit null there (an absent key would give connectgaps nothing to
+  // break at).
   const baseRows = useMemo<ChartRow[]>(() => {
     const dtMap: Record<string, ChartRow> = {}
     for (const entry of allSamples ?? []) {
@@ -175,7 +168,7 @@ export function MultiEgcChart({
     return Object.values(dtMap).sort((a, b) => a._ts - b._ts)
   }, [series, dateFrom, dateTo, allSamples])
 
-  // W27 (docs/AUDIT-2026-09-22.md): unsmoothed is the metric/standardize
+  // unsmoothed is the metric/standardize
   // pipeline WITHOUT LOWESS -- stats (perSeriesVals below) read this, so
   // toggling Smooth never changes the reported numbers, only the drawn
   // curve. `chartDataRaw` adds smoothing per series on top of this.
@@ -203,9 +196,9 @@ export function MultiEgcChart({
     return rows
   }, [baseRows, metric, standardize, series])
 
-  // W (2.6, docs/AUDIT-2026-09-22.md): applyZScore is a silent no-op for a
-  // series with fewer than 2 real points -- per series here, since each
-  // series is standardized independently (W25) and can have a different
+  // applyZScore is a silent no-op for a series with fewer than 2 real
+  // points -- per series here, since each series is standardized
+  // independently and can have a different
   // real point count (e.g. comparing a well-sampled annotation against a
   // 1-sample one). canStandardizeSeries(id) is whether THAT series'
   // Z-score actually took effect, for its own tooltip formatting;
@@ -216,7 +209,7 @@ export function MultiEgcChart({
     canApplyZScore(unsmoothedRows.map(r => (r[id] as number | null) ?? null))
   const standardizeApplied = standardize && series.some(s => canStandardizeSeries(s.id))
 
-  // F3 (docs/AUDIT-2026-10-05.md): same per-series reasoning as
+  // Same per-series reasoning as
   // canStandardizeSeries above -- applyLowess is a silent no-op for a
   // series with fewer than 3 real points, independently per series.
   const canSmoothSeries = (id: string) =>
@@ -246,7 +239,7 @@ export function MultiEgcChart({
     return chartDataRaw.map(r => ({ ...r, tide_wl: aligned.get(r._dt) ?? null }))
   }, [chartDataRaw, showTide, tides])
 
-  // Tides (docs/AUDIT-2026-09-22.md): the VISUAL tide trace plots at its own
+  // The VISUAL tide trace plots at its own
   // native resolution -- see nativeTideTrace's doc comment in
   // utils/solar.ts. chartData.tide_wl above still feeds CSV export.
   const nativeTide = useMemo(
@@ -266,14 +259,14 @@ export function MultiEgcChart({
     [showNightShading, sunTimes, chartData],
   )
 
-  // W25 (docs/AUDIT-2026-09-22.md): one value array PER series, not pooled
-  // into one flat array -- a pooled mean/CV describes neither series when
-  // they're on genuinely different scales (e.g. mixing a 4.8e-4 series with
-  // a 7.8e-6 series gave one meaningless "mean" of 2.4e-4). Label matches
+  // One value array PER series, not pooled into one flat array -- a pooled
+  // mean/CV describes neither series when they're on genuinely different
+  // scales (mixing a 4.8e-4 series with a 7.8e-6 series gives one
+  // meaningless "mean" of 2.4e-4). Label matches
   // the legend's own taxonomyAwarePrimaryLabel exactly, so a series reads
   // the same way in both places.
   //
-  // W27: reads unsmoothedRows, NOT chartData -- stats must never change
+  // Reads unsmoothedRows, NOT chartData -- stats must never change
   // just because Smooth is toggled, only the drawn curve should.
   const perSeriesVals = useMemo(() => {
     return series.map(s => {
@@ -287,14 +280,14 @@ export function MultiEgcChart({
   }, [unsmoothedRows, series])
 
   const scaleMismatch = useMemo(() => {
-    // W33 (docs/AUDIT-2026-09-22.md): Relative Abundance divides every
-    // series by the same per-sample total, so a raw-EGC scale gap between
-    // series survives it unchanged (confirmed live: COG0055 vs K02568 are
-    // ~92x apart in raw EGC and ~108x apart in Relative Abundance) -- only
+    // Relative Abundance divides every series by the same per-sample total,
+    // so a raw-EGC scale gap between series survives it unchanged (COG0055
+    // vs K02568 are ~92x apart in raw EGC and ~108x apart in Relative
+    // Abundance) -- only
     // Z-score actually resolves it, by re-centering each series on its own
     // mean/SD independently.
     //
-    // W (2.6, docs/AUDIT-2026-09-22.md): that resolution only genuinely
+    // That resolution only genuinely
     // happens when EVERY compared series was actually standardized --
     // applyZScore silently no-ops for a series with fewer than 2 real
     // points, so if even one series in the comparison is still raw EGC,
@@ -304,15 +297,12 @@ export function MultiEgcChart({
     // wording at all) -- suppression here is a claim that the WHOLE
     // comparison is now safe, so it needs the stricter check.
     if (standardize && series.every(s => canStandardizeSeries(s.id))) return false
-    // F7 (docs/AUDIT-2026-10-05.md): this used to read every point in
-    // s.data directly, ignoring dateFrom/dateTo entirely -- the warning
-    // could fire (or stay silent) based on data that isn't even visible
-    // on screen. Filters the same way baseRows above does, but stays on
-    // raw EGC specifically (not unsmoothedRows, which holds norm_egc
-    // instead once metric='norm_egc') -- this check is deliberately
-    // metric-independent per its own W33 note above: Relative Abundance
-    // doesn't resolve a raw-EGC scale gap, so comparing norm_egc values
-    // here would silently undo that fix.
+    // Respects dateFrom/dateTo like baseRows above, so the warning reflects
+    // only data visible on screen -- but stays on raw EGC specifically (not
+    // unsmoothedRows, which holds norm_egc once metric='norm_egc'). This
+    // check is deliberately metric-independent per the note above:
+    // Relative Abundance doesn't resolve a raw-EGC scale gap, so comparing
+    // norm_egc values here would hide a real mismatch.
     const means = series
       .map(s => {
         const vals = s.data
@@ -364,22 +354,16 @@ export function MultiEgcChart({
     return out
   }, [dayBandsList, nightBands])
 
-  // W28 (docs/AUDIT-2026-09-22.md): resolved ONCE here and used for BOTH the
-  // Plotly trace AND the legend swatch below -- previously each computed its
-  // own color independently and could disagree. Two distinct ways they used
-  // to diverge:
-  //   (a) a non-grouped series' color came straight from a source-color
-  //       constant like SOURCE_COLORS/CHART_COLORS, which is a raw CSS
-  //       `var(--chart-1)` string -- real DOM/CSS (the legend's `<div
-  //       style={{background: ...}}>`) resolves that correctly, but
+  // Resolved ONCE here and used for BOTH the Plotly trace AND the legend
+  // swatch below, so the two can never disagree:
+  //   (a) a non-grouped series' color is a raw CSS `var(--chart-1)` string
+  //       (SOURCE_COLORS/CHART_COLORS) -- DOM/CSS resolves that, but
   //       Plotly's SVG renderer can't parse `var()` at all and silently
-  //       fell back to black, while the legend showed the real color.
-  //   (b) a grouped series' PLOTTED line was deliberately recolored to the
+  //       falls back to black, so it's resolved to a real color here.
+  //   (b) a grouped series' PLOTTED line is deliberately recolored to the
   //       theme's near-black/CB-safe palette (for visual hierarchy against
-  //       ungrouped lines), but the legend swatch kept showing the
-  //       series' own original (unrelated) color -- confirmed live: a
-  //       group's legend dot showed sky blue while its actual line was
-  //       near-black.
+  //       ungrouped lines), so the legend swatch must show that color too,
+  //       not the series' own original one.
   const resolvedColors = useMemo(() => {
     const groupedSeries = series.filter(s => s.isGrouped)
     const map = new Map<string, string>()
@@ -396,7 +380,7 @@ export function MultiEgcChart({
 
   // ── Traces ────────────────────────────────────────────────────────────────
   const plotData = useMemo(() => {
-    // W (2.6, docs/AUDIT-2026-09-22.md): per-series, not the chart-wide
+    // Per-series, not the chart-wide
     // standardizeApplied above -- each series' own Z-score can silently
     // no-op independently (e.g. a 1-sample series next to a well-sampled
     // one), so its own tooltip must stop claiming "σ" units when its own
@@ -428,7 +412,7 @@ export function MultiEgcChart({
         opacity,
         name: primaryLabelWithCogCategory(s.source, s.annotationId, s.name),
         yaxis: 'y',
-        // F1 (docs/AUDIT-2026-10-05.md): must not connect across a real
+        // Must not connect across a real
         // non-detection -- see baseRows' union-with-the-full-timeline
         // comment above, which is what gives this an explicit null to
         // break at instead of nothing to act on.
@@ -436,8 +420,8 @@ export function MultiEgcChart({
         customdata: chartData.map((r, i) => [fmtVal(ys[i], seriesStandardizeApplied), r._dt]),
         hovertemplate:
           '<b>%{customdata[1]}</b><br>' +
-          // W27: discloses when the hovered value is a fitted LOWESS
-          // curve, not the real sample value -- previously indistinguishable.
+          // Discloses when the hovered value is a fitted LOWESS curve, not
+          // the real sample value.
           primaryLabelWithCogCategory(s.source, s.annotationId, s.name) + (seriesSmoothedApplied ? ' (smoothed)' : '') + ': %{customdata[0]}' +
           '<extra></extra>',
       }

@@ -216,7 +216,7 @@ export function computeDayBands(
 // ── formatRelativeAbundancePercent ──────────────────────────────────────────
 // Format a norm_egc fraction (0-1) as a percentage for chart tooltips.
 //
-// W23 (docs/AUDIT-2026-09-22.md): most real annotations have a norm_egc far
+// Most real annotations have a norm_egc far
 // below 0.1% (rare KOs can be as low as ~1e-8, e.g. mean norm_egc for K24448
 // is 6.3e-8 in the real local database) -- a fixed 3-4 decimal places
 // (.toFixed) rounds every one of these down to a meaningless "0.000%",

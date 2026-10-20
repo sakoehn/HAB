@@ -204,19 +204,15 @@ export function alignTideToChartPoints(
 }
 
 // ── nativeTideTrace ───────────────────────────────────────────────────────
-// Tides (docs/AUDIT-2026-09-22.md): the tide OVERLAY chart trace used to be
-// built by snapping the real 6-min-resolution tide data onto the sparse
-// (4h-cadence) EGC sample timestamps via alignTideToChartPoints -- confirmed
-// live against /api/tides: 59 turning points shown versus 72 in the real
-// tide, up to 1.07m error, and the wrong flood/ebb direction 15.8% of the
-// time (a turning point strictly between two samples is invisible; the
-// straight line connecting their snapped values can show the opposite of
-// what's actually happening). alignTideToChartPoints existed only because
-// Recharts (the library this app used before it moved to Plotly) needed one
-// shared categorical x-axis across every series on a chart. Plotly has no
-// such constraint -- the day/night band shapes elsewhere in these chart
-// components already plot at arbitrary real timestamps on the same x-axis,
-// confirming a second trace can too. This returns the tide series at its
+// Snapping the real 6-min-resolution tide data onto the sparse
+// (4h-cadence) EGC sample timestamps (alignTideToChartPoints) would distort
+// the tide overlay: on the real /api/tides data that shows 59 turning
+// points instead of 72, up to 1.07m error, and the wrong flood/ebb
+// direction 15.8% of the time (a turning point strictly between two
+// samples is invisible; the straight line connecting their snapped values
+// can show the opposite of what's actually happening). Plotly doesn't need
+// a shared categorical x-axis -- the day/night band shapes in these chart
+// components already plot at arbitrary real timestamps -- so this returns the tide series at its
 // own native resolution, completely independent of EGC sample timestamps,
 // for the VISUAL trace. alignTideToChartPoints is kept for CSV export's
 // per-sample-row tide_predicted_wl_m column, a different, legitimate need

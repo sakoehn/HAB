@@ -1,8 +1,8 @@
 """
 test_mappings_notebook_executes.py
 ====================================
-P8 (docs/AUDIT-2026-10-05.md): Notebooks/mappings.ipynb has no execution
-record, and test_mappings_notebook_matches.py re-derives the build logic
+Notebooks/mappings.ipynb has no execution record, and
+test_mappings_notebook_matches.py re-derives the build logic
 with its own hand-copied functions rather than running the notebook -- so
 an edit to the notebook would never be caught by it.
 

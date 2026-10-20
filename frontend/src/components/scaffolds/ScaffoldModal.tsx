@@ -81,10 +81,9 @@ export function ScaffoldModal({
   // rare sample whose scaffold count exceeds it gets the rest lazily, only
   // if the user actually clicks "Show all".
   const DETAIL_FETCH_PAGE = 500
-  // W29 (docs/AUDIT-2026-09-22.md): clicking sample A (slow response), then
-  // sample B before A resolves, used to let A's stale response land after
-  // B's and overwrite B's real data -- "B's drill-down lists A's
-  // scaffolds," per the audit's own live example. A ref (not the
+  // Clicking sample A (slow response), then sample B before A resolves,
+  // must not let A's stale response land after B's and overwrite B's real
+  // data (B's drill-down listing A's scaffolds). A ref (not the
   // `expandedSample` state) tracks which sample is the CURRENT request,
   // since the async closure below must compare against the latest value at
   // resolve time, not whatever it captured when the request started.
@@ -134,7 +133,7 @@ export function ScaffoldModal({
         all = all.concat(r.data)
         page += 1
       }
-      // W29: same guard as loadDetail -- the user may have switched to a
+      // Same guard as loadDetail -- the user may have switched to a
       // different sample while these extra pages were still loading.
       if (latestSampleRef.current !== sample) return
       setDetailRows(all)

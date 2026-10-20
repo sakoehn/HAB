@@ -20,7 +20,7 @@ scratch (straight from disk, one file at a time):
 
 ...and compares each against the real counts in hab_mappings.db.
 
-P6 (docs/AUDIT-2026-10-05.md): counts alone can't catch wrong VALUES --
+Counts alone can't catch wrong VALUES --
 every egc/norm_egc in the db could be wrong and the counts would still
 match. So for every sample file it also compares each annotation's
 egc/norm_egc against that same (source, sample)'s db rows, with a tight
@@ -28,7 +28,7 @@ relative tolerance (VALUE_REL_TOL) to absorb float round-trip noise only.
 Annotations present on one side but not the other are reported too.
 
 What this does NOT prove: that the source JSON files are themselves
-current. It checks db == JSON, so a stale JSON file (P2's concern) and a
+current. It checks db == JSON, so a stale JSON file and a
 db faithfully copied from it would still match.
 
 Processes one sample file at a time (never holds more than one parsed

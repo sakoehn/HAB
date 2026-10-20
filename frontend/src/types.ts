@@ -129,24 +129,19 @@ export type TopAnnotation = {
   sample_count:   number
   value?:         AnnotationValue | null
   // Taxonomic rank, 1=domain..8=strain for taxonomy; hierarchy-tree depth
-  // (real for every source, including cog -- confirmed directly against
-  // the live db, despite a stale create_sql_schema.py comment claiming
-  // otherwise) for kegg/cog/enzyme. A8 (docs/AUDIT-2026-10-05.md): now
-  // present on /api/annotations/top rows too, not just
-  // /api/search/annotations — without it, non-taxonomy sources had no way
-  // to rank-filter down to real leaf annotations (a parent's EGC is the
-  // sum of its descendants, so parents always outranked leaves by mean_egc).
+  // (real for every source, including cog) for kegg/cog/enzyme. Present on
+  // both /api/annotations/top and /api/search/annotations rows -- needed to
+  // rank-filter down to real leaf annotations, since a parent's EGC is the
+  // sum of its descendants and so always outranks its leaves by mean_egc.
   depth?:         number | null
   // Also only on /api/search/annotations rows — a single-source
   // /annotations/top request has no need to repeat its own source per row.
   source?:        string
-  // SQL-backend-only, top-level (W5) — the JSON backend's equivalents live
-  // nested inside `value.category`/`value.scaffolds` instead; callers that
-  // need to work on both backends should read `category ?? value?.category`
-  // and `scaffold_count ?? (value?.scaffolds && Object.keys(value.scaffolds).length)`.
-  // category is exact (identical for every sample of a given annotation);
-  // scaffold_count is a real count from *a* sample, not necessarily the
-  // same one the JSON backend's `value.scaffolds` would reflect.
+  // Top-level fields from /api/search/annotations (see
+  // resolveLookupCategory/resolveLookupScaffoldCount in utils/stats.ts,
+  // which also accept the nested `value` shape). category is exact
+  // (identical for every sample of a given annotation); scaffold_count is
+  // a real count from *a* sample, not a specific one.
   category?:       string | null
   scaffold_count?: number | null
 }
@@ -221,13 +216,13 @@ export type CorrelationFamilyResult = {
 // prescreen_top_n strongest candidates (by a fast method) out of
 // prescreen_pool_size real candidates in the family, not the whole
 // family -- circular_shift is ~120x slower per candidate than a
-// parametric method (measured against the real db, post-CR8 fix -- see
-// docs/AUDIT-2026-09-22.md), so scoring a multi-thousand-candidate family
+// parametric method (measured against the real db), so scoring a
+// multi-thousand-candidate family
 // in full is still real work, not an instant pass. When false,
 // prescreen_pool_size/prescreen_top_n are both null.
 export type CorrelationFamilyResponse = {
   results:           CorrelationFamilyResult[]
-  // CR10 (docs/AUDIT-2026-09-22.md): the true count of significant (q<0.05)
+  // The true count of significant (q<0.05)
   // candidates BEFORE `limit` truncates `results` -- lets the panel show
   // "top N of {significant_count}" instead of a bare N that looks the same
   // whether N was the whole answer or a silent cut of a much larger one.
@@ -304,9 +299,9 @@ export type CompareEntryMember = {
 }
 
 export type CompareEntry = {
-  // W26 (docs/AUDIT-2026-09-22.md): stable per-slot id (e.g. "entry-0"),
-  // assigned once at entry creation from the fixed compare-slot index --
-  // used ONLY for series keying (MultiEgcChart), never for display.
+  // Stable, unique id (crypto.randomUUID()), assigned once at entry
+  // creation -- used ONLY for series keying (MultiEgcChart), never for
+  // display.
   // `annotationId` alone can't serve that role: for a group it's just the
   // user-typed label, and two different groups (different, unrelated
   // members) can share the exact same label.

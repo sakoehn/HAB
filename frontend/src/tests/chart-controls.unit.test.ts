@@ -14,9 +14,8 @@
  *   Z-score hint text      — 'Std deviations from mean'
  *   all 4 metric×standardize combinations verified via applyZScore directly
  *
- * ChartControls — LOWESS slider (W27, docs/AUDIT-2026-09-22.md -- widened
- * from 0.01-0.05, which gave a 2-7 point window that trivially reproduced
- * the raw value at a realistic 128-sample series):
+ * ChartControls — LOWESS slider (0.01-0.05 would give a 2-7 point window
+ * that trivially reproduces the raw value at a realistic 128-sample series):
  *   minimum bandwidth   — 0.1
  *   maximum bandwidth   — 0.8
  *   step                — 0.05
@@ -163,14 +162,10 @@ describe('metric + standardize pipeline — all 4 combinations', () => {
 // ChartControls — LOWESS slider parameters
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Previously this block asserted against a LOWESS_SLIDER object hand-copied
-// into this test file instead of importing the real bounds -- so when the
-// component's actual slider changed, this block kept passing regardless,
-// asserting nothing about the real component. Fixed by importing the real
-// exported constants directly (currently min 0.1/max 0.8/step 0.05, see
-// ChartControls.tsx -- W27 widened this from 0.01/0.05/0.01), so a future
-// change to the actual slider bounds will break these tests rather than
-// silently leaving them checking a stale copy.
+// Imports the real exported constants (currently min 0.1/max 0.8/step 0.05,
+// see ChartControls.tsx) rather than a hand-copied object, so a future
+// change to the actual slider bounds breaks these tests rather than
+// leaving them checking a stale copy.
 import { LOWESS_BANDWIDTH_MIN, LOWESS_BANDWIDTH_MAX, LOWESS_BANDWIDTH_STEP, LOWESS_DEBOUNCE_MS } from '../components/charts/ChartControls'
 
 describe('ChartControls — LOWESS slider', () => {
@@ -620,10 +615,9 @@ describe('About page — calculations section content', () => {
     expect(ABOUT_CALC_TEXT).toContain('CLR')
   })
 
-  // CR8 (docs/AUDIT-2026-09-22.md): the permutation test is now exhaustive
-  // over every valid shift (no sample count or seed to configure/cite --
-  // see FastAPI/api/correlation_sql.py::_circular_shift_pvalue), replacing
-  // the old n=1000/seed=42 random-sampling scheme this test used to pin.
+  // The permutation test is exhaustive over every valid shift (no sample
+  // count or seed to configure/cite -- see
+  // FastAPI/api/correlation_sql.py::_circular_shift_pvalue).
   it('the permutation test is described as deterministic/exhaustive, not as a tunable sample+seed', () => {
     expect(ABOUT_CALC_TEXT).toContain('exhaustive')
     expect(ABOUT_CALC_TEXT).toContain('deterministic')

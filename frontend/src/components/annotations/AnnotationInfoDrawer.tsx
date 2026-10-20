@@ -31,12 +31,10 @@ export function AnnotationInfoDrawer({
   parent:       string | null
 }) {
   const [open, setOpen] = useState(false)
-  // G13 (docs/AUDIT-2026-10-05.md): `parent` is the single, last-occurrence-
-  // wins stored value (W30(a)/P3) -- a real multi-parent KEGG KO (e.g.
-  // K00844/hexokinase has 14 real pathway parents) or multi-category COG
-  // (P4, e.g. COG0028 under both category E and H) has more than one real
-  // immediate parent, but this drawer only ever showed the one stored
-  // value. Mirrors the exact fetch Explore's own Lookup card already uses
+  // `parent` is the single, last-occurrence-wins stored value -- a real
+  // multi-parent KEGG KO (e.g. K00844/hexokinase has 14 real pathway
+  // parents) or multi-category COG (e.g. COG0028 under both category E and
+  // H) has more than one real immediate parent. Mirrors the exact fetch Explore's own Lookup card already uses
   // (kegg_paths/cog_paths, built for the hierarchy popup, hold every real
   // path) -- enzyme/taxonomy are never multi-parent (confirmed directly:
   // 0 of 7,333 real EC nodes; taxonomy's parent is a full lineage-prefix,
