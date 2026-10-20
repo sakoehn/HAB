@@ -13,6 +13,8 @@ definitions and column meanings.
 
 import sqlite3
 
+from .ec_renumbering import resolve_or_drop_ec
+
 # annotation_series.depth (taxonomy rows only) -> the taxon_paths column
 # it corresponds to. 1=domain .. 8=strain, same order taxon_paths' columns
 # were built in (see parse_taxon_path() in migrate_mappings_to_sql.py).
@@ -1108,6 +1110,53 @@ def _expand_to_leaf_ids(conn: sqlite3.Connection, source: str, annotation_id: st
     return sorted(row[0] for row in rows)
 
 
+# Database file path -> {gene_enzyme label: enzyme node its genes are
+# credited to}, for labels that aren't enzyme_paths nodes themselves. Built
+# once per process per database (one ~2s indexed DISTINCT scan); a rebuilt
+# enzyme tree needs a server restart to be picked up.
+_ENZYME_LABEL_NODES: dict[str, dict[str, str]] = {}
+
+
+def _enzyme_label_nodes(conn: sqlite3.Connection) -> dict[str, str]:
+    """Map every gene_enzyme label that isn't itself an enzyme tree node --
+    a partial label ("EC:3.6.1.-"), a renumbered one ("EC:3.6.4.12"), or one
+    unknown to KEGG -- to the real node EGC_ENZYME_TREE.ipynb credits its
+    genes to, using the same rule (api.ec_renumbering.resolve_or_drop_ec).
+    Labels that resolve nowhere are left out."""
+    db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+    if db_path and db_path in _ENZYME_LABEL_NODES:
+        return _ENZYME_LABEL_NODES[db_path]
+
+    nodes = {
+        value
+        for row in conn.execute("SELECT a_id, b_id, c_id, d_id FROM enzyme_paths")
+        for value in row
+        if value is not None
+    }
+    label_nodes = {}
+    for (label,) in conn.execute("SELECT DISTINCT ec_id FROM gene_enzyme"):
+        bare = label[3:] if label.startswith("EC:") else label
+        if bare in nodes:
+            continue
+        node = resolve_or_drop_ec(bare, nodes)
+        if node is not None:
+            label_nodes[label] = node
+
+    if db_path:
+        _ENZYME_LABEL_NODES[db_path] = label_nodes
+    return label_nodes
+
+
+def _enzyme_labels_credited_to(conn: sqlite3.Connection, node_id: str) -> list[str]:
+    """gene_enzyme labels that aren't tree nodes but whose genes the enzyme
+    tree credits to `node_id` or anything beneath it. EC ids nest by their
+    digits, so "beneath" is a dotted-prefix check."""
+    return sorted(
+        label for label, node in _enzyme_label_nodes(conn).items()
+        if node == node_id or node.startswith(node_id + ".")
+    )
+
+
 def get_mappings_sql(
     conn: sqlite3.Connection, source: str, annotation_id: str,
     samples: list[str] | None = None, bypass_cap: bool = False,
@@ -1168,7 +1217,12 @@ def get_mappings_sql(
         expand_id = strip_source_prefix(source, annotation_id)
 
         leaf_ids = _expand_to_leaf_ids(conn, source, expand_id)
-        if not leaf_ids:
+        # Enzyme genes can also carry a label that isn't a tree node at all
+        # (partial or renumbered); the tree credits those to a real node, so
+        # they belong in that node's mappings too. A node can have only
+        # such genes and no leaves of its own (e.g. 3.1.27, all "3.1.27.-").
+        extra_enzyme_labels = _enzyme_labels_credited_to(conn, expand_id) if source == "enzyme" else []
+        if not leaf_ids and not extra_enzyme_labels:
             return []
         if samples is not None and len(leaf_ids) > _MANY_LEAVES_THRESHOLD and not bypass_cap:
             samples = samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
@@ -1221,7 +1275,7 @@ def get_mappings_sql(
         """
         where_params = tuple(leaf_ids) + sample_filter_params
     elif source == "enzyme":
-        ec_ids = [f"EC:{leaf}" for leaf in leaf_ids]
+        ec_ids = [f"EC:{leaf}" for leaf in leaf_ids] + extra_enzyme_labels
         placeholders = ", ".join("?" * len(ec_ids))
         # DISTINCT for the same reason as cog above.
         where_sql = f"""

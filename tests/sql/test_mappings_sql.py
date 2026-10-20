@@ -529,3 +529,39 @@ def test_unique_pairs_dedup_key_is_stable_across_repeated_calls(conn):
     first  = get_mappings_sql(conn, "cog", "COG1539")
     second = get_mappings_sql(conn, "cog", "COG1539")
     assert dedup_keys(first) == dedup_keys(second)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Enzyme labels that aren't tree nodes themselves
+# ═══════════════════════════════════════════════════════════════════════════
+# Some genes carry an EC label that isn't a node in the enzyme tree: a
+# partial label ("EC:3.6.1.-"), a renumbered one ("EC:3.6.4.12", now
+# 5.6.2.3/5.6.2.4), or one unknown to KEGG. The enzyme tree credits each such
+# gene to a real node (Notebooks/enzyme_ec_utils.py), so a node's mappings
+# must include those genes too -- otherwise the gene list behind a chart
+# would be missing genes the chart counts.
+
+SAMPLE = "3300060358"
+
+
+@pytest.mark.parametrize("node", ["5.6.2", "1.3.5.1", "3.6.1", "3.6.4", "3.1.27"])
+def test_enzyme_mappings_cover_exactly_the_genes_the_tree_counts(conn, node):
+    rows = get_mappings_sql(conn, "enzyme", node, samples=[SAMPLE])
+    expected = conn.execute(
+        "SELECT gene_count FROM annotation_series WHERE source='enzyme' AND sample=? AND annotation_id=?",
+        (SAMPLE, node),
+    ).fetchone()[0]
+    assert len({r["gene_id"] for r in rows}) == expected
+
+
+def test_renumbered_label_is_found_under_its_new_node_not_its_old_one(conn):
+    under_new = get_mappings_sql(conn, "enzyme", "5.6.2", samples=[SAMPLE])
+    under_old = get_mappings_sql(conn, "enzyme", "3.6.4", samples=[SAMPLE])
+    assert any("3.6.4.12" in (r["enzyme"] or "") for r in under_new)
+    assert not any("3.6.4.12" in (r["enzyme"] or "").split(",") or "EC:3.6.4.12" in (r["enzyme"] or "")
+                   for r in under_old)
+
+
+def test_partial_label_is_found_under_the_node_it_is_credited_to(conn):
+    rows = get_mappings_sql(conn, "enzyme", "3.6.1", samples=[SAMPLE])
+    assert any("3.6.1.-" in (r["enzyme"] or "") for r in rows)
