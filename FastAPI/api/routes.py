@@ -52,6 +52,7 @@ from .cache_sql import (
     _ROW_VOLUME_THRESHOLD,
     count_taxa_under_sql,
     estimate_mapping_row_count_sql,
+    count_annotation_scaffolds_sql,
     get_annotation_scaffolds_sql,
     get_annotation_series_sql,
     get_all_sample_names_sql,
@@ -821,52 +822,37 @@ def annotation_scaffolds(
     request:       Request,
     source:        AnnotationSource = Query(...),
     annotation_id: str = Query(...),
-    sample:        str | None = Query(
-        None, description="Restrict to one sample — strongly recommended for interactive use"
-    ),
+    sample:        str = Query(..., description="The sample to list this annotation's scaffolds for"),
     page:          int = Query(1, ge=1),
     page_size:     int = Query(500, ge=1, le=5000),
 ):
     """
-    Return scaffolds associated with an annotation, paginated.
+    Return the scaffolds associated with an annotation in one sample, paginated.
 
-    Passing `sample` restricts results to one sample and is strongly
-    recommended for interactive use — without it, results span every
-    sample that has this annotation, which for high-level nodes (e.g. a
-    taxonomy domain) can still be very large even paginated, since sorting
-    a mixed-sample result requires materializing everything first.
+    `sample` is required: across all 128 samples a high-level node has
+    tens of millions of scaffold rows (31M for taxonomy "Bacteria").
+    Paging is done in SQL, so a request only ever reads `page_size` rows.
 
     Returns { annotation_id, source, sample, total, page, page_size, data }
-    where data is [{ sample, date, scaffold, count }], sorted by date.
+    where data is [{ sample, date, scaffold, count }].
     """
     conn = connect_to_sql()
     try:
-        scaffolds = get_annotation_scaffolds_sql(conn, source.value, annotation_id, sample=sample)
+        total = count_annotation_scaffolds_sql(conn, source.value, annotation_id, sample)
+        scaffolds = get_annotation_scaffolds_sql(
+            conn, source.value, annotation_id, sample,
+            limit=page_size, offset=(page - 1) * page_size,
+        )
     finally:
         close_sql_connection(conn)
-    rows: list[dict] = []
-    for scaff in scaffolds:
-        dt = (get_timepoint(scaff['sample_name']) or {}).get('datetime', '')
-        rows.append({
-                 "sample":   scaff["sample_name"],
-                 "date":     dt,
-                 "scaffold": scaff['scaffold_id'],
-                 "count":    scaff["gene_count"],
-        })
 
-    if not rows:
+    if total == 0:
         raise HTTPException(
             status_code=404,
-            detail=f"No scaffolds found for '{annotation_id}' in source '{source.value}'"
-                   + (f" sample '{sample}'" if sample else ""),
+            detail=f"No scaffolds found for '{annotation_id}' in source '{source.value}' sample '{sample}'",
         )
 
-    rows.sort(key=lambda r: timepoint_dt_sort_key(r["date"]) if r["date"] else -1.0)
-
-    total = len(rows)
-    start = (page - 1) * page_size
-    page_rows = rows[start:start + page_size]
-
+    dt = (get_timepoint(sample) or {}).get('datetime', '')
     return {
         "annotation_id": annotation_id,
         "source":        source.value,
@@ -874,7 +860,10 @@ def annotation_scaffolds(
         "total":         total,
         "page":          page,
         "page_size":     page_size,
-        "data":          page_rows,
+        "data":          [
+            {"sample": s["sample_name"], "date": dt, "scaffold": s["scaffold_id"], "count": s["gene_count"]}
+            for s in scaffolds
+        ],
     }
 
 

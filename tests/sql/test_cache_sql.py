@@ -48,6 +48,7 @@ from api.cache_sql import (
     _enzyme_node_exists,
     _kegg_node_depth,
     get_all_sample_names_sql,
+    count_annotation_scaffolds_sql,
     get_annotation_scaffolds_sql,
     get_annotation_series_sql,
     get_cog_children_sql,
@@ -1051,13 +1052,31 @@ def test_cog_path_unknown_id_returns_none(conn):
 # (COG0055's real total scaffold count across all samples).
 # ═══════════════════════════════════════════════════════════════════════════
 
-EXPECTED_COG0055_TOTAL_SCAFFOLD_ROWS = 29307
 EXPECTED_COG0055_SAMPLE_3300060358_SCAFFOLD_ROWS = 169
 
 
-def test_returns_all_scaffold_rows_across_every_sample_when_unscoped(conn):
-    rows = get_annotation_scaffolds_sql(conn, "cog", "COG0055")
-    assert len(rows) == EXPECTED_COG0055_TOTAL_SCAFFOLD_ROWS
+def test_sample_is_required(conn):
+    """Unscoped, this query would return every scaffold across all 128
+    samples -- 31M rows (~20 GB in memory) for taxonomy "Bacteria"."""
+    with pytest.raises(TypeError):
+        get_annotation_scaffolds_sql(conn, "cog", "COG0055")  # pylint: disable=no-value-for-parameter
+
+
+def test_count_matches_the_full_row_count(conn):
+    assert count_annotation_scaffolds_sql(conn, "cog", "COG0055", "3300060358") ==         EXPECTED_COG0055_SAMPLE_3300060358_SCAFFOLD_ROWS
+
+
+def test_count_no_match_is_zero(conn):
+    assert count_annotation_scaffolds_sql(conn, "cog", "COG_TOTALLY_BOGUS", "3300060358") == 0
+
+
+def test_limit_and_offset_page_through_every_row_exactly_once(conn):
+    full = get_annotation_scaffolds_sql(conn, "cog", "COG0055", "3300060358")
+    paged = []
+    for offset in range(0, len(full), 50):
+        paged += get_annotation_scaffolds_sql(conn, "cog", "COG0055", "3300060358", limit=50, offset=offset)
+    assert paged == full
+    assert len(get_annotation_scaffolds_sql(conn, "cog", "COG0055", "3300060358", limit=10)) == 10
 
 
 def test_sample_param_restricts_to_just_that_sample(conn):
@@ -1073,7 +1092,7 @@ def test_row_shape_and_a_known_real_value(conn):
 
 
 def test_scaffolds_no_match_returns_empty_list(conn):
-    rows = get_annotation_scaffolds_sql(conn, "cog", "COG_TOTALLY_BOGUS")
+    rows = get_annotation_scaffolds_sql(conn, "cog", "COG_TOTALLY_BOGUS", "3300060358")
     assert rows == []
 
 

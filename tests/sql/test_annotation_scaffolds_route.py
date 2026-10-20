@@ -124,22 +124,43 @@ def test_envelope_fields_present(client):
         params={"source": "cog", "annotation_id": "COG0055", "sample": 3300060358},
     ).json()
     assert {"annotation_id", "source", "total", "data"} <= body.keys()
-    assert body["total"] == len(body["data"])
 
 
-def test_rows_sorted_chronologically(client):
-    """Not covered by the ground-truth dict comparisons above, which are
-    order-insensitive by construction. Real dates are unpadded "M/D/YY
-    H:MM" strings (e.g. "6/2/21 9:00") -- a plain string sort disagrees
-    with real chronological order (e.g. "6/10/21" < "6/2/21" as text), so
-    this must compare via timepoint_dt_sort_key like the route itself
-    does, not sort dates directly."""
+def test_missing_sample_returns_422(client):
+    """Across all samples a high-level node has tens of millions of
+    scaffold rows (31M for taxonomy "Bacteria"), so a sample is required.
+    Every frontend caller already passes one."""
+    resp = client.get("/annotations/scaffolds", params={"source": "cog", "annotation_id": "COG0055"})
+    assert resp.status_code == 422
+
+
+def test_pages_cover_every_row_exactly_once(client):
+    params = {"source": "cog", "annotation_id": "COG0055", "sample": 3300060358}
+    full = client.get("/annotations/scaffolds", params={**params, "page_size": 5000}).json()
+    paged = []
+    for page in range(1, 5):
+        body = client.get("/annotations/scaffolds", params={**params, "page": page, "page_size": 50}).json()
+        assert body["total"] == full["total"] == 169
+        paged += body["data"]
+    assert paged == full["data"]
+
+
+def test_total_is_the_full_count_not_the_page_length(client):
     body = client.get(
         "/annotations/scaffolds",
-        params={"source": "cog", "annotation_id": "COG0055"},
+        params={"source": "cog", "annotation_id": "COG0055", "sample": 3300060358, "page_size": 10},
     ).json()
-    keys = [timepoint_dt_sort_key(r["date"]) for r in body["data"] if r["date"]]
-    assert keys == sorted(keys)
+    assert len(body["data"]) == 10
+    assert body["total"] == 169
+
+
+def test_page_past_the_end_is_empty_not_404(client):
+    body = client.get(
+        "/annotations/scaffolds",
+        params={"source": "cog", "annotation_id": "COG0055", "sample": 3300060358, "page": 99, "page_size": 50},
+    )
+    assert body.status_code == 200
+    assert body.json()["data"] == []
 
 
 def test_summary_missing_source_returns_422(client):
@@ -153,8 +174,10 @@ def test_summary_missing_annotation_id_returns_422(client):
 
 
 def test_summary_sorted_chronologically(client):
-    """Same timepoint_dt_sort_key requirement as test_rows_sorted_chronologically
-    above -- real dates are unpadded "M/D/YY H:MM" strings, not plain-string-sortable."""
+    """Real dates are unpadded "M/D/YY H:MM" strings (e.g. "6/2/21 9:00") --
+    a plain string sort disagrees with real chronological order ("6/10/21" <
+    "6/2/21" as text), so this compares via timepoint_dt_sort_key like the
+    route itself does."""
     body = client.get(
         "/annotations/scaffolds/summary",
         params={"source": "cog", "annotation_id": "COG0055"},

@@ -646,40 +646,61 @@ def get_cog_path_sql(conn: sqlite3.Connection, annotation_id: str) -> dict | Non
     return {"annotation_id": annotation_id, "paths": paths, "path_count": len(paths)}
 
 
+_SCAFFOLDS_FOR_ANNOTATION_SAMPLE = """
+        FROM scaffolds
+        JOIN annotation_series ON scaffolds.annotation_series_id = annotation_series.id
+        WHERE annotation_series.source = ? AND annotation_series.annotation_id = ?
+          AND annotation_series.sample = ?
+"""
+
+
 def get_annotation_scaffolds_sql(
-    conn: sqlite3.Connection, source: str, annotation_id: str, sample: str | None = None,
+    conn: sqlite3.Connection, source: str, annotation_id: str, sample: str,
+    limit: int | None = None, offset: int = 0,
 ) -> list[dict]:
-    """Return individual scaffold rows for one annotation, for the
-    /annotations/scaffolds route (the detail route -- /summary is served
+    """Return individual scaffold rows for one annotation in one sample, for
+    the /annotations/scaffolds route (the detail route -- /summary is served
     by get_annotation_series_sql's precomputed counts instead).
+
+    `sample` is required: across all samples a high-level node has tens of
+    millions of rows (31M for taxonomy "Bacteria"); within one sample the
+    worst case is ~205k.
 
     Args:
         conn: Open SQLite connection.
         source: Annotation source ("cog", "kegg", "enzyme", "taxonomy").
         annotation_id: Annotation ID to look up.
-        sample: If given, restrict results to this sample (indexed join,
-            recommended for interactive use given the row counts involved).
+        sample: Sample to restrict results to (indexed join).
+        limit: Maximum rows to return, or None for all.
+        offset: Rows to skip, for pagination. Rows are in a stable
+            (scaffolds.id) order so consecutive pages never overlap.
 
     Returns:
         List of dicts keyed sample_name, scaffold_id, gene_count.
     """
-    query = """
-        SELECT annotation_series.sample AS sample_name, scaffolds.scaffold_id, scaffolds.gene_count
-        FROM scaffolds
-        JOIN annotation_series ON scaffolds.annotation_series_id = annotation_series.id
-        WHERE annotation_series.source = ? AND annotation_series.annotation_id = ?
-    """
-    params: list[str] = [source, annotation_id]
-    if sample is not None:
-        query += " AND annotation_series.sample = ?"
-        params.append(sample)
+    query = (
+        "SELECT annotation_series.sample AS sample_name, scaffolds.scaffold_id, scaffolds.gene_count"
+        + _SCAFFOLDS_FOR_ANNOTATION_SAMPLE
+        + " ORDER BY scaffolds.id"
+    )
+    params: list[str | int] = [source, annotation_id, sample]
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params += [limit, offset]
 
-    cursor = conn.execute(query, params)
-    rows = cursor.fetchall()
+    rows = conn.execute(query, params).fetchall()
     return [
         {"sample_name": row[0], "scaffold_id": row[1], "gene_count": row[2]}
         for row in rows
     ]
+
+
+def count_annotation_scaffolds_sql(
+    conn: sqlite3.Connection, source: str, annotation_id: str, sample: str,
+) -> int:
+    """Number of rows get_annotation_scaffolds_sql would return unpaginated."""
+    query = "SELECT COUNT(*)" + _SCAFFOLDS_FOR_ANNOTATION_SAMPLE
+    return conn.execute(query, [source, annotation_id, sample]).fetchone()[0]
 
 def taxon_exists_sql(conn: sqlite3.Connection, lineage_prefix: str) -> bool:
     """Return whether `lineage_prefix` exists in taxon_paths -- either as
