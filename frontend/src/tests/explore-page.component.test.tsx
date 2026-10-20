@@ -887,3 +887,65 @@ describe('ExplorePage — Top EGC Group column shows every real KEGG parent', ()
     expect(mockFetch.mock.calls.some(([u]) => String(u).includes('/api/kegg/parents'))).toBe(false)
   })
 })
+
+// A rank filter picked for one set of rows must not silently carry over to
+// the next load or search -- the new rows may have none of that rank, and
+// the pill bar (shown only when there's more than one rank to choose from)
+// would then vanish, leaving an empty table with no way to clear it.
+describe('ExplorePage — rank filters reset when new rows load', () => {
+  const pill = (label: string) =>
+    screen.getAllByRole('button').find(b => b.className.includes('al-source-pill') && b.textContent === label)
+
+  it('Top EGC: reloading clears the rank filter instead of hiding every new row', async () => {
+    const user = userEvent.setup()
+    let rows: object[] = [
+      { annotation_id: '09180', name: 'Brite Hierarchies', parent: null, depth: 1, mean_egc: 900, max_egc: 1000, sample_count: 128 },
+      { annotation_id: 'K00001', name: 'alcohol dehydrogenase', parent: '00010', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
+    ]
+    mockFetch.mockImplementation((url: string) =>
+      Promise.resolve(jsonResponse(url.includes('/api/annotations/top') ? { data: rows, sample_count: 128 } : {})))
+    render(<Harness initial={{ openSection: 'top-egc', source: 'kegg' }} />)
+
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+    await waitFor(() => expect(screen.getByText('K00001')).toBeInTheDocument())
+    await user.click(pill('leaf (KO)')!)
+    expect(screen.queryByText('09180')).not.toBeInTheDocument()
+
+    rows = [
+      { annotation_id: '09100', name: 'Metabolism', parent: null, depth: 1, mean_egc: 800, max_egc: 900, sample_count: 128 },
+      { annotation_id: '09120', name: 'Genetic Information Processing', parent: null, depth: 1, mean_egc: 700, max_egc: 800, sample_count: 128 },
+    ]
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+
+    await waitFor(() => expect(screen.getByText('09100')).toBeInTheDocument())
+    expect(screen.getByText('09120')).toBeInTheDocument()
+  })
+
+  it('Lookup: a new search clears the rank filter', async () => {
+    const user = userEvent.setup()
+    let rows: object[] = [
+      { annotation_id: '09180', source: 'kegg', name: 'Brite Hierarchies', parent: null, depth: 1, mean_egc: 900, max_egc: 1000, sample_count: 128 },
+      { annotation_id: 'K00001', source: 'kegg', name: 'transporter one', parent: '00010', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
+    ]
+    mockFetch.mockImplementation((url: string) =>
+      Promise.resolve(jsonResponse(url.includes('/api/search/annotations') ? { data: rows, total: rows.length } : {})))
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'kegg' }} />)
+
+    const input = screen.getByPlaceholderText(/ID \(K02014\)/i)
+    await user.type(input, 'transport')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+    await waitFor(() => expect(pill('leaf (KO)')).toBeDefined())
+    await user.click(pill('leaf (KO)')!)
+
+    rows = [
+      { annotation_id: '09130', source: 'kegg', name: 'Environmental Information Processing', parent: null, depth: 1, mean_egc: 600, max_egc: 700, sample_count: 128 },
+      { annotation_id: '09140', source: 'kegg', name: 'Cellular Processes', parent: null, depth: 1, mean_egc: 500, max_egc: 600, sample_count: 128 },
+    ]
+    await user.clear(input)
+    await user.type(input, 'process')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    await waitFor(() => expect(screen.getByText('09130')).toBeInTheDocument())
+    expect(screen.getByText('09140')).toBeInTheDocument()
+  })
+})

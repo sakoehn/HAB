@@ -1255,7 +1255,9 @@ export function ExplorePage({
   async function load() {
     const requestId = ++topRequestSeqRef.current
     const params = { source: state.source, dateFrom: state.dateFrom, dateTo: state.dateTo }
-    setState(prev => ({ ...prev, status: 'loading' }))
+    // A rank filter chosen for the previous rows may match none of the new
+    // ones (and their ranks can mean something else for another source).
+    setState(prev => ({ ...prev, status: 'loading', topRankFilter: new Set() }))
     setTopKeggParents({})
     setTopKeggParentsFailed(false)
     try {
@@ -1357,7 +1359,7 @@ export function ExplorePage({
     if (!term) return
     const requestId = ++lookupRequestSeqRef.current
     const requestedSource = state.lookupSource
-    setState(prev => ({ ...prev, lookupStatus: 'loading', lookupSelected: null }))
+    setState(prev => ({ ...prev, lookupStatus: 'loading', lookupSelected: null, lookupRankFilter: new Set() }))
     try {
       const url = `/api/search/annotations?q=${encodeURIComponent(term)}&sources=${requestedSource}&page_size=25`
       const r   = await apiFetch<{ data: TopAnnotation[]; total: number }>(url)
@@ -1636,7 +1638,7 @@ export function ExplorePage({
                 )}
               </div>
 
-              {availableTopRanks.length > 1 && (
+              {(availableTopRanks.length > 1 || state.topRankFilter.size > 0) && (
                 <div className="al-source-filter al-rank-filter" style={{ marginBottom: 10, borderRadius: 6 }}>
                   <span className="al-rank-filter-label">Rank</span>
                   <button
@@ -1772,6 +1774,19 @@ export function ExplorePage({
                     </tr>
                   </thead>
                   <tbody>
+                    {sorted.length === 0 && state.rows.length > 0 && (
+                      <tr>
+                        <td colSpan={99} style={{ padding: '18px 16px', color: 'var(--text-dim)', textAlign: 'center' }}>
+                          No rows match the filters above ({state.rows.length} loaded).{' '}
+                          <button
+                            className="btn sm ghost"
+                            onClick={() => setState(prev => ({ ...prev, topRankFilter: new Set(), topFilter: '' }))}
+                          >
+                            Clear filters
+                          </button>
+                        </td>
+                      </tr>
+                    )}
                     {sorted.map((row, i) => {
                       const group = topGroupDisplay(row)
                       return (
@@ -1915,6 +1930,7 @@ export function ExplorePage({
                       lookupSelected: null,
                       lookupTotal:    0,
                       lookupStatus:   'idle',
+                      lookupRankFilter: new Set(),
                     }))
                   }
                 >
@@ -1992,7 +2008,7 @@ export function ExplorePage({
 
               {state.lookupStatus === 'ok' && state.lookupResults.length > 0 && (
                 <>
-                  {availableLookupRanks.length > 1 && (
+                  {(availableLookupRanks.length > 1 || state.lookupRankFilter.size > 0) && (
                     <div className="al-source-filter al-rank-filter" style={{ marginBottom: 10, borderRadius: 6 }}>
                       <span className="al-rank-filter-label">Rank</span>
                       <button
