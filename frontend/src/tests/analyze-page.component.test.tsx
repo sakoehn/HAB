@@ -2868,3 +2868,57 @@ describe('ThemeToggle', () => {
     })
   })
 })
+// ─────────────────────────────────────────────────────────────────────────────
+// AnalyzePage — open charts stay visible whatever the current search shows
+// ─────────────────────────────────────────────────────────────────────────────
+// The chart cards on the right belong to the user, not to the current
+// search: a new search that is loading, finds nothing, or fails must not
+// hide them.
+
+describe('AnalyzePage — open charts survive an empty or failed search', () => {
+  async function openOneChart() {
+    render(<App />)
+    await userEvent.click(await searchAndGetResult())
+    await waitFor(() => expect(screen.getAllByText(/↓ PNG/i).length).toBeGreaterThan(0))
+  }
+
+  it('keeps the open chart after a search that finds nothing, and says so', async () => {
+    setupDefaultMocks()
+    await openOneChart()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [], total: 0 }) })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    const input = await getAnalyzeSearchInput()
+    await userEvent.clear(input)
+    await userEvent.type(input, 'zzqqxxnotreal')
+    await userEvent.keyboard('{Enter}')
+
+    await waitFor(() => expect(screen.getByText(/No annotations found/i)).toBeInTheDocument())
+    expect(screen.getAllByText(/↓ PNG/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/1 chart open/i)).toBeInTheDocument()
+  })
+
+  it('keeps the open chart after a search that fails', async () => {
+    setupDefaultMocks()
+    await openOneChart()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations')) return Promise.reject(new Error('500 Internal Server Error'))
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    const input = await getAnalyzeSearchInput()
+    await userEvent.clear(input)
+    await userEvent.type(input, 'anything')
+    await userEvent.keyboard('{Enter}')
+
+    await waitFor(() => expect(screen.getByText(/Search failed/i)).toBeInTheDocument())
+    expect(screen.getAllByText(/↓ PNG/i).length).toBeGreaterThan(0)
+  })
+})

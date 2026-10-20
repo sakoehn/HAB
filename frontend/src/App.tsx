@@ -177,6 +177,7 @@ export default function App() {
       searchStatus:  'idle',
       activeTermIdx: 0,
       checkedByTerm: {},
+      autoRunSearch: true,
     }))
     setPage('analyze')
   }

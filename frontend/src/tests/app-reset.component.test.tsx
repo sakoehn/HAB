@@ -139,5 +139,12 @@ describe('App::handleSendToAnalyze (real navigation, not a hand-mocked simulatio
     // into Analyze before navigating away, and it's the only field.
     expect(analyzeInputAfterNav).toHaveValue('K02014')
     expect(screen.queryAllByPlaceholderText(/Term \d/i)).toHaveLength(0)
+
+    // ...and the search actually runs, so the user sees the result rather
+    // than a pre-filled box and an empty page.
+    await waitFor(() => {
+      expect(mockFetch.mock.calls.some(([u]) => String(u).includes('/api/search/annotations?q=K02014'))).toBe(true)
+      expect(document.querySelector('.al-row-id')?.textContent).toContain('K02014')
+    })
   })
 })

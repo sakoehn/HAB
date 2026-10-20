@@ -64,6 +64,9 @@ export type AnalyzeState = {
   seriesCache:   SeriesCache
   drawerOpen:    boolean
   drawerChecked: Set<string>
+  // Set by another page that hands Analyze a query to look up ("View
+  // Timeseries in Analyze"): run that search once on arrival, then clear.
+  autoRunSearch?: boolean
 }
 
 export function makeDefaultAnalyzeState(): AnalyzeState {
@@ -787,6 +790,14 @@ export function AnalyzePage({
 
   useEffect(() => { firstInputRef.current?.focus() }, [])
 
+  // Run a search handed over from another page, once.
+  useEffect(() => {
+    if (!state.autoRunSearch) return
+    setState(prev => ({ ...prev, autoRunSearch: false }))
+    runSearch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.autoRunSearch])
+
   // Re-search when index becomes ready but results lack stats
   useEffect(() => {
     if (!indexReady) return
@@ -1075,6 +1086,30 @@ export function AnalyzePage({
   const hasResults =
     state.searchStatus === 'ok' &&
     state.resultsByTerm.some(r => r.length > 0)
+  // Open charts belong to the user, not to the current search -- keep the
+  // workspace (and every chart in it) on screen while a new search is
+  // loading, finds nothing, or fails.
+  const showWorkspace = hasResults || state.rightCards.length > 0
+
+  const searchStatusBox =
+    state.searchStatus === 'loading' ? (
+      <div className="state-box">
+        <span>Searching across all samples…</span>
+      </div>
+    ) : state.searchStatus === 'error' ? (
+      <div className="state-box error">
+        <div className="state-icon">⚠</div>
+        <span>Search failed — is the FastAPI server running?</span>
+      </div>
+    ) : state.searchStatus === 'ok' && !hasResults ? (
+      <div className="state-box">
+        <div className="state-icon">∅</div>
+        <span>
+          No annotations found for{' '}
+          {displayTerms.map(t => `"${t}"`).join(' or ')}
+        </span>
+      </div>
+    ) : null
 
   return (
     <div className="page-fade al-page">
@@ -1156,31 +1191,12 @@ export function AnalyzePage({
 
       </div>
 
-      {/* ── States ── */}
-      {state.searchStatus === 'idle' && <FirstRunHint />}
-      {state.searchStatus === 'loading' && (
-        <div className="state-box">
-          <span>Searching across all samples…</span>
-        </div>
-      )}
-      {state.searchStatus === 'error' && (
-        <div className="state-box error">
-          <div className="state-icon">⚠</div>
-          <span>Search failed — is the FastAPI server running?</span>
-        </div>
-      )}
-      {state.searchStatus === 'ok' && !hasResults && (
-        <div className="state-box">
-          <div className="state-icon">∅</div>
-          <span>
-            No annotations found for{' '}
-            {displayTerms.map(t => `"${t}"`).join(' or ')}
-          </span>
-        </div>
-      )}
+      {/* ── States (no charts open yet) ── */}
+      {!showWorkspace && state.searchStatus === 'idle' && <FirstRunHint />}
+      {!showWorkspace && searchStatusBox}
 
       {/* ── Two-column workspace ── */}
-      {hasResults && (
+      {showWorkspace && (
         <div className="al-workspace" style={{ gridTemplateColumns: `${leftWidth}px minmax(0, 1fr)` }}>
 
           {/* LEFT COLUMN */}
@@ -1190,6 +1206,8 @@ export function AnalyzePage({
               onMouseDown={startResize}
               title="Drag to resize"
             />
+            {!hasResults && searchStatusBox}
+            {hasResults && (<>
             <div className="al-term-tabs">
               {displayTerms.map((term, i) => (
                 <button
@@ -1219,6 +1237,7 @@ export function AnalyzePage({
               onGroupSelected={addSelectedAsGroup}
               total={state.totalsByTerm[activeTermIdx] ?? activeRows.length}
             />
+            </>)}
           </div>
 
           {/* RIGHT COLUMN */}
