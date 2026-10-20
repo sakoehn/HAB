@@ -238,48 +238,6 @@ class TestSmokePatched:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GET /sql-test -- found completely untested by a post-JSON-removal coverage
-# pass. Uses the same sql_request fixture as the mapping-search tests above
-# (a real sql_conn, not a live server).
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestSqlTestRoute:
-
-    def test_returns_a_row_from_annotation_series(self, sql_request):
-        from api.routes import sql_test
-        rows = sql_test(sql_request)
-        assert isinstance(rows, list)
-        assert len(rows) == 1
-
-    def test_raises_500_not_a_raw_exception_on_a_bad_connection(self, monkeypatch):
-        """Real robustness check, not hypothetical: sql_test wraps its
-        query in try/except specifically so a broken connection surfaces
-        as a clean 500, not an unhandled exception escaping the route.
-
-        sql_test opens its own connection via connect_to_sql() (2026-09-25
-        fix -- see routes.py's module docstring: a single connection
-        shared across every request/thread caused real production hangs
-        and corruption) instead of reading one off request.app.state, so
-        the exploding connection is injected by patching connect_to_sql
-        itself rather than via _FakeRequest.
-        """
-        from fastapi import HTTPException
-        import api.routes as routes_mod
-
-        class _ExplodingConn:
-            def execute(self, *_a, **_kw):
-                raise RuntimeError("connection lost")
-            def close(self):
-                pass
-
-        monkeypatch.setattr(routes_mod, "connect_to_sql", lambda: _ExplodingConn())
-
-        with pytest.raises(HTTPException) as exc_info:
-            routes_mod.sql_test(_FakeRequest(None))
-        assert exc_info.value.status_code == 500
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # The 6 "SQL backend only" 501 guards on /kegg,enzyme,cog/children,path --
 # found untested by the same coverage pass (DATA_BACKEND is fixed to 'sql'
 # for the whole real test run via FastAPI/.env, so the "not sql" branch

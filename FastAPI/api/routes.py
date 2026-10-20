@@ -1,12 +1,10 @@
 """
 routes.py
 ---------
-All FastAPI endpoints except /annotations/correlate (in correlation.py).
+All FastAPI endpoints except the correlation routes (in correlation_sql.py).
 
 Endpoints
 ~~~~~~~~~
-GET /debug
-GET /sql-test
 GET /status
 GET /timepoints
 GET /samples
@@ -38,7 +36,6 @@ mirrors the per-call connection pattern correlation_sql.py's _connect()
 already used successfully.
 """
 
-import os
 import time
 from collections import OrderedDict
 
@@ -85,13 +82,11 @@ from .cache import (
 )
 from .db import connect_to_sql, close_sql_connection
 from .config import (
-    BASE_DIR,
     DATA_BACKEND,
     LOCATION_LAT,
     LOCATION_LON,
     LOCATION_NAME,
     TIDE_SHIFT_HOURS,
-    TIMEPOINTS_CSV,
 )
 from . import index as index_module
 from .index import (
@@ -187,33 +182,6 @@ def _top_ann_cache_set(key: tuple, value) -> None:
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
-
-@router.get("/debug")
-def debug():
-    return {
-        "base_dir":              BASE_DIR,
-        "timepoints_csv":        TIMEPOINTS_CSV,
-        "timepoints_csv_exists": os.path.exists(TIMEPOINTS_CSV),
-        "base_dir_exists":       os.path.exists(BASE_DIR),
-        "base_dir_contents":     os.listdir(BASE_DIR) if os.path.exists(BASE_DIR) else "DIR NOT FOUND",
-    }
-
-@router.get("/sql-test")
-def sql_test(request: Request):
-    """ Test SQLite connection by a test query."""
-    db = connect_to_sql()
-    try:
-        query = f"""
-            SELECT *
-            FROM annotation_series
-            LIMIT 1
-        """
-        cursor = db.execute(query)
-        return cursor.fetchall()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"SQL operation failed: {str(e)}")
-    finally:
-        close_sql_connection(db)
 
 @router.get("/status")
 def api_status():

@@ -826,13 +826,12 @@ class TestRoutesViaTestClient:
         assert "location" in body
         assert "data"     in body
 
-    def test_debug_returns_200(self, patched_client):
-        r = patched_client.get("/debug")
-        assert r.status_code == 200
-
-    def test_debug_has_base_dir(self, patched_client):
-        body = patched_client.get("/debug").json()
-        assert "base_dir" in body
+    @pytest.mark.parametrize("path", ["/debug", "/api/debug", "/sql-test", "/api/sql-test"])
+    def test_debug_routes_are_not_served(self, patched_client, path):
+        """These development-only routes exposed server paths and raw db
+        rows publicly. Nothing uses them, so they must not be served."""
+        r = patched_client.get(path)
+        assert r.status_code == 404
 
     # /search/annotations, /series/annotations, /annotations/top,
     # /mappings/search, /timepoints, and /samples (above) all branch on
