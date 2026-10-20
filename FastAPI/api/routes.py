@@ -482,7 +482,7 @@ def search_annotations(
 
 
 @router.get("/series/annotations")
-async def annotation_time_series(
+def annotation_time_series(
     request: Request,
     source:        AnnotationSource = Query(...),
     annotation_id: str = Query(...),
@@ -528,7 +528,7 @@ async def annotation_time_series(
 
 
 @router.get("/taxonomy/children")
-async def taxonomy_children(request: Request, parent: str | None = Query(None)):
+def taxonomy_children(request: Request, parent: str | None = Query(None)):
     """
     Direct children of a taxon (structure only — no egc values), for lazily
     populating an expandable tree without shipping the full ~38k-taxon index.
@@ -557,7 +557,7 @@ async def taxonomy_children(request: Request, parent: str | None = Query(None)):
 
 
 @router.get("/kegg/children")
-async def kegg_children(request: Request, parent: str | None = Query(None)):
+def kegg_children(request: Request, parent: str | None = Query(None)):
     """
     Direct children of a KEGG node (structure only — no egc values), for
     the BRITE hierarchy popup.
@@ -592,7 +592,7 @@ async def kegg_children(request: Request, parent: str | None = Query(None)):
 
 
 @router.get("/kegg/path")
-async def kegg_path(request: Request, id: str = Query(...)):
+def kegg_path(request: Request, id: str = Query(...)):
     """
     Ancestor path (root to node) for a KEGG node, for auto-expanding and
     highlighting a node in the hierarchy popup when opened from a chart
@@ -614,7 +614,7 @@ async def kegg_path(request: Request, id: str = Query(...)):
 
 
 @router.get("/kegg/parents")
-async def kegg_parents_bulk(request: Request, ids: str = Query(...)):
+def kegg_parents_bulk(request: Request, ids: str = Query(...)):
     """
     Every real IMMEDIATE parent (one level up) for each of a comma-separated
     list of KEGG node ids, in one request -- W30a (docs/AUDIT-2026-09-22.md):
@@ -639,7 +639,7 @@ async def kegg_parents_bulk(request: Request, ids: str = Query(...)):
 
 
 @router.get("/enzyme/children")
-async def enzyme_children(request: Request, parent: str | None = Query(None)):
+def enzyme_children(request: Request, parent: str | None = Query(None)):
     """
     Direct children of an Enzyme (EC) node (structure only — no egc
     values), for the same BRITE-hierarchy-popup feature as /kegg/children.
@@ -671,7 +671,7 @@ async def enzyme_children(request: Request, parent: str | None = Query(None)):
 
 
 @router.get("/enzyme/path")
-async def enzyme_path(request: Request, id: str = Query(...)):
+def enzyme_path(request: Request, id: str = Query(...)):
     """
     Ancestor path (root to node) for an Enzyme (EC) node, for auto-
     expanding and highlighting a node in the hierarchy popup when opened
@@ -693,7 +693,7 @@ async def enzyme_path(request: Request, id: str = Query(...)):
 
 
 @router.get("/cog/children")
-async def cog_children(request: Request, parent: str | None = Query(None)):
+def cog_children(request: Request, parent: str | None = Query(None)):
     """
     Direct children of a COG node (structure only — no egc values), for
     the same BRITE-hierarchy-popup feature as /kegg/children.
@@ -727,7 +727,7 @@ async def cog_children(request: Request, parent: str | None = Query(None)):
 
 
 @router.get("/cog/path")
-async def cog_path(request: Request, id: str = Query(...)):
+def cog_path(request: Request, id: str = Query(...)):
     """
     Ancestor path (root to node) for a COG node, for auto-expanding and
     highlighting a node in the hierarchy popup when opened from a chart
@@ -749,7 +749,7 @@ async def cog_path(request: Request, id: str = Query(...)):
 
 
 @router.get("/annotations/top")
-async def top_annotations_by_egc(
+def top_annotations_by_egc(
     request:   Request,
     source:    AnnotationSource = Query(...),
     limit:     int = Query(25, ge=1, le=200),
@@ -817,7 +817,7 @@ async def top_annotations_by_egc(
 
 
 @router.get("/annotations/scaffolds")
-async def annotation_scaffolds(
+def annotation_scaffolds(
     request:       Request,
     source:        AnnotationSource = Query(...),
     annotation_id: str = Query(...),
@@ -879,7 +879,7 @@ async def annotation_scaffolds(
 
 
 @router.get("/annotations/scaffolds/summary")
-async def annotation_scaffolds_summary(
+def annotation_scaffolds_summary(
     request:       Request,
     source:        AnnotationSource = Query(...),
     annotation_id: str = Query(...),
@@ -918,7 +918,7 @@ async def annotation_scaffolds_summary(
 
 
 @router.get("/taxonomy/export")
-async def taxonomy_rank_export(request: Request, rank: str):
+def taxonomy_rank_export(request: Request, rank: str):
     """Return all taxa at the given taxonomic rank (e.g. "genus", "order")."""
     depth = None
     for d, column in RANK_COLUMNS.items():
