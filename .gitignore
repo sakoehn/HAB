@@ -99,3 +99,9 @@ htmlcov/
 
 .DS_Store
 Thumbs.db
+
+########################################
+# Audit reports (kept locally, not versioned)
+########################################
+
+docs/AUDIT*.md
