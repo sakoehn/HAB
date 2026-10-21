@@ -949,3 +949,31 @@ describe('ExplorePage — rank filters reset when new rows load', () => {
     expect(screen.getByText('09140')).toBeInTheDocument()
   })
 })
+
+describe('ExplorePage — Top EGC Group column shows every real COG category', () => {
+  it('a multi-category COG shows both categories, not just its stored one', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve(jsonResponse({
+          data: [{ annotation_id: 'COG0028', name: 'thiamine pyrophosphate enzyme', parent: 'E', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 }],
+          sample_count: 128,
+        }))
+      if (url.includes('/api/cog/parents'))
+        return Promise.resolve(jsonResponse({
+          parents: {
+            COG0028: [
+              { annotation_id: 'E', name: 'Amino acid transport and metabolism' },
+              { annotation_id: 'H', name: 'Coenzyme transport and metabolism' },
+            ],
+          },
+        }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'top-egc', source: 'cog' }} />)
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+
+    await waitFor(() => expect(screen.getByText(/Amino acid transport and metabolism \(\+1 more\)/)).toBeInTheDocument())
+    expect(screen.getByTitle(/Coenzyme transport and metabolism/)).toBeInTheDocument()
+  })
+})

@@ -507,3 +507,33 @@ describe('AnnotationsByParentPanel — files a multi-parent KO under every real 
     expect(screen.queryByText('Ungrouped')).not.toBeInTheDocument()
   })
 })
+
+// A COG id can belong to several categories (e.g. COG0028 is in E and H),
+// but its stored `parent` holds only one. Like a multi-parent KO, it must
+// be filed under every real category it belongs to.
+describe('AnnotationsByParentPanel — files a multi-category COG under every real category', () => {
+  it('uses /api/cog/parents and lists the COG in both of its categories', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve(jsonResponse({ data: [makeRow('COG0028', 'E', 100), makeRow('COG0001', 'E', 30)] }))
+      if (url.includes('/api/cog/parents'))
+        return Promise.resolve(jsonResponse({
+          parents: {
+            COG0028: [
+              { annotation_id: 'E', name: 'Amino acid transport and metabolism' },
+              { annotation_id: 'H', name: 'Coenzyme transport and metabolism' },
+            ],
+            COG0001: [{ annotation_id: 'E', name: 'Amino acid transport and metabolism' }],
+          },
+        }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<AnnotationsByParentPanel source="cog" />)
+
+    await waitFor(() => expect(screen.getByText('Coenzyme transport and metabolism')).toBeInTheDocument())
+    const eRow = screen.getByText('Amino acid transport and metabolism').closest('.mappings-toggle')!
+    expect(eRow.textContent).toContain('2 annotations')
+    const hRow = screen.getByText('Coenzyme transport and metabolism').closest('.mappings-toggle')!
+    expect(hRow.textContent).toContain('1 annotations')
+  })
+})

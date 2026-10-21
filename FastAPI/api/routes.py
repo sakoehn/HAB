@@ -61,6 +61,7 @@ from .cache_sql import (
     get_enzyme_children_sql,
     get_enzyme_path_sql,
     get_kegg_children_sql,
+    get_cog_immediate_parents_bulk_sql,
     get_kegg_immediate_parents_bulk_sql,
     get_kegg_path_sql,
     get_taxonomy_children_sql,
@@ -607,6 +608,23 @@ def kegg_parents_bulk(request: Request, ids: str = Query(...)):
     db = connect_to_sql()
     try:
         result = get_kegg_immediate_parents_bulk_sql(db, id_list)
+    finally:
+        close_sql_connection(db)
+    return {"parents": result}
+
+
+@router.get("/cog/parents")
+def cog_parents_bulk(request: Request, ids: str = Query(...)):
+    """
+    Every real category for each of a comma-separated list of COG ids, in
+    one request -- the COG counterpart of /kegg/parents. A COG id's stored
+    `parent` holds only one of its categories, so Explore needs every real
+    category to file a multi-category COG under each one it belongs to.
+    """
+    id_list = [i for i in ids.split(",") if i]
+    db = connect_to_sql()
+    try:
+        result = get_cog_immediate_parents_bulk_sql(db, id_list)
     finally:
         close_sql_connection(db)
     return {"parents": result}

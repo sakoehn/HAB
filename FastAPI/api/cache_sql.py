@@ -597,6 +597,36 @@ def get_cog_children_sql(conn: sqlite3.Connection, parent_id: str | None, depth:
     )
 
 
+def get_cog_immediate_parents_bulk_sql(conn: sqlite3.Connection, annotation_ids: list[str]) -> dict[str, list[dict]]:
+    """Every real category for each of `annotation_ids` (COG ids), in one
+    query -- the COG counterpart of get_kegg_immediate_parents_bulk_sql.
+
+    annotation_catalog.parent holds only one of a COG id's categories, but
+    cog_paths has one row per real (category, COG id) membership (e.g.
+    COG0028 is in both E and H), so this reads cog_paths instead.
+
+    Args:
+        conn: Open SQLite connection.
+        annotation_ids: COG ids and/or category letters.
+
+    Returns:
+        {annotation_id: [{"annotation_id": letter, "name": category name},
+        ...]} with every requested id present. A category letter (top
+        level) or an unknown id maps to an empty list.
+    """
+    result: dict[str, list[dict]] = {aid: [] for aid in annotation_ids}
+    if not annotation_ids:
+        return result
+    placeholders = ", ".join("?" * len(annotation_ids))
+    rows = conn.execute(
+        f"SELECT DISTINCT b_id, a_id, a_name FROM cog_paths WHERE b_id IN ({placeholders}) ORDER BY b_id, a_id",
+        annotation_ids,
+    ).fetchall()
+    for cog_id, category_id, category_name in rows:
+        result[cog_id].append({"annotation_id": category_id, "name": category_name})
+    return result
+
+
 def get_cog_path_sql(conn: sqlite3.Connection, annotation_id: str) -> dict | None:
     """Return every real ancestor path (root to node) for a COG node, for
     auto-expanding/highlighting a node in the hierarchy popup. Same

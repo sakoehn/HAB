@@ -149,3 +149,29 @@ def test_cog_path_resolves_multicategory_node_to_all_real_paths(client):
         "if this is a single category, cog_paths hasn't been regenerated "
         "from the multi-category COG notebook yet"
     )
+
+
+# /cog/parents, the COG counterpart of /kegg/parents: a COG id's stored
+# `parent` holds only one of its categories, so Explore needs every real
+# category for every row to file a multi-category COG under each of them.
+
+def test_cog_parents_bulk_returns_every_real_category(client):
+    path_resp = client.get("/cog/path", params={"id": "COG0028"})
+    assert path_resp.status_code == 200
+    expected = {path[0]["annotation_id"] for path in path_resp.json()["paths"]}
+    assert expected == {"E", "H"}
+
+    resp = client.get("/cog/parents", params={"ids": "COG0028"})
+    assert resp.status_code == 200
+    parents = resp.json()["parents"]["COG0028"]
+    assert {p["annotation_id"] for p in parents} == expected
+    assert all(p["name"] and p["name"] != p["annotation_id"] for p in parents)  # real category names
+
+
+def test_cog_parents_bulk_category_letters_and_unknown_ids_have_no_parents(client):
+    resp = client.get("/cog/parents", params={"ids": "E,COG0028,NOT_A_COG"})
+    assert resp.status_code == 200
+    body = resp.json()["parents"]
+    assert body["E"] == []          # a category is top-level -- nothing above it
+    assert len(body["COG0028"]) == 2
+    assert body["NOT_A_COG"] == []  # every requested id is present, never missing

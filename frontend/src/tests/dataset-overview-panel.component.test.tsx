@@ -307,3 +307,31 @@ describe('DatasetOverviewPanel — top-level categories are listed separately, n
     expect(urls.some(u => /annotation_id=(E|J)&/.test(u))).toBe(false)
   })
 })
+
+// Groups must reflect every real parent of a multi-parent KO or
+// multi-category COG, not just the single stored `parent` value.
+describe('DatasetOverviewPanel — groups use every real parent for kegg and cog', () => {
+  it('files a multi-category COG under both of its categories', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve(jsonResponse({ data: [makeRow('COG0028', 'E', 100)], sample_count: 128 }))
+      if (url.includes('/api/cog/parents'))
+        return Promise.resolve(jsonResponse({
+          parents: {
+            COG0028: [
+              { annotation_id: 'E', name: 'Amino acid transport and metabolism' },
+              { annotation_id: 'H', name: 'Coenzyme transport and metabolism' },
+            ],
+          },
+        }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    await user.selectOptions(screen.getByRole('combobox'), 'cog')
+    await user.click(screen.getByRole('button', { name: /Load Overview/i }))
+
+    await waitFor(() => expect(screen.getByTitle('Coenzyme transport and metabolism')).toBeInTheDocument())
+    expect(screen.getByTitle('Amino acid transport and metabolism')).toBeInTheDocument()
+  })
+})

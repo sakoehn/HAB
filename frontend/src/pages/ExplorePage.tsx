@@ -36,6 +36,19 @@ const TOP_LEVEL_TOOLTIP =
   'everything beneath it, so it overlaps every group listed above -- it is shown separately ' +
   'instead of being ranked alongside them.'
 
+// Sources whose stored `parent` holds only one of a node's possibly several
+// real parents: a KEGG KO can sit in many pathways, a COG id in several
+// categories. Everywhere Explore groups rows by parent, these sources use
+// the real parents from /api/{source}/parents instead.
+const MULTI_PARENT_SOURCES = new Set(['kegg', 'cog'])
+type RealParents = Record<string, { annotation_id: string; name: string }[]>
+
+async function fetchRealParents(source: string, rows: TopAnnotation[]): Promise<RealParents> {
+  const ids = rows.map(row => row.annotation_id).join(',')
+  const r = await apiFetch<{ parents: RealParents }>(`/api/${source}/parents?ids=${encodeURIComponent(ids)}`)
+  return r.parents ?? {}
+}
+
 function topLevelEntryLabel(r: TopAnnotation, source: string): string {
   if (source === 'taxonomy') return r.name ?? r.annotation_id
   const withCog = primaryLabelWithCogCategory(source, r.annotation_id, r.name)
@@ -181,6 +194,10 @@ export function DatasetOverviewPanel({
   const [seriesFailed, setSeriesFailed] = useState<string[]>([])
   const [seriesTruncatedFrom, setSeriesTruncatedFrom] = useState<number | null>(null)
   const [topLevelOpen, setTopLevelOpen] = useState(false)
+  // Every real parent per row for kegg/cog (see MULTI_PARENT_SOURCES); null
+  // when not applicable or when the lookup failed, which falls back to each
+  // row's single stored parent.
+  const [realParents, setRealParents]   = useState<RealParents | null>(null)
 
   // `rows` is only ever correct for whatever (source, dateFrom, dateTo) was
   // actually sent with the request that produced it -- not necessarily what
@@ -200,6 +217,7 @@ export function DatasetOverviewPanel({
     setSeriesData({}); setSeriesStatus('idle'); setSeriesFailed([])
     setSeriesTruncatedFrom(null)
     setTopLevelOpen(false)
+    setRealParents(null)
   }, [resetKey])
 
   async function load() {
@@ -215,6 +233,16 @@ export function DatasetOverviewPanel({
       if (params.dateTo)   url += `&date_to=${params.dateTo}`
       const r = await apiFetch<{ data: TopAnnotation[]; sample_count: number }>(url)
       if (requestId !== requestSeqRef.current) return // a newer load() has since started
+      let parents: RealParents | null = null
+      if (MULTI_PARENT_SOURCES.has(params.source) && (r.data ?? []).length > 0) {
+        try {
+          parents = await fetchRealParents(params.source, r.data ?? [])
+        } catch {
+          parents = null // group by each row's single stored parent instead
+        }
+        if (requestId !== requestSeqRef.current) return
+      }
+      setRealParents(parents)
       setRows(r.data ?? [])
       setSampleCount(r.sample_count)
       setLoadedParams(params)
@@ -233,23 +261,34 @@ export function DatasetOverviewPanel({
   )
 
   const parentGroups = useMemo(() => {
-    const map = new Map<string, TopAnnotation[]>()
+    const loadedSource = loadedParams?.source ?? source
+    const map = new Map<string, { label: string; items: TopAnnotation[] }>()
+    const addTo = (key: string, label: string, row: TopAnnotation) => {
+      if (!map.has(key)) map.set(key, { label, items: [] })
+      map.get(key)!.items.push(row)
+    }
     for (const r of rows) {
       if (r.parent == null) continue
-      const key = r.parent
-      if (!map.has(key)) map.set(key, [])
-      map.get(key)!.push(r)
+      // A multi-parent KO / multi-category COG counts toward every real
+      // parent it has, so group totals can overlap (same as Annotations
+      // by Parent).
+      const real = realParents?.[r.annotation_id]
+      if (real && real.length > 0) {
+        for (const p of real) addTo(p.annotation_id, p.name, r)
+      } else {
+        addTo(r.parent, expandParentLabel(r.parent, loadedSource), r)
+      }
     }
     return Array.from(map.entries())
-      .map(([parent, items]) => ({
+      .map(([parent, { label, items }]) => ({
         parent,
-        label:  expandParentLabel(parent, loadedParams?.source ?? source),
+        label,
         sumEgc: items.reduce((s, i) => s + i.mean_egc, 0),
         count:  items.length,
         items,
       }))
       .sort((a, b) => b.sumEgc - a.sumEgc)
-  }, [rows, loadedParams])
+  }, [rows, loadedParams, realParents])
 
   const top5Groups = parentGroups.slice(0, 5)
 
@@ -690,17 +729,14 @@ export function AnnotationsByParentPanel({
         setAllRows(rows)
         setLoadedSource(requestedSource)
 
-        if (requestedSource === 'kegg' && rows.length > 0) {
+        if (MULTI_PARENT_SOURCES.has(requestedSource) && rows.length > 0) {
           // Stays in 'loading' until this resolves too, so the panel
           // never flashes a transient "everything in Ungrouped" grouping
           // before the real multi-parent buckets are known.
           try {
-            const ids = rows.map(row => row.annotation_id).join(',')
-            const pr = await apiFetch<{ parents: Record<string, { annotation_id: string; name: string }[]> }>(
-              `/api/kegg/parents?ids=${encodeURIComponent(ids)}`,
-            )
+            const parents = await fetchRealParents(requestedSource, rows)
             if (requestId !== requestSeqRef.current) return
-            setMultiParents(pr.parents ?? {})
+            setMultiParents(parents)
           } catch {
             if (requestId !== requestSeqRef.current) return
             setMultiParents({})
@@ -725,9 +761,12 @@ export function AnnotationsByParentPanel({
     }
 
     for (const r of allRows) {
-      if (loadedSource === 'kegg' && !multiParentsFetchFailed) {
-        const parents = multiParents[r.annotation_id]
-        if (parents && parents.length > 0) {
+      // The real-parents lookup returns every requested id: an empty list
+      // means the row has no parent (top-level). A row missing from the
+      // response entirely is unknown, so it falls through to its stored parent.
+      const parents = multiParents[r.annotation_id]
+      if (MULTI_PARENT_SOURCES.has(loadedSource) && !multiParentsFetchFailed && parents !== undefined) {
+        if (parents.length > 0) {
           // File under EVERY real parent -- a multi-parent KO's EGC
           // counts toward each real pathway/category it belongs to, the
           // same as COG's multi-category rollup. Group totals summed
@@ -833,16 +872,16 @@ export function AnnotationsByParentPanel({
   // source) rather than the real, possibly-multiple parents
   // /kegg/parents would have resolved, so a multi-parent KO only
   // appears under one of its real groups right now.
-  const multiParentsWarning = loadedSource === 'kegg' && multiParentsFetchFailed ? (
+  const multiParentsWarning = MULTI_PARENT_SOURCES.has(loadedSource) && multiParentsFetchFailed ? (
     <div
       className="state-box error"
       style={{ padding: '10px 16px', flexDirection: 'row', gap: 10, textAlign: 'left', marginBottom: 12 }}
       data-testid="kegg-parents-fetch-failure-warning"
     >
       <span style={{ flex: 1 }}>
-        Couldn't load full parent info for these KEGG annotations — grouping by each
-        one's single stored parent instead, so a multi-parent KO may be missing from
-        some of its real groups.
+        Couldn't load full parent info for these annotations — grouping by each
+        one's single stored parent instead, so one with several real parents may be
+        missing from some of its groups.
       </span>
       <button className="btn sm" data-testid="kegg-parents-retry-btn" onClick={loadTop}>
         Retry
@@ -1149,8 +1188,8 @@ export function ExplorePage({
   // alone is the single last-occurrence-wins stored value, e.g. "Exosome"
   // (one of its rarest real categories) for K00134/GAPDH, whose 9 real
   // parents include Glycolysis.
-  const [topKeggParents, setTopKeggParents]             = useState<Record<string, { annotation_id: string; name: string }[]>>({})
-  const [topKeggParentsFailed, setTopKeggParentsFailed] = useState(false)
+  const [topRealParents, setTopRealParents]             = useState<Record<string, { annotation_id: string; name: string }[]>>({})
+  const [topRealParentsFailed, setTopRealParentsFailed] = useState(false)
 
   // A KEGG KO's stored `parent` is
   // last-occurrence-wins -- only ONE of its possibly-many real immediate
@@ -1258,8 +1297,8 @@ export function ExplorePage({
     // A rank filter chosen for the previous rows may match none of the new
     // ones (and their ranks can mean something else for another source).
     setState(prev => ({ ...prev, status: 'loading', topRankFilter: new Set() }))
-    setTopKeggParents({})
-    setTopKeggParentsFailed(false)
+    setTopRealParents({})
+    setTopRealParentsFailed(false)
     try {
       let url = `/api/annotations/top?source=${params.source}&limit=${state.limit}`
       if (params.dateFrom) url += `&date_from=${params.dateFrom}`
@@ -1271,17 +1310,14 @@ export function ExplorePage({
       // Stays 'loading' until this resolves too (same reasoning as
       // AnnotationsByParentPanel.loadTop) -- never flash the single wrong
       // stored parent before the real multi-parent data is known.
-      if (params.source === 'kegg' && rows.length > 0) {
+      if (MULTI_PARENT_SOURCES.has(params.source) && rows.length > 0) {
         try {
-          const ids = rows.map(row => row.annotation_id).join(',')
-          const pr = await apiFetch<{ parents: Record<string, { annotation_id: string; name: string }[]> }>(
-            `/api/kegg/parents?ids=${encodeURIComponent(ids)}`,
-          )
+          const parents = await fetchRealParents(params.source, rows)
           if (requestId !== topRequestSeqRef.current) return
-          setTopKeggParents(pr.parents ?? {})
+          setTopRealParents(parents)
         } catch {
           if (requestId !== topRequestSeqRef.current) return
-          setTopKeggParentsFailed(true) // Group column below falls back to the single stored parent
+          setTopRealParentsFailed(true) // Group column below falls back to the single stored parent
         }
       }
 
@@ -1398,15 +1434,15 @@ export function ExplorePage({
   }
 
   // The Group column's display -- real
-  // multi-parent data (topKeggParents) when it's available for this row,
+  // multi-parent data (topRealParents) when it's available for this row,
   // falling back to the single stored `parent` field otherwise (a
   // non-kegg source, a kegg root with no real parent above it, or
-  // topKeggParentsFailed). label is what's shown in the cell; title is
+  // topRealParentsFailed). label is what's shown in the cell; title is
   // the full real parent list for the tooltip when there's more than one.
   // full: every real parent, readable, for the CSV `group` column ('' when
   // there is no parent).
   function topGroupDisplay(row: TopAnnotation): { label: string; title: string | undefined; full: string } {
-    const parents = effectiveTopSource === 'kegg' ? topKeggParents[row.annotation_id] : undefined
+    const parents = MULTI_PARENT_SOURCES.has(effectiveTopSource) ? topRealParents[row.annotation_id] : undefined
     if (parents && parents.length > 0) {
       const names = parents.map(p => p.name)
       return {
@@ -1459,7 +1495,7 @@ export function ExplorePage({
           ? String(av).localeCompare(String(bv))
           : String(bv).localeCompare(String(av))
       })
-  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter, topKeggParents, effectiveTopSource])
+  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter, topRealParents, effectiveTopSource])
 
   // Must scale against `sorted` (what's
   // actually visible after the rank/text filters), not the unfiltered
@@ -1735,16 +1771,16 @@ export function ExplorePage({
               </div>
             )}
 
-            {state.status === 'ok' && effectiveTopSource === 'kegg' && topKeggParentsFailed && (
+            {state.status === 'ok' && MULTI_PARENT_SOURCES.has(effectiveTopSource) && topRealParentsFailed && (
               <div
                 className="state-box error"
                 style={{ padding: '10px 16px', flexDirection: 'row', gap: 10, textAlign: 'left', margin: '0 0 12px' }}
                 data-testid="top-kegg-parents-fetch-failure-warning"
               >
                 <span style={{ flex: 1 }}>
-                  Couldn't load full parent info for these KEGG annotations — the Group
+                  Couldn't load full parent info for these annotations — the Group
                   column below shows each one's single stored parent instead, which may
-                  not be a multi-parent KO's most meaningful real category.
+                  be only one of several real parents.
                 </span>
                 <button className="btn sm" data-testid="top-kegg-parents-retry-btn" onClick={load}>
                   Retry
