@@ -39,6 +39,19 @@ export const SOURCE_SHADES: Record<string, string[]> = {
   taxonomy: ['#009E73', '#006B4E', '#4DC9A3', '#007A5A', '#00402E', '#8FE3C8', '#00563D', '#2EB68C'],  // bluish-green/teal family
 }
 
+// ── Summed-group colors ─────────────────────────────────────────────────────
+// A summed group's line color, by its position among the groups on a chart.
+// MultiEgcChart draws with this and Compare's chips show it, so they agree.
+// None of these is a SOURCE_SHADES color, so a group never looks like one
+// of its own members.
+const GROUP_EXTRA_COLORS = ['#D55E00', '#0072B2', '#882255', '#999933', '#332288', '#661100']
+
+export function groupSeriesColor(groupIndex: number): string {
+  return groupIndex === 0
+    ? 'var(--chart-group)'
+    : GROUP_EXTRA_COLORS[(groupIndex - 1) % GROUP_EXTRA_COLORS.length]
+}
+
 // ── Color allocation ───────────────────────────────────────────────────────
 // Module-level counters cycle through SOURCE_SHADES so successive cards of
 // the same source get distinct colors.  Call resetSourceCounters() on reset.

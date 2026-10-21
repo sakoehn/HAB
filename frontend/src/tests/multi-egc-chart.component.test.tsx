@@ -36,6 +36,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { MultiEgcChart } from '../components/charts/MultiEgcChart'
+import { groupSeriesColor } from '../constants'
 import type { AnnotationItem } from '../types'
 
 function makePoint(datetime: string, egc: number | null): AnnotationItem {
@@ -290,7 +291,7 @@ describe('MultiEgcChart — legend color matches the plotted trace', () => {
     expect(legendDotColor('iron (2)')).not.toBe('rgb(255, 0, 255)')
   })
 
-  it('a second grouped series gets the deterministic CB-safe extra-group color, matching the trace exactly', () => {
+  it('a second grouped series gets groupSeriesColor(1), matching the trace exactly', () => {
     render(
       <MultiEgcChart
         series={[
@@ -306,10 +307,11 @@ describe('MultiEgcChart — legend color matches the plotted trace', () => {
         dateFrom="" dateTo=""
       />,
     )
-    // CB_EXTRA_GROUPS[0] -- deterministic, not dependent on jsdom's CSS
-    // custom-property resolution (unlike the first group's near-black,
-    // which comes from a var() fallback).
-    expect(legendDotColor('Group B')).toBe('rgb(230, 159, 0)')
+    // groupSeriesColor(1) = #D55E00 -- deterministic, not dependent on
+    // jsdom's CSS custom-property resolution (unlike the first group's
+    // near-black, which comes from a var() fallback).
+    expect(groupSeriesColor(1)).toBe('#D55E00')
+    expect(legendDotColor('Group B')).toBe('rgb(213, 94, 0)')
   })
 
   it('a non-grouped series with a raw CSS var() color still shows a resolved value in the legend, not the literal var() string', () => {

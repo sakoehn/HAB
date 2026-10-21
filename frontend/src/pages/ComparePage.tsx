@@ -24,7 +24,7 @@ import type {
   AnnotationItem, ApiStatus, SharedAnnotation, ChartMetric,
 } from '../types'
 import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel, primaryLabelWithCogCategory } from '../constants'
-import { nextColorForSource, resetSourceCounters } from '../constants'
+import { nextColorForSource, resetSourceCounters, groupSeriesColor } from '../constants'
 import { apiFetch } from '../utils/api'
 import { sumMembersByTimestamp, seriesMeanInRange } from '../utils/stats'
 import { formatRelativeAbundancePercent, isoDate } from '../utils/format'
@@ -167,7 +167,7 @@ export function ComparePage({
     const colors = toLoad.map(ann =>
       ann.kind === 'single'
         ? nextColorForSource(ann.source)
-        : nextColorForSource('kegg'), // group gets a fresh color slot
+        : groupSeriesColor(0), // shown via entryColor() below, by position among groups
     )
     // Must be genuinely unique against whatever's already in state.entries
     // (manually added before this load, or surviving a previous
@@ -503,6 +503,15 @@ export function ComparePage({
   }
 
   const readyEntries   = state.entries.filter(e => e.status === 'ok')
+  // A group is drawn in groupSeriesColor(its position among the charted
+  // groups); its chip and dot show the same. A group not on the chart yet
+  // (still loading or failed) shows a neutral dot.
+  const chartedGroupIds = readyEntries.filter(e => e.isGrouped).map(e => e.id)
+  function entryColor(e: CompareEntry): string {
+    if (!e.isGrouped) return e.color
+    const i = chartedGroupIds.indexOf(e.id)
+    return i >= 0 ? groupSeriesColor(i) : 'var(--text-dim)'
+  }
   const slotsRemaining = 4 - state.entries.length
 
   return (
@@ -741,7 +750,7 @@ export function ComparePage({
               {state.entries.map(e => (
                 <div key={e.id}>
                   <div className="compare-chip">
-                    <div className="chip-color" style={{ background: e.color }} />
+                    <div className="chip-color" style={{ background: entryColor(e) }} />
                     {e.isGrouped ? (
                       <span style={{ fontSize: 13, color: 'var(--teal)' }}>∑</span>
                     ) : (
@@ -1050,7 +1059,7 @@ export function ComparePage({
                         width:        10,
                         height:       10,
                         borderRadius: '50%',
-                        background:   e.color,
+                        background:   entryColor(e),
                       }} />
                       <span
                         title={e.annotationId}

@@ -15,7 +15,7 @@ import { useSolarTideData } from '../../utils/useSolarTideData'
 import { useAllSamples } from '../../utils/useAllSamples'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
-import { primaryLabelWithCogCategory } from '../../constants'
+import { primaryLabelWithCogCategory, groupSeriesColor } from '../../constants'
 import { StatsPanel }   from '../ui/StatsPanel'
 import { HelpTooltip } from '../ui/HelpTooltip'
 import { ChartControls } from './ChartControls'
@@ -32,8 +32,6 @@ function resolveCssVar(value: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 }
 
-// Wong CB-safe colors for additional grouped series (after the first, which gets --chart-group)
-const CB_EXTRA_GROUPS = ['#E69F00', '#56B4E9', '#D55E00', '#CC79A7', '#0072B2', '#009E73']
 
 type SeriesEntry = {
   // `id` is the ONLY field used to key rows
@@ -342,7 +340,7 @@ export function MultiEgcChart({
     for (const s of series) {
       if (s.isGrouped) {
         const gIdx = groupedSeries.findIndex(g => g.id === s.id)
-        map.set(s.id, gIdx === 0 ? groupColor : CB_EXTRA_GROUPS[(gIdx - 1) % CB_EXTRA_GROUPS.length])
+        map.set(s.id, gIdx === 0 ? groupColor : groupSeriesColor(gIdx))
       } else {
         map.set(s.id, resolveCssVar(s.color, '#4f8ef7'))
       }

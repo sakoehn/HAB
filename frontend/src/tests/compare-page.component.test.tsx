@@ -80,6 +80,13 @@ import userEvent from '@testing-library/user-event'
 import { ComparePage } from '../pages/ComparePage'
 import { makeDefaultCompareState } from '../pages/compareState'
 import type { CompareState, SharedAnnotation } from '../types'
+import { groupSeriesColor } from '../constants'
+
+// jsdom reports a hex background as rgb(); compare in that form.
+function rgbOrHex(hex: string): string {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+  return m ? `RGB(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)})` : hex.toUpperCase()
+}
 
 // ── Mock fetch ──────────────────────────────────────────────────────────────
 
@@ -837,6 +844,23 @@ describe('ComparePage — annotations sent from Analyze join what is already ope
     expect(note).toHaveTextContent('K00103')
     expect(note).not.toHaveTextContent('K00102')
     expect(screen.getAllByText('×')).toHaveLength(4)
+  })
+})
+
+describe('ComparePage — a group chip matches its line on the chart', () => {
+  const group = (id: string, label: string) => ({
+    id, annotationId: label, source: 'kegg' as const, name: label,
+    data: DEFAULT_SERIES.data, status: 'ok' as const, color: '#56B4E9',
+    isGrouped: true, membersExpanded: false,
+    members: [{ annotationId: 'K02014', source: 'kegg', data: DEFAULT_SERIES.data, status: 'ok' as const }],
+  })
+
+  it('the first and second groups show groupSeriesColor(0) and (1)', async () => {
+    render(<ManagedComparePage initialState={{ entries: [group('g1', 'Group one'), group('g2', 'Group two')] }} />)
+    await waitFor(() => expect(findChip('Group two')).not.toBeNull())
+    const dot = (label: string) => (findChip(label)!.querySelector('.chip-color') as HTMLElement).style.background
+    expect(dot('Group one')).toBe(groupSeriesColor(0))
+    expect(dot('Group two').toUpperCase()).toBe(rgbOrHex(groupSeriesColor(1)))
   })
 })
 
