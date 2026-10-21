@@ -32,8 +32,11 @@ FastAPI/
   api/
     routes.py        -- most endpoints (search, series, taxonomy, mappings, scaffolds...)
     correlation_sql.py -- correlation finder: pairwise cache (Tier 1) + family/FDR (Tier 2)
-    correlation.py    -- legacy JSON-backend correlation endpoint
-    cache_sql.py, cache.py, index.py, config.py, db.py
+    correlation_loaders.py -- sample order and per-annotation vectors for the correlation finder
+    cache_sql.py     -- SQLite query layer used by the routes
+    ec_renumbering.py -- maps renumbered/partial EC labels onto the enzyme tree (shared with the notebooks)
+    cache.py, astronomy.py -- tide data and sunrise/sunset times
+    index.py, config.py, db.py -- date helpers, paths/constants, database connection
   scripts/           -- one-off migration/schema scripts (populate the SQLite db from raw JGI files)
 frontend/
   src/
