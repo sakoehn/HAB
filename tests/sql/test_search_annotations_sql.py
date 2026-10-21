@@ -302,31 +302,19 @@ def test_search_is_case_insensitive(conn):
     assert key(results_lower) == key(results_upper) == key(results_mixed)
 
 
-def test_percent_and_underscore_in_query_act_as_sql_wildcards_not_literals(conn):
-    """KNOWN BEHAVIOR, not asserted as desirable: q is interpolated into a
-    LIKE pattern as f"%{q}%" with no escaping of LIKE's own metacharacters.
-    A literal '%' in the query becomes part of the pattern (not a literal
-    percent sign to search for), so q="%" produces the pattern "%%%",
-    which matches every row with a non-null name/annotation_id -- same
-    "matches everything" surprise as the empty-string case above, just
-    reached through a different input. A literal '_' similarly matches
-    any single character rather than a literal underscore (confirmed
-    directly: pattern "%K_0001%" matches "K10001" too, not just a real
-    "K_0001"). This test pins down the actual behavior so a future caller
-    can't be surprised twice, without claiming it's the right behavior."""
+def test_percent_and_underscore_in_query_are_literal_not_wildcards(conn):
+    """'%' and '_' in q are escaped, so they match only a literal '%' or
+    '_' -- not "any text" / "any one character" as LIKE metacharacters."""
     results_percent = get_search_annotations(conn, sources=["cog"], q="%", annotation_id=None, name_exact=None)
+    assert all("%" in (r["name"] or "") or "%" in r["annotation_id"] for r in results_percent)
     results_q_none = get_search_annotations(conn, sources=["cog"], q=None, annotation_id=None, name_exact=None)
-    assert results_percent
-    key = lambda rows: {(r["source"], r["annotation_id"]) for r in rows}
-    assert key(results_percent) == key(results_q_none)
+    assert len(results_percent) < len(results_q_none)
 
-    # "COG0055" contains no literal underscore, but "%COG0_55%" (one
-    # wildcard character standing in for "0") still matches it.
-    results_wildcard_underscore = get_search_annotations(
+    # "COG0_55" would have matched "COG0055" with '_' as a wildcard.
+    results_underscore = get_search_annotations(
         conn, sources=["cog"], q="COG0_55", annotation_id=None, name_exact=None,
     )
-    ann_ids = {r["annotation_id"] for r in results_wildcard_underscore}
-    assert "COG0055" in ann_ids
+    assert "COG0055" not in {r["annotation_id"] for r in results_underscore}
 
 
 def test_sql_metacharacters_in_query_are_safely_parameterized(conn):

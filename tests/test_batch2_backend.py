@@ -204,7 +204,7 @@ class TestSmokePatched:
 
         result = search_mappings(
             sql_request,
-            annotation_id="__nonexistent__",
+            annotation_id="K00001",
             source=AnnotationSource.kegg,
             sample_count=1,
             # page/page_size are Query(1, ge=1)/Query(100, ...) defaults --
@@ -227,7 +227,7 @@ class TestSmokePatched:
         from api.cache import AnnotationSource
         result = search_mappings(
             sql_request,
-            annotation_id="__nonexistent__",
+            annotation_id="K00001",
             source=AnnotationSource.kegg,
             sample_count=5,
             unique_pairs=True,
