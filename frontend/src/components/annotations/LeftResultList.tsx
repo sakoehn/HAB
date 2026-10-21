@@ -18,7 +18,7 @@ import { useMemo, useRef, useState, useEffect } from 'react'
 
 import type { AnnotationItem, SeriesCache } from '../../types'
 import { SOURCE_COLORS, SOURCE_TAG_CLS, TAXONOMY_RANK_NAMES, taxonomyRankLabel } from '../../constants'
-import { taxonomyDomainFromId, immediateParentSegment } from '../../utils/taxonomy'
+import { taxonomyDomainFromId, immediateParentSegment, homonymHints } from '../../utils/taxonomy'
 import { CopyBtn } from '../ui/controls'
 import { HelpTooltip } from '../ui/HelpTooltip'
 
@@ -146,6 +146,9 @@ export function LeftResultList({
   )
 
   const visibleKeys  = visibleRows.map(r => `${r.annotation_id}::${r.source}`)
+  // A same-named taxon elsewhere in the list often shares the immediate
+  // parent too; for those the hint names the ancestor that differs.
+  const nameHints = useMemo(() => homonymHints(visibleRows.map(r => r.annotation_id)), [visibleRows])
   const allChecked   = visibleKeys.length > 0 && visibleKeys.every(k => checkedKeys.has(k))
   const someChecked  = checkedKeys.size > 0
   const checkedCount = checkedKeys.size
@@ -327,14 +330,14 @@ export function LeftResultList({
                   title={ann.source === 'taxonomy' ? ann.annotation_id : undefined}
                 >
                   {ann.name ?? '—'}
-                  {ann.source === 'taxonomy' && immediateParentSegment(ann.annotation_id) && (
+                  {ann.source === 'taxonomy' && (nameHints.get(ann.annotation_id) ?? immediateParentSegment(ann.annotation_id)) && (
                     // The cheapest real
                     // disambiguator for two cross-lineage homonyms (same
                     // bare name, different ancestry) short of showing the
                     // full lineage inline -- hovering the row still shows
                     // the whole thing via the title attribute above.
                     <span className="al-row-parent-hint">
-                      {' '}in {immediateParentSegment(ann.annotation_id)}
+                      {' '}in {nameHints.get(ann.annotation_id) ?? immediateParentSegment(ann.annotation_id)}
                     </span>
                   )}
                 </div>

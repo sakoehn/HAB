@@ -864,6 +864,27 @@ describe('ComparePage — a group chip matches its line on the chart', () => {
   })
 })
 
+describe('ComparePage — same-named taxa are told apart', () => {
+  const taxon = (id: string, lineage: string) => ({
+    id, annotationId: lineage, source: 'taxonomy' as const, name: 'Bosea',
+    data: DEFAULT_SERIES.data, status: 'ok' as const, color: '#009E73',
+  })
+
+  it('chips and the chart legend show which Bosea is which', async () => {
+    render(<ManagedComparePage initialState={{ entries: [
+      taxon('t1', 'Bacteria;Proteobacteria;Alphaproteobacteria;Rhizobiales;Bradyrhizobiaceae;Bosea'),
+      taxon('t2', 'Bacteria;Proteobacteria;Alphaproteobacteria;Rhizobiales;Boseaceae;Bosea'),
+    ] }} />)
+    await waitFor(() => expect(screen.getAllByText('Bosea · Boseaceae').length).toBeGreaterThan(0))
+    expect(findChip('Bosea · Bradyrhizobiaceae')).not.toBeNull()
+    expect(findChip('Bosea · Boseaceae')).not.toBeNull()
+    expect(document.querySelectorAll('.legend-item').length).toBe(2)
+    const legend = [...document.querySelectorAll('.legend-item')].map(el => el.textContent)
+    expect(legend.some(t => t?.includes('Bosea · Bradyrhizobiaceae'))).toBe(true)
+    expect(legend.some(t => t?.includes('Bosea · Boseaceae'))).toBe(true)
+  })
+})
+
 describe('ComparePage — mappings for a summed group', () => {
   const GROUP_ENTRY = {
     id:              'group-1',

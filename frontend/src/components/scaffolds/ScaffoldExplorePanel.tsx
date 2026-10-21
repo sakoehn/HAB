@@ -65,7 +65,7 @@ import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime, toPlotlyDate } from '../../utils/format'
 import { minMeanMax } from '../../utils/stats'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
-import { taxonomyDepthFromId } from '../../utils/taxonomy'
+import { taxonomyDepthFromId, homonymHints, withHomonymHint } from '../../utils/taxonomy'
 import { filterRedundantAnnotations, type DroppedRedundancy } from '../../utils/annotationHierarchy'
 import { DateRangePicker } from '../ui/DateRangePicker'
 import { HelpTooltip } from '../ui/HelpTooltip'
@@ -347,6 +347,11 @@ export function ScaffoldExplorePanel({
       : [...new Set(searchRes.map(r => r.depth).filter((d): d is number => d != null))].sort((a, b) => a - b),
     [searchRes, searchSrc],
   )
+
+  // Same-named taxa among the search results / added terms get a hint that
+  // tells them apart (see homonymHints).
+  const searchHints = useMemo(() => homonymHints(searchRes.map(r => r.annotation_id)), [searchRes])
+  const termHints   = useMemo(() => homonymHints(terms.map(t => t.annotationId)), [terms])
 
   const visibleSearchRes = useMemo(
     () => rankFilter.size === 0 || searchSrc !== 'taxonomy'
@@ -634,7 +639,7 @@ export function ScaffoldExplorePanel({
                     fontStyle: r.source === 'taxonomy' ? 'italic' : 'normal',
                   }}
                 >
-                  {taxonomyAwarePrimaryLabel(r.source ?? searchSrc, r.annotation_id, r.name)}
+                  {withHomonymHint(taxonomyAwarePrimaryLabel(r.source ?? searchSrc, r.annotation_id, r.name), r.annotation_id, searchHints)}
                 </span>
                 {r.source !== 'taxonomy' && (
                   <span style={{ font: '13px var(--sans)', color: 'var(--text-dim)', flex: 1 }}>
@@ -719,7 +724,7 @@ export function ScaffoldExplorePanel({
                   overflowWrap: 'anywhere',
                 }}
               >
-                {primaryLabelWithCogCategory(term.source, term.annotationId, null)}
+                {withHomonymHint(primaryLabelWithCogCategory(term.source, term.annotationId, null), term.annotationId, termHints)}
               </span>
               <span className={`tag ${SOURCE_TAG_CLS[term.source] ?? ''}`}>
                 {term.source}
@@ -934,7 +939,7 @@ export function ScaffoldExplorePanel({
                 fontStyle:  term.source === 'taxonomy' ? 'italic' : 'normal',
               }}
             >
-              {primaryLabelWithCogCategory(term.source, term.annotationId, null)}
+              {withHomonymHint(primaryLabelWithCogCategory(term.source, term.annotationId, null), term.annotationId, termHints)}
             </span>
             <span className={`tag ${SOURCE_TAG_CLS[term.source] ?? ''}`}>{term.source}</span>
             <span className="toggle-count">

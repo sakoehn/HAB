@@ -243,6 +243,18 @@ describe('ScaffoldExplorePanel — search', () => {
     expect(Number(new URL(searchUrl, 'http://x').searchParams.get('page_size'))).toBeGreaterThanOrEqual(500)
   })
 
+  it('same-named taxa in the results are told apart', async () => {
+    const bosea = (family: string) => ({
+      annotation_id: `Bacteria;Proteobacteria;Alphaproteobacteria;Rhizobiales;${family};Bosea`,
+      source: 'taxonomy', name: 'Bosea', parent: null, mean_egc: 1, max_egc: 1, sample_count: 1, depth: 6,
+    })
+    setupMocks({ searchData: { data: [bosea('Boseaceae'), bosea('Bradyrhizobiaceae')], total: 2 } })
+    render(<ScaffoldExplorePanel />)
+    await userEvent.type(screen.getByPlaceholderText(/search annotation id or name/i), 'Bosea{Enter}')
+    expect(await screen.findByText('Bosea · Boseaceae')).toBeInTheDocument()
+    expect(screen.getByText('Bosea · Bradyrhizobiaceae')).toBeInTheDocument()
+  })
+
   it('Enter key triggers search', async () => {
     setupMocks()
     render(<ScaffoldExplorePanel />)

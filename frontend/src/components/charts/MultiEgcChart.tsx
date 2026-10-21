@@ -16,6 +16,7 @@ import { useAllSamples } from '../../utils/useAllSamples'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { primaryLabelWithCogCategory, groupSeriesColor } from '../../constants'
+import { homonymHints, withHomonymHint } from '../../utils/taxonomy'
 import { StatsPanel }   from '../ui/StatsPanel'
 import { HelpTooltip } from '../ui/HelpTooltip'
 import { ChartControls } from './ChartControls'
@@ -238,6 +239,15 @@ export function MultiEgcChart({
   //
   // Reads unsmoothedRows, NOT chartData -- stats must never change
   // just because Smooth is toggled, only the drawn curve should.
+  // Series label, with a hint when two series are same-named taxa from
+  // different lineages (see homonymHints) -- used by the legend, the
+  // traces, their hover text and the stats panel alike.
+  const seriesLabel = useMemo(() => {
+    const hints = homonymHints(series.filter(s => !s.isGrouped).map(s => s.annotationId))
+    return (s: SeriesEntry) =>
+      withHomonymHint(primaryLabelWithCogCategory(s.source, s.annotationId, s.name), s.annotationId, hints)
+  }, [series])
+
   const perSeriesVals = useMemo(() => {
     return series.map(s => {
       const vals: number[] = []
@@ -245,9 +255,9 @@ export function MultiEgcChart({
         const v = row[s.id]
         if (typeof v === 'number') vals.push(v)
       }
-      return { label: primaryLabelWithCogCategory(s.source, s.annotationId, s.name), vals }
+      return { label: seriesLabel(s), vals }
     })
-  }, [unsmoothedRows, series])
+  }, [unsmoothedRows, series, seriesLabel])
 
   const scaleMismatch = useMemo(() => {
     // Relative Abundance divides every series by the same per-sample total,
@@ -380,7 +390,7 @@ export function MultiEgcChart({
         line:    { color: traceColor, width: sw },
         marker:  { color: traceColor, size: s.isGrouped ? 5 : 3, opacity },
         opacity,
-        name: primaryLabelWithCogCategory(s.source, s.annotationId, s.name),
+        name: seriesLabel(s),
         yaxis: 'y',
         // Must not connect across a real
         // non-detection -- see baseRows' union-with-the-full-timeline
@@ -392,7 +402,7 @@ export function MultiEgcChart({
           '<b>%{customdata[1]}</b><br>' +
           // Discloses when the hovered value is a fitted LOWESS curve, not
           // the real sample value.
-          primaryLabelWithCogCategory(s.source, s.annotationId, s.name) + (seriesSmoothedApplied ? ' (smoothed)' : '') + ': %{customdata[0]}' +
+          seriesLabel(s) + (seriesSmoothedApplied ? ' (smoothed)' : '') + ': %{customdata[0]}' +
           '<extra></extra>',
       }
     })
@@ -411,7 +421,7 @@ export function MultiEgcChart({
     }
 
     return traces
-  }, [chartData, series, showTide, metric, standardize, resolvedColors, smoothed, nativeTide, canStandardizeSeries, canSmoothSeries])
+  }, [chartData, series, showTide, metric, standardize, resolvedColors, smoothed, nativeTide, canStandardizeSeries, canSmoothSeries, seriesLabel])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {
@@ -508,7 +518,7 @@ export function MultiEgcChart({
                   title={s.annotationId}
                   style={s.source === 'taxonomy' ? { fontStyle: 'italic' } : undefined}
                 >
-                  {primaryLabelWithCogCategory(s.source, s.annotationId, s.name)}
+                  {seriesLabel(s)}
                 </span>
                 {!s.scaffoldsDisabled && (
                   <>

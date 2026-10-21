@@ -125,6 +125,18 @@ describe('LeftResultList — taxonomy homonym disambiguation', () => {
     expect(screen.getByText(/in SomeOtherFamily/)).toBeInTheDocument()
   })
 
+  it('names the ancestor that differs when two same-named taxa share their parent', () => {
+    renderList({
+      rows: [
+        makeRow({ source: 'taxonomy', depth: 4, name: 'X', annotation_id: 'Bacteria;PhylumA;unclassified;X' }),
+        makeRow({ source: 'taxonomy', depth: 4, name: 'X', annotation_id: 'Bacteria;PhylumB;unclassified;X' }),
+      ],
+      total: 2,
+    })
+    expect(screen.getByText(/in PhylumA/)).toBeInTheDocument()
+    expect(screen.getByText(/in PhylumB/)).toBeInTheDocument()
+  })
+
   it('does not show a parent hint for a domain-level taxon (no parent above it)', () => {
     renderList({
       rows: [makeRow({ source: 'taxonomy', depth: 1, name: 'Bacteria', annotation_id: 'Bacteria' })],

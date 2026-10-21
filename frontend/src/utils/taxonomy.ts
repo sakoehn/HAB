@@ -235,3 +235,47 @@ export function computeChartTitle(rootId: string, excludedList: string[], mode: 
     ? bareTaxonName(rootId)
     : `${bareTaxonName(rootId)} — ${mode === 'keep' ? 'Only' : 'Excluding'} ${excludedList.map(bareTaxonName).join(', ')}`
 }
+
+// homonymHints
+// Within one on-screen list, taxa that share a name (cross-lineage
+// homonyms) get a short hint that tells them apart: for each same-named
+// other, its closest ancestor that differs, joined root-to-leaf. For a pair
+// that's one name -- often not the immediate parent, which most same-named
+// pairs here share. Taxa whose name is unique in the list (and
+// non-taxonomy ids) get no entry.
+
+export function homonymHints(ids: string[]): Map<string, string> {
+  const byName = new Map<string, string[][]>()
+  for (const id of new Set(ids)) {
+    if (!id.includes(';')) continue
+    const segments = id.split(';')
+    const name = segments[segments.length - 1]
+    if (!byName.has(name)) byName.set(name, [])
+    byName.get(name)!.push(segments)
+  }
+  const hints = new Map<string, string>()
+  for (const group of byName.values()) {
+    if (group.length < 2) continue
+    for (const a of group) {
+      const levels = new Set<number>()
+      for (const b of group) {
+        if (a === b) continue
+        // Closest ancestor (deepest level above the name) where they differ.
+        let i = Math.min(a.length, b.length) - 2
+        while (i > 0 && a[i] === b[i]) i--
+        levels.add(i)
+      }
+      const hint = [...levels].sort((x, y) => x - y).map(i => a[i]).join(' › ')
+      hints.set(a.join(';'), hint)
+    }
+  }
+  return hints
+}
+
+// withHomonymHint
+// A display label with its homonym hint appended, when it has one.
+
+export function withHomonymHint(label: string, id: string, hints: Map<string, string>): string {
+  const hint = hints.get(id)
+  return hint ? `${label} · ${hint}` : label
+}

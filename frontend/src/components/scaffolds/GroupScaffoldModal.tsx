@@ -40,6 +40,7 @@ function resolveCssVar(value: string, fallback: string): string {
 import type { ApiStatus, ScaffoldSummaryRow, ScaffoldDetailRow, SortDir } from '../../types'
 import type { Data as PlotlyData, Layout as PlotlyLayout } from 'plotly.js'
 import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel } from '../../constants'
+import { homonymHints, withHomonymHint } from '../../utils/taxonomy'
 import { filterRedundantAnnotations, type DroppedRedundancy } from '../../utils/annotationHierarchy'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime, toPlotlyDate } from '../../utils/format'
@@ -252,6 +253,8 @@ export function GroupScaffoldModal({
 
   // ── Summary stats across all rows ────────────────────────────────────
   const totalSamples   = useMemo(() => new Set(rows.map(r => r.sample)).size, [rows])
+  // Same-named taxa among the members get a hint that tells them apart.
+  const memberHints    = useMemo(() => homonymHints(members.map(m => m.annotationId)), [members])
   const totalScaffolds = useMemo(() => rows.reduce((s, r) => s + r.scaffold_count, 0), [rows])
   const totalGenes     = useMemo(() => rows.reduce((s, r) => s + r.gene_count, 0), [rows])
   // "peak scaffolds"/"peak genes" must be
@@ -548,7 +551,7 @@ export function GroupScaffoldModal({
                         fontStyle: m.source === 'taxonomy' ? 'italic' : 'normal',
                       }}
                     >
-                      {taxonomyAwarePrimaryLabel(m.source, m.annotationId, m.name)}
+                      {withHomonymHint(taxonomyAwarePrimaryLabel(m.source, m.annotationId, m.name), m.annotationId, memberHints)}
                     </span>
                     {m.name && m.source !== 'taxonomy' && (
                       <span style={{ font: '11px var(--sans)', color: 'var(--text-dim)' }}>
@@ -699,7 +702,7 @@ export function GroupScaffoldModal({
                                 overflowWrap:  'anywhere', // taxonomy IDs are long, space-free lineage strings
                               }}
                             >
-                              {taxonomyAwarePrimaryLabel(row.source, row.annotationId, row.name)}
+                              {withHomonymHint(taxonomyAwarePrimaryLabel(row.source, row.annotationId, row.name), row.annotationId, memberHints)}
                             </td>
                             <td style={{
                               fontSize:     12,
@@ -755,7 +758,7 @@ export function GroupScaffoldModal({
                                             fontStyle: row.source === 'taxonomy' ? 'italic' : 'normal',
                                           }}
                                         >
-                                          {taxonomyAwarePrimaryLabel(row.source, row.annotationId, row.name)}
+                                          {withHomonymHint(taxonomyAwarePrimaryLabel(row.source, row.annotationId, row.name), row.annotationId, memberHints)}
                                         </span>
                                         {row.name && row.source !== 'taxonomy' && (
                                           <span style={{ color: 'var(--text-dim)', marginLeft: 4 }}>

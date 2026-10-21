@@ -24,6 +24,7 @@ import type {
   AnnotationItem, ApiStatus, SharedAnnotation, ChartMetric,
 } from '../types'
 import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel, primaryLabelWithCogCategory } from '../constants'
+import { homonymHints, withHomonymHint } from '../utils/taxonomy'
 import { nextColorForSource, resetSourceCounters, groupSeriesColor } from '../constants'
 import { apiFetch } from '../utils/api'
 import { sumMembersByTimestamp, seriesMeanInRange } from '../utils/stats'
@@ -507,6 +508,10 @@ export function ComparePage({
   // groups); its chip and dot show the same. A group not on the chart yet
   // (still loading or failed) shows a neutral dot.
   const chartedGroupIds = readyEntries.filter(e => e.isGrouped).map(e => e.id)
+  // Same-named taxa among the open entries / search results get a hint
+  // that tells them apart (see homonymHints).
+  const entryHints  = homonymHints(state.entries.filter(e => !e.isGrouped).map(e => e.annotationId))
+  const resultHints = homonymHints(state.searchResults.map(r => r.annotation_id))
   function entryColor(e: CompareEntry): string {
     if (!e.isGrouped) return e.color
     const i = chartedGroupIds.indexOf(e.id)
@@ -706,7 +711,7 @@ export function ComparePage({
                           whiteSpace:   'nowrap',
                         }}
                       >
-                        {taxonomyAwarePrimaryLabel(r.source, r.annotation_id, r.name)}
+                        {withHomonymHint(taxonomyAwarePrimaryLabel(r.source, r.annotation_id, r.name), r.annotation_id, resultHints)}
                       </span>
                       {r.source !== 'taxonomy' && (
                         <span style={{
@@ -760,7 +765,7 @@ export function ComparePage({
                       title={e.annotationId}
                       style={!e.isGrouped && e.source === 'taxonomy' ? { fontStyle: 'italic' } : undefined}
                     >
-                      {e.isGrouped ? e.annotationId : primaryLabelWithCogCategory(e.source, e.annotationId, e.name)}
+                      {e.isGrouped ? e.annotationId : withHomonymHint(primaryLabelWithCogCategory(e.source, e.annotationId, e.name), e.annotationId, entryHints)}
                     </span>
                     {e.isGrouped ? (
                       <>
@@ -942,7 +947,11 @@ export function ComparePage({
                               overflowWrap: 'anywhere',
                             }}
                           >
-                            {primaryLabelWithCogCategory(m.source, m.annotationId, null)}
+                            {withHomonymHint(
+                              primaryLabelWithCogCategory(m.source, m.annotationId, null),
+                              m.annotationId,
+                              homonymHints(e.members!.map(x => x.annotationId)),
+                            )}
                           </span>
                           <span style={{ color: 'var(--text-dim)' }}>{m.source}</span>
                           {m.status === 'error' && (
@@ -1070,7 +1079,7 @@ export function ComparePage({
                           fontStyle:  !e.isGrouped && e.source === 'taxonomy' ? 'italic' : 'normal',
                         }}
                       >
-                        {e.isGrouped ? e.annotationId : primaryLabelWithCogCategory(e.source, e.annotationId, e.name)}
+                        {e.isGrouped ? e.annotationId : withHomonymHint(primaryLabelWithCogCategory(e.source, e.annotationId, e.name), e.annotationId, entryHints)}
                       </span>
                       <span className={`tag ${SOURCE_TAG_CLS[e.source] ?? ''}`}>
                         {e.source}
