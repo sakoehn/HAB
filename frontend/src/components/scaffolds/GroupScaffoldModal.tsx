@@ -517,6 +517,16 @@ export function GroupScaffoldModal({
                   </div>
                 </div>
               </div>
+              {effectiveMemberCount > 1 && (
+                <div
+                  data-testid="group-sum-overlap-note"
+                  style={{ font: '11px var(--mono)', color: 'var(--text-dim)', margin: '-4px 0 10px' }}
+                >
+                  Σ and peak values add up each term's own counts: a scaffold or gene shared by
+                  two of these terms is counted once for each, so they can exceed the number of
+                  distinct scaffolds or genes.
+                </div>
+              )}
 
               {/* ── Member list ── */}
               <div style={{

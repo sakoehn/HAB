@@ -680,3 +680,24 @@ describe('ScaffoldExplorePanel — redundant terms', () => {
     expect(screen.getAllByText('COG0055').length).toBeGreaterThan(0)
   })
 })
+
+// Even with no nested terms, two terms can share a scaffold (a scaffold
+// carries genes for several COGs/KOs) or a gene (a COG in two categories),
+// and the aggregated line counts it once per term. The chart must say so.
+describe('ScaffoldExplorePanel — aggregated sums disclose per-term counting', () => {
+  it('notes that shared scaffolds/genes count once per term when 2+ terms are summed', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/cog/path?id=H'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ annotation_id: 'H', path_count: 1, paths: [[{ annotation_id: 'H', name: 'H', depth: 1 }]] }) })
+      if (url.includes('/api/cog/path?id=E'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ annotation_id: 'E', path_count: 1, paths: [[{ annotation_id: 'E', name: 'E', depth: 1 }]] }) })
+      if (url.includes('/api/annotations/scaffolds/summary'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => SUMMARY_ROWS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<ScaffoldExplorePanel initialTerms={[{ annotationId: 'H', source: 'cog' }, { annotationId: 'E', source: 'cog' }]} />)
+
+    await waitFor(() => expect(screen.getByText('All terms (2)')).toBeInTheDocument())
+    expect(screen.getByTestId('aggregated-overlap-note')).toHaveTextContent(/counted once for each/i)
+  })
+})

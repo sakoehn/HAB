@@ -826,6 +826,12 @@ export function ScaffoldExplorePanel({
                   Sum of {chartMetric === 'scaffold_count' ? 'scaffold counts' : 'gene counts'}{' '}
                   across all {aggregatedTerms.length} annotations listed
                   below, per sample — not a single annotation's value.{' '}
+                  {aggregatedTerms.length > 1 && (
+                    <span data-testid="aggregated-overlap-note">
+                      A scaffold or gene shared by two of these annotations is counted once for
+                      each, so the sum can exceed the number of distinct ones.{' '}
+                    </span>
+                  )}
                   {visibleTerms.length > 1 && 'Use "Split by term" to see each one separately.'}
                 </div>
               )}

@@ -963,6 +963,9 @@ describe('GroupScaffoldModal', () => {
     // once both members' same-date rows are summed, is 5+7=12 / 10+20=30.
     expect(screen.getByText('peak scaffolds').previousElementSibling?.textContent).toBe('12')
     expect(screen.getByText('peak genes').previousElementSibling?.textContent).toBe('30')
+    // Two members can share a scaffold or a gene, which these sums count
+    // once per member -- the strip must say so.
+    expect(screen.getByTestId('group-sum-overlap-note')).toHaveTextContent(/counted once for each/i)
   })
 
   it('clicking retry re-fetches only the failed member and merges it in on success', async () => {
