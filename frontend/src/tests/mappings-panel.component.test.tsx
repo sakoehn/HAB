@@ -25,7 +25,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, within, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { MappingsPanel } from '../components/mappings/MappingsPanel'
@@ -237,13 +237,10 @@ describe('MappingsPanel — controls trigger real re-fetches', () => {
     const user = await open()
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
 
-    // fireEvent.change (a single direct value set) instead of userEvent.type
-    // (character-by-character) -- typing into this controlled, clamped
-    // numeric input keystroke-by-keystroke is a known testing-library
-    // timing quirk unrelated to what this test is actually checking (that
-    // Load re-fetches with whatever value is currently in the field).
+    // Typed, then Load clicked straight away: the click applies what was typed.
     const sampleInput = screen.getByRole('spinbutton')
-    fireEvent.change(sampleInput, { target: { value: '10' } })
+    await user.clear(sampleInput)
+    await user.type(sampleInput, '10')
     await user.click(screen.getByRole('button', { name: 'Load' }))
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))

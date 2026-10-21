@@ -61,7 +61,7 @@ import {
   resolveLookupCategory, resolveLookupScaffoldCount, resolveLookupDepth, depthLabel,
 } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
-import { CopyBtn, ResetBtn } from '../components/ui/controls'
+import { CopyBtn, ResetBtn, NumberField } from '../components/ui/controls'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
 import { ChartErrorBoundary } from '../components/ui/ChartErrorBoundary'
 import { StatsPanel } from '../components/ui/StatsPanel'
@@ -1562,18 +1562,12 @@ export function ExplorePage({
                   }}>
                     Top N:
                   </label>
-                  <input
+                  <NumberField
                     className="field"
-                    type="number"
                     min={5}
                     max={200}
                     value={state.limit}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setState(prev => ({
-                        ...prev,
-                        limit: Math.max(5, Math.min(200, Number(e.target.value))),
-                      }))
-                    }
+                    onChange={limit => setState(prev => ({ ...prev, limit }))}
                     style={{ width: 80 }}
                   />
                 </div>

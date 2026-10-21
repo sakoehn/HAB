@@ -27,6 +27,7 @@ import type { ApiStatus, MappingSortCol, SortDir, MappingSearchRow } from '../..
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime } from '../../utils/format'
 import { SkeletonTable } from '../ui/Skeleton'
+import { NumberField } from '../ui/controls'
 import {
   sortMappingRows, paginateRows, totalPages, buildMappingsUrl,
   isLikelyLeafAnnotation, buildMappingCsvRow,
@@ -241,15 +242,12 @@ export function MappingsPanel({
           {/* ── Controls ── */}
           <div className="mappings-controls">
             <label>Samples:</label>
-            <input
+            <NumberField
               className="field"
-              type="number"
               min={1}
               max={128}
               value={sampleCount}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                setSampleCount(Math.max(1, Math.min(128, Number(e.target.value))))
-              }
+              onChange={setSampleCount}
               style={{ width: 80 }}
             />
             <label style={{ marginLeft: 8 }}>

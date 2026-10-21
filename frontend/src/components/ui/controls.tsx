@@ -6,8 +6,9 @@
 //   CopyBtn      — clipboard copy button with ✓ feedback tick
 //   ThemeToggle  — dark/light mode toggle button
 //   ResetBtn     — reset all page state button
+//   NumberField  — number input clamped to [min, max] when you finish typing
 
-import React from 'react'
+import React, { useState } from 'react'
 import type { Theme } from '../../types'
 
 // ── CopyBtn ────────────────────────────────────────────────────────────────
@@ -108,5 +109,45 @@ export function ResetBtn({
       </svg>
       <span>{label}</span>
     </button>
+  )
+}
+
+// ── NumberField ────────────────────────────────────────────────────────────
+// A number input that lets you type freely and applies its limits only when
+// you finish (leave the box or press Enter). Clamping on every keystroke
+// turned a cleared box into the minimum, so typing "12" gave 512 -> 200.
+// An empty or unreadable entry goes back to the last value.
+
+export function NumberField({
+  value, min, max, onChange, ...inputProps
+}: {
+  value:    number
+  min:      number
+  max:      number
+  onChange: (value: number) => void
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'min' | 'max' | 'onChange' | 'type'>) {
+  // What's typed but not yet applied; null when not editing.
+  const [draft, setDraft] = useState<string | null>(null)
+
+  function commit() {
+    if (draft === null) return
+    const n = Number(draft)
+    if (draft.trim() !== '' && Number.isFinite(n)) {
+      onChange(Math.max(min, Math.min(max, Math.round(n))))
+    }
+    setDraft(null)
+  }
+
+  return (
+    <input
+      {...inputProps}
+      type="number"
+      min={min}
+      max={max}
+      value={draft ?? String(value)}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={e => { commit(); inputProps.onBlur?.(e) }}
+      onKeyDown={e => { if (e.key === 'Enter') commit(); inputProps.onKeyDown?.(e) }}
+    />
   )
 }

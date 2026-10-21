@@ -18,11 +18,12 @@
  * Run: npx vitest run src/tests/ui-controls.component.test.tsx
  */
 
+import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { CopyBtn, ThemeToggle, ResetBtn } from '../components/ui/controls'
+import { CopyBtn, ThemeToggle, ResetBtn, NumberField } from '../components/ui/controls'
 
 describe('CopyBtn', () => {
   it('shows the copy icon when this id is not the copied one', () => {
@@ -117,5 +118,51 @@ describe('ResetBtn', () => {
     const smallSvg = smallContainer.querySelector('svg')!
     expect(smallSvg.getAttribute('width')).toBe('12')
     expect(smallContainer.querySelector('button')?.className).toContain('sm')
+  })
+})
+
+describe('NumberField — typing is free, limits apply when you finish', () => {
+  function Harness({ initial = 25 }: { initial?: number }) {
+    const [v, setV] = React.useState(initial)
+    return (
+      <>
+        <NumberField value={v} min={5} max={200} onChange={setV} aria-label="Top N" />
+        <span data-testid="committed">{v}</span>
+      </>
+    )
+  }
+
+  it('typing "12" over the old value gives 12', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+    const box = screen.getByRole('spinbutton', { name: 'Top N' })
+    await user.clear(box)
+    await user.type(box, '12')
+    await user.tab()
+    expect(box).toHaveValue(12)
+    expect(screen.getByTestId('committed')).toHaveTextContent('12')
+  })
+
+  it('a value outside the limits is clamped when you leave the box', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+    const box = screen.getByRole('spinbutton', { name: 'Top N' })
+    await user.clear(box)
+    await user.type(box, '999{Enter}')
+    expect(box).toHaveValue(200)
+    expect(screen.getByTestId('committed')).toHaveTextContent('200')
+    await user.clear(box)
+    await user.type(box, '2')
+    await user.tab()
+    expect(box).toHaveValue(5)
+  })
+
+  it('an empty box goes back to the last value', async () => {
+    const user = userEvent.setup()
+    render(<Harness initial={40} />)
+    const box = screen.getByRole('spinbutton', { name: 'Top N' })
+    await user.clear(box)
+    await user.tab()
+    expect(box).toHaveValue(40)
   })
 })
