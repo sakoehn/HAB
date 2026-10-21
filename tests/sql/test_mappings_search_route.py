@@ -259,7 +259,8 @@ def test_kegg_pathway_search_returns_real_rows_at_the_route_level(client):
 def test_broad_category_caps_sample_count_and_discloses_it(client):
     """H (Coenzyme transport and metabolism) resolves to well over
     _MANY_LEAVES_THRESHOLD (20) real COGs -- requesting all 128 samples
-    must come back capped to _MAX_SAMPLES_FOR_MANY_LEAVES (5), with
+    must come back capped to at most _MAX_SAMPLES_FOR_MANY_LEAVES (5), and
+    to fewer if those 5 would exceed the row limit, with
     samples_were_capped=True so the frontend can disclose it (rather than
     the caller silently getting a partial answer with no indication)."""
     resp = client.get(
@@ -269,7 +270,8 @@ def test_broad_category_caps_sample_count_and_discloses_it(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["samples_were_capped"] is True
-    assert body["sample_count"] == 5
+    assert 1 <= body["sample_count"] <= 5
+    assert body["results_were_truncated"] is False  # whole samples only
     assert body["leaf_count"] is not None and body["leaf_count"] > 20
 
 
@@ -415,12 +417,11 @@ def test_broad_taxonomy_node_is_capped_too(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["samples_were_capped"] is True
-    assert body["sample_count"] == 5
     assert body["leaf_count"] is not None and body["leaf_count"] > 20
-    # Unlike the single-abundant-organism case below, Bacteria's real
-    # row count even at 5 samples (measured: ~1.7M) still exceeds
-    # _MAPPINGS_ROW_LIMIT -- both mechanisms legitimately fire together
-    # here, unlike the K02014 case above.
+    # Bacteria has ~340k rows in a single sample, more than
+    # _MAPPINGS_ROW_LIMIT on its own: the row budget keeps just the first
+    # sample, and its truncation is still disclosed.
+    assert body["sample_count"] == 1
     assert body["results_were_truncated"] is True
 
 
@@ -448,17 +449,12 @@ def test_leaf_level_taxon_is_not_capped(client):
     assert body["results_were_truncated"] is False
 
 
-def test_single_abundant_leaf_taxon_is_row_limited_even_though_never_capped(client):
-    """A DIFFERENT failure mode from the broad-category cap above: a
-    single, specific, real leaf-level organism (leaf_count=1, not a
-    category at all, so samples_were_capped never fires) can itself be
-    enormous. Found live in production, 2026-09-25: the single most
-    abundant organism in this dataset has 2,235,509 rows across all 128
-    samples -- this first crashed the whole server via the kernel OOM
-    killer before _MAPPINGS_ROW_LIMIT existed. results_were_truncated
-    must disclose this separately from samples_were_capped, since here
-    the sample count was never reduced at all -- only the raw row count
-    was capped."""
+def test_single_abundant_leaf_taxon_is_sample_capped_not_truncated(client):
+    """A single, specific, real leaf-level organism (leaf_count=1, so the
+    broad-category cap never fires) can itself be enormous: the most
+    abundant one in this dataset has 2,235,509 rows across all 128 samples.
+    The row budget keeps only as many whole, earliest samples as fit the
+    row limit -- capped and disclosed, never a truncated partial subset."""
     resp = client.get(
         "/mappings/search",
         params={
@@ -475,9 +471,9 @@ def test_single_abundant_leaf_taxon_is_row_limited_even_though_never_capped(clie
     assert resp.status_code == 200
     body = resp.json()
     assert body["leaf_count"] == 1
-    assert body["samples_were_capped"] is False
-    assert body["sample_count"] == 128
-    assert body["results_were_truncated"] is True
+    assert body["samples_were_capped"] is True
+    assert body["sample_count"] < 128
+    assert body["results_were_truncated"] is False
 
 
 def test_cog_broad_category_truncation_is_correctly_flagged(client):
@@ -493,7 +489,9 @@ def test_cog_broad_category_truncation_is_correctly_flagged(client):
     test_broad_taxonomy_node_is_capped_too above."""
     resp = client.get(
         "/mappings/search",
-        params={"annotation_id": "H", "source": "cog", "sample_count": 5, "page_size": 1},
+        # bypass_cap: without it, the row budget would pick fewer samples
+        # to fit the limit, and this would no longer exercise truncation.
+        params={"annotation_id": "H", "source": "cog", "sample_count": 5, "page_size": 1, "bypass_cap": True},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -509,7 +507,8 @@ def test_enzyme_broad_category_truncation_is_correctly_flagged(client):
     the real db before writing this test)."""
     resp = client.get(
         "/mappings/search",
-        params={"annotation_id": "1", "source": "enzyme", "sample_count": 5, "page_size": 1},
+        # bypass_cap for the same reason as the cog test above.
+        params={"annotation_id": "1", "source": "enzyme", "sample_count": 5, "page_size": 1, "bypass_cap": True},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -575,3 +574,46 @@ def test_negative_page_is_rejected_not_a_silent_wrong_slice(client):
         params={"annotation_id": "COG0055", "source": "cog", "page": -1, "page_size": 2},
     )
     assert resp.status_code == 422
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Row budget: never return a partial sample
+# ═══════════════════════════════════════════════════════════════════════════
+# A node's per-sample gene_count is exactly the number of mapping rows that
+# sample returns, so the route takes samples in time order while their total
+# fits the hard row limit. Without that, an abundant single organism (one
+# leaf, so no leaf-count cap) hit the LIMIT partway through an unordered
+# scan: rows from only the 3 lowest-numbered samples, reported as all 128.
+
+HTCC2207 = ("Bacteria;Proteobacteria;Gammaproteobacteria;Cellvibrionales;Porticoccaceae;"
+            "unclassified Porticoccaceae;gamma proteobacterium HTCC2207")
+
+
+def test_abundant_taxon_returns_whole_earliest_samples_and_reports_them_truthfully(client):
+    import sqlite3
+    from api.cache_sql import _MAPPINGS_ROW_LIMIT, get_all_sample_names_sql
+    from api.index import timepoint_sort_key
+
+    resp = client.get("/mappings/search", params={
+        "annotation_id": HTCC2207, "source": "taxonomy", "sample_count": 128, "page_size": 50000,
+    })
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["results_were_truncated"] is False
+    assert body["samples_were_capped"] is True
+    assert 1 <= body["sample_count"] < 128
+
+    conn = sqlite3.connect(f"file:{SQLITE_DB_PATH}?mode=ro", uri=True)
+    try:
+        chronological = sorted(get_all_sample_names_sql(conn), key=timepoint_sort_key)
+        expected_samples = chronological[:body["sample_count"]]
+        per_sample = dict(conn.execute(
+            "SELECT sample, gene_count FROM annotation_series WHERE source='taxonomy' AND annotation_id=?",
+            (HTCC2207,),
+        ).fetchall())
+    finally:
+        conn.close()
+
+    assert {r["sample"] for r in body["data"]} == {s for s in expected_samples if per_sample.get(s)}
+    assert body["total"] == sum(per_sample.get(s, 0) for s in expected_samples)
+    assert body["total"] <= _MAPPINGS_ROW_LIMIT

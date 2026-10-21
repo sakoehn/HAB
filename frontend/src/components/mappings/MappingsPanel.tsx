@@ -193,13 +193,10 @@ export function MappingsPanel({
   // caught live, 2026-09-25, when a user correctly pointed out COG only
   // has 2 hierarchy levels and a leaf id has no "members" to be broad.
   const [leafCount, setLeafCount] = useState<number | null>(null)
-  // A DIFFERENT failure mode from samplesCapped -- found live in
-  // production, 2026-09-25: a single, specific, real leaf-level
-  // organism (leafCount=1, not a category, so samplesCapped never
-  // fires) can itself have millions of rows across all 128 samples
-  // (the single most abundant organism in this dataset: 2,235,509).
-  // The backend's hard row-count safety limit can truncate results even
-  // when the sample count was never reduced at all.
+  // A DIFFERENT failure mode from samplesCapped: the backend fits whole
+  // samples, earliest first, within its hard row limit (samplesCapped),
+  // but a single sample larger than the limit on its own (e.g. a whole
+  // domain like Bacteria) is still cut off -- disclosed separately here.
   const [resultsWereTruncated, setResultsWereTruncated] = useState(false)
   // A handful of very-high-volume ids (kegg/cog/enzyme leaves that match
   // hundreds of thousands of rows, or broad categories) were measured

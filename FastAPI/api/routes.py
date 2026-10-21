@@ -68,6 +68,7 @@ from .cache_sql import (
     get_top_annotations_sql,
     taxon_exists_sql,
     get_mappings_sql,
+    samples_within_row_budget,
     get_search_annotations,
     get_top_annotations_from_catalog_sql,
     get_taxa_at_rank_sql,
@@ -358,6 +359,20 @@ def search_mappings(
             leaf_count = count_taxa_under_sql(conn, annotation_id)
             if leaf_count > _MANY_LEAVES_THRESHOLD and not bypass_cap:
                 allowed_samples = allowed_samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
+                samples_were_capped = True
+
+        # Fit whole samples, in time order, within the hard row limit --
+        # otherwise an abundant node (e.g. a single common organism, which
+        # no leaf-count cap catches) hits get_mappings_sql's LIMIT partway
+        # through an unordered scan and returns an arbitrary partial subset
+        # while still reporting every requested sample.
+        if not bypass_cap:
+            budgeted = samples_within_row_budget(
+                conn, source.value, strip_source_prefix(source.value, annotation_id),
+                allowed_samples, _MAPPINGS_ROW_LIMIT,
+            )
+            if len(budgeted) < len(allowed_samples):
+                allowed_samples = budgeted
                 samples_were_capped = True
 
         seen_keys: set[str] = set()

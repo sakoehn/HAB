@@ -1077,6 +1077,45 @@ def estimate_mapping_row_count_sql(
     return row[0] if row else 0
 
 
+def samples_within_row_budget(
+    conn: sqlite3.Connection, source: str, annotation_id: str, samples: list[str], budget: int,
+) -> list[str]:
+    """The longest leading run of `samples` (in the order given) whose
+    mapping rows for this node fit within `budget`.
+
+    A node's annotation_series.gene_count for a sample is exactly the number
+    of mapping rows get_mappings_sql returns for it (one row per gene), so
+    this predicts the result size without running the query. Taking whole
+    samples in order means a capped search always returns complete samples
+    -- never a partial, arbitrary subset cut off by the hard row LIMIT.
+    Always keeps at least the first sample, even if it alone exceeds the
+    budget (that case is still disclosed by results_were_truncated).
+
+    Args:
+        conn: Open SQLite connection.
+        source: Annotation source.
+        annotation_id: The node being searched (bare, no KO:/EC: prefix).
+        samples: Candidate samples, in the order to take them
+            (chronological, from the route).
+        budget: Maximum total rows.
+
+    Returns:
+        A prefix of `samples`.
+    """
+    if not samples:
+        return samples
+    rows = dict(conn.execute(
+        "SELECT sample, gene_count FROM annotation_series WHERE source = ? AND annotation_id = ?",
+        (source, annotation_id),
+    ).fetchall())
+    total = 0
+    for i, sample in enumerate(samples):
+        total += rows.get(sample) or 0
+        if total > budget:
+            return samples[:max(i, 1)]
+    return samples
+
+
 def strip_source_prefix(source: str, annotation_id: str) -> str:
     """Strip kegg's "KO:" / enzyme's "EC:" prefix, if present, so an id
     resolves the same way regardless of which form a caller passes.
