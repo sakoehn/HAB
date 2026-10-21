@@ -791,6 +791,80 @@ describe('ComparePage — initialAnnotations from Analyze page', () => {
   })
 })
 
+describe('ComparePage — annotations sent from Analyze join what is already open', () => {
+  const EXISTING = {
+    id:           'existing-1',
+    annotationId: 'K00001',
+    source:       'kegg' as const,
+    name:         'Alcohol dehydrogenase',
+    data:         DEFAULT_SERIES.data,
+    status:       'ok' as const,
+    color:        '#38d9b4',
+  }
+
+  it('keeps entries already on the page and adds the new ones', async () => {
+    render(
+      <ManagedComparePage
+        initialState={{ entries: [EXISTING] }}
+        initialAnnotations={[{ kind: 'single', annotationId: 'K02014', source: 'kegg', name: 'TonB-dep receptor' }]}
+      />,
+    )
+    await waitFor(() => expect(screen.getAllByText('K02014').length).toBeGreaterThan(0))
+    expect(screen.getAllByText('K00001').length).toBeGreaterThan(0)
+  })
+
+  it('does not add an annotation that is already open a second time', async () => {
+    render(
+      <ManagedComparePage
+        initialState={{ entries: [EXISTING] }}
+        initialAnnotations={[{ kind: 'single', annotationId: 'K00001', source: 'kegg', name: 'Alcohol dehydrogenase' }]}
+      />,
+    )
+    await waitFor(() => expect(screen.getAllByText('×')).toHaveLength(1))
+    expect(screen.queryByTestId('compare-handoff-skipped')).not.toBeInTheDocument()
+  })
+
+  it('names the annotations that did not fit in the 4 slots instead of dropping them silently', async () => {
+    const incoming: SharedAnnotation[] = Array.from({ length: 4 }, (_, i) => ({
+      kind:         'single' as const,
+      annotationId: `K0010${i}`,
+      source:       'kegg' as const,
+      name:         `Ann ${i}`,
+    }))
+    render(<ManagedComparePage initialState={{ entries: [EXISTING] }} initialAnnotations={incoming} />)
+    const note = await screen.findByTestId('compare-handoff-skipped')
+    expect(note).toHaveTextContent('K00103')
+    expect(note).not.toHaveTextContent('K00102')
+    expect(screen.getAllByText('×')).toHaveLength(4)
+  })
+})
+
+describe('ComparePage — mappings for a summed group', () => {
+  const GROUP_ENTRY = {
+    id:              'group-1',
+    annotationId:    'My group',
+    source:          'kegg' as const,
+    name:            'My group',
+    data:            DEFAULT_SERIES.data,
+    status:          'ok' as const,
+    color:           '#38d9b4',
+    isGrouped:       true,
+    membersExpanded: false,
+    members: [
+      { annotationId: 'K02014', source: 'kegg', data: DEFAULT_SERIES.data, status: 'ok' as const },
+      { annotationId: 'COG0055', source: 'cog', data: DEFAULT_SERIES.data, status: 'ok' as const },
+    ],
+  }
+
+  it("shows one mappings panel per member, not one for the group's label", async () => {
+    render(<ManagedComparePage initialState={{ entries: [GROUP_ENTRY], showMappings: true }} />)
+    const section = await screen.findByTestId('group-member-mappings')
+    expect(within(section).getByText('K02014')).toBeInTheDocument()
+    expect(within(section).getByText('COG0055')).toBeInTheDocument()
+    expect(screen.getAllByText(/show mappings|view mappings/i).length).toBeGreaterThan(0)
+  })
+})
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ComparePage — CSV export
 // ─────────────────────────────────────────────────────────────────────────────

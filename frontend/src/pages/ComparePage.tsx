@@ -157,8 +157,12 @@ export function ComparePage({
 }) {
   const { copiedId, copy } = useCopyId()
   const [scaffoldModalFor, setScaffoldModalFor] = useState<string | null>(null)
+  // Annotations sent from Analyze that didn't fit in the 4 slots.
+  const [handoffSkipped, setHandoffSkipped] = useState<string[]>([])
 
   // Load annotations arriving from the Analyze page Compare drawer.
+  // They join whatever is already open: one already on the page isn't added
+  // twice, and any that don't fit in the 4 slots are named in a notice.
   // Singles: fetch one series directly.
   // Groups: fetch all member series in parallel, sum by datetime — identical
   // algorithm to GroupedEgcChart/CompareDrawer so the line matches exactly.
@@ -169,7 +173,18 @@ export function ComparePage({
     onConsumed()
     resetSourceCounters()
 
-    const toLoad = initialAnnotations.slice(0, 4)
+    const handoffKey = (ann: SharedAnnotation) =>
+      ann.kind === 'single' ? `single:${ann.source}:${ann.annotationId}` : `group:${ann.label}`
+    const openKeys = new Set(state.entries.map(e =>
+      e.isGrouped ? `group:${e.annotationId}` : `single:${e.source}:${e.annotationId}`,
+    ))
+    const incoming = initialAnnotations.filter(ann => !openKeys.has(handoffKey(ann)))
+    const freeSlots = Math.max(0, 4 - state.entries.length)
+    const toLoad = incoming.slice(0, freeSlots)
+    setHandoffSkipped(incoming.slice(freeSlots).map(ann =>
+      ann.kind === 'single' ? ann.annotationId : ann.label,
+    ))
+    if (!toLoad.length) return
     const colors = toLoad.map(ann =>
       ann.kind === 'single'
         ? nextColorForSource(ann.source)
@@ -192,7 +207,7 @@ export function ComparePage({
     // construction below.
     setState(prev => ({
       ...prev,
-      entries: toLoad.map((ann, i) =>
+      entries: [...prev.entries, ...toLoad.map((ann, i) =>
         ann.kind === 'single'
           ? {
               id:           ids[i],
@@ -220,7 +235,7 @@ export function ComparePage({
               })),
               membersExpanded: false,
             },
-      ),
+      )],
     }))
 
     // Fetch all series — singles fetch once, groups fetch all members in parallel
@@ -524,6 +539,24 @@ export function ComparePage({
       </div>
 
       <div className="page-body">
+
+        {handoffSkipped.length > 0 && (
+          <div
+            data-testid="compare-handoff-skipped"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+              border: '1px solid var(--border)', borderRadius: 6,
+              font: '12px var(--mono)', color: 'var(--text-dim)',
+            }}
+          >
+            <span style={{ flex: 1 }}>
+              Compare holds 4 annotations, so {handoffSkipped.length === 1 ? 'this one' : 'these'} from
+              Analyze {handoffSkipped.length === 1 ? 'was' : 'were'} not added: {handoffSkipped.join(', ')}.
+              Remove an entry below to make room.
+            </span>
+            <button className="btn sm ghost" onClick={() => setHandoffSkipped([])} title="Dismiss">✕</button>
+          </div>
+        )}
 
         {/* ── Add annotations ── */}
         <div>
@@ -1052,10 +1085,28 @@ export function ComparePage({
                         {e.source}
                       </span>
                     </div>
-                    <MappingsPanel
-                      annotationId={e.annotationId}
-                      source={e.source}
-                    />
+                    {e.isGrouped && e.members ? (
+                      // A group's label isn't an annotation id, so mappings
+                      // are listed for each member it sums.
+                      <div data-testid="group-member-mappings" style={{ paddingLeft: 18 }}>
+                        {e.members.map(m => (
+                          <div key={`${m.source}:${m.annotationId}`} style={{ marginBottom: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                              <span style={{ fontSize: 12, fontFamily: 'var(--mono)', color: 'var(--text-h)' }}>
+                                {m.annotationId}
+                              </span>
+                              <span className={`tag ${SOURCE_TAG_CLS[m.source] ?? ''}`}>{m.source}</span>
+                            </div>
+                            <MappingsPanel annotationId={m.annotationId} source={m.source} />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <MappingsPanel
+                        annotationId={e.annotationId}
+                        source={e.source}
+                      />
+                    )}
                   </div>
                 ))}
               </div>
