@@ -462,7 +462,7 @@ export function DatasetOverviewPanel({
               : ' · all dates'}
             {rows.length === 200 && (
               <span style={{ color: 'var(--amber)', marginLeft: 6 }}>
-                · showing first 200 — use date filter to narrow
+                · showing first 200 by mean EGC, the most the server returns
               </span>
             )}
           </div>
@@ -625,7 +625,7 @@ export function DatasetOverviewPanel({
                 <span style={{ flex: 1 }}>
                   The top 5 groups have {seriesTruncatedFrom} member annotations combined, but
                   only the first 40 were fetched — one or more groups' summed totals below may
-                  be undercounted. Narrow the date range to reduce the group sizes.
+                  be undercounted.
                 </span>
               </div>
             )}
@@ -862,7 +862,7 @@ export function AnnotationsByParentPanel({
       font: '11px var(--mono)', color: 'var(--amber)',
       marginBottom: 10,
     }}>
-      Showing first 200 annotations — use date filter in Dataset Overview to narrow.
+      Showing first 200 annotations by mean EGC, the most the server returns.
     </div>
   ) : null
 

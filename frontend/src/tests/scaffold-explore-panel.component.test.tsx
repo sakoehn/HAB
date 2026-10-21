@@ -224,6 +224,25 @@ describe('ScaffoldExplorePanel — search', () => {
     })
   })
 
+  it("says when the server returned only part of the matches", async () => {
+    setupMocks({ searchData: { data: SEARCH_RESULTS.data, total: 436 } })
+    render(<ScaffoldExplorePanel />)
+    await userEvent.type(screen.getByPlaceholderText(/search annotation id or name/i), 'ATP{Enter}')
+    await waitFor(() => expect(screen.getByText('COG0055')).toBeInTheDocument())
+    expect(screen.getByTestId('scaffold-search-count')).toHaveTextContent(
+      `first ${SEARCH_RESULTS.data.length} of 436 results`,
+    )
+  })
+
+  it('asks the server for more than 20 matches', async () => {
+    setupMocks()
+    render(<ScaffoldExplorePanel />)
+    await userEvent.type(screen.getByPlaceholderText(/search annotation id or name/i), 'ATP{Enter}')
+    await waitFor(() => expect(screen.getByText('COG0055')).toBeInTheDocument())
+    const searchUrl = mockFetch.mock.calls.map(c => String(c[0])).find(u => u.includes('/api/search/annotations'))!
+    expect(Number(new URL(searchUrl, 'http://x').searchParams.get('page_size'))).toBeGreaterThanOrEqual(500)
+  })
+
   it('Enter key triggers search', async () => {
     setupMocks()
     render(<ScaffoldExplorePanel />)

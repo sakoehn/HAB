@@ -99,6 +99,8 @@ describe('AnnotationsByParentPanel — parent grouping and sort order', () => {
     render(<AnnotationsByParentPanel source="kegg" />)
 
     await waitFor(() => expect(screen.getByText(/Showing first 200/i)).toBeInTheDocument())
+    // A date filter never lifts the server's 200-row limit.
+    expect(screen.getByText(/Showing first 200/i).textContent).not.toMatch(/date/i)
   })
 
   it('does not show a truncation note when fewer than 500 rows come back', async () => {

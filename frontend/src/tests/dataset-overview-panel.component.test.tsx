@@ -76,6 +76,8 @@ describe('DatasetOverviewPanel — truncation warning threshold (200 vs 500)', (
     await waitFor(() => {
       expect(screen.getByText(/showing first 200/i)).toBeInTheDocument()
     })
+    // A date filter never lifts the server's 200-row limit.
+    expect(screen.getByText(/showing first 200/i).textContent).not.toMatch(/date/i)
   })
 
   it('does not show the truncation note when fewer than 200 rows come back', async () => {
@@ -127,6 +129,7 @@ describe('DatasetOverviewPanel — 40-annotation temporal-chart fetch cap', () =
       expect(screen.getByTestId('overview-series-truncated-warning')).toBeInTheDocument()
     })
     expect(screen.getByTestId('overview-series-truncated-warning').textContent).toContain('50')
+    expect(screen.getByTestId('overview-series-truncated-warning').textContent).not.toMatch(/date range/i)
   })
 
   it('does not warn when the top 5 groups have 40 or fewer members combined', async () => {

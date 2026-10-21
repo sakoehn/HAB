@@ -39,6 +39,9 @@ export type TaxonomyState = {
   rootQuery:         string
   rootSearchResults: AnnotationItem[]
   rootSearchStatus:  ApiStatus
+  // How many taxa matched in all; more than rootSearchResults holds when
+  // the server returned only its first page.
+  rootSearchTotal:   number | null
   // The checked branches. Read as "remove these from the scope" or "keep only
   // these" depending on selectionMode -- switching modes keeps the same set.
   excludedIds:       Set<string>
@@ -54,6 +57,7 @@ export function makeDefaultTaxonomyState(): TaxonomyState {
     rootQuery:         '',
     rootSearchResults: [],
     rootSearchStatus:  'idle',
+    rootSearchTotal:   null,
     excludedIds:       new Set(),
     selectionMode:     'remove',
     seriesCache:       {},
@@ -102,7 +106,7 @@ export function TaxonomyPage({
     if (!q) return
     setState(prev => ({ ...prev, rootSearchStatus: 'loading' }))
     try {
-      const json = await apiFetch<{ data: AnnotationItem[] }>(
+      const json = await apiFetch<{ data: AnnotationItem[]; total?: number }>(
         `/api/search/annotations?q=${encodeURIComponent(q)}&sources=taxonomy&page_size=500`,
       )
       const seen   = new Set<string>()
@@ -111,7 +115,12 @@ export function TaxonomyPage({
         seen.add(r.annotation_id)
         return true
       })
-      setState(prev => ({ ...prev, rootSearchResults: unique, rootSearchStatus: 'ok' }))
+      setState(prev => ({
+        ...prev,
+        rootSearchResults: unique,
+        rootSearchTotal:   Math.max(json.total ?? unique.length, unique.length),
+        rootSearchStatus:  'ok',
+      }))
     } catch {
       setState(prev => ({ ...prev, rootSearchStatus: 'error' }))
     }
@@ -312,13 +321,25 @@ export function TaxonomyPage({
               )}
 
               {state.rootSearchResults.length > 0 && (
+                <div
+                  data-testid="taxonomy-search-count"
+                  style={{ font: '11px var(--mono)', color: 'var(--text-dim)', margin: '0 0 6px' }}
+                >
+                  {(state.rootSearchTotal ?? 0) > state.rootSearchResults.length
+                    ? `Showing the first ${state.rootSearchResults.length.toLocaleString()} of ${state.rootSearchTotal!.toLocaleString()} matching taxa — refine the search to narrow it.`
+                    : `${state.rootSearchResults.length.toLocaleString()} matching ${state.rootSearchResults.length === 1 ? 'taxon' : 'taxa'}`}
+                </div>
+              )}
+
+              {state.rootSearchResults.length > 0 && (
                 <div style={{
                   background:   'var(--surface)',
                   border:       '1px solid var(--border)',
                   borderRadius: 8,
-                  overflow:     'hidden',
+                  maxHeight:    480,
+                  overflowY:    'auto',
                 }}>
-                  {state.rootSearchResults.slice(0, 12).map((r, i) => (
+                  {state.rootSearchResults.map((r, i) => (
                     <div
                       key={r.annotation_id}
                       onClick={() => pickRoot(r.annotation_id)}
@@ -328,7 +349,7 @@ export function TaxonomyPage({
                         gap:          12,
                         padding:      '10px 16px',
                         cursor:       'pointer',
-                        borderBottom: i < Math.min(12, state.rootSearchResults.length) - 1
+                        borderBottom: i < state.rootSearchResults.length - 1
                           ? '1px solid var(--border)'
                           : 'none',
                       }}

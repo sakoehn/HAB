@@ -150,6 +150,9 @@ export function ScaffoldExplorePanel({
   const [searchQ, setSearchQ]           = useState('')
   const [searchSrc, setSearchSrc]       = useState('taxonomy')
   const [searchRes, setSearchRes]       = useState<TopAnnotation[]>([])
+  // How many matched in all -- more than searchRes holds when the server
+  // returned only its first page.
+  const [searchTotal, setSearchTotal]   = useState(0)
   const [searchStatus, setSearchStatus] = useState<ApiStatus>('idle')
   // Taxonomy rank multi-select filter for the search results below — only
   // shown when searchSrc === 'taxonomy'. Real `depth` comes straight off
@@ -359,10 +362,12 @@ export function ScaffoldExplorePanel({
     setSearchStatus('loading')
     setSearchRes([])
     try {
-      const r = await apiFetch<{ data: TopAnnotation[] }>(
-        `/api/search/annotations?q=${encodeURIComponent(searchQ)}&sources=${searchSrc}&page_size=20`,
+      const r = await apiFetch<{ data: TopAnnotation[]; total?: number }>(
+        `/api/search/annotations?q=${encodeURIComponent(searchQ)}&sources=${searchSrc}&page_size=500`,
       )
-      setSearchRes(r.data ?? [])
+      const rows = r.data ?? []
+      setSearchRes(rows)
+      setSearchTotal(Math.max(r.total ?? rows.length, rows.length))
       setSearchStatus('ok')
     } catch {
       setSearchStatus('error')
@@ -642,13 +647,18 @@ export function ScaffoldExplorePanel({
           background: 'var(--surface)', overflow: 'hidden',
           maxHeight: 260, overflowY: 'auto',
         }}>
-          <div style={{
-            padding: '6px 12px', font: '10px var(--mono)', color: 'var(--text-dim)',
-            background: 'var(--surface3)', borderBottom: '1px solid var(--border)',
-          }}>
+          <div
+            data-testid="scaffold-search-count"
+            style={{
+              padding: '6px 12px', font: '10px var(--mono)', color: 'var(--text-dim)',
+              background: 'var(--surface3)', borderBottom: '1px solid var(--border)',
+            }}
+          >
             {rankFilter.size > 0
-              ? <>{visibleSearchRes.length} of {searchRes.length} results</>
-              : <>{searchRes.length} results</>
+              ? <>{visibleSearchRes.length} of {searchRes.length} loaded results</>
+              : searchTotal > searchRes.length
+                ? <>first {searchRes.length} of {searchTotal.toLocaleString()} results — refine the search to narrow it</>
+                : <>{searchRes.length} results</>
             } — click to add
           </div>
           {visibleSearchRes.map(r => {

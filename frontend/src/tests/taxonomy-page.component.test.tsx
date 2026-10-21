@@ -401,3 +401,32 @@ describe('TaxonomyPage — Remove / Keep-only mode', () => {
     await waitFor(() => expect(legend().some(t => t.includes('minus 2 exclusions'))).toBe(true))
   })
 })
+
+describe('TaxonomyPage — taxon search shows every match and says how many', () => {
+  function taxon(i: number) {
+    return { annotation_id: `Bacteria;Taxon${i}`, name: `Taxon${i}`, source: 'taxonomy', depth: 2 }
+  }
+
+  async function search(data: object[], total: number) {
+    mockFetch.mockImplementation((url: string) =>
+      url.includes('/api/search/annotations')
+        ? Promise.resolve(jsonResponse({ data, total }))
+        : Promise.resolve(jsonResponse({})),
+    )
+    render(<Wrapper onGoScaffoldExplore={vi.fn()} initialState={{ rootId: null }} />)
+    fireEvent.change(screen.getByPlaceholderText(/search for a taxon/i), { target: { value: 'taxon' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Find' }))
+    return screen.findByTestId('taxonomy-search-count')
+  }
+
+  it('lists all 20 matches, not just the first 12, and counts them', async () => {
+    const count = await search(Array.from({ length: 20 }, (_, i) => taxon(i)), 20)
+    expect(count).toHaveTextContent('20 matching taxa')
+    expect(screen.getByText('Taxon19')).toBeInTheDocument()
+  })
+
+  it('says when the server returned only part of the matches', async () => {
+    const count = await search([taxon(0), taxon(1), taxon(2)], 1234)
+    expect(count).toHaveTextContent(/first 3 of 1,234 matching taxa/)
+  })
+})
