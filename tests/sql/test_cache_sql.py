@@ -15,7 +15,7 @@ Covers every function in that module:
   get_top_annotations_from_catalog_sql() -- pre-aggregated fast path for the same.
   get_search_annotations()         -- backs /search/annotations.
   get_mappings_sql()               -- backs /mappings/search.
-  get_taxa_at_rank_sql()           -- backs /taxonomy/export.
+  get_taxa_at_rank_sql()           -- backs /taxonomy/export (one row per lineage).
   get_cog_children_sql()           -- backs /cog/children (BRITE-hierarchy popup).
   get_kegg_path_sql() / get_enzyme_path_sql() / get_cog_path_sql() -- back
                                        /{source}/path (auto-expand+highlight
@@ -1332,73 +1332,89 @@ def test_matches_live_aggregation_across_all_samples(conn):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# get_taxa_at_rank_sql -- every distinct taxon name at one rank of
-# taxon_paths (e.g. every order, every phylum). Real counts independently
-# confirmed against the live database right before this section was
-# written. depth=4 ("order") is deliberately covered here: RANK_COLUMNS
-# stores it pre-quoted (`'"order"'`) since it's a SQL reserved word, so
-# this is the one case that would break first if that quoting were lost.
+# get_taxa_at_rank_sql -- every distinct lineage at one rank of taxon_paths
+# (e.g. every order, every genus), each as {"taxon", "lineage"}. Two
+# lineages that share a name (homonyms) are two rows, never merged. depth=4
+# ("order") is deliberately covered: RANK_COLUMNS stores it pre-quoted
+# (`'"order"'`) since it's a SQL reserved word, so it would break first if
+# that quoting were lost.
 # ═══════════════════════════════════════════════════════════════════════════
 
 EXPECTED_DOMAIN_LIST  = ["Archaea", "Bacteria", "Eukaryota", "Viruses"]
-EXPECTED_ORDER_COUNT  = 486
-EXPECTED_ORDER_FIRST  = "Acholeplasmatales"
-EXPECTED_ORDER_LAST   = "unclassified unassigned viruses"
-EXPECTED_PHYLUM_COUNT = 111
+EXPECTED_ORDER_NAMES  = 486
+EXPECTED_PHYLUM_NAMES = 111
+
+_LINEAGE_SQL = {
+    d: " || ';' || ".join(c for c in ["domain", "phylum", "class_", '"order"', "family",
+                                      "genus", "species", "strain"][:d])
+    for d in range(1, 9)
+}
+
+
+def _independent_lineage_count(conn, depth):
+    col = ["domain", "phylum", "class_", '"order"', "family", "genus", "species", "strain"][depth - 1]
+    return conn.execute(
+        f"SELECT COUNT(DISTINCT {_LINEAGE_SQL[depth]}) FROM taxon_paths WHERE {col} IS NOT NULL"
+    ).fetchone()[0]
 
 
 def test_domain_rank_returns_exactly_the_four_real_domains(conn):
     result = get_taxa_at_rank_sql(conn, depth=1)
-    assert sorted(result) == EXPECTED_DOMAIN_LIST
+    assert sorted(r["taxon"] for r in result) == EXPECTED_DOMAIN_LIST
+    assert all(r["lineage"] == r["taxon"] for r in result)
 
 
 def test_order_rank_handles_the_reserved_word_column(conn):
     """depth=4 maps to RANK_COLUMNS[4] = '"order"' -- if that quoting were
-    ever dropped, this wouldn't return a wrong answer, it would raise a
-    sqlite3.OperationalError (SQL syntax error), since ORDER unquoted is
-    a keyword, not a column name. So this test failing to even run is
-    itself the signal, not just a wrong count."""
+    ever dropped, this would raise a sqlite3.OperationalError (SQL syntax
+    error), since ORDER unquoted is a keyword, not a column name."""
     result = get_taxa_at_rank_sql(conn, depth=4)
-    assert len(result) == EXPECTED_ORDER_COUNT
-    assert sorted(result)[0]  == EXPECTED_ORDER_FIRST
-    assert sorted(result)[-1] == EXPECTED_ORDER_LAST
-    assert "Bacteroidales" in result
+    assert len({r["taxon"] for r in result}) == EXPECTED_ORDER_NAMES
+    assert len(result) == _independent_lineage_count(conn, 4)
+    assert "Bacteroidales" in {r["taxon"] for r in result}
 
 
-def test_phylum_rank_count_and_known_value(conn):
+def test_phylum_rank_name_count_and_known_value(conn):
     result = get_taxa_at_rank_sql(conn, depth=2)
-    assert len(result) == EXPECTED_PHYLUM_COUNT
-    assert "Bacteroidetes" in result
+    assert len({r["taxon"] for r in result}) == EXPECTED_PHYLUM_NAMES
+    assert "Bacteroidetes" in {r["taxon"] for r in result}
 
 
-def test_matches_an_independently_recomputed_count_for_a_different_rank(conn):
-    """class_ (depth=3), deliberately checked via a raw query built in the
-    test itself rather than a hardcoded constant -- a second, independent
-    way of confirming the function's COUNT/DISTINCT logic, not just a
-    repeat of the same number used to write the function."""
-    result = get_taxa_at_rank_sql(conn, depth=3)
-    expected = conn.execute(
-        "SELECT COUNT(DISTINCT class_) FROM taxon_paths WHERE class_ IS NOT NULL"
-    ).fetchone()[0]
-    assert len(result) == expected
+@pytest.mark.parametrize("depth", [3, 6, 8])
+def test_one_row_per_lineage_matches_an_independent_count(conn, depth):
+    """Counted with a query built here, not the function's own -- a second,
+    independent check of the one-row-per-lineage rule."""
+    result = get_taxa_at_rank_sql(conn, depth=depth)
+    assert len(result) == _independent_lineage_count(conn, depth)
+    assert len({r["lineage"] for r in result}) == len(result)
 
 
-def test_results_are_a_flat_list_of_strings_not_row_tuples(conn):
-    """Regression guard: an earlier draft of this function appended the
-    raw sqlite3 row tuple instead of unpacking it, which would have
-    returned [('Bacteria',), ...] instead of ['Bacteria', ...]."""
-    result = get_taxa_at_rank_sql(conn, depth=1)
-    assert all(isinstance(v, str) for v in result)
+def test_homonyms_are_listed_once_per_lineage_not_merged(conn):
+    """Bosea is a real genus name under two different families/lineages --
+    the export must list both, each with its own lineage."""
+    result = get_taxa_at_rank_sql(conn, depth=6)
+    bosea = [r for r in result if r["taxon"] == "Bosea"]
+    assert len(bosea) == 2
+    assert len({r["lineage"] for r in bosea}) == 2
+    assert all(r["lineage"].endswith(";Bosea") and r["lineage"].count(";") == 5 for r in bosea)
+    assert len(result) > len({r["taxon"] for r in result})  # homonyms exist at genus
 
 
-def test_no_duplicates(conn):
+def test_lineage_is_the_taxon_id_used_elsewhere(conn):
+    """Each lineage is a real taxonomy node id (annotation_catalog), so a
+    row can be looked up in the rest of the app."""
+    result = get_taxa_at_rank_sql(conn, depth=6)
+    sample = [r["lineage"] for r in result[:50]]
+    found = {row[0] for row in conn.execute(
+        f"SELECT annotation_id FROM annotation_catalog WHERE source = 'taxonomy' "
+        f"AND annotation_id IN ({','.join('?' * len(sample))})", sample)}
+    assert found == set(sample)
+
+
+def test_sorted_by_name_then_lineage(conn):
     result = get_taxa_at_rank_sql(conn, depth=2)
-    assert len(result) == len(set(result))
-
-
-def test_sorted_ascending(conn):
-    result = get_taxa_at_rank_sql(conn, depth=2)
-    assert result == sorted(result)
+    keys = [(r["taxon"], r["lineage"]) for r in result]
+    assert keys == sorted(keys)
 
 
 @pytest.mark.parametrize("bad_depth", [0, 9, -1, 100])

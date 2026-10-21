@@ -60,10 +60,12 @@ export function TaxonomyPage({
   async function downloadTaxaAtRank() {
     setExportStatus('loading')
     try {
-      const taxa = await apiFetch<string[]>(
+      // One row per lineage: same-named taxa in different lineages stay
+      // separate rows, told apart by their lineage column.
+      const taxa = await apiFetch<{ taxon: string; lineage: string }[]>(
         `/api/taxonomy/export?rank=${encodeURIComponent(exportRank)}`,
       )
-      downloadCsv(taxa.map(name => ({ taxon: name })), `taxa_${exportRank}.csv`)
+      downloadCsv(taxa.map(({ taxon, lineage }) => ({ taxon, lineage })), `taxa_${exportRank}.csv`)
       setExportStatus('ok')
     } catch {
       setExportStatus('error')
@@ -389,7 +391,7 @@ export function TaxonomyPage({
                 >
                   ↓ CSV
                 </button>
-                <HelpTooltip text="Download a CSV list of every unique taxon name at the selected rank (e.g. every order, every phylum) across the full dataset — not limited to a scope you've picked above." />
+                <HelpTooltip text="Download a CSV of every taxon at the selected rank (e.g. every order, every phylum) across the full dataset, with its full lineage — not limited to a scope you've picked above. Taxa that share a name but sit in different lineages are separate rows." />
                 {exportStatus === 'error' && (
                   <span style={{ font: '12px var(--sans)', color: 'var(--red, #d55e00)' }}>
                     Download failed — try again.

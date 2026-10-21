@@ -1401,16 +1401,19 @@ def get_mappings_sql(
         })
     return results
 
-def get_taxa_at_rank_sql(conn: sqlite3.Connection, depth: int) -> list[str]:
-    """Return every distinct taxon name at one rank of taxon_paths (e.g.
-    every order, every phylum), sorted ascending.
+def get_taxa_at_rank_sql(conn: sqlite3.Connection, depth: int) -> list[dict]:
+    """Return every distinct lineage at one rank of taxon_paths (e.g. every
+    order, every genus) as {"taxon": name, "lineage": full path to it},
+    sorted by name then lineage. Two lineages that share a name (homonyms)
+    are two rows, never merged. The lineage is the taxon's node id used
+    everywhere else in the app.
 
     Args:
         conn: Open SQLite connection.
         depth: Rank to list, 1 (domain) through 8 (strain).
 
     Returns:
-        Sorted list of distinct taxon names at that rank.
+        One dict per distinct lineage at that rank.
 
     Raises:
         ValueError: If depth is outside 1-8.
@@ -1418,15 +1421,11 @@ def get_taxa_at_rank_sql(conn: sqlite3.Connection, depth: int) -> list[str]:
     if depth < 1 or depth > 8:
         raise ValueError(f"depth must be 1-8, got {depth}")
     rank = RANK_COLUMNS.get(depth)
+    lineage = " || ';' || ".join(RANK_COLUMNS[d] for d in range(1, depth + 1))
     query = f"""
-        SELECT DISTINCT {rank}
+        SELECT DISTINCT {rank}, {lineage}
         FROM taxon_paths
         WHERE {rank} IS NOT NULL
-        ORDER BY {rank}
+        ORDER BY 1, 2
     """
-    cursor = conn.execute(query)
-    rows = cursor.fetchall()
-    results = []
-    for row in rows:
-        results.append(row[0])
-    return results
+    return [{"taxon": name, "lineage": path} for name, path in conn.execute(query)]

@@ -877,7 +877,9 @@ def annotation_scaffolds_summary(
 
 @router.get("/taxonomy/export")
 def taxonomy_rank_export(request: Request, rank: str):
-    """Return all taxa at the given taxonomic rank (e.g. "genus", "order")."""
+    """Return every lineage at the given taxonomic rank (e.g. "genus",
+    "order") as {"taxon", "lineage"}; same-named taxa in different lineages
+    are listed separately."""
     depth = None
     for d, column in RANK_COLUMNS.items():
         # strip('"') undoes "order"'s SQL-reserved-word quoting;

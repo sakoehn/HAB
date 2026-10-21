@@ -151,7 +151,7 @@ export function AboutPage() {
               ['/api/annotations/scaffolds?source=…&annotation_id=…&sample=…&page=1&page_size=500',
                'Individual scaffold names and gene counts in one sample (sample is required), paginated'],
               ['/api/taxonomy/export?rank=genus',
-               'All distinct taxa at a given rank (domain … strain) — powers the Taxonomy page\'s CSV download'],
+               'Every taxon at a given rank (domain … strain) as {taxon, lineage}, one row per lineage, so same-named taxa in different lineages are listed separately — powers the Taxonomy page\'s CSV download'],
               ['/api/tides',
                'Predicted tide height (meters) every 6 minutes at the sampling site, with timestamps already aligned to the sample timepoints'],
               ['/api/sun-times',

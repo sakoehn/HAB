@@ -26,14 +26,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"
 from api.config import SQLITE_DB_PATH
 from test_cache_sql import (
     EXPECTED_DOMAIN_LIST,
-    EXPECTED_ORDER_COUNT,
-    EXPECTED_ORDER_FIRST,
-    EXPECTED_ORDER_LAST,
-    EXPECTED_PHYLUM_COUNT,
+    EXPECTED_ORDER_NAMES,
+    EXPECTED_PHYLUM_NAMES,
 )
 
 # Real count, independently confirmed against the live database.
-EXPECTED_CLASS_COUNT = 251
+EXPECTED_CLASS_NAMES = 251
 
 pytestmark = pytest.mark.skipif(
     not os.path.exists(SQLITE_DB_PATH),
@@ -57,7 +55,7 @@ def client():
 def test_domain_rank_returns_the_four_real_domains(client):
     resp = client.get("/taxonomy/export", params={"rank": "domain"})
     assert resp.status_code == 200
-    assert sorted(resp.json()) == EXPECTED_DOMAIN_LIST
+    assert sorted(r["taxon"] for r in resp.json()) == EXPECTED_DOMAIN_LIST
 
 
 def test_order_rank_handles_the_reserved_word_column(client):
@@ -66,10 +64,9 @@ def test_order_rank_handles_the_reserved_word_column(client):
     a generic "does the route work" check."""
     resp = client.get("/taxonomy/export", params={"rank": "order"})
     assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == EXPECTED_ORDER_COUNT
-    assert sorted(data)[0]  == EXPECTED_ORDER_FIRST
-    assert sorted(data)[-1] == EXPECTED_ORDER_LAST
+    names = {r["taxon"] for r in resp.json()}
+    assert len(names) == EXPECTED_ORDER_NAMES
+    assert "Bacteroidales" in names
 
 
 def test_class_rank_accepts_the_clean_name_not_the_python_internal_one(client):
@@ -80,7 +77,7 @@ def test_class_rank_accepts_the_clean_name_not_the_python_internal_one(client):
     internal 'class_' form."""
     resp = client.get("/taxonomy/export", params={"rank": "class"})
     assert resp.status_code == 200
-    assert len(resp.json()) == EXPECTED_CLASS_COUNT
+    assert len({r["taxon"] for r in resp.json()}) == EXPECTED_CLASS_NAMES
 
     leaky_resp = client.get("/taxonomy/export", params={"rank": "class_"})
     assert leaky_resp.status_code == 400
@@ -89,19 +86,25 @@ def test_class_rank_accepts_the_clean_name_not_the_python_internal_one(client):
 def test_phylum_rank_count_and_known_value(client):
     resp = client.get("/taxonomy/export", params={"rank": "phylum"})
     assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == EXPECTED_PHYLUM_COUNT
-    assert "Bacteroidetes" in data
+    names = {r["taxon"] for r in resp.json()}
+    assert len(names) == EXPECTED_PHYLUM_NAMES
+    assert "Bacteroidetes" in names
 
 
-def test_response_is_a_flat_list_of_strings(client):
-    """Regression guard matching test_cache_sql.py's equivalent check on
-    the underlying function -- the route must not leak raw row tuples
-    (or any other shape) through to the HTTP response."""
+def test_response_is_one_taxon_and_lineage_per_row(client):
+    """The route must not leak raw row tuples (or any other shape) through
+    to the HTTP response -- each row is {"taxon", "lineage"} strings."""
     resp = client.get("/taxonomy/export", params={"rank": "domain"})
     data = resp.json()
     assert isinstance(data, list)
-    assert all(isinstance(v, str) for v in data)
+    assert all(set(r) == {"taxon", "lineage"} for r in data)
+    assert all(isinstance(r["taxon"], str) and isinstance(r["lineage"], str) for r in data)
+
+
+def test_genus_homonyms_are_separate_rows(client):
+    resp = client.get("/taxonomy/export", params={"rank": "genus"})
+    bosea = [r for r in resp.json() if r["taxon"] == "Bosea"]
+    assert len({r["lineage"] for r in bosea}) == 2
 
 
 def test_unknown_rank_returns_400_not_a_raw_error(client):

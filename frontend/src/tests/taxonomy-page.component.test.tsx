@@ -25,6 +25,12 @@ import { makeDefaultTaxonomyState, type TaxonomyState } from '../pages/taxonomyS
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
+const { mockDownloadCsv } = vi.hoisted(() => ({ mockDownloadCsv: vi.fn() }))
+vi.mock('../utils/api', async importOriginal => {
+  const actual = await importOriginal<typeof import('../utils/api')>()
+  return { ...actual, downloadCsv: mockDownloadCsv }
+})
+
 function jsonResponse(data: unknown) {
   return { ok: true, status: 200, json: async () => data }
 }
@@ -429,5 +435,21 @@ describe('TaxonomyPage — taxon search shows every match and says how many', ()
   it('says when the server returned only part of the matches', async () => {
     const count = await search([taxon(0), taxon(1), taxon(2)], 1234)
     expect(count).toHaveTextContent(/first 3 of 1,234 matching taxa/)
+  })
+})
+
+describe('TaxonomyPage — rank CSV keeps same-named taxa apart', () => {
+  it('writes one row per lineage, with the lineage, so homonyms are not merged', async () => {
+    const rows = [
+      { taxon: 'Bosea', lineage: 'Bacteria;Proteobacteria;Alphaproteobacteria;Rhizobiales;Bradyrhizobiaceae;Bosea' },
+      { taxon: 'Bosea', lineage: 'Bacteria;Proteobacteria;Alphaproteobacteria;Rhizobiales;Boseaceae;Bosea' },
+    ]
+    mockFetch.mockImplementation((url: string) =>
+      Promise.resolve(jsonResponse(url.includes('/api/taxonomy/export') ? rows : {})),
+    )
+    render(<Wrapper onGoScaffoldExplore={vi.fn()} initialState={{ rootId: null }} />)
+    fireEvent.click(screen.getByRole('button', { name: '↓ CSV' }))
+    await waitFor(() => expect(mockDownloadCsv).toHaveBeenCalled())
+    expect(mockDownloadCsv.mock.calls[0][0]).toEqual(rows)
   })
 })
