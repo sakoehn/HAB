@@ -242,14 +242,16 @@ export function ScaffoldExplorePanel({
         `/api/annotations/scaffolds?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`
         + `&sample=${encodeURIComponent(sample)}&page=1&page_size=${DETAIL_FETCH_PAGE}`,
       )
+      // Applied only if this sample is still the open one -- the user may
+      // have opened another sample (or closed it) while this was loading.
       setTerms(prev => prev.map(t =>
-        t.annotationId === annotationId && t.source === source
+        t.annotationId === annotationId && t.source === source && t.expandedSample === sample
           ? { ...t, detailRows: r.data ?? [], detailTotal: r.total ?? 0, detailStatus: 'ok' }
           : t,
       ))
     } catch {
       setTerms(prev => prev.map(t =>
-        t.annotationId === annotationId && t.source === source
+        t.annotationId === annotationId && t.source === source && t.expandedSample === sample
           ? { ...t, detailStatus: 'error' }
           : t,
       ))
@@ -289,7 +291,7 @@ export function ScaffoldExplorePanel({
       }
       const finalRows = all
       setTerms(prev => prev.map(t =>
-        t.annotationId === annotationId && t.source === source
+        t.annotationId === annotationId && t.source === source && t.expandedSample === sample
           ? { ...t, detailRows: finalRows }
           : t,
       ))

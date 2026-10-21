@@ -494,6 +494,32 @@ describe('ScaffoldExplorePanel — drill-down detail', () => {
     })
   })
 
+  it("a slow answer for a sample you've moved away from doesn't replace the open sample's list", async () => {
+    setupMocks()
+    const base = mockFetch.getMockImplementation()!
+    let releaseFirst!: () => void
+    let detailCalls = 0
+    mockFetch.mockImplementation((url: string) => {
+      if (!url.includes('/api/annotations/scaffolds?')) return base(url)
+      const sample = new URL(url, 'http://x').searchParams.get('sample')
+      const body = { data: [{ sample, date: '5/9/21 13:00', scaffold: `from_${sample}`, count: 1 }], total: 1 }
+      const respond = () => ({ ok: true, status: 200, json: async () => body })
+      detailCalls += 1
+      if (detailCalls === 1) return new Promise(resolve => { releaseFirst = () => resolve(respond()) })
+      return Promise.resolve(respond())
+    })
+    await expandTermAndTable()
+    const rows = document.querySelectorAll('.scaffold-summary-row')
+    await userEvent.click(rows[0] as HTMLElement)   // slow
+    await userEvent.click(rows[1] as HTMLElement)   // fast
+    const second = await screen.findByText(/^from_s\d$/)
+    const openSample = second.textContent
+    releaseFirst()
+    await new Promise(r => setTimeout(r, 50))
+    expect(screen.getByText(openSample!)).toBeInTheDocument()
+    expect(screen.getAllByText(/^from_s\d$/)).toHaveLength(1)
+  })
+
   it('"Show all N scaffolds" appears only when there are more than 10 rows', async () => {
     setupMocks()
     await expandTermAndTable()
