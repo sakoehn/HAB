@@ -108,6 +108,28 @@ export function seriesMeanInRange(
   return { mean: vals.reduce((a, b) => a + b, 0) / vals.length, n: vals.length }
 }
 
+// ── seriesMeanOverSamples ──────────────────────────────────────────────────
+// Mean of one series' active metric over the given samples -- the Analyze
+// card-header mean, restricted to the samples EgcChart reports it is
+// drawing (after its date range and Timepoints filters). null samples means
+// every point. Points with no value for the metric are skipped, as above.
+
+export function seriesMeanOverSamples(
+  data:    { sample?: string; value: unknown }[],
+  metric:  ChartMetric,
+  samples: Set<string> | null,
+): { mean: number; n: number } | null {
+  const extract = metric === 'norm_egc' ? extractNormEgc : extractEgc
+  const vals: number[] = []
+  for (const d of data) {
+    if (samples && !samples.has(d.sample ?? '')) continue
+    const v = extract(d.value)
+    if (v !== null) vals.push(v)
+  }
+  if (!vals.length) return null
+  return { mean: vals.reduce((a, b) => a + b, 0) / vals.length, n: vals.length }
+}
+
 // ── computeStats ───────────────────────────────────────────────────────────
 // Compute descriptive statistics on an array of numbers.
 // Returns null for empty arrays.

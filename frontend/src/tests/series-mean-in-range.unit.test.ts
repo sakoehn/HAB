@@ -11,7 +11,7 @@
  * Run: npx vitest run src/tests/series-mean-in-range.unit.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { seriesMeanInRange } from '../utils/stats'
+import { seriesMeanInRange, seriesMeanOverSamples } from '../utils/stats'
 
 const point = (day: number, egc: number | null, norm: number | null) => ({
   timepoint: { datetime: `2021-05-${String(day).padStart(2, '0')}T08:00:00` },
@@ -51,5 +51,22 @@ describe('seriesMeanInRange', () => {
   it('returns null when nothing falls in range', () => {
     expect(seriesMeanInRange(DATA, 'egc', '2021-06-01', '')).toBeNull()
     expect(seriesMeanInRange([], 'egc', '', '')).toBeNull()
+  })
+})
+
+describe('seriesMeanOverSamples', () => {
+  const withSamples = DATA.map((d, i) => ({ ...d, sample: `s${i + 1}` }))
+
+  it('null sample set means every point', () => {
+    expect(seriesMeanOverSamples(withSamples, 'egc', null)).toEqual({ mean: 250, n: 4 })
+  })
+
+  it('only the listed samples count', () => {
+    expect(seriesMeanOverSamples(withSamples, 'egc', new Set(['s1', 's4']))).toEqual({ mean: 250, n: 2 })
+    expect(seriesMeanOverSamples(withSamples, 'egc', new Set(['s2']))).toEqual({ mean: 200, n: 1 })
+  })
+
+  it('null when none of the listed samples has a value', () => {
+    expect(seriesMeanOverSamples(withSamples, 'egc', new Set())).toBeNull()
   })
 })

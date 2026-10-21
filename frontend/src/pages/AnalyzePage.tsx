@@ -26,7 +26,7 @@ import { SOURCE_COLORS, SOURCE_TAG_CLS, CHART_COLORS, taxonomyAwarePrimaryLabel,
 import { filterRedundantAnnotations } from '../utils/annotationHierarchy'
 import { nextColorForSource } from '../constants'
 import { apiFetch } from '../utils/api'
-import { extractEgc, extractNormEgc, sumMembersByTimestamp } from '../utils/stats'
+import { seriesMeanOverSamples, sumMembersByTimestamp } from '../utils/stats'
 import { formatRelativeAbundancePercent } from '../utils/format'
 import { useAllSamples } from '../utils/useAllSamples'
 import { useCopyId } from '../hooks/useCopyId'
@@ -145,18 +145,16 @@ function RightSingleCard({
   // the header mean below can report the same metric instead of always
   // computing raw EGC regardless of what the chart displays.
   const [activeMetric, setActiveMetric] = useState<ChartMetric>('norm_egc')
+  // The samples the chart is drawing after its own date/Timepoints filters
+  // (null until it reports), so the header mean covers the same points.
+  const [visibleSamples, setVisibleSamples] = useState<Set<string> | null>(null)
   const { allSamples } = useAllSamples()
 
   const quickStats = useMemo(() => {
     if (cached?.status !== 'ok' || !cached.data.length) return null
-    const extract = activeMetric === 'norm_egc' ? extractNormEgc : extractEgc
-    const vals = cached.data
-      .map(d => extract(d.value))
-      .filter((v): v is number => v !== null)
-    if (!vals.length) return null
-    const mean = vals.reduce((a, b) => a + b, 0) / vals.length
-    return { mean, n: vals.length }
-  }, [cached, activeMetric])
+    return seriesMeanOverSamples(cached.data, activeMetric, visibleSamples)
+  }, [cached, activeMetric, visibleSamples])
+  const sampleTotal = visibleSamples?.size ?? allSamples?.length
 
   return (
     <div className="al-right-card">
@@ -185,7 +183,7 @@ function RightSingleCard({
               {activeMetric === 'norm_egc'
                 ? `mean rel. abundance ${formatRelativeAbundancePercent(quickStats.mean)}`
                 : `mean EGC ${quickStats.mean.toExponential(2)}`}
-              {' · '}{quickStats.n}{allSamples ? ` / ${allSamples.length}` : ''} samples
+              {' · '}{quickStats.n}{sampleTotal != null ? ` / ${sampleTotal}` : ''} samples
             </span>
           )}
           {cached?.status === 'ok' && (
@@ -237,6 +235,7 @@ function RightSingleCard({
               dataDateRange={dataDateRange}
               onGoExplore={onGoExplore}
               onMetricChange={setActiveMetric}
+              onVisibleSamplesChange={samples => setVisibleSamples(new Set(samples))}
             />
           </ChartErrorBoundary>
 <MappingsPanel

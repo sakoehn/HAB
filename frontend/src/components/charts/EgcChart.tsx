@@ -88,6 +88,10 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   // has no way to know which one is currently displayed without this, and
   // could show a different unit than the chart right below it.
   onMetricChange?: (metric: ChartMetric) => void
+  // The samples currently drawn, after the date range and Timepoints
+  // filters, in time order -- so a caller's own summary can cover the same
+  // points as the chart.
+  onVisibleSamplesChange?: (samples: string[]) => void
 }>(function EgcChart({
   data,
   annotationId,
@@ -98,6 +102,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   dataDateRange,
   onGoExplore,
   onMetricChange,
+  onVisibleSamplesChange,
 }, ref) {
   const [dateFrom, setDateFrom]               = useState('')
   const [dateTo, setDateTo]                   = useState('')
@@ -229,6 +234,11 @@ export const EgcChart = forwardRef<EgcChartHandle, {
       return true
     }),
   [allPoints, dateFrom, dateTo, selectedDates, allSelected, selectedTimes, allTimesSelected])
+
+  const visibleSamplesKey = filteredPoints.map(p => p.sample).join(' ')
+  useEffect(() => {
+    onVisibleSamplesChange?.(filteredPoints.map(p => p.sample))
+  }, [visibleSamplesKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // unsmoothed is the metric/standardize
   // pipeline WITHOUT LOWESS -- this is what statistics/detection-count
