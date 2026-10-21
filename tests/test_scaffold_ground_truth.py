@@ -28,13 +28,8 @@ checked. Ancestor/category nodes (KEGG BRITE categories, Enzyme EC prefixes,
 Taxonomy higher ranks) aggregate scaffolds across many raw labels and are
 intentionally excluded.
 
-Known limitation
------------------
-Taxonomy nodes are keyed by bare rank name, not full lineage path, so two
-different lineages that share a leaf name collide in the built JSON. A Taxonomy mismatch here may reflect that
-pre-existing, documented issue rather than a new scaffold-parsing bug --
-check whether the reconstructed lineage is one of the known homonyms before
-treating a failure as new.
+Taxonomy nodes are keyed by their full lineage path, the same string the
+raw file uses, so two lineages that share a leaf name stay separate.
 
 Run:
     pytest tests/test_scaffold_ground_truth.py -v
@@ -180,18 +175,6 @@ def _load_json(directory: Path, sample: str, suffix: str) -> dict:
         return json.load(fh)
 
 
-def _reconstruct_taxonomy_path(tree: dict, leaf_key: str) -> str:
-    """Walk a Taxonomy node's `parent` chain back to the root."""
-    chain: list[str] = []
-    node_id: str | None = leaf_key
-    seen: set[str] = set()
-    while node_id is not None and node_id not in seen:
-        seen.add(node_id)
-        chain.append(node_id)
-        node_id = tree.get(node_id, {}).get("parent")
-    return ";".join(reversed(chain))
-
-
 # ── Tests ─────────────────────────────────────────────────────────────────
 
 class TestCOGScaffoldsMatchRawFile:
@@ -268,24 +251,10 @@ class TestEnzymeScaffoldsMatchRawFile:
 
 class TestTaxonomyScaffoldsMatchRawFile:
     """
-    Leaves are keys that never appear as another node's `parent`. Full lineage
-    is reconstructed from the parent chain since built keys are bare names.
-
-    See module docstring: failures here can be the pre-existing homonym bug,
-    not a new scaffold-parsing bug.
+    Leaves are keys that never appear as another node's `parent`. Each key is
+    already the full lineage path, so it is looked up in the raw tally as is.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "Known homonym bug: bare-name "
-            "tree keying collides distinct lineages that share a leaf name (e.g. "
-            "'Bacteroides sp. AR20' picking up scaffolds from a second, different "
-            "lineage). Affects ~0.0145% of leaf taxa across all 128 samples. "
-            "Remove this xfail once the tree is keyed by full lineage path instead "
-            "of bare name."
-        ),
-        strict=True,
-    )
     @pytest.mark.parametrize("sample", SAMPLE_IDS)
     def test_all_leaf_taxa_match_raw_file(self, raw_tally, sample):
         tree  = _load_json(TAXONOMY_JSON_DIR, sample, "tax")
@@ -298,7 +267,7 @@ class TestTaxonomyScaffoldsMatchRawFile:
         mismatches = []
         skipped    = 0
         for leaf in leaf_keys:
-            full_path = _reconstruct_taxonomy_path(tree, leaf)
+            full_path = leaf
             if full_path not in truth:
                 skipped += 1
                 continue
@@ -313,6 +282,5 @@ class TestTaxonomyScaffoldsMatchRawFile:
         )
         assert not mismatches, (
             f"Taxonomy scaffold mismatches in {sample} "
-            f"({len(mismatches)}/{len(leaf_keys) - skipped}, check for "
-            f"homonym-bug lineages first): {mismatches[:10]}"
+            f"({len(mismatches)}/{len(leaf_keys) - skipped}): {mismatches[:10]}"
         )
