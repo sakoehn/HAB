@@ -221,16 +221,13 @@ def test_small_sample_count_is_meaningfully_faster_than_the_full_dataset(client)
 
 def test_exact_match_rejects_substring_query(client):
     """A partial/substring annotation_id ("COG005" instead of "COG0055")
-    returns total=0 on the sql backend -- locks in the deliberate
-    exact-match-only design decision, at the route level this time rather
-    than the get_mappings_sql level."""
+    matches nothing -- ids are exact-match only -- so it's "not found",
+    like any other id this source doesn't have."""
     resp = client.get(
             "/mappings/search",
             params={"annotation_id": "COG005", "source": "cog", "sample_count": 3},
     )
-    body = resp.json()
-    assert resp.status_code == 200
-    assert body['total'] == 0
+    assert resp.status_code == 404
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -617,3 +614,25 @@ def test_abundant_taxon_returns_whole_earliest_samples_and_reports_them_truthful
     assert {r["sample"] for r in body["data"]} == {s for s in expected_samples if per_sample.get(s)}
     assert body["total"] == sum(per_sample.get(s, 0) for s in expected_samples)
     assert body["total"] <= _MAPPINGS_ROW_LIMIT
+
+
+def test_an_id_from_another_source_is_404_not_an_empty_200(client):
+    resp = client.get("/mappings/search", params={"annotation_id": "COG0001", "source": "kegg", "sample_count": 1})
+    assert resp.status_code == 404
+
+
+def test_unique_pairs_keeps_the_earliest_row_of_each_pair(client):
+    """Duplicates are dropped after ordering by time, so each kept pair is
+    its earliest occurrence -- not whichever row the database returned first."""
+    from api.index import timepoint_dt_sort_key
+    params = {"annotation_id": "COG0055", "source": "cog", "sample_count": 5, "page_size": 50000}
+    every  = client.get("/mappings/search", params={**params, "unique_pairs": False}).json()["data"]
+    unique = client.get("/mappings/search", params={**params, "unique_pairs": True}).json()["data"]
+    key = lambda r: (r["taxonomy"], r["kegg_id"], r["enzyme"], r["cog_id"])
+    when = lambda r: timepoint_dt_sort_key((r.get("timepoint") or {}).get("datetime"))
+    earliest = {}
+    for r in every:
+        if key(r) not in earliest or when(r) < earliest[key(r)]:
+            earliest[key(r)] = when(r)
+    assert unique and len(unique) == len(earliest)
+    assert all(when(r) == earliest[key(r)] for r in unique)

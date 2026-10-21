@@ -129,3 +129,11 @@ def test_series_annotations_negative_page_is_rejected(client):
         params={"source": "cog", "annotation_id": "COG0055", "page": -1, "page_size": 5},
     )
     assert resp.status_code == 422
+
+
+def test_series_accepts_the_kegg_ko_prefix_like_mappings_does(client):
+    bare     = client.get("/series/annotations", params={"source": "kegg", "annotation_id": "K00001", "page_size": 500})
+    prefixed = client.get("/series/annotations", params={"source": "kegg", "annotation_id": "KO:K00001", "page_size": 500})
+    assert bare.status_code == 200 and prefixed.status_code == 200
+    strip = lambda rows: [(r["sample"], r["egc"]) for r in rows]
+    assert strip(prefixed.json()["data"]) == strip(bare.json()["data"])

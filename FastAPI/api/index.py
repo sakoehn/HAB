@@ -71,8 +71,9 @@ def is_within_date_range(dt_str: str | None, date_from: str | None, date_to: str
     (e.g. "6/9/21 8:00" < "6/18/21 ..." lexically, even though June 9 is
     earlier than June 18). Both sides are parsed to datetime objects first.
 
-    date_to is treated as covering the whole day (through 23:59:59), so a
-    sample timestamped e.g. "6/5/21 21:00" still matches date_to=2021-06-05.
+    A bare-date date_to covers the whole day (through 23:59:59), so a
+    sample timestamped e.g. "6/5/21 21:00" still matches date_to=2021-06-05;
+    a date_to that carries a time ends at that time, as date_from's does.
     A dt_str/date_from/date_to that fails to parse is treated as not
     matching that bound (dt_str: excluded entirely; a bound: that bound is
     ignored) rather than raising, since malformed input shouldn't 500 the
@@ -87,8 +88,10 @@ def is_within_date_range(dt_str: str | None, date_from: str | None, date_to: str
             return False
     if date_to:
         to_dt = _parse_any_datetime(date_to)
-        if to_dt is not None and dt.date() > to_dt.date():
-            return False
+        if to_dt is not None:
+            bare_date = len(date_to.strip()) == len("YYYY-MM-DD")
+            if (dt.date() > to_dt.date()) if bare_date else (dt > to_dt):
+                return False
     return True
 
 

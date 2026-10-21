@@ -413,6 +413,14 @@ class TestIsWithinDateRange:
         assert is_within_date_range("6/5/21 21:00", None, "2021-06-05") is True
         assert is_within_date_range("6/6/21 0:01", None, "2021-06-05") is False
 
+    def test_date_to_with_a_time_is_respected_like_date_from(self):
+        """A bare date covers the whole day; a date_to that carries a time
+        ends at that time, the same way date_from's time is respected."""
+        from api.index import is_within_date_range
+        assert is_within_date_range("6/5/21 21:00", None, "2021-06-05T12:00:00") is False
+        assert is_within_date_range("6/5/21 8:00",  None, "2021-06-05T12:00:00") is True
+        assert is_within_date_range("6/5/21 21:00", None, "2021-06-05") is True
+
     def test_both_bounds_narrow_window(self):
         from api.index import is_within_date_range
         assert is_within_date_range("6/2/21 8:00", "2021-06-01", "2021-06-03") is True

@@ -329,6 +329,17 @@ def search_mappings(
         samples_sorted  = sorted(samples, key=timepoint_sort_key)
         allowed_samples = samples_sorted[:sample_count]
 
+        # An id this source doesn't have (e.g. a COG id with source=kegg)
+        # is "not found", as on /series/annotations -- not an empty result.
+        if conn.execute(
+            "SELECT 1 FROM annotation_catalog WHERE source = ? AND annotation_id = ? LIMIT 1",
+            (source.value, strip_source_prefix(source.value, annotation_id)),
+        ).fetchone() is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No {source.value} annotation {annotation_id!r}",
+            )
+
         leaf_count = None
         samples_were_capped = False
         if source.value in ("kegg", "cog", "enzyme"):
@@ -403,9 +414,16 @@ def search_mappings(
     finally:
         close_sql_connection(conn)
 
-    results = []
     for row in mappings:
         row['timepoint'] = get_timepoint(row['sample'])
+    # Chronological (then sample, gene) before de-duplicating, so "unique
+    # pairs" keeps each pair's earliest occurrence, the same every time.
+    mappings.sort(key=lambda r: (
+        timepoint_dt_sort_key((r.get("timepoint") or {}).get("datetime")),
+        r.get("sample") or "", r.get("gene_id") or "",
+    ))
+    results = []
+    for row in mappings:
         if unique_pairs:
             key = f"{row['taxonomy']}|{row['kegg_id']}|{row['enzyme']}|{row['cog_id']}"
             if key in seen_keys:
@@ -494,7 +512,8 @@ def annotation_time_series(
 
     conn = connect_to_sql()
     try:
-        rows = get_annotation_series_sql(conn, source.value, annotation_id)
+        # Accepts kegg's "KO:" / enzyme's "EC:" prefix, as mappings does.
+        rows = get_annotation_series_sql(conn, source.value, strip_source_prefix(source.value, annotation_id))
     finally:
         close_sql_connection(conn)
     for row in rows:
