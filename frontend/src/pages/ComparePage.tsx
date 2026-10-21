@@ -181,6 +181,7 @@ export function ComparePage({
     const incoming = initialAnnotations.filter(ann => !openKeys.has(handoffKey(ann)))
     const freeSlots = Math.max(0, 4 - state.entries.length)
     const toLoad = incoming.slice(0, freeSlots)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Annotations handed over from Analyze are taken in once, when they arrive.
     setHandoffSkipped(incoming.slice(freeSlots).map(ann =>
       ann.kind === 'single' ? ann.annotationId : ann.label,
     ))

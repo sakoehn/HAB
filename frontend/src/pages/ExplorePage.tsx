@@ -211,6 +211,7 @@ export function DatasetOverviewPanel({
   const requestSeqRef = useRef(0)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- A page reset (new resetKey) clears this panel.
     setSource('taxonomy'); setDateFrom(''); setDateTo('')
     setRows([]); setSampleCount(null); setStatus('idle')
     setLoadedParams(null)
@@ -751,6 +752,7 @@ export function AnnotationsByParentPanel({
       })
   }
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- Changing source starts a new load, which first shows its loading state.
   useEffect(loadTop, [source])
 
   const parentGroups = useMemo(() => {
@@ -1236,6 +1238,7 @@ export function ExplorePage({
     // current" check below even though the state it was for is no longer
     // active.
     const requestId = ++lookupParentsSeqRef.current
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- A new selection clears the previous one's parents before fetching its own.
     setLookupKeggParents(null)
     setLookupKeggCategories(null)
     setLookupCogCategories(null)
@@ -1508,14 +1511,6 @@ export function ExplorePage({
   function toggleSection(s: ExploreSection) {
     setState(prev => ({ ...prev, openSection: prev.openSection === s ? null : s }))
   }
-
-  const SortTh = ({ col, label }: { col: ExploreSortCol; label: string }) => (
-    <ExploreSortTh
-      col={col} label={label}
-      sortCol={state.sortCol} sortDir={state.sortDir}
-      onSort={toggleSort}
-    />
-  )
 
   return (
     <div className="page-fade">
@@ -1802,8 +1797,8 @@ export function ExplorePage({
                       <th>Name</th>
                       <th>Rank</th>
                       <th>Group</th>
-                      <SortTh col="mean_egc"     label="Mean EGC"  />
-                      <SortTh col="sample_count" label="Samples"   />
+                      <ExploreSortTh col="mean_egc"     label="Mean EGC" sortCol={state.sortCol} sortDir={state.sortDir} onSort={toggleSort} />
+                      <ExploreSortTh col="sample_count" label="Samples"  sortCol={state.sortCol} sortDir={state.sortDir} onSort={toggleSort} />
                       <th>Scaffolds</th>
                       <th>Hierarchy</th>
                       <th>Relative</th>

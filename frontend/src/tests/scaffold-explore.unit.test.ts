@@ -91,7 +91,7 @@
 
 import { describe, it, expect } from 'vitest'
 
-import { fmtDate, fmtTime, parseDateTime } from '../utils/format'
+import { fmtDate, fmtTime } from '../utils/format'
 import { filterSummaryForChart, buildAggregatedChartRows, DETAIL_PAGE } from '../components/scaffolds/ScaffoldExplorePanel'
 import type { ScaffoldSummaryRow, ScaffoldDetailRow } from '../types'
 

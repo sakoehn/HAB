@@ -44,7 +44,7 @@ export function AnnotationInfoDrawer({
 
   useEffect(() => {
     if (!open || realParentsStatus !== 'idle') return
-    if (source !== 'kegg' && source !== 'cog') { setRealParentsStatus('ok'); return }
+    if (source !== 'kegg' && source !== 'cog') return
     apiFetch<HierarchyPathResponse>(`/api/${source}/path?id=${encodeURIComponent(annotationId)}`)
       .then(r => {
         const depth = r.paths[0]?.length ?? 0

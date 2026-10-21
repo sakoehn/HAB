@@ -29,6 +29,12 @@ export function HelpTooltip({ text }: { text: string }) {
   const btnRef   = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
 
+  // Closing also forgets the position, so the next open measures afresh.
+  function close() {
+    setOpen(false)
+    setCoords(null)
+  }
+
   // Outside click closes it — "outside" means outside both the button and
   // the portaled panel, which live in different parts of the DOM tree.
   useEffect(() => {
@@ -37,7 +43,7 @@ export function HelpTooltip({ text }: { text: string }) {
       const target = e.target as Node
       const insideButton = rootRef.current?.contains(target)
       const insidePanel  = panelRef.current?.contains(target)
-      if (!insideButton && !insidePanel) setOpen(false)
+      if (!insideButton && !insidePanel) close()
     }
     document.addEventListener('mousedown', handleOutsideClick)
     return () => document.removeEventListener('mousedown', handleOutsideClick)
@@ -47,17 +53,12 @@ export function HelpTooltip({ text }: { text: string }) {
   // simple and avoids the panel drifting away from the button it explains.
   useEffect(() => {
     if (!open) return
-    function close() { setOpen(false) }
     window.addEventListener('scroll', close, true)
     window.addEventListener('resize', close)
     return () => {
       window.removeEventListener('scroll', close, true)
       window.removeEventListener('resize', close)
     }
-  }, [open])
-
-  useEffect(() => {
-    if (!open) setCoords(null)
   }, [open])
 
   // Position the portaled panel against the button, clamped to stay fully
@@ -81,7 +82,9 @@ export function HelpTooltip({ text }: { text: string }) {
     }
     top = Math.max(MARGIN, top)
 
-    setCoords({ top, left })
+    // Measuring the rendered panel and then placing it is what a layout
+    // effect is for: it runs before paint, so the panel never shows unplaced.
+    setCoords({ top, left }) // eslint-disable-line react-hooks/set-state-in-effect
   }, [open, text])
 
   return (
@@ -90,7 +93,7 @@ export function HelpTooltip({ text }: { text: string }) {
         ref={btnRef}
         type="button"
         className={`help-tooltip-btn ${open ? 'help-tooltip-btn-active' : ''}`}
-        onClick={() => setOpen(o => !o)}
+        onClick={() => (open ? close() : setOpen(true))}
         title="Help"
       >
         ?

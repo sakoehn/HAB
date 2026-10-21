@@ -209,6 +209,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
 
   useEffect(() => {
     if (allDates.length > 0 && !userTouchedDateFilter) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- New data: select all of its dates/times unless the user has picked some.
       setSelectedDates(new Set(allDates))
     }
     if (allTimes.length > 0 && !userTouchedTimeFilter) {

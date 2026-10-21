@@ -26,6 +26,9 @@ export default defineConfig([
         destructuredArrayIgnorePattern: '^_',
       }],
       'no-empty': ['error', { allowEmptyCatch: true }],
+      // Only reports on code the React Compiler would skip; the compiler
+      // isn't enabled here (vite.config.ts uses plain @vitejs/plugin-react).
+      'react-hooks/preserve-manual-memoization': 'off',
     },
   },
 ])

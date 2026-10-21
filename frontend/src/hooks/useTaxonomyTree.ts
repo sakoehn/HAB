@@ -54,6 +54,7 @@ export function useTaxonomyTree(rootId: string | null) {
 
   useEffect(() => {
     let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- A new root clears the old tree and starts loading the new one.
     setStatus('loading')
     setNodes([])
     fetchChildren(rootId)
