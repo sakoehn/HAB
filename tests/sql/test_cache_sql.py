@@ -1,7 +1,7 @@
 """
 test_cache_sql.py
 ====================
-Tests for FastAPI/api/cache_sql.py -- the DATA_BACKEND=sql query layer.
+Tests for FastAPI/api/cache_sql.py -- the SQLite query layer.
 Covers every function in that module:
 
   taxon_paths_under()              -- every taxon_paths row under a full

@@ -1,8 +1,7 @@
 """
 test_hierarchy_path_sql_route.py
 ==================================
-Live-HTTP tests for /kegg/path, /enzyme/path, /cog/path under
-DATA_BACKEND=sql -- these back the hierarchy popup's auto-expand-and-
+Live-HTTP tests for /kegg/path, /enzyme/path, /cog/path -- these back the hierarchy popup's auto-expand-and-
 highlight feature (open a popup for one specific annotation, jump
 straight to its position in the tree instead of an empty root).
 

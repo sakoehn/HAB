@@ -1,7 +1,7 @@
 """
 test_mappings_search_route.py
 ===============================
-Live-HTTP tests for /mappings/search under DATA_BACKEND=sql -- same spirit
+Live-HTTP tests for /mappings/search -- same spirit
 as test_annotation_scaffolds_route.py: hits a real running server rather
 than calling cache_sql functions directly, so it covers route-layer logic
 (sample_count filtering, unique_pairs dedup, response envelope, sort order)

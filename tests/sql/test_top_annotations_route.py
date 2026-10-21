@@ -43,8 +43,7 @@ def client():
 
 def test_missing_source_returns_422(client):
     """`source` has no default -- FastAPI's own request validation must
-    reject a call without it, before the route body (and its DATA_BACKEND
-    branch) ever runs. Ported from test_unit_backend.py's
+    reject a call without it, before the route body ever runs. Ported from test_unit_backend.py's
     TestRoutesViaTestClient (deleted alongside the rest of that class once
     this route's real coverage lived here instead)."""
     resp = client.get("/annotations/top")

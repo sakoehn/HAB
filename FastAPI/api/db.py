@@ -11,7 +11,7 @@ import sqlite3
 from api.config import SQLITE_DB_PATH
 
 def connect_to_sql() -> sqlite3.Connection:
-    """Open the SQLite database used by DATA_BACKEND=sql.
+    """Open the SQLite database the app reads from.
 
     Returns:
         A connection with check_same_thread=False -- required since this

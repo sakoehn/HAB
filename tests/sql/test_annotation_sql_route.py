@@ -1,7 +1,7 @@
 """
 test_annotation_sql_route.py
 ==============================
-Live-API test for the DATA_BACKEND=sql branch(es) of routes.py.
+Live-API test for routes.py's database-backed routes.
 
 tests/sql/test_cache_sql.py already verifies api/cache_sql.py's functions
 directly, in isolation -- this file exists to cover what that one can't:

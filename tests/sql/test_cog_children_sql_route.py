@@ -1,7 +1,7 @@
 """
 test_cog_children_sql_route.py
 ================================
-Live-HTTP tests for /cog/children under DATA_BACKEND=sql -- same spirit
+Live-HTTP tests for /cog/children -- same spirit
 as test_kegg_children_sql_route.py / test_enzyme_children_sql_route.py,
 but self-contained: uses FastAPI's TestClient AS A CONTEXT MANAGER
 (`with TestClient(app) as client:`) instead of requiring a separately
@@ -11,7 +11,7 @@ Why not the live-server pattern its siblings use: TestClient only runs
 main.py's lifespan() (which sets up app.state.sql_conn) when entered as a
 context manager. tests/test_unit_backend.py's patched_client fixture
 skips that step, which is the exact root cause of a large pre-existing
-gap where every DATA_BACKEND=sql route 500s under that fixture. Using the context-manager
+gap where every database-backed route 500s under that fixture. Using the context-manager
 form here means this test always actually runs -- no server to remember
 to start, no silent skip if one isn't up.
 

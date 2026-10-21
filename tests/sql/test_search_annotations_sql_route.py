@@ -1,7 +1,7 @@
 """
 test_search_annotations_sql_route.py
 ======================================
-Live-HTTP tests for /search/annotations under DATA_BACKEND=sql -- same
+Live-HTTP tests for /search/annotations -- same
 spirit as test_mappings_search_route.py: hits a real running server, so it
 covers route-layer logic (min-length rejection, pagination, sort order,
 response envelope) that tests/sql/test_search_annotations_sql.py's direct
@@ -31,7 +31,6 @@ search results show taxonomic rank. `category`/`scaffold_count` are top-level fi
 the Annotation Lookup detail card.
 
 Run:
-    # in FastAPI/.env or as an env var: DATA_BACKEND=sql
     # uvicorn main:app --reload
     pytest tests/sql/test_search_annotations_sql_route.py -v
 """
@@ -93,7 +92,7 @@ def test_search_returns_correct_shape(client):
 
 def test_missing_all_of_q_annotation_id_name_exact_returns_400(client):
     """The route requires at least one of q/annotation_id/name_exact --
-    checked before the DATA_BACKEND branch, so it's backend-agnostic.
+    checked before the route body runs.
     Distinct from test_query_too_short_rejected below (q present but too
     short); this is q absent entirely. Ported from test_unit_backend.py's
     TestRoutesViaTestClient (deleted alongside the rest of that class once

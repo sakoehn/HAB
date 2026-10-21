@@ -36,7 +36,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
-# ── Stand-in Request for calling DATA_BACKEND=sql routes directly ───────────
+# ── Stand-in Request for calling routes directly ────────────────────────────
 # search_mappings() (and other sql-backed routes) reads the SQLite connection
 # main.py's lifespan() normally stores at request.app.state.sql_conn. Calling
 # the route function directly -- not through a live server or the
@@ -234,53 +234,3 @@ class TestSmokePatched:
             page=1, page_size=100,  # see test_search_mappings_returns_dict's comment
         )
         assert isinstance(result["data"], list)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# The 6 "SQL backend only" 501 guards on /kegg,enzyme,cog/children,path --
-# found untested by the same coverage pass (DATA_BACKEND is fixed to 'sql'
-# for the whole real test run via FastAPI/.env, so the "not sql" branch
-# never fires without monkeypatching it directly, same gotcha
-# TestTaxonomyChildrenJsonBranchDirect's own comments used to document
-# before that class was deleted along with the json branch it tested).
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestHierarchyRoutesRejectNonSqlBackend:
-
-    @pytest.fixture(autouse=True)
-    def _patch_non_sql_backend(self):
-        import api.routes as routes_mod
-        orig = routes_mod.DATA_BACKEND
-        routes_mod.DATA_BACKEND = 'not_sql'
-        yield
-        routes_mod.DATA_BACKEND = orig
-
-    async def _assert_501(self, coro_fn, **kwargs):
-        from fastapi import HTTPException
-        with pytest.raises(HTTPException) as exc_info:
-            await coro_fn(request=None, **kwargs)
-        assert exc_info.value.status_code == 501
-
-    async def test_kegg_children_rejects(self):
-        from api.routes import kegg_children
-        await self._assert_501(kegg_children, parent=None)
-
-    async def test_kegg_path_rejects(self):
-        from api.routes import kegg_path
-        await self._assert_501(kegg_path, id='K00844')
-
-    async def test_enzyme_children_rejects(self):
-        from api.routes import enzyme_children
-        await self._assert_501(enzyme_children, parent=None)
-
-    async def test_enzyme_path_rejects(self):
-        from api.routes import enzyme_path
-        await self._assert_501(enzyme_path, id='1.1.1.1')
-
-    async def test_cog_children_rejects(self):
-        from api.routes import cog_children
-        await self._assert_501(cog_children, parent=None)
-
-    async def test_cog_path_rejects(self):
-        from api.routes import cog_path
-        await self._assert_501(cog_path, id='COG0001')

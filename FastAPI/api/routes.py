@@ -85,7 +85,6 @@ from .cache import (
 )
 from .db import connect_to_sql, close_sql_connection
 from .config import (
-    DATA_BACKEND,
     LOCATION_LAT,
     LOCATION_LON,
     LOCATION_NAME,
@@ -189,8 +188,8 @@ def _filter_timepoints_to_real_samples(timepoints: dict, real_samples) -> list[d
     JGI_ID_Timepoints_128.csv (TIMEPOINTS' source) actually has 132 rows --
     4 real-looking taxon_oids with plausible dates in the sampling window
     that were never processed into mapping/annotation data (confirmed live:
-    they're absent from both the JSON backend's mapping TSVs and the SQL
-    backend's samples). Without this filter, /timepoints reports 132 while
+    they're absent from both the raw mapping TSVs and the database's
+    samples). Without this filter, /timepoints reports 132 while
     /samples reports 128 for the same dataset.
     """
     real_samples = set(real_samples)
@@ -559,15 +558,9 @@ def kegg_children(request: Request, parent: str | None = Query(None)):
     parent omitted/empty -> the 8 top-level branches (Metabolism, Human
     Diseases, Brite Hierarchies, etc.).
 
-    SQL backend only. `kegg_paths` (built from ko00001.keg, capturing every
-    real multi-parent occurrence — see migrate_kegg_paths_to_sql.py) has no
-    JSON-backend equivalent: the old per-sample .ko.json format only ever
-    stored a single parent_id per node, which can't represent a
-    multi-parent KO.
+    Read from `kegg_paths` (built from ko00001.keg, capturing every real
+    multi-parent occurrence — see migrate_kegg_paths_to_sql.py).
     """
-    if DATA_BACKEND != 'sql':
-        raise HTTPException(status_code=501, detail="KEGG hierarchy browsing requires DATA_BACKEND=sql")
-
     # An explicitly empty `parent=` arrives as "", not None -- treat it as
     # omission (see taxonomy_children), not as an unknown node to 404 on.
     parent = parent or None
@@ -588,11 +581,7 @@ def kegg_path(request: Request, id: str = Query(...)):
     Ancestor path (root to node) for a KEGG node, for auto-expanding and
     highlighting a node in the hierarchy popup when opened from a chart
     for one specific annotation.
-
-    SQL backend only, same reasoning as /kegg/children.
     """
-    if DATA_BACKEND != 'sql':
-        raise HTTPException(status_code=501, detail="KEGG hierarchy browsing requires DATA_BACKEND=sql")
 
     db = connect_to_sql()
     try:
@@ -613,12 +602,7 @@ def kegg_parents_bulk(request: Request, ids: str = Query(...)):
     real parents), so the panel needs every real parent for every row to
     bucket a multi-parent KO into every group it actually belongs to --
     one /kegg/path call per row would be 200 round trips; this is one.
-
-    SQL backend only, same reasoning as /kegg/path.
     """
-    if DATA_BACKEND != 'sql':
-        raise HTTPException(status_code=501, detail="KEGG hierarchy browsing requires DATA_BACKEND=sql")
-
     id_list = [i for i in ids.split(",") if i]
     db = connect_to_sql()
     try:
@@ -654,15 +638,10 @@ def enzyme_children(request: Request, parent: str | None = Query(None)):
     parent omitted/empty -> the 7 top-level EC classes (Oxidoreductases,
     Transferases, etc.).
 
-    SQL backend only, same reasoning as /kegg/children -- enzyme_paths
-    (see migrate_enzyme_paths_to_sql.py) has no JSON-backend equivalent.
-    Unlike KEGG, every EC id has exactly one real parent (see
+    Read from enzyme_paths (see migrate_enzyme_paths_to_sql.py). Unlike KEGG, every EC id has exactly one real parent (see
     get_enzyme_children_sql's docstring), so this exists purely for
     consistent tree-browsing UI, not to work around a multi-parent bug.
     """
-    if DATA_BACKEND != 'sql':
-        raise HTTPException(status_code=501, detail="Enzyme hierarchy browsing requires DATA_BACKEND=sql")
-
     # An explicitly empty `parent=` arrives as "" -- treat it as omission
     # (see taxonomy_children).
     parent = parent or None
@@ -683,11 +662,7 @@ def enzyme_path(request: Request, id: str = Query(...)):
     Ancestor path (root to node) for an Enzyme (EC) node, for auto-
     expanding and highlighting a node in the hierarchy popup when opened
     from a chart for one specific annotation.
-
-    SQL backend only, same reasoning as /kegg/children.
     """
-    if DATA_BACKEND != 'sql':
-        raise HTTPException(status_code=501, detail="Enzyme hierarchy browsing requires DATA_BACKEND=sql")
 
     db = connect_to_sql()
     try:
@@ -708,16 +683,11 @@ def cog_children(request: Request, parent: str | None = Query(None)):
     parent omitted/empty -> the 25 top-level category letters (Energy
     production and conversion, etc.) -- 25 in the real db, not 26.
 
-    SQL backend only, same reasoning as /kegg/children -- cog_paths (see
-    migrate_cog_paths_to_sql.py) has no JSON-backend equivalent. A COG id
-    can belong to more than one category, same as KEGG -- cog_paths has one
-    row per real
-    (category, COG) membership. The hierarchy is only 2 levels deep
+    Read from cog_paths (see migrate_cog_paths_to_sql.py). A COG id can
+    belong to more than one category, same as KEGG -- cog_paths has one row
+    per real (category, COG) membership. The hierarchy is only 2 levels deep
     (category -> specific COG id), not 4.
     """
-    if DATA_BACKEND != 'sql':
-        raise HTTPException(status_code=501, detail="COG hierarchy browsing requires DATA_BACKEND=sql")
-
     # An explicitly empty `parent=` arrives as "" -- treat it as omission
     # (see taxonomy_children).
     parent = parent or None
@@ -738,11 +708,7 @@ def cog_path(request: Request, id: str = Query(...)):
     Ancestor path (root to node) for a COG node, for auto-expanding and
     highlighting a node in the hierarchy popup when opened from a chart
     for one specific annotation.
-
-    SQL backend only, same reasoning as /kegg/children.
     """
-    if DATA_BACKEND != 'sql':
-        raise HTTPException(status_code=501, detail="COG hierarchy browsing requires DATA_BACKEND=sql")
 
     db = connect_to_sql()
     try:

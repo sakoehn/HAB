@@ -9,10 +9,8 @@ this file.
 """
 
 import os
-from dotenv import load_dotenv
 
 _HERE = os.path.dirname(__file__)
-load_dotenv(os.path.join(_HERE,"..",".env"))
 
 # ── Data directory layout ─────────────────────────────────────────────────────
 
@@ -21,8 +19,8 @@ load_dotenv(os.path.join(_HERE,"..",".env"))
 _HERE     = os.path.dirname(__file__)
 BASE_DIR  = os.path.normpath(os.path.join(_HERE, "../../DataStructures"))
 
-# These raw source directories are no longer read by the live app (which is
-# sql-only, see DATA_BACKEND below) -- they're kept for the one-time
+# These raw source directories are no longer read by the live app (which
+# reads only the SQLite database below) -- they're kept for the one-time
 # migration scripts (FastAPI/scripts/migrate_*_to_sql.py) that populate the
 # SQLite DB from them, and for tests that verify sql results against these
 # files as independent ground truth (e.g. tests/sql/test_annotation_scaffolds_route.py).
@@ -76,15 +74,8 @@ LAG_HOURS_PER_SAMPLE = 4
 # _circular_shift_pvalue in correlation_sql.py), so there is no sample
 # count or random seed to configure here.
 
-# ── Data backend selection ────────────────────────────────────────────────────
-#
-# The app reads from the SQLite database below (see api/db.py,
-# api/cache_sql.py). The old direct-from-JSON-files backend was retired;
-# "sql" is the only supported value now.
-DATA_BACKEND = os.getenv("DATA_BACKEND", "sql")
-
 # ── SQLite connection ─────────────────────────────────────────────────────────
 #
 # Connection settings for the SQLite backend (see FastAPI/scripts/migrate_mappings_to_sql.py
-# and FastAPI/scripts/create_sql_schema.py). Only used when DATA_BACKEND=sql.
+# and FastAPI/scripts/create_sql_schema.py).
 SQLITE_DB_PATH = os.path.normpath(os.path.join(_HERE, "../../hab_mappings.db"))

@@ -1,11 +1,10 @@
 """
 test_samples_and_timepoints_route.py
 ======================================
-Live-HTTP tests for /samples and /timepoints under DATA_BACKEND=sql.
+Live-HTTP tests for /samples and /timepoints.
 
 These two routes need their own coverage here: the other tests (test_unit_backend.py's
-TestRoutesViaTestClient, via the `patched_client` fixture) always 500 under
-the real DATA_BACKEND=sql config, because `patched_client` builds a plain
+TestRoutesViaTestClient, via the `patched_client` fixture) always 500, because `patched_client` builds a plain
 `TestClient(app, raise_server_exceptions=False)` without entering it as a
 context manager -- so main.py's lifespan() never runs, app.state.sql_conn
 is never set, and every route that reads it crashes. raise_server_exceptions

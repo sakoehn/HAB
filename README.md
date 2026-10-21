@@ -46,7 +46,7 @@ frontend/
 tests/               -- pytest backend tests (test_correlation_*.py, etc.)
 ```
 
-`DataStructures/`, raw JGI data directories, and the SQLite database file are gitignored — see **Data backend** below.
+`DataStructures/`, raw JGI data directories, and the SQLite database file are gitignored — see **Database** below.
 
 ## Getting started
 
@@ -60,14 +60,6 @@ tests/               -- pytest backend tests (test_correlation_*.py, etc.)
 ```bash
 pip install -r requirements.txt
 ```
-
-Create `FastAPI/.env`:
-
-```
-DATA_BACKEND=sql
-```
-
-(`sql` uses the SQLite database described below; `json` reads the raw per-sample JSON files directly and is the legacy backend — much slower to start, kept for comparison/fallback.)
 
 Run from `FastAPI/`:
 
@@ -87,9 +79,9 @@ npm run dev
 
 Serves on `http://localhost:5173`, proxying `/api/*` to the backend on `:8000` (see `vite.config.ts`).
 
-### Data backend
+### Database
 
-The SQL backend needs `hab_mappings.db` (a SQLite file, gitignored — too large for git) at the repo root. It's built from the raw per-sample JGI annotation JSON files via the scripts in `FastAPI/scripts/` — schema creation, bulk mapping/annotation ingestion, index building, and catalog aggregation, roughly in that order (`create_sql_schema.py` → `migrate_mappings_to_sql.py` → `create_sql_indexes.py` → `migrate_annotations_to_sql.py` → `migrate_annotation_catalog_sql.py`). Each script's own docstring documents its exact inputs/outputs and re-run safety. **Ask a project maintainer for a copy of the database rather than rebuilding it from scratch** unless you're specifically working on the migration pipeline — it's a multi-hour process over tens of millions of rows.
+The app needs `hab_mappings.db` (a SQLite file, gitignored — too large for git) at the repo root. It's built from the raw per-sample JGI annotation JSON files via the scripts in `FastAPI/scripts/` — schema creation, bulk mapping/annotation ingestion, index building, and catalog aggregation, roughly in that order (`create_sql_schema.py` → `migrate_mappings_to_sql.py` → `create_sql_indexes.py` → `migrate_annotations_to_sql.py` → `migrate_annotation_catalog_sql.py`). Each script's own docstring documents its exact inputs/outputs and re-run safety. **Ask a project maintainer for a copy of the database rather than rebuilding it from scratch** unless you're specifically working on the migration pipeline — it's a multi-hour process over tens of millions of rows.
 
 ## Testing
 

@@ -2,7 +2,7 @@
  * hierarchy.e2e.spec.ts
  * =======================
  * Real-browser verification of the KEGG/COG/Enzyme hierarchy popup against
- * the actual running FastAPI (DATA_BACKEND=sql) + Vite dev servers (see
+ * the actual running FastAPI + Vite dev servers (see
  * playwright.config.ts's webServer entries -- both auto-start).
  *
  * Covers the flagship scenario this feature was built for: K00844

@@ -92,7 +92,7 @@ def test_invalid_source(client):
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Param validation + response shape -- ported from test_main_scaffolds.py
-# (deleted; it only ever exercised the DATA_BACKEND=='json' branch of these
+# (deleted; it only ever exercised the old JSON-file branch of these
 # two routes with synthetic fixture data, which the ground-truth checks
 # above already cover more strongly for the real sql branch). These
 # specific scenarios -- missing/invalid params, and ordering, which the

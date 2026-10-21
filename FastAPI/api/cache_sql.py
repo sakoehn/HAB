@@ -1,10 +1,9 @@
 """
 cache_sql.py
 ============
-SQL (SQLite) query layer for DATA_BACKEND=sql. Each function takes an
-open sqlite3.Connection (created by api.db.connect_to_sql, stored on
-app.state.sql_conn) and returns plain dicts/lists that routes.py's sql
-branches return directly as JSON.
+SQL (SQLite) query layer. Each function takes an open sqlite3.Connection
+(created by api.db.connect_to_sql, stored on app.state.sql_conn) and
+returns plain dicts/lists that routes.py returns directly as JSON.
 
 Schema is created by scripts/create_sql_schema.py and populated by the
 scripts/migrate_*_sql.py scripts -- see those files for table

@@ -18,7 +18,7 @@ Covers shared (backend-agnostic) logic:
   Everything that only ever exercised the JSON backend (extract_* field
   helpers, the inverted search_index, _normalize_annotation_dict /
   _search_dict_annotations / _filter_mapping_rows, and the routes that
-  branched on DATA_BACKEND) was removed here once that code was deleted
+  had a JSON branch) was removed here once that code was deleted
   from api/cache.py, api/index.py, and api/routes.py -- their real,
   always-on coverage now lives in tests/sql/*_route.py instead (each using
   `with TestClient(app) as client:` so main.py's lifespan() actually runs).
@@ -28,7 +28,7 @@ Covers shared (backend-agnostic) logic:
   /samples/{sample_name}/search/annotations were removed -- they only ever
   worked against the full local JSON dataset, which the
   production deployment never carries (55GB+ vs the 87MB SQL database), so
-  they 404'd there regardless of DATA_BACKEND, and nothing in the frontend
+  they 404'd there regardless of backend, and nothing in the frontend
   called them.
 
 Each class tests one module/concern; fake data is defined inline.
@@ -693,10 +693,8 @@ class TestFilterTimepointsToRealSamples:
     with no corresponding processed sample data (the "/timepoints reports
     132 while /samples reports 128" mismatch).
 
-    Tested directly (not via patched_client/HTTP) since the real fix
-    branches on DATA_BACKEND at the route layer to pick the right sample
-    list, which under the real DATA_BACKEND=sql config needs
-    app.state.sql_conn -- a dependency patched_client doesn't set up (the
+    Tested directly (not via patched_client/HTTP) since the route reads
+    its sample list from the database, which needs app.state.sql_conn -- a dependency patched_client doesn't set up (the
     same pre-existing gap as TestRoutesViaTestClient's other SQL-backed
     routes). This class covers the actual filtering logic without that
     dependency at all.
@@ -759,7 +757,7 @@ def patched_client():
 
     No monkeypatching needed any more: this fixture used to fake an entire
     JSON-backend dataset (COG/KEGG/Enzyme/Taxonomy/TSV data, the search and
-    mapping indexes) to test routes that branched on DATA_BACKEND. All of
+    mapping indexes) to test routes that had a JSON branch. All of
     those were removed once that JSON code was deleted -- what's left
     (`/status`, `/tides`, `/sun-times`, `/debug`) are backend-agnostic and
     just work against the real data already on disk.
@@ -777,8 +775,8 @@ def patched_client():
            f"main.py's lifespan, which needs a real database",
 )
 class TestRoutesViaTestClient:
-    """HTTP-level tests for the backend-agnostic endpoints (no DATA_BACKEND
-    branch): /status, /tides, /sun-times, /debug."""
+    """HTTP-level tests for the backend-agnostic endpoints (no database
+    access): /status, /tides, /sun-times, /debug."""
 
     def test_status_returns_200(self, patched_client):
         r = patched_client.get("/status")
@@ -797,7 +795,7 @@ class TestRoutesViaTestClient:
         assert body.get("date_min") is None or isinstance(body["date_min"], str)
         assert body.get("date_max") is None or isinstance(body["date_max"], str)
 
-    # /samples branches on DATA_BACKEND -- see the note above
+    # /samples reads the database -- see the note above
     # test_debug_has_base_dir for why its tests now live in
     # tests/sql/test_samples_and_timepoints_route.py instead.
 
@@ -830,8 +828,8 @@ class TestRoutesViaTestClient:
         assert r.status_code == 404
 
     # /search/annotations, /series/annotations, /annotations/top,
-    # /mappings/search, /timepoints, and /samples (above) all branch on
-    # DATA_BACKEND, so under the real DATA_BACKEND=sql config they hit the
+    # /mappings/search, /timepoints, and /samples (above) all read the
+    # database, so they hit the
     # pre-existing patched_client/sql_conn gap (patched_client only patches
     # JSON-backend internals; app.state.sql_conn from main.py's lifespan()
     # is never set up here). Their tests were removed from here and now
@@ -849,7 +847,7 @@ class TestRoutesViaTestClient:
 # tests/sql/test_taxonomy_children_sql_route.py -- both the old
 # TestTaxonomyChildrenEndpoint (HTTP via patched_client, hit the
 # patched_client/sql_conn gap documented above test_debug_has_base_dir) and
-# TestTaxonomyChildrenJsonBranchDirect (tested the DATA_BACKEND=='json'
+# TestTaxonomyChildrenJsonBranchDirect (tested the old JSON
 # branch directly) were removed here once that branch itself was deleted
 # from routes.py as part of the JSON backend retirement.
 
