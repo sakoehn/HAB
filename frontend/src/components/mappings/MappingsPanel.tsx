@@ -25,8 +25,12 @@ import React, { useState, useMemo } from 'react'
 
 import type { ApiStatus, MappingSortCol, SortDir, MappingSearchRow } from '../../types'
 import { apiFetch, downloadCsv } from '../../utils/api'
-import { fmtDate, fmtTime, parseDateTime } from '../../utils/format'
+import { fmtDate, fmtTime } from '../../utils/format'
 import { SkeletonTable } from '../ui/Skeleton'
+import {
+  sortMappingRows, paginateRows, totalPages, buildMappingsUrl,
+  isLikelyLeafAnnotation, buildMappingCsvRow,
+} from './mappingsData'
 
 // ── MappingsSortTh ─────────────────────────────────────────────────────────
 // Reusable sortable table header cell.
@@ -55,108 +59,6 @@ function MappingsSortTh({
       </span>
     </th>
   )
-}
-
-// ── Constants ──────────────────────────────────────────────────────────────
-
-export const MAPPINGS_PAGE_SIZE = 25
-
-// ── Pure helpers ─────────────────────────────────────────────────────────────
-// Exported so tests can exercise the real sort/paginate/URL logic directly.
-
-export function sortMappingRows(
-  rows:    MappingSearchRow[],
-  sortCol: MappingSortCol,
-  sortDir: SortDir,
-): MappingSearchRow[] {
-  // 'date' and 'time' sort by full datetime, numerically via parseDateTime
-  // -- NOT a plain string compare. The API returns unpadded "M/D/YY H:MM"
-  // (e.g. "6/10/21 8:00"), which does not sort correctly as text: "6/10/21"
-  // sorts before "6/2/21" lexically, even though June 10 is AFTER June 2.
-  // The CSV export reuses this same sorted list.
-  if (sortCol === 'date' || sortCol === 'time') {
-    return [...rows].sort((a, b) => {
-      const av = parseDateTime(a.timepoint?.datetime ?? '')
-      const bv = parseDateTime(b.timepoint?.datetime ?? '')
-      return sortDir === 'asc' ? av - bv : bv - av
-    })
-  }
-  return [...rows].sort((a, b) => {
-    const av = (a[sortCol as keyof MappingSearchRow] ?? '') as string
-    const bv = (b[sortCol as keyof MappingSearchRow] ?? '') as string
-    return sortDir === 'asc'
-      ? av.localeCompare(bv)
-      : bv.localeCompare(av)
-  })
-}
-
-export function paginateRows<T>(rows: T[], page: number, pageSize: number = MAPPINGS_PAGE_SIZE): T[] {
-  return rows.slice((page - 1) * pageSize, page * pageSize)
-}
-
-export function totalPages(rowCount: number, pageSize: number = MAPPINGS_PAGE_SIZE): number {
-  return Math.ceil(rowCount / pageSize)
-}
-
-// page_size is set far above any realistic result size (the backend
-// additionally clamps sample_count for broad categories -- see
-// SAMPLES_CAPPED_NOTE below -- so even a worst-case broad-category result
-// stays well under this) so the panel keeps fetching everything in one
-// call and sorting/paginating client-side.
-// 50_000 = the backend's own page_size cap on /mappings/search, which is
-// also its hard row limit (_MAPPINGS_ROW_LIMIT), so asking for more could
-// never return more -- and the route rejects anything larger with a 422.
-const MAPPINGS_FETCH_PAGE_SIZE = 50_000
-
-export function buildMappingsUrl(
-  annotationId: string,
-  source:       string,
-  sampleCount:  number,
-  uniquePairs:  boolean,
-  bypassCap = false,
-): string {
-  const base = `/api/mappings/search?annotation_id=${encodeURIComponent(annotationId)}&source=${source}&sample_count=${sampleCount}&unique_pairs=${uniquePairs}&page_size=${MAPPINGS_FETCH_PAGE_SIZE}`
-  return bypassCap ? `${base}&bypass_cap=true` : base
-}
-
-// Leaf ids have a fixed, well-known shape per source (mirrors the same
-// shape assumptions cache_sql.py's _expand_to_leaf_ids already relies on
-// server-side: a COG category is always a bare letter, never "COG####";
-// a KEGG pathway/BRITE code is numeric, never "K#####"; an Enzyme class
-// has fewer than 4 dot-separated segments). Used only to pick a sensible
-// *default* for the unique-pairs checkbox before the first response comes
-// back -- a wrong guess here doesn't affect correctness, just which
-// starting checkbox state the user sees, and they can always toggle it.
-export function isLikelyLeafAnnotation(source: string, annotationId: string): boolean {
-  switch (source) {
-    case 'cog':     return /^COG\d+$/i.test(annotationId)
-    case 'kegg':    return /^K\d+$/i.test(annotationId)
-    case 'enzyme':  return /^\d+\.\d+\.\d+\.\d+$/.test(annotationId)
-    default:        return true // taxonomy: always a specific node, not a category
-  }
-}
-
-export function buildMappingCsvRow(
-  row: {
-    taxonomy:  string | null
-    kegg_id:   string | null
-    enzyme:    string | null
-    cog_id:    string | null
-    timepoint: { datetime: string } | null
-  },
-  annotationId: string,
-  source:       string,
-): Record<string, string> {
-  return {
-    annotation_id: annotationId,
-    source,
-    date:     fmtDate(row.timepoint?.datetime ?? ''),
-    time:     fmtTime(row.timepoint?.datetime ?? ''),
-    taxonomy: row.taxonomy ?? '',
-    kegg_id:  row.kegg_id  ?? '',
-    enzyme:   row.enzyme   ?? '',
-    cog_id:   row.cog_id   ?? '',
-  }
 }
 
 // ── MappingsPanel ──────────────────────────────────────────────────────────

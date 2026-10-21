@@ -3,7 +3,7 @@ test_methods_page_facts.py
 ============================
 The Methods page (frontend/src/pages/MethodsPage.tsx) states the
 correlation lag window, the circular-shift prescreen size and the
-Correlates list limits as numbers. They live in its METHODS_FACTS block;
+Correlates list limits as numbers. They live in METHODS_FACTS (methodsFacts.ts);
 this checks that block against the backend's real values, so the page
 can't drift from the code (the old About page said "9 lags" and "1000
 random shifts" long after both had changed).
@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "FastAPI"))
 from api import correlation_sql  # pylint: disable=wrong-import-position
 from api.config import CORRELATION_LAGS, LAG_HOURS_PER_SAMPLE  # pylint: disable=wrong-import-position
 
-PAGE = Path(__file__).resolve().parent.parent / "frontend" / "src" / "pages" / "MethodsPage.tsx"
+PAGE = Path(__file__).resolve().parent.parent / "frontend" / "src" / "pages" / "methodsFacts.ts"
 
 
 def _facts() -> dict:

@@ -24,7 +24,8 @@ vi.mock('../utils/api', async importOriginal => ({
   downloadCsv: (...args: unknown[]) => downloadCsv(...args),
 }))
 
-import { ExplorePage, makeDefaultExploreState, type ExploreState } from '../pages/ExplorePage'
+import { ExplorePage } from '../pages/ExplorePage'
+import { makeDefaultExploreState, type ExploreState } from '../pages/exploreState'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)

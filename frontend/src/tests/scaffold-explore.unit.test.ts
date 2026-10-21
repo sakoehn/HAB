@@ -92,14 +92,15 @@
 import { describe, it, expect } from 'vitest'
 
 import { fmtDate, fmtTime } from '../utils/format'
-import { filterSummaryForChart, buildAggregatedChartRows, DETAIL_PAGE } from '../components/scaffolds/ScaffoldExplorePanel'
+import { filterSummaryForChart, buildAggregatedChartRows } from '../components/scaffolds/scaffoldChartData'
+import { DETAIL_PAGE } from '../components/scaffolds/ScaffoldExplorePanel'
 import type { ScaffoldSummaryRow, ScaffoldDetailRow } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure helpers (mirror component-internal logic)
 //
 // filterSummaryForChart and buildAggregatedChartRows are imported directly
-// from the real component rather than reimplemented here -- a local
+// from the real code the panel uses (scaffoldChartData) rather than reimplemented here -- a local
 // duplicate using synthetic ISO-format ("YYYY-MM-DD HH:MM") fixtures can't
 // catch a date filter that compares dates as text: ISO strings happen to
 // compare correctly as plain text, so it would never exercise the real

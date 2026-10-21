@@ -36,9 +36,9 @@
 
 import { describe, it, expect } from 'vitest'
 
-import { buildEgcTimeseriesCsvRows } from '../components/charts/EgcChart'
-import { buildMultiEgcCsvRows } from '../components/charts/MultiEgcChart'
-import { buildGroupedEgcCsvRows } from '../components/charts/GroupedEgcChart'
+import {
+  buildEgcTimeseriesCsvRows, buildMultiEgcCsvRows, buildGroupedEgcCsvRows,
+} from '../components/charts/chartCsv'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // buildEgcTimeseriesCsvRows

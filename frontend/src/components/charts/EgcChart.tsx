@@ -22,6 +22,7 @@ import { DateRangePicker } from '../ui/DateRangePicker'
 import { ChartControls }  from './ChartControls'
 import { ScaffoldBtn }    from '../scaffolds/ScaffoldBtn'
 import { HierarchyBtn }   from '../hierarchy/HierarchyBtn'
+import { buildEgcTimeseriesCsvRows } from './chartCsv'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = createPlotlyComponent(PlotlyBase as any)
@@ -52,26 +53,6 @@ export type EgcChartHandle = {
 // with `metric`/`standardized`/`smoothed` recorded on every row -- d.egc
 // is whichever transform is currently displayed (metric swap, z-score,
 // LOWESS smoothing all already applied upstream), not necessarily raw EGC.
-
-export function buildEgcTimeseriesCsvRows(
-  points:       { sample: string; datetime: string; egc: number | null; tide_wl?: number | null }[],
-  annotationId: string,
-  metric:       ChartMetric,
-  standardize:  boolean,
-  smoothed:     boolean,
-  showTide:     boolean,
-): Record<string, unknown>[] {
-  return points.map(d => ({
-    annotation_id: annotationId,
-    sample:        d.sample,
-    date:          d.datetime,
-    [metric]:      d.egc,
-    metric,
-    standardized:  standardize,
-    smoothed,
-    ...(showTide ? { tide_predicted_wl_m: d.tide_wl } : {}),
-  }))
-}
 
 export const EgcChart = forwardRef<EgcChartHandle, {
   data:           AnnotationItem[]

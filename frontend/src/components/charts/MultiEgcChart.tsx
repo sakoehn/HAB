@@ -21,6 +21,7 @@ import { HelpTooltip } from '../ui/HelpTooltip'
 import { ChartControls } from './ChartControls'
 import { ScaffoldBtn }   from '../scaffolds/ScaffoldBtn'
 import { HierarchyBtn }  from '../hierarchy/HierarchyBtn'
+import { buildMultiEgcCsvRows } from './chartCsv'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = createPlotlyComponent(PlotlyBase as any)
@@ -52,39 +53,6 @@ type SeriesEntry = {
   source:       string
   isGrouped?:   boolean
   scaffoldsDisabled?: boolean
-}
-
-// buildMultiEgcCsvRows
-// Exported so tests can exercise the real CSV row shape directly.
-// The value column is named from the active metric, with
-// metric/standardized/smoothed recorded on every row.
-export function buildMultiEgcCsvRows(
-  chartData:   Record<string, unknown>[],
-  series:      { id: string; annotationId: string; source?: string }[],
-  metric:      ChartMetric,
-  standardize: boolean,
-  smoothed:    boolean,
-  showTide:    boolean,
-): Record<string, unknown>[] {
-  const rows: Record<string, unknown>[] = []
-  for (const row of chartData) {
-    for (const s of series) {
-      const val = row[s.id]
-      if (val !== null && val !== undefined) {
-        rows.push({
-          annotation_id: s.annotationId,
-          source:        s.source ?? '',
-          date:          row._dt ?? row.date,
-          [metric]:      val,
-          metric,
-          standardized:  standardize,
-          smoothed,
-          ...(showTide ? { tide_predicted_wl_m: row.tide_wl ?? null } : {}),
-        })
-      }
-    }
-  }
-  return rows
 }
 
 export function MultiEgcChart({

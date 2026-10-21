@@ -18,6 +18,7 @@ import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { StatsPanel }    from '../ui/StatsPanel'
 import { DateRangePicker } from '../ui/DateRangePicker'
 import { ChartControls }  from './ChartControls'
+import { buildGroupedEgcCsvRows } from './chartCsv'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = createPlotlyComponent(PlotlyBase as any)
@@ -33,30 +34,6 @@ type SeriesEntry = {
   name:         string | null
   data:         AnnotationItem[]
   color:        string
-}
-
-// buildGroupedEgcCsvRows
-// Exported so tests can exercise the real CSV row shape directly.
-// The value column is named from the active metric, with metric/
-// standardized/smoothed recorded on every row, so the CSV records which
-// transform (metric swap, z-score, LOWESS smoothing) was applied.
-export function buildGroupedEgcCsvRows(
-  points:      { datetime: string; egc: number | null; tide_wl?: number | null }[],
-  groupLabel:  string,
-  metric:      ChartMetric,
-  standardize: boolean,
-  smoothed:    boolean,
-  showTide:    boolean,
-): Record<string, unknown>[] {
-  return points.map(d => ({
-    group:        groupLabel,
-    date:         d.datetime,
-    [metric]:     d.egc,
-    metric,
-    standardized: standardize,
-    smoothed,
-    ...(showTide ? { tide_predicted_wl_m: d.tide_wl } : {}),
-  }))
 }
 
 export function GroupedEgcChart({

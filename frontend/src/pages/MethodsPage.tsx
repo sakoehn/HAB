@@ -12,17 +12,7 @@
 
 import type { ReactNode } from 'react'
 import { LOWESS_BANDWIDTH_MIN, LOWESS_BANDWIDTH_MAX } from '../components/charts/ChartControls'
-
-export const METHODS_FACTS = {
-  // FastAPI/api/config.py CORRELATION_LAGS / LAG_HOURS_PER_SAMPLE
-  correlationLags: [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6],
-  lagHoursPerSample: 4,
-  // FastAPI/api/correlation_sql.py CIRCULAR_SHIFT_SCREEN_TOP_N
-  circularShiftScreenTopN: 200,
-  // /correlations/family `limit` Query(default, le=max)
-  familyLimitDefault: 50,
-  familyLimitMax: 500,
-}
+import { METHODS_FACTS } from './methodsFacts'
 
 const N_LAGS  = METHODS_FACTS.correlationLags.length
 const MAX_LAG = Math.max(...METHODS_FACTS.correlationLags)

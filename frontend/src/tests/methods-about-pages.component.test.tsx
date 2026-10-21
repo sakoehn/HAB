@@ -16,7 +16,8 @@
  */
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { MethodsPage, METHODS_FACTS } from '../pages/MethodsPage'
+import { MethodsPage } from '../pages/MethodsPage'
+import { METHODS_FACTS } from '../pages/methodsFacts'
 import { AboutPage } from '../pages/AboutPage'
 import { NAV_ITEMS } from '../constants'
 

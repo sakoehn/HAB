@@ -61,7 +61,7 @@
 
 import { describe, it, expect } from 'vitest'
 
-import { makeDefaultExploreState } from '../pages/ExplorePage'
+import { makeDefaultExploreState } from '../pages/exploreState'
 import type { ExploreSortCol, ExploreSection, SortDir } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────

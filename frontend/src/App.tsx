@@ -12,26 +12,14 @@ import { NAV_ITEMS, resetSourceCounters } from './constants'
 import { apiFetch } from './utils/api'
 import { ThemeToggle, ResetBtn } from './components/ui/controls'
 import './App.css'
-import {
-  AnalyzePage,
-  makeDefaultAnalyzeState,
-  type AnalyzeState,
-} from './pages/AnalyzePage'
-import {
-  ComparePage,
-  makeDefaultCompareState,
-  type CompareState,
-} from './pages/ComparePage'
-import {
-  ExplorePage,
-  makeDefaultExploreState,
-  type ExploreState,
-} from './pages/ExplorePage'
-import {
-  TaxonomyPage,
-  makeDefaultTaxonomyState,
-  type TaxonomyState,
-} from './pages/TaxonomyPage'
+import { AnalyzePage } from './pages/AnalyzePage'
+import { makeDefaultAnalyzeState, type AnalyzeState } from './pages/analyzeState'
+import { ComparePage } from './pages/ComparePage'
+import { makeDefaultCompareState, type CompareState } from './pages/compareState'
+import { ExplorePage } from './pages/ExplorePage'
+import { makeDefaultExploreState, type ExploreState } from './pages/exploreState'
+import { TaxonomyPage } from './pages/TaxonomyPage'
+import { makeDefaultTaxonomyState, type TaxonomyState } from './pages/taxonomyState'
 import { AboutPage } from './pages/AboutPage'
 import { MethodsPage } from './pages/MethodsPage'
 

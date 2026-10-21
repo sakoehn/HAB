@@ -23,6 +23,7 @@ import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { TaxonomyTree } from '../components/taxonomy/TaxonomyTree'
 import { TaxonomyBrowseTree } from '../components/taxonomy/TaxonomyBrowseTree'
 import { ResetBtn } from '../components/ui/controls'
+import type { TaxonomyState } from './taxonomyState'
 
 // Rank dropdown options for the "download taxa list" export — value is the
 // lowercased form /taxonomy/export expects (e.g. "class", not the display
@@ -33,38 +34,6 @@ const RANK_EXPORT_OPTIONS = Object.entries(TAXONOMY_RANK_NAMES)
 
 // ── State shape + default ──────────────────────────────────────────────────
 // Co-located here because only TaxonomyPage uses TaxonomyState.
-
-export type TaxonomyState = {
-  rootId:            string | null
-  rootQuery:         string
-  rootSearchResults: AnnotationItem[]
-  rootSearchStatus:  ApiStatus
-  // How many taxa matched in all; more than rootSearchResults holds when
-  // the server returned only its first page.
-  rootSearchTotal:   number | null
-  // The checked branches. Read as "remove these from the scope" or "keep only
-  // these" depending on selectionMode -- switching modes keeps the same set.
-  excludedIds:       Set<string>
-  selectionMode:     'remove' | 'keep'
-  seriesCache:       SeriesCache
-  dateFrom:          string
-  dateTo:            string
-}
-
-export function makeDefaultTaxonomyState(): TaxonomyState {
-  return {
-    rootId:            null,
-    rootQuery:         '',
-    rootSearchResults: [],
-    rootSearchStatus:  'idle',
-    rootSearchTotal:   null,
-    excludedIds:       new Set(),
-    selectionMode:     'remove',
-    seriesCache:       {},
-    dateFrom:          '',
-    dateTo:            '',
-  }
-}
 
 // ── TaxonomyPage ────────────────────────────────────────────────────────────
 

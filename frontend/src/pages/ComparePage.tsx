@@ -36,31 +36,10 @@ import { ChartErrorBoundary } from '../components/ui/ChartErrorBoundary'
 import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { MappingsPanel } from '../components/mappings/MappingsPanel'
 import { GroupScaffoldModal } from '../components/scaffolds/GroupScaffoldModal'
+import type { CompareState } from './compareState'
 
 // ── State shape + default ──────────────────────────────────────────────────
 // Co-located here because only ComparePage uses CompareState.
-
-export type CompareState = {
-  query:         string
-  searchResults: AnnotationItem[]
-  searchStatus:  ApiStatus
-  entries:       CompareEntry[]
-  showMappings:  boolean
-  dateFrom:      string
-  dateTo:        string
-}
-
-export function makeDefaultCompareState(): CompareState {
-  return {
-    query:         '',
-    searchResults: [],
-    searchStatus:  'idle',
-    entries:       [],
-    showMappings:  false,
-    dateFrom:      '',
-    dateTo:        '',
-  }
-}
 
 // ── Series fetch helpers ─────────────────────────────────────────────────
 // Module-level — no component state needed. Shared by the initial-load

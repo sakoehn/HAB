@@ -70,7 +70,7 @@ import {
   buildMappingCsvRow,
   isLikelyLeafAnnotation,
   MAPPINGS_PAGE_SIZE,
-} from '../components/mappings/MappingsPanel'
+} from '../components/mappings/mappingsData'
 import type { MappingSortCol, MappingSearchRow } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,7 +149,7 @@ describe('mapping table column set', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mapping CSV export shape — imported directly from MappingsPanel (see import above)
+// Mapping CSV export shape — imported directly from mappingsData (see import above)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SAMPLE_ROW = {
@@ -212,7 +212,7 @@ describe('mapping CSV export shape', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sorting logic — imported directly from MappingsPanel (see import above)
+// Sorting logic — imported directly from mappingsData (see import above)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const RAW_ROWS: MappingSearchRow[] = [
@@ -381,7 +381,7 @@ describe('mapping row sorting — real raw "M/D/YY H:MM" date format', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pagination logic — imported directly from MappingsPanel (see import above)
+// Pagination logic — imported directly from mappingsData (see import above)
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('mapping table pagination', () => {
@@ -513,7 +513,7 @@ describe('unique pairs deduplication', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// API URL construction — imported directly from MappingsPanel (see import above)
+// API URL construction — imported directly from mappingsData (see import above)
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('mappings API URL construction', () => {

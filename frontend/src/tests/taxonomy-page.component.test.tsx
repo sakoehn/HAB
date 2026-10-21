@@ -19,7 +19,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useState } from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
-import { TaxonomyPage, makeDefaultTaxonomyState, type TaxonomyState } from '../pages/TaxonomyPage'
+import { TaxonomyPage } from '../pages/TaxonomyPage'
+import { makeDefaultTaxonomyState, type TaxonomyState } from '../pages/taxonomyState'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
