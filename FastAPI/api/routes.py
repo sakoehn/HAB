@@ -455,7 +455,7 @@ def search_annotations(
     # only real IDs that short are the 25 COG category letters and the 7 EC
     # classes ("E", "3"), which used to be unsearchable here (a 400) from
     # every search box in the app.
-    search_q, search_id = q, annotation_id
+    search_q, search_id = (q.strip() if q is not None else None), annotation_id
     if q is not None and not q.strip():
         raise HTTPException(status_code=400, detail="Search text is blank.")
     if q is not None and len(q.strip()) < 3 and not annotation_id:

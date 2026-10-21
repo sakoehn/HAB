@@ -902,9 +902,14 @@ def get_search_annotations(conn: sqlite3.Connection, sources: list[str], q: str 
         # string -- matching against it there would hit on any ancestor's
         # name, not just this node's own name, so taxonomy only matches
         # on `name`.
-        clauses.append("(name LIKE ? OR (source != 'taxonomy' AND annotation_id LIKE ?))")
-        params.append(f"%{q}%")
-        params.append(f"%{q}%")
+        # % and _ in q are searched for literally, not as LIKE wildcards.
+        clauses.append(
+            "(name LIKE ? ESCAPE '!' "
+            "OR (source != 'taxonomy' AND annotation_id LIKE ? ESCAPE '!'))"
+        )
+        literal = q.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+        params.append(f"%{literal}%")
+        params.append(f"%{literal}%")
     else:
         pass   # no clause added at all -- matches every annotation for these sources
 

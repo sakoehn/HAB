@@ -235,3 +235,28 @@ def test_one_unknown_source_mixed_with_real_ones_is_still_rejected(client):
         params={"q": "iron", "sources": ["cog", "bogus"]},
     )
     assert resp.status_code == 422
+
+
+# ── % and _ are searched for literally, not as SQL wildcards ────────────────
+
+def test_percent_signs_are_literal_not_match_everything(client):
+    """'%%%' contains no wildcard meaning for the user -- no real annotation
+    name contains it, so nothing matches (before, it matched every row)."""
+    resp = client.get("/search/annotations", params={"q": "%%%", "sources": "cog"})
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+
+
+def test_underscore_is_literal(client):
+    """'_' would otherwise match any single character, so '___' would match
+    every name of 3+ characters."""
+    resp = client.get("/search/annotations", params={"q": "___", "sources": "cog"})
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+
+
+def test_surrounding_spaces_are_ignored(client):
+    padded = client.get("/search/annotations", params={"q": "  synthase  ", "sources": "cog", "page_size": 5000}).json()
+    plain  = client.get("/search/annotations", params={"q": "synthase", "sources": "cog", "page_size": 5000}).json()
+    assert plain["total"] > 0
+    assert padded["total"] == plain["total"]
