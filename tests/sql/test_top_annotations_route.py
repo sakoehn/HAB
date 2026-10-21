@@ -186,3 +186,31 @@ def test_a_valid_date_still_works_after_the_validation_added(client):
     )
     resp.raise_for_status()
     assert resp.json()["data"]
+
+
+# ── What the in-process cache keeps ─────────────────────────────────────────
+
+def test_cache_keeps_only_the_rows_a_request_can_return(client, monkeypatch):
+    """limit is at most 200, so the cache never needs more than the top 200
+    -- not the full ranking (68,820 taxonomy rows, tens of MB per entry)."""
+    from collections import OrderedDict
+    import api.routes as routes_mod
+    monkeypatch.setattr(routes_mod, "_TOP_ANN_CACHE_SQL", OrderedDict())
+
+    small = client.get("/annotations/top", params={"source": "taxonomy", "limit": 5}).json()
+    (_key, (_inserted_at, (rows, _count))), = routes_mod._TOP_ANN_CACHE_SQL.items()
+    assert len(rows) == 200
+    full = client.get("/annotations/top", params={"source": "taxonomy", "limit": 200}).json()
+    assert full["data"][:5] == small["data"]
+    assert len(full["data"]) == 200
+
+
+def test_same_date_written_two_ways_shares_one_cache_entry(client, monkeypatch):
+    from collections import OrderedDict
+    import api.routes as routes_mod
+    monkeypatch.setattr(routes_mod, "_TOP_ANN_CACHE_SQL", OrderedDict())
+
+    a = client.get("/annotations/top", params={"source": "cog", "limit": 10, "date_from": "2021-05-20"}).json()
+    b = client.get("/annotations/top", params={"source": "cog", "limit": 10, "date_from": "2021-05-20T00:00:00"}).json()
+    assert a["data"] == b["data"]
+    assert len(routes_mod._TOP_ANN_CACHE_SQL) == 1

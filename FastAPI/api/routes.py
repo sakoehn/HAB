@@ -128,7 +128,8 @@ def paginate(data: list, page: int, page_size: int) -> dict:
 
 # ── Top-annotations cache ─────────────────────────────────────────────────────
 
-# One real taxonomy entry measures ~52 MB, and a server lifetime can
+# Each entry keeps only the top _TOP_ANN_MAX_LIMIT rows (~50 KB; the full
+# taxonomy ranking would be ~68,800 rows, tens of MB), and a server lifetime can
 # accumulate one entry per (source, date_from, date_to) combination ever
 # requested (unparseable dates are rejected before a key is built, see
 # top_annotations_by_egc). This process also has no hook to learn that a
@@ -143,6 +144,9 @@ def paginate(data: list, page: int, page_size: int) -> dict:
 # hour without anyone needing to restart the process.
 _TOP_ANN_CACHE_MAX_ENTRIES = 64
 _TOP_ANN_CACHE_TTL_SECONDS = 30 * 60
+# The most rows /annotations/top can return (its `limit` cap) -- all an
+# entry needs to keep, rather than the full ranking.
+_TOP_ANN_MAX_LIMIT = 200
 
 _TOP_ANN_CACHE_SQL: "OrderedDict[tuple, tuple[float, list]]" = OrderedDict()
 
@@ -724,7 +728,7 @@ def cog_path(request: Request, id: str = Query(...)):
 def top_annotations_by_egc(
     request:   Request,
     source:    AnnotationSource = Query(...),
-    limit:     int = Query(25, ge=1, le=200),
+    limit:     int = Query(25, ge=1, le=_TOP_ANN_MAX_LIMIT),
     date_from: str | None = Query(None),
     date_to:   str | None = Query(None),
 ):
@@ -753,7 +757,13 @@ def top_annotations_by_egc(
         if not samples:
             raise HTTPException(status_code=404, detail="No samples found")
 
-        cache_key = (source.value, date_from or "", date_to or "")
+        # Keyed by the parsed dates, so one date written two ways (e.g.
+        # "2021-05-20" and "2021-05-20T00:00:00") shares an entry.
+        cache_key = (
+            source.value,
+            _parse_any_datetime(date_from).isoformat() if date_from else "",
+            _parse_any_datetime(date_to).isoformat() if date_to else "",
+        )
 
         cached_entry = _top_ann_cache_get(cache_key)
         if cached_entry is None:
@@ -762,14 +772,14 @@ def top_annotations_by_egc(
                 # precomputed annotation_catalog table instead of the per-sample
                 # timepoint scan below, which exists only to resolve date-range
                 # filters and would otherwise run needlessly on every request.
-                cached_entry = (get_top_annotations_from_catalog_sql(db, source.value), len(samples))
+                cached_entry = (get_top_annotations_from_catalog_sql(db, source.value)[:_TOP_ANN_MAX_LIMIT], len(samples))
             else:
                 active_samples = [
                     s for s in samples
                     if is_within_date_range((get_timepoint(s) or {}).get("datetime"), date_from, date_to)
                 ]
                 cached_entry = (
-                    (get_top_annotations_sql(db, source.value, active_samples), len(active_samples))
+                    (get_top_annotations_sql(db, source.value, active_samples)[:_TOP_ANN_MAX_LIMIT], len(active_samples))
                     if active_samples else ([], 0)
                 )
             _top_ann_cache_set(cache_key, cached_entry)
