@@ -132,6 +132,15 @@ describe('ExternalLinks — kegg', () => {
   })
 })
 
+describe('ExternalLinks — cog category letter', () => {
+  it('links a one-letter functional category to its NCBI category page', () => {
+    render(<ExternalLinks annotationId="E" source="cog" />)
+    expect(screen.getByRole('link', { name: 'NCBI COG' })).toHaveAttribute(
+      'href', 'https://www.ncbi.nlm.nih.gov/research/cog/cogcategory/E/',
+    )
+  })
+})
+
 describe('ExternalLinks — cog', () => {
   it('gets the real NCBI COG entry link', () => {
     render(<ExternalLinks annotationId="COG0001" source="cog" />)

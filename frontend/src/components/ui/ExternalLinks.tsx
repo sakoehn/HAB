@@ -132,6 +132,14 @@ export function ExternalLinks({
   }
 
   if (source === 'cog') {
+    // The 25 functional categories are single letters, with their own page.
+    if (/^[A-Z]$/.test(id)) {
+      return link(
+        `https://www.ncbi.nlm.nih.gov/research/cog/cogcategory/${id}/`,
+        'NCBI COG',
+        'NCBI COG functional category',
+      )
+    }
     return link(
       `https://www.ncbi.nlm.nih.gov/research/cog/cog/${id}/`,
       'NCBI COG',
