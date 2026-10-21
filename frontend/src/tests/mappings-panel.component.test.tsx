@@ -384,3 +384,27 @@ describe('MappingsPanel — empty-state discloses the real cap scope', () => {
     expect(screen.queryByText(/actually searched/i)).not.toBeInTheDocument()
   })
 })
+
+describe('MappingsPanel — an older response never replaces a newer one', () => {
+  it('keeps the latest request\'s rows when the earlier one finishes last', async () => {
+    const resolvers: ((v: unknown) => void)[] = []
+    mockFetch.mockImplementation((url: string) =>
+      url.includes('/api/mappings/search')
+        ? new Promise(resolve => resolvers.push(resolve))
+        : Promise.resolve(jsonResponse({})),
+    )
+    render(<MappingsPanel annotationId="K00001" source="kegg" />)
+    const user = await open()                                 // request 1 (all pairs)
+    await user.click(screen.getByRole('checkbox', { name: /unique pairs only/i }))  // request 2
+    await waitFor(() => expect(resolvers).toHaveLength(2))
+
+    // The newer request (2 rows) answers first, then the older one (1 row).
+    resolvers[1](jsonResponse({ data: [makeRow('5/27/21 8:00', 'K1'), makeRow('5/28/21 8:00', 'K2')] }))
+    const rowCount = () => document.querySelector('.toggle-count')?.textContent
+    await waitFor(() => expect(rowCount()).toBe('2 rows'))
+    resolvers[0](jsonResponse({ data: [makeRow('5/27/21 8:00', 'K9')] }))
+
+    await new Promise(r => setTimeout(r, 50))
+    expect(rowCount()).toBe('2 rows')
+  })
+})

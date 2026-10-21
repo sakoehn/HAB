@@ -21,7 +21,7 @@
 //     on-screen preview's cap -- a deliberate, explicit action a researcher
 //     opts into and is willing to wait on, unlike passive browsing
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef } from 'react'
 
 import type { ApiStatus, MappingSortCol, SortDir, MappingSearchRow } from '../../types'
 import { apiFetch, downloadCsv } from '../../utils/api'
@@ -110,8 +110,12 @@ export function MappingsPanel({
   const MAPPINGS_TIMEOUT_MS = 120_000
   const SLOW_NOTICE_DELAY_MS = 8_000
   const [showSlowNotice, setShowSlowNotice] = useState(false)
+  // Only the latest load may apply its response; an earlier one that
+  // finishes later is ignored.
+  const loadSeqRef = useRef(0)
 
   async function loadMappings(count = sampleCount, unique = uniqueOnly) {
+    const requestId = ++loadSeqRef.current
     setStatus('loading')
     setPage(1)
     setRequestedSampleCount(count)
@@ -129,6 +133,7 @@ export function MappingsPanel({
         buildMappingsUrl(annotationId, source, count, unique),
         MAPPINGS_TIMEOUT_MS,
       )
+      if (requestId !== loadSeqRef.current) return
       setAllRows(r.data ?? [])
       setSamplesCapped(r.samples_were_capped ?? false)
       setResultsWereTruncated(r.results_were_truncated ?? false)
@@ -142,10 +147,11 @@ export function MappingsPanel({
       }
       setStatus('ok')
     } catch {
+      if (requestId !== loadSeqRef.current) return
       setStatus('error')
     } finally {
       clearTimeout(slowTimer)
-      setShowSlowNotice(false)
+      if (requestId === loadSeqRef.current) setShowSlowNotice(false)
     }
   }
 
