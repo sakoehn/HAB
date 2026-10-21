@@ -6,7 +6,7 @@ FastAPI application entry point.
 Responsibilities (only)
 ~~~~~~~~~~~~~~~~~~~~~~~
 - Create the FastAPI app instance.
-- Register CORS middleware.
+- Register CORS middleware and the browser security headers.
 - Mount the frontend static files (production mode).
 - Define the lifespan hook that opens the SQLite connection and validates
   the sample time axis on startup.
@@ -17,7 +17,7 @@ All business logic lives in the api/ package.
 Usage
 ~~~~~
     uvicorn main:app --reload            # development
-    uvicorn main:app --host 0.0.0.0      # production
+    uvicorn main:app --host 127.0.0.1    # production, behind nginx
 """
 
 import logging
@@ -74,6 +74,40 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Browser security headers on every response. The CSP lets the page run only
+# its own scripts and call only its own API; styles may be inline because
+# Plotly injects <style> elements, and fonts come from Google Fonts (the
+# stylesheet @imports them). Chart exports render through data:/blob: images.
+CONTENT_SECURITY_POLICY = "; ".join([
+    "default-src 'self'",
+    "script-src 'self'",
+    "connect-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+])
+SECURITY_HEADERS = {
+    "Content-Security-Policy":   CONTENT_SECURITY_POLICY,
+    # Only takes effect over HTTPS; nginx terminates TLS in production.
+    "Strict-Transport-Security": "max-age=31536000",
+    "X-Content-Type-Options":    "nosniff",
+    "X-Frame-Options":           "DENY",
+    "Referrer-Policy":           "strict-origin-when-cross-origin",
+    "Permissions-Policy":        "camera=(), microphone=(), geolocation=()",
+}
+
+
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 # Must be included before the static-files mount so API routes are matched
