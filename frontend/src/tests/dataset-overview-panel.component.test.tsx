@@ -338,3 +338,28 @@ describe('DatasetOverviewPanel — groups use every real parent for kegg and cog
     expect(screen.getByTitle('Amino acid transport and metabolism')).toBeInTheDocument()
   })
 })
+
+describe('DatasetOverviewPanel — a chart started for earlier rows is dropped', () => {
+  it('reloading the overview while the time series loads discards that time series', async () => {
+    const rows = [makeRow('K1', 'group1', 10), makeRow('K2', 'group2', 5)]
+    const held: (() => void)[] = []
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve(jsonResponse({ data: rows, sample_count: 128 }))
+      if (url.includes('/api/series/annotations'))
+        return new Promise(resolve => held.push(() => resolve(jsonResponse({ data: [] }))))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    const user = await loadOverview()
+    await user.click(await screen.findByRole('button', { name: /Load time series/i }))
+    await waitFor(() => expect(held.length).toBeGreaterThan(0))
+
+    await loadOverview()                         // new rows; the chart starts over
+    await screen.findByRole('button', { name: /Load time series/i })
+    held.forEach(release => release())           // the old time series arrives late
+    await new Promise(r => setTimeout(r, 50))
+
+    expect(screen.getByRole('button', { name: /Load time series/i })).toBeInTheDocument()
+  })
+})

@@ -539,3 +539,34 @@ describe('AnnotationsByParentPanel — files a multi-category COG under every re
     expect(hRow.textContent).toContain('1 annotations')
   })
 })
+
+describe('AnnotationsByParentPanel — a group trend from the previous source is not reused', () => {
+  it('a late series for the old source does not stand in for the new source\'s same-named group', async () => {
+    const heldCog: (() => void)[] = []
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top') && url.includes('source=cog'))
+        return Promise.resolve(jsonResponse({ data: [makeRow('COG0001', 'Shared', 100)] }))
+      if (url.includes('/api/annotations/top') && url.includes('source=enzyme'))
+        return Promise.resolve(jsonResponse({ data: [makeRow('EC:1.1.1.1', 'Shared', 50)] }))
+      if (url.includes('/api/series/annotations') && url.includes('source=cog'))
+        return new Promise(resolve => heldCog.push(() => resolve(jsonResponse({ data: [] }))))
+      if (url.includes('/api/series/annotations')) return Promise.resolve(jsonResponse({ data: [] }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    const user = userEvent.setup()
+    const { rerender } = render(<AnnotationsByParentPanel source="cog" />)
+    await user.click(await screen.findByRole('button', { name: /Shared/ }))   // cog series held
+    await waitFor(() => expect(heldCog.length).toBeGreaterThan(0))
+
+    rerender(<AnnotationsByParentPanel source="enzyme" />)
+    await screen.findByRole('button', { name: /Shared/ })
+    heldCog.forEach(release => release())                                      // arrives late
+    await new Promise(r => setTimeout(r, 50))
+
+    await user.click(screen.getByRole('button', { name: /Shared/ }))
+    await waitFor(() => {
+      const urls = mockFetch.mock.calls.map(c => String(c[0]))
+      expect(urls.some(u => u.includes('/api/series/annotations') && u.includes('source=enzyme'))).toBe(true)
+    })
+  })
+})

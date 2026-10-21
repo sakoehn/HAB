@@ -147,6 +147,7 @@ export function DatasetOverviewPanel({
   // actual parameters snapshotted at the moment `rows` was set.
   const [loadedParams, setLoadedParams] = useState<{ source: string; dateFrom: string; dateTo: string } | null>(null)
   const requestSeqRef = useRef(0)
+  const chartSeqRef   = useRef(0)
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- A page reset (new resetKey) clears this panel.
@@ -157,6 +158,7 @@ export function DatasetOverviewPanel({
     setSeriesTruncatedFrom(null)
     setTopLevelOpen(false)
     setRealParents(null)
+    requestSeqRef.current++ // anything still loading belongs to the old page
   }, [resetKey])
 
   async function load() {
@@ -235,6 +237,10 @@ export function DatasetOverviewPanel({
     const allMembers = top5Groups.flatMap(g => g.items)
     const allAnns = allMembers.slice(0, 40)
     if (!allAnns.length) return
+    // Dropped if the rows change (load() or a reset) or the chart is
+    // loaded again before this finishes.
+    const rowsRequestId  = requestSeqRef.current
+    const chartRequestId = ++chartSeqRef.current
     // The actually-loaded source, not the live dropdown -- switching
     // the source after loading rows (but before clicking this) must not
     // silently fetch a different source's time series for rows still
@@ -260,6 +266,7 @@ export function DatasetOverviewPanel({
       map[id] = data
       if (f) failed.push(id)
     }
+    if (rowsRequestId !== requestSeqRef.current || chartRequestId !== chartSeqRef.current) return
     setSeriesData(map)
     setSeriesFailed(failed)
     setSeriesStatus('ok')
@@ -747,6 +754,9 @@ export function AnnotationsByParentPanel({
 
   async function loadGroupSeries(parent: string, items: TopAnnotation[], force = false) {
     if (!force && groupSeriesData[parent]) return
+    // Series are kept by parent name, which another source can share --
+    // a fetch that outlives its rows (a source change) must not land.
+    const rowsRequestId = requestSeqRef.current
     setGroupSeriesData(prev => ({ ...prev, [parent]: { data: {}, failed: [], status: 'loading' } }))
     const results = await Promise.all(
       items.slice(0, 20).map(ann =>
@@ -767,6 +777,7 @@ export function AnnotationsByParentPanel({
       map[id] = data
       if (f) failed.push(id)
     }
+    if (rowsRequestId !== requestSeqRef.current) return
     setGroupSeriesData(prev => ({ ...prev, [parent]: { data: map, failed, status: 'ok' } }))
   }
 
