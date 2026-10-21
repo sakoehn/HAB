@@ -54,12 +54,7 @@ jobs:
         run: npm ci
 
       - name: Lint
-        # Non-blocking for now: 27 pre-existing errors remain
-        # (react-refresh/only-export-components, react-hooks/static-components,
-        # react-hooks/set-state-in-effect) -- fix in progress, tracked separately.
-        # Flip to blocking once that cleanup finishes.
-        continue-on-error: true
-        run: npm run lint
+        run: npm run lint -- --max-warnings 0
 
       - name: Unit / component tests
         run: npm test
