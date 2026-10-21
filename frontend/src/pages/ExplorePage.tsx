@@ -15,7 +15,7 @@
 // defined in this file because they are only used here and are tightly
 // coupled to ExploreState.
 
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 
 import type {
   ApiStatus, TopAnnotation, AnnotationItem,
@@ -106,6 +106,13 @@ export function ExploreSortTh({
 // ── DatasetOverviewPanel ───────────────────────────────────────────────────
 // Exported for direct component testing (the 40-annotation fetch cap and
 // the 200-row truncation check).
+
+
+// Line colors for Dataset Overview's top-5 group chart.
+const CHART_GROUP_COLORS = [
+  'var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)',
+  'var(--chart-4)', 'var(--amber)',
+]
 
 export function DatasetOverviewPanel({
   resetKey,
@@ -220,14 +227,9 @@ export function DatasetOverviewPanel({
         items,
       }))
       .sort((a, b) => b.sumEgc - a.sumEgc)
-  }, [rows, loadedParams, realParents])
+  }, [rows, loadedParams, realParents, source])
 
   const top5Groups = parentGroups.slice(0, 5)
-
-  const CHART_GROUP_COLORS = [
-    'var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)',
-    'var(--chart-4)', 'var(--amber)',
-  ]
 
   async function loadTemporalChart() {
     const allMembers = top5Groups.flatMap(g => g.items)
@@ -1375,7 +1377,7 @@ export function ExplorePage({
   // the full real parent list for the tooltip when there's more than one.
   // full: every real parent, readable, for the CSV `group` column ('' when
   // there is no parent).
-  function topGroupDisplay(row: TopAnnotation): { label: string; title: string | undefined; full: string } {
+  const topGroupDisplay = useCallback((row: TopAnnotation): { label: string; title: string | undefined; full: string } => {
     const parents = MULTI_PARENT_SOURCES.has(effectiveTopSource) ? topRealParents[row.annotation_id] : undefined
     if (parents && parents.length > 0) {
       const names = parents.map(p => p.name)
@@ -1387,7 +1389,7 @@ export function ExplorePage({
     }
     const expanded = row.parent ? expandParentLabel(row.parent, effectiveTopSource) : '—'
     return { label: expanded, title: expanded === '—' ? undefined : expanded, full: expanded === '—' ? '' : expanded }
-  }
+  }, [effectiveTopSource, topRealParents])
 
   // Ranks actually present among the loaded rows — mirrors LeftResultList's
   // availableSources/availableRanks pattern on the Analyze page. depth is
@@ -1429,7 +1431,7 @@ export function ExplorePage({
           ? String(av).localeCompare(String(bv))
           : String(bv).localeCompare(String(av))
       })
-  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter, topRealParents, effectiveTopSource])
+  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter, topGroupDisplay])
 
   // Must scale against `sorted` (what's
   // actually visible after the rank/text filters), not the unfiltered

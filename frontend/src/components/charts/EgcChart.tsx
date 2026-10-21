@@ -387,7 +387,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
       })
     }
     return traces
-  }, [pointsWithTide, resolvedColor, annotationId, hoverYLabel, yLabel, showTide, metric, standardizeApplied, showNightShading, showDayBands, sunTimes, nativeTide])
+  }, [pointsWithTide, resolvedColor, annotationId, hoverYLabel, showTide, metric, standardizeApplied, showNightShading, showDayBands, sunTimes, nativeTide])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {

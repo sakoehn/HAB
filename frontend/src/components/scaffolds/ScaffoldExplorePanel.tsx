@@ -30,7 +30,6 @@ function resolveCssVar(value: string, fallback: string): string {
 
 // Builds one Plotly trace (line or bar) from a series of scaffold summary
 // rows — shared by the aggregated/split chart and the per-term chart.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildScaffoldTrace(
   label:  string,
   color:  string,

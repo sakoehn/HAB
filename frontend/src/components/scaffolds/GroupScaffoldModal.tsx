@@ -170,7 +170,6 @@ export function GroupScaffoldModal({
         setStatus('ok')
       })
     return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [members])
 
   // ── Retry ───────────────────────────────────────────────────────────

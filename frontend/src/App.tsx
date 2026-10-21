@@ -86,8 +86,9 @@ export default function App() {
       )
         .then(r => {
           if (r.index_ready) setIndexReady(true)
-          if (r.date_min && r.date_max && !dataDateRange) {
-            setDataDateRange({ min: r.date_min, max: r.date_max })
+          if (r.date_min && r.date_max) {
+            const range = { min: r.date_min, max: r.date_max }
+            setDataDateRange(prev => prev ?? range)
           }
         })
         .catch(() => {})

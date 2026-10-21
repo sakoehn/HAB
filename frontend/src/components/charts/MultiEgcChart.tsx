@@ -1,7 +1,7 @@
 // @ts-expect-error plotly.js-dist-min ships no .d.ts; types from @types/plotly.js
 import PlotlyBase from 'plotly.js-dist-min'
 import createPlotlyComponent from 'react-plotly.js/factory'
-import { useState, useRef, useMemo, useEffect } from 'react'
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 
 import type { AnnotationItem, ChartMetric } from '../../types'
 import { extractEgc, extractNormEgc } from '../../utils/stats'
@@ -173,15 +173,19 @@ export function MultiEgcChart({
   // standardizeApplied (chart-wide, for the shared axis label) is true
   // when at least one series qualifies -- same shared-label limitation
   // the axis title already has for mixed per-series metrics elsewhere.
-  const canStandardizeSeries = (id: string) =>
-    canApplyZScore(unsmoothedRows.map(r => (r[id] as number | null) ?? null))
+  const canStandardizeSeries = useCallback(
+    (id: string) => canApplyZScore(unsmoothedRows.map(r => (r[id] as number | null) ?? null)),
+    [unsmoothedRows],
+  )
   const standardizeApplied = standardize && series.some(s => canStandardizeSeries(s.id))
 
   // Same per-series reasoning as
   // canStandardizeSeries above -- applyLowess is a silent no-op for a
   // series with fewer than 3 real points, independently per series.
-  const canSmoothSeries = (id: string) =>
-    canApplyLowess(unsmoothedRows.map(r => (r[id] as number | null) ?? null))
+  const canSmoothSeries = useCallback(
+    (id: string) => canApplyLowess(unsmoothedRows.map(r => (r[id] as number | null) ?? null)),
+    [unsmoothedRows],
+  )
   const smoothedApplied = smoothed && series.some(s => canSmoothSeries(s.id))
 
   const chartDataRaw = useMemo<ChartRow[]>(() => {
@@ -287,7 +291,7 @@ export function MultiEgcChart({
       .filter(m => m > 0)
     if (means.length < 2) return false
     return Math.max(...means) / Math.min(...means) > 10
-  }, [series, standardize, dateFrom, dateTo, unsmoothedRows])
+  }, [series, standardize, dateFrom, dateTo, canStandardizeSeries])
 
   const yLabel = metric === 'norm_egc'
     ? (standardizeApplied ? 'Relative Abundance (Z-score, σ from mean)' : 'Relative Abundance')
@@ -409,7 +413,7 @@ export function MultiEgcChart({
     }
 
     return traces
-  }, [chartData, series, showTide, metric, standardize, unsmoothedRows, resolvedColors, smoothed, nativeTide])
+  }, [chartData, series, showTide, metric, standardize, resolvedColors, smoothed, nativeTide, canStandardizeSeries, canSmoothSeries])
 
   // ── Layout ────────────────────────────────────────────────────────────────
   const layout = useMemo(() => {
