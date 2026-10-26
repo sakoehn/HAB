@@ -92,7 +92,7 @@ export function MultiEgcChart({
 
   const { sunTimes, tides, tidesLoading, tidesError } =
     useSolarTideData(showNightShading || showTide)
-  const { allSamples } = useAllSamples()
+  const { allSamples, allSamplesError } = useAllSamples()
 
   // Wide-format row: one row per datetime, each series has its own column.
   type ChartRow = { date: string; _dt: string; _ts: number } & Record<string, number | null | string>
@@ -497,8 +497,17 @@ export function MultiEgcChart({
   return (
     <div className="chart-card">
       <div className="chart-card-header">
-        <div className="chart-card-title">
-          {title ?? `${yLabel} — ${series.length} Annotations`}
+        <div>
+          <div className="chart-card-title">
+            {title ?? `${yLabel} — ${series.length} Annotations`}
+          </div>
+          {/* Without the full sample list, a series can't show the samples
+              it wasn't detected in -- the line runs straight across them. */}
+          {allSamplesError && (
+            <div style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--amber)', marginTop: 2 }}>
+              ⚠ full sample timeline unavailable — detection gaps may not be shown
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button

@@ -58,7 +58,7 @@ export function GroupedEgcChart({
 
   const { sunTimes, tides, tidesLoading, tidesError } =
     useSolarTideData(showNightShading || showTide)
-  const { allSamples } = useAllSamples()
+  const { allSamples, allSamplesError } = useAllSamples()
 
   // Two things a summed chart must not hide: a timepoint where no member
   // was detected (the trace must break there, not skip straight to the
@@ -338,6 +338,13 @@ export function GroupedEgcChart({
             {yLabel} · {processedPoints.length} timepoints
             {detectedTimepointCount < processedPoints.length && ` (detected in ${detectedTimepointCount})`}
           </div>
+          {/* Same disclosure as EgcChart: without the full sample list, the
+              summed line runs straight across samples nothing was detected in. */}
+          {allSamplesError && (
+            <div style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--amber)', marginTop: 2 }}>
+              ⚠ full sample timeline unavailable — detection gaps may not be shown
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="btn sm" onClick={handleExportPng}>↓ PNG</button>
