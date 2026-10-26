@@ -121,7 +121,7 @@ export function GroupedEgcChart({
   const standardizeApplied = standardize && canApplyZScore(unsmoothedPointsRaw.map(p => p.egc))
 
   // applyLowess is a silent no-op with
-  // fewer than 3 real points -- this is whether it ACTUALLY smoothed,
+  // fewer than LOWESS_MIN_POINTS real points -- this is whether it ACTUALLY smoothed,
   // not just whether the toggle is on.
   const smoothedApplied = smoothed && canApplyLowess(unsmoothedPointsRaw.map(p => p.egc))
 

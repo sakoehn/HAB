@@ -96,6 +96,12 @@ export function canApplyZScore(vals: (number | null)[]): boolean {
 // reproduce a point's own value by exact coincidence (real floating-
 // point EGC data lying perfectly collinear), not structurally.
 
+// Fewer real points than this and smoothing would change nothing: below 3
+// there is nothing to fit, and at exactly 3 the window covers the whole
+// series, the farthest point gets zero weight, and every fitted value
+// lands back on its own point. Such a series is returned as is.
+export const LOWESS_MIN_POINTS = 4
+
 export function applyLowess(
   data: { egc: number | null; ts: number }[],
   bandwidth: number,
@@ -104,7 +110,7 @@ export function applyLowess(
     .map((d, i) => ({ i, x: d.ts, y: d.egc }))
     .filter((p): p is { i: number; x: number; y: number } => p.y !== null)
 
-  if (pts.length < 3) return data
+  if (pts.length < LOWESS_MIN_POINTS) return data
 
   const n    = pts.length
   const span = Math.max(3, Math.ceil(bandwidth * n))
@@ -161,7 +167,7 @@ export function applyLowess(
 
 // ── canApplyLowess ─────────────────────────────────────────────────────────
 // Same shape as canApplyZScore above --
-// applyLowess is a silent, provable no-op with fewer than 3 real points
+// applyLowess is a no-op with fewer than LOWESS_MIN_POINTS real points
 // (its own early-return, mirrored here rather than duplicated), so this
 // is whether it could ACTUALLY smooth anything, not just whether the
 // toggle is on. Callers should check this and suppress "(smoothed)"
@@ -169,5 +175,5 @@ export function applyLowess(
 // `smoothed` toggle state alone.
 
 export function canApplyLowess(vals: (number | null)[]): boolean {
-  return vals.filter((v): v is number => v !== null).length >= 3
+  return vals.filter((v): v is number => v !== null).length >= LOWESS_MIN_POINTS
 }

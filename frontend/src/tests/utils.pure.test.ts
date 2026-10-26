@@ -596,6 +596,11 @@ describe('applyLowess', () => {
     expect(r[1].egc).toBe(2)
   })
 
+  it('returns data unchanged for exactly 3 non-null points', () => {
+    const data = [{ egc: 1, ts: 0 }, { egc: 9, ts: 1 }, { egc: 2, ts: 5 }]
+    expect(applyLowess(data, 0.8)).toBe(data)
+  })
+
   it('preserves null entries in output', () => {
     const r = applyLowess(
       [{ egc: 1, ts: 0 }, { egc: null, ts: 1 }, { egc: 3, ts: 2 }, { egc: 4, ts: 3 }, { egc: 5, ts: 4 }],
@@ -777,7 +782,8 @@ describe('applyLowess', () => {
 // Mirrors canApplyZScore above -- callers
 // should use this instead of the raw `smoothed` toggle state when
 // deciding whether to label a curve "(smoothed)", since applyLowess is
-// a silent, provable no-op below its own 3-point floor.
+// a no-op below its 4-point floor (at exactly 3 points every fitted value
+// lands back on its own point, so it is skipped there too).
 
 describe('canApplyLowess', () => {
   it('false for 0 real values', () => {
@@ -789,12 +795,14 @@ describe('canApplyLowess', () => {
     expect(canApplyLowess([null, 1, null, 2])).toBe(false)
   })
 
-  it('true for exactly 3 real values', () => {
-    expect(canApplyLowess([1, 2, 3])).toBe(true)
+  it('false for exactly 3 real values -- smoothing would change nothing', () => {
+    expect(canApplyLowess([1, 2, 3])).toBe(false)
+    expect(canApplyLowess([1, null, 2, null, 3])).toBe(false)
   })
 
-  it('true for more than 3 real values, nulls ignored', () => {
-    expect(canApplyLowess([1, null, 2, null, 3, 4])).toBe(true)
+  it('true for 4 or more real values, nulls ignored', () => {
+    expect(canApplyLowess([1, 2, 3, 4])).toBe(true)
+    expect(canApplyLowess([1, null, 2, null, 3, 4, 5])).toBe(true)
   })
 
   it('false for an empty array', () => {

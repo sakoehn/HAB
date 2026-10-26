@@ -180,7 +180,7 @@ export function MultiEgcChart({
 
   // Same per-series reasoning as
   // canStandardizeSeries above -- applyLowess is a silent no-op for a
-  // series with fewer than 3 real points, independently per series.
+  // series with fewer than LOWESS_MIN_POINTS real points, independently per series.
   const canSmoothSeries = useCallback(
     (id: string) => canApplyLowess(unsmoothedRows.map(r => (r[id] as number | null) ?? null)),
     [unsmoothedRows],
