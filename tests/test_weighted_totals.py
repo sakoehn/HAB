@@ -49,8 +49,12 @@ import sqlite3
 import sys
 from pathlib import Path
 
-import pandas as pd
 import pytest
+
+# pandas is a notebook dependency, not one of the app's requirements. Every
+# test here needs the real data anyway, so without pandas (e.g. in CI) the
+# file is skipped rather than failing to load.
+pd = pytest.importorskip("pandas")
 
 from conftest import NORM_TOLERANCE
 
