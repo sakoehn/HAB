@@ -45,6 +45,19 @@ class TaxonPath(NamedTuple):
     full_path: str | None
 
 
+def _samples_or_exit() -> list[str]:
+    """The sample names in MAPPINGS_DIR, or stop with a clear error if
+    there are none -- a missing or misnamed folder (e.g. a case mismatch
+    on Linux) must not let the rebuild "finish" having loaded nothing."""
+    samples = get_all_sample_names()
+    if not samples:
+        raise SystemExit(
+            f"No samples found in {MAPPINGS_DIR} (expected <sample>_mapping.tsv files) "
+            "-- check the folder exists with exactly this name and case."
+        )
+    return samples
+
+
 def parse_taxon_path(raw: str | None) -> TaxonPath:
     """Split a semicolon-delimited phylodist lineage string into its 8
     fixed ranks.
@@ -97,7 +110,7 @@ def iter_unique_taxon_paths():
     Yields:
         TaxonPath, one per newly-seen full_path.
     """
-    samples = get_all_sample_names()
+    samples = _samples_or_exit()
     seen: set[str] = set()
 
     for i, sample in enumerate(samples, start=1):
@@ -264,7 +277,7 @@ def populate_mappings():
     connection = sqlite3.connect(SQLITE_DB_PATH)
     try:
         taxon_lookup = build_taxon_path_lookup(connection)
-        samples = get_all_sample_names()
+        samples = _samples_or_exit()
 
         existing = connection.execute("SELECT COUNT(*) FROM mappings").fetchone()[0]
         skip_delete = existing == 0
