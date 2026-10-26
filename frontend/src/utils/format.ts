@@ -181,6 +181,11 @@ export function computeDayBands(
 
   const MS_PER_DAY = 24 * 60 * 60 * 1000
   const firstDate  = parseGroupDate(dayGroups[0].date)
+  // The first band starts at the first sample and the last ends at the last
+  // one, so the bands never stretch the x-axis past the data.
+  const sampleTs = points.map(p => parseDateTime(p.datetime)).filter(Number.isFinite)
+  const firstTs  = Math.min(...sampleTs)
+  const lastTs   = Math.max(...sampleTs)
 
   return dayGroups.map(group => {
     const groupDate = parseGroupDate(group.date)
@@ -201,13 +206,13 @@ export function computeDayBands(
       // snapping to the nearest sample. The explicit Date constructor for x2Ts
       // is DST-safe (JS resolves local time correctly); +86400000-1 would be
       // wrong on spring-forward days (23-hour days) and land 1 h into the next day.
-      x1Ts:  groupDate.getTime(),
-      x2Ts:  new Date(
+      x1Ts:  Math.max(groupDate.getTime(), firstTs),
+      x2Ts:  Math.min(new Date(
         groupDate.getFullYear(),
         groupDate.getMonth(),
         groupDate.getDate(),
         23, 59, 59, 999,
-      ).getTime(),
+      ).getTime(), lastTs),
       shade: daysSinceStart % 2 === 0,
     }
   })

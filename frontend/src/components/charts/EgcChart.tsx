@@ -283,7 +283,10 @@ export const EgcChart = forwardRef<EgcChartHandle, {
   // in sync with whatever the EGC line itself is actually showing.
   const nativeTide = useMemo(
     () => (showTide && tides)
-      ? nativeTideTrace(tides, filteredPoints[0]?.iso, filteredPoints[filteredPoints.length - 1]?.iso)
+      ? nativeTideTrace(
+          tides, filteredPoints[0]?.iso, filteredPoints[filteredPoints.length - 1]?.iso,
+          { fromTs: filteredPoints[0]?.ts, toTs: filteredPoints[filteredPoints.length - 1]?.ts },
+        )
       : { x: [], y: [] },
     [showTide, tides, filteredPoints],
   )

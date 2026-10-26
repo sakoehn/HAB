@@ -79,7 +79,12 @@ describe('EgcChart — Timepoints pill filter also bounds the tide trace', () =>
     const user = userEvent.setup()
     render(
       <EgcChart
-        data={[makeSparsePoint('5/27/21 8:00', 100, 's1'), makeSparsePoint('5/28/21 8:00', 110, 's2')]}
+        // A sample at each day's first and last tide reading, since the tide
+        // line stops at the first and last sample shown.
+        data={[
+          makeSparsePoint('5/27/21 8:00', 100, 's1'), makeSparsePoint('5/27/21 10:30', 105, 's2'),
+          makeSparsePoint('5/28/21 8:00', 110, 's3'), makeSparsePoint('5/28/21 10:30', 115, 's4'),
+        ]}
         annotationId="COG0001"
         annotationName="GroEL"
         source="cog"

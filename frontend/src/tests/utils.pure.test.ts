@@ -1112,27 +1112,25 @@ describe('computeDayBands', () => {
     expect(performance.now() - start).toBeLessThan(50)
   })
 
-  it('x1Ts is the start-of-day midnight timestamp (not first sample time)', () => {
+  it('a day after the first starts at its midnight (not its first sample)', () => {
     const bands = computeDayBands(SAMPLE_POINTS)
-    expect(bands[0].x1Ts).toBe(new Date(2021, 4, 27, 0, 0, 0, 0).getTime())
     expect(bands[1].x1Ts).toBe(new Date(2021, 4, 28, 0, 0, 0, 0).getTime())
   })
 
-  it('x2Ts is 23:59:59.999 of each calendar day (not last sample time)', () => {
+  it('a day before the last ends at 23:59:59.999 (not its last sample)', () => {
     const bands = computeDayBands(SAMPLE_POINTS)
     expect(bands[0].x2Ts).toBe(new Date(2021, 4, 27, 23, 59, 59, 999).getTime())
-    expect(bands[1].x2Ts).toBe(new Date(2021, 4, 28, 23, 59, 59, 999).getTime())
+  })
+
+  it('the bands stop at the first and last samples, so they never stretch the x-axis past the data', () => {
+    const bands = computeDayBands(SAMPLE_POINTS)
+    expect(bands[0].x1Ts).toBe(new Date(2021, 4, 27, 4, 0).getTime())
+    expect(bands[bands.length - 1].x2Ts).toBe(parseDateTime(SAMPLE_POINTS[SAMPLE_POINTS.length - 1].datetime))
   })
 
   it('adjacent day bands are exactly 1ms apart (no gap or overlap)', () => {
     const bands = computeDayBands(SAMPLE_POINTS)
     expect(bands[1].x1Ts - bands[0].x2Ts).toBe(1)
-  })
-
-  it('x1Ts is earlier than the first data point in that day', () => {
-    const bands = computeDayBands(SAMPLE_POINTS)
-    const firstPtTs = new Date(2021, 4, 27, 4, 0).getTime()  // 04:00 sample
-    expect(bands[0].x1Ts).toBeLessThan(firstPtTs)
   })
 
   it('x2Ts is later than the last data point in that day', () => {
@@ -1370,6 +1368,15 @@ describe('alignTideToChartPoints', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('nativeTideTrace', () => {
+  it('drops readings outside the given time span, so the line stops at the data', () => {
+    const tides = [
+      tidePoint('2021-06-18 08:00', 1.0), tidePoint('2021-06-18 09:00', 2.0),
+      tidePoint('2021-06-18 10:00', 3.0), tidePoint('2021-06-19 00:54', 4.0),
+    ]
+    const span = { fromTs: new Date(2021, 5, 18, 8, 30).getTime(), toTs: new Date(2021, 5, 18, 9, 0).getTime() }
+    expect(nativeTideTrace(tides, undefined, undefined, span).y).toEqual([2.0])
+  })
+
   it('returns empty arrays for no tide data', () => {
     expect(nativeTideTrace([])).toEqual({ x: [], y: [] })
   })

@@ -47,7 +47,9 @@ function jsonResponse(data: unknown) {
 
 // 25 real 6-min-resolution tide readings spanning ~2.5h -- deliberately far
 // more than the 2 sparse EGC sample points below, so "native resolution"
-// and "snapped to sample count" are trivially distinguishable.
+// and "snapped to sample count" are trivially distinguishable. The samples
+// below bracket all 25 (08:00 and 10:30), since the tide line stops at the
+// first and last sample.
 function makeDenseTides() {
   return Array.from({ length: 25 }, (_, i) => {
     const totalMin = i * 6
@@ -93,7 +95,7 @@ describe('EgcChart — tide trace wiring', () => {
     const { EgcChart } = await import('../components/charts/EgcChart')
     render(
       <EgcChart
-        data={[makeSparsePoint('5/27/21 8:00', 100), makeSparsePoint('5/27/21 10:00', 110)]}
+        data={[makeSparsePoint('5/27/21 8:00', 100, 's1'), makeSparsePoint('5/27/21 10:30', 110, 's2')]}
         annotationId="COG0001"
         annotationName="GroEL"
         source="cog"
@@ -158,7 +160,7 @@ describe('GroupedEgcChart — tide trace wiring (Tides)', () => {
         allSeries={[
           {
             annotationId: 'COG0001', name: 'COG0001', color: '#000',
-            data: [makeSparsePoint('5/27/21 8:00', 100), makeSparsePoint('5/27/21 10:00', 110)],
+            data: [makeSparsePoint('5/27/21 8:00', 100, 's1'), makeSparsePoint('5/27/21 10:30', 110, 's2')],
           },
         ]}
         groupLabel="Test group"
@@ -183,7 +185,7 @@ describe('MultiEgcChart — tide trace wiring (Tides)', () => {
         series={[
           {
             id: 'A', annotationId: 'COG0001', name: 'COG0001', color: '#000', source: 'cog',
-            data: [makeSparsePoint('5/27/21 8:00', 100), makeSparsePoint('5/27/21 10:00', 110)],
+            data: [makeSparsePoint('5/27/21 8:00', 100, 's1'), makeSparsePoint('5/27/21 10:30', 110, 's2')],
           },
         ]}
         dateFrom="" dateTo=""

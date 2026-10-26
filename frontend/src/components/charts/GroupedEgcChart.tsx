@@ -151,8 +151,12 @@ export function GroupedEgcChart({
   // native resolution -- see nativeTideTrace's doc comment in
   // utils/solar.ts. The tide_wl field above still feeds CSV export.
   const nativeTide = useMemo(
-    () => (showTide && tides) ? nativeTideTrace(tides, dateFrom || undefined, dateTo || undefined) : { x: [], y: [] },
-    [showTide, tides, dateFrom, dateTo],
+    () => (showTide && tides)
+      ? nativeTideTrace(tides, dateFrom || undefined, dateTo || undefined, {
+          fromTs: processedPoints[0]?.ts, toTs: processedPoints[processedPoints.length - 1]?.ts,
+        })
+      : { x: [], y: [] },
+    [showTide, tides, dateFrom, dateTo, processedPoints],
   )
 
   // Stats read the unsmoothed values, unaffected by the Smooth toggle.

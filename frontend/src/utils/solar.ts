@@ -225,6 +225,9 @@ export function nativeTideTrace(
   tides:   TidePoint[],
   fromIso?: string,
   toIso?:   string,
+  // The chart's first/last sample time: readings outside it are dropped so
+  // the tide line doesn't stretch the x-axis past the data.
+  span?:    { fromTs?: number; toTs?: number },
 ): { x: string[]; y: number[] } {
   const x: string[] = []
   const y: number[] = []
@@ -235,6 +238,8 @@ export function nativeTideTrace(
     if (toIso   && tideDate > toIso)   continue
     const ts = parseLocalDateTime(t.time)?.getTime()
     if (ts == null) continue
+    if (span?.fromTs != null && ts < span.fromTs) continue
+    if (span?.toTs   != null && ts > span.toTs)   continue
     x.push(toPlotlyDate(ts))
     y.push(t.predicted_wl)
   }

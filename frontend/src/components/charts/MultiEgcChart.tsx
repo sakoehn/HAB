@@ -214,8 +214,12 @@ export function MultiEgcChart({
   // native resolution -- see nativeTideTrace's doc comment in
   // utils/solar.ts. chartData.tide_wl above still feeds CSV export.
   const nativeTide = useMemo(
-    () => (showTide && tides) ? nativeTideTrace(tides, dateFrom || undefined, dateTo || undefined) : { x: [], y: [] },
-    [showTide, tides, dateFrom, dateTo],
+    () => (showTide && tides)
+      ? nativeTideTrace(tides, dateFrom || undefined, dateTo || undefined, {
+          fromTs: chartData[0]?._ts, toTs: chartData[chartData.length - 1]?._ts,
+        })
+      : { x: [], y: [] },
+    [showTide, tides, dateFrom, dateTo, chartData],
   )
 
   const dayBandsList = useMemo(
