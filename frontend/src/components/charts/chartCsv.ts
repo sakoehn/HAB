@@ -52,30 +52,34 @@ export function buildGroupedEgcCsvRows(
 // Exported so tests can exercise the real CSV row shape directly.
 // The value column is named from the active metric, with
 // metric/standardized/smoothed recorded on every row.
+// One row per timepoint and series, including timepoints a series wasn't
+// detected at (value null, detected false), so "not detected" can be told
+// from "not sampled". standardized/smoothed come per series from `flags`,
+// matching how each line was actually drawn (a series too short to smooth
+// or z-score is drawn raw even when the toggle is on).
 export function buildMultiEgcCsvRows(
-  chartData:   Record<string, unknown>[],
-  series:      { id: string; annotationId: string; source?: string }[],
-  metric:      ChartMetric,
-  standardize: boolean,
-  smoothed:    boolean,
-  showTide:    boolean,
+  chartData: Record<string, unknown>[],
+  series:    { id: string; annotationId: string; source?: string }[],
+  metric:    ChartMetric,
+  flags:     (seriesId: string) => { standardized: boolean; smoothed: boolean },
+  showTide:  boolean,
 ): Record<string, unknown>[] {
   const rows: Record<string, unknown>[] = []
   for (const row of chartData) {
     for (const s of series) {
       const val = row[s.id]
-      if (val !== null && val !== undefined) {
-        rows.push({
-          annotation_id: s.annotationId,
-          source:        s.source ?? '',
-          date:          row._dt ?? row.date,
-          [metric]:      val,
-          metric,
-          standardized:  standardize,
-          smoothed,
-          ...(showTide ? { tide_predicted_wl_m: row.tide_wl ?? null } : {}),
-        })
-      }
+      const detected = val !== null && val !== undefined
+      rows.push({
+        annotation_id: s.annotationId,
+        source:        s.source ?? '',
+        sample:        row._sample ?? '',
+        date:          row._dt ?? row.date,
+        [metric]:      detected ? val : null,
+        detected,
+        metric,
+        ...flags(s.id),
+        ...(showTide ? { tide_predicted_wl_m: row.tide_wl ?? null } : {}),
+      })
     }
   }
   return rows

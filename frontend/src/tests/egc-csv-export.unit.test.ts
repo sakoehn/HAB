@@ -24,8 +24,8 @@
  *
  * buildMultiEgcCsvRows (MultiEgcChart.tsx):
  *   value column named from metric, not hardcoded "egc_normalized"
- *   rows only emitted for non-null/non-undefined series values
- *   multiple series per row produce multiple output rows
+ *   one row per timepoint and series, undetected ones included as null
+ *   a sample column, and standardized/smoothed flags per series
  *
  * buildGroupedEgcCsvRows (GroupedEgcChart.tsx):
  *   value column named from metric, not hardcoded "egc"
@@ -105,49 +105,47 @@ describe('buildMultiEgcCsvRows', () => {
     { id: 'COG0001', annotationId: 'COG0001', source: 'cog' },
   ]
   const chartData = [
-    { date: '05/27/21', _dt: '5/27/21 8:00', K00001: 100, COG0001: 50 },
-    { date: '05/27/21', _dt: '5/27/21 12:00', K00001: null, COG0001: 60 },
+    { date: '05/27/21', _dt: '5/27/21 8:00',  _sample: 's1', K00001: 100,  COG0001: 50 },
+    { date: '05/27/21', _dt: '5/27/21 12:00', _sample: 's2', K00001: null, COG0001: 60 },
   ]
+  const none = () => ({ standardized: false, smoothed: false })
 
   it('raw egc mode: value column is named "egc", not "egc_normalized"', () => {
-    const rows = buildMultiEgcCsvRows(chartData, series, 'egc', false, false, false)
+    const rows = buildMultiEgcCsvRows(chartData, series, 'egc', none, false)
     expect(rows.every(r => 'egc' in r)).toBe(true)
     expect(rows.some(r => 'egc_normalized' in r)).toBe(false)
   })
 
   it('norm_egc mode: value column is named "norm_egc"', () => {
-    const rows = buildMultiEgcCsvRows(chartData, series, 'norm_egc', false, false, false)
+    const rows = buildMultiEgcCsvRows(chartData, series, 'norm_egc', none, false)
     expect(rows.every(r => 'norm_egc' in r)).toBe(true)
   })
 
-  it('one row per (chartData row × series) pair with a non-null value', () => {
-    const rows = buildMultiEgcCsvRows(chartData, series, 'egc', false, false, false)
-    // row 1: both K00001 and COG0001 present -> 2 rows
-    // row 2: K00001 is null (skipped), COG0001 present -> 1 row
-    expect(rows).toHaveLength(3)
+  it('one row per (timepoint × series), including timepoints a series was not detected at', () => {
+    const rows = buildMultiEgcCsvRows(chartData, series, 'egc', none, false)
+    expect(rows).toHaveLength(4)
+    const undetected = rows.find(r => r.annotation_id === 'K00001' && r.date === '5/27/21 12:00')!
+    expect(undetected.egc).toBeNull()
+    expect(undetected.detected).toBe(false)
+    expect(rows.find(r => r.annotation_id === 'K00001' && r.date === '5/27/21 8:00')!.detected).toBe(true)
   })
 
-  it('null/undefined series values are skipped entirely, not exported as empty rows', () => {
-    const rows = buildMultiEgcCsvRows(chartData, series, 'egc', false, false, false)
-    const k00001Rows = rows.filter(r => r.annotation_id === 'K00001')
-    expect(k00001Rows).toHaveLength(1)
-    expect(k00001Rows[0].egc).toBe(100)
+  it('every row names its sample', () => {
+    const rows = buildMultiEgcCsvRows(chartData, series, 'egc', none, false)
+    expect(rows.map(r => r.sample)).toEqual(['s1', 's1', 's2', 's2'])
   })
 
-  it('smoothed is recorded (was entirely absent pre-fix)', () => {
-    const rows = buildMultiEgcCsvRows(chartData, series, 'egc', false, true, false)
-    expect(rows[0].smoothed).toBe(true)
-  })
-
-  it('metric/standardized already existed pre-fix and still work correctly', () => {
-    const rows = buildMultiEgcCsvRows(chartData, series, 'norm_egc', true, false, false)
-    expect(rows[0].metric).toBe('norm_egc')
-    expect(rows[0].standardized).toBe(true)
+  it('standardized/smoothed are recorded per series, as each line was actually drawn', () => {
+    const flags = (id: string) => ({ standardized: true, smoothed: id === 'COG0001' })
+    const rows = buildMultiEgcCsvRows(chartData, series, 'norm_egc', flags, false)
+    expect(rows.find(r => r.annotation_id === 'K00001')!.smoothed).toBe(false)
+    expect(rows.find(r => r.annotation_id === 'COG0001')!.smoothed).toBe(true)
+    expect(rows.every(r => r.standardized === true && r.metric === 'norm_egc')).toBe(true)
   })
 
   it('date falls back to row.date when row._dt is absent', () => {
     const rows = buildMultiEgcCsvRows(
-      [{ date: '05/27/21', K00001: 100 }], [series[0]], 'egc', false, false, false,
+      [{ date: '05/27/21', K00001: 100 }], [series[0]], 'egc', none, false,
     )
     expect(rows[0].date).toBe('05/27/21')
   })
@@ -175,7 +173,7 @@ describe('buildMultiEgcCsvRows — same-label groups', () => {
       },
     ]
 
-    const rows = buildMultiEgcCsvRows(chartData, series, 'egc', false, false, false)
+    const rows = buildMultiEgcCsvRows(chartData, series, 'egc', () => ({ standardized: false, smoothed: false }), false)
 
     expect(rows).toHaveLength(2)
     const keggRow = rows.find(r => r.source === 'kegg')

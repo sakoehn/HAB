@@ -95,7 +95,7 @@ export function MultiEgcChart({
   const { allSamples, allSamplesError } = useAllSamples()
 
   // Wide-format row: one row per datetime, each series has its own column.
-  type ChartRow = { date: string; _dt: string; _ts: number } & Record<string, number | null | string>
+  type ChartRow = { date: string; _dt: string; _ts: number; _sample: string } & Record<string, number | null | string>
 
   // A line must break at a non-detection, not run straight across it
   // (which would imply steady presence). So every timepoint in the full
@@ -111,7 +111,7 @@ export function MultiEgcChart({
       if (dateFrom && iso < dateFrom) continue
       if (dateTo   && iso > dateTo)   continue
       const dt = entry.datetime
-      if (!dtMap[dt]) dtMap[dt] = { date: fmtDate(dt), _dt: dt, _ts: parseDateTime(dt) }
+      if (!dtMap[dt]) dtMap[dt] = { date: fmtDate(dt), _dt: dt, _ts: parseDateTime(dt), _sample: entry.sample }
     }
     for (const s of series) {
       for (const d of s.data) {
@@ -119,7 +119,7 @@ export function MultiEgcChart({
         if (dateFrom && iso < dateFrom) continue
         if (dateTo   && iso > dateTo)   continue
         const dt = d.timepoint?.datetime ?? ''
-        if (!dtMap[dt]) dtMap[dt] = { date: fmtDate(dt), _dt: dt, _ts: parseDateTime(dt) }
+        if (!dtMap[dt]) dtMap[dt] = { date: fmtDate(dt), _dt: dt, _ts: parseDateTime(dt), _sample: d.sample ?? '' }
         dtMap[dt][s.id]            = extractEgc(d.value)
         dtMap[dt][s.id + '__norm'] = extractNormEgc(d.value)
       }
@@ -185,7 +185,6 @@ export function MultiEgcChart({
     (id: string) => canApplyLowess(unsmoothedRows.map(r => (r[id] as number | null) ?? null)),
     [unsmoothedRows],
   )
-  const smoothedApplied = smoothed && series.some(s => canSmoothSeries(s.id))
 
   const chartDataRaw = useMemo<ChartRow[]>(() => {
     if (!smoothed) return unsmoothedRows
@@ -485,7 +484,11 @@ export function MultiEgcChart({
   }
 
   const handleExportCsv = () => downloadCsv(
-    buildMultiEgcCsvRows(chartData, series, metric, standardizeApplied, smoothedApplied, showTide),
+    buildMultiEgcCsvRows(
+      chartData, series, metric,
+      id => ({ standardized: standardize && canStandardizeSeries(id), smoothed: smoothed && canSmoothSeries(id) }),
+      showTide,
+    ),
     `compare_egc_${metric}${standardizeApplied ? '_zscore' : ''}.csv`,
   )
 
