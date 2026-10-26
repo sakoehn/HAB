@@ -76,8 +76,9 @@ def test_parse_taxon_path_handles_semicolon_within_strain():
     # Act
     result = parse_taxon_path(raw)
 
-    # Assert: ranks 1-7 split normally; everything from rank 8 onward,
-    # including the embedded semicolon, stays intact as `strain`
+    # Assert: ranks 1-7 split normally; everything from rank 8 onward is the
+    # strain, its inner ";" written as ", " (see api/taxon_lineage.py) so
+    # the taxon id still has one segment per rank
     assert result.domain == "Eukaryota"
     assert result.phylum == "Arthropoda"
     assert result.class_ == "Insecta"
@@ -85,8 +86,8 @@ def test_parse_taxon_path_handles_semicolon_within_strain():
     assert result.family == "Drosophilidae"
     assert result.genus == "Drosophila"
     assert result.species == "Drosophila melanogaster"
-    assert result.strain == "Drosophila melanogaster y; cn bw sp"
-    assert result.full_path == raw
+    assert result.strain == "Drosophila melanogaster y, cn bw sp"
+    assert result.full_path == raw.replace("y; cn bw sp", "y, cn bw sp")
 
 
 def test_parse_taxon_path_handles_missing_ranks():
@@ -167,9 +168,9 @@ def test_parse_taxon_path_handles_extra_ranks():
     result = parse_taxon_path(raw)
 
     # Assert: ranks 1-7 split normally; everything from rank 8 onward is
-    # absorbed into `strain` intact (same rule as the real Drosophila case
-    # above -- the parser can't tell "genuine 9th rank" apart from "stray
-    # semicolon inside rank 8", so it must pick one rule and it's this one)
+    # the strain (same rule as the real Drosophila case above -- the parser
+    # can't tell "genuine 9th rank" apart from "stray semicolon inside rank
+    # 8", so it must pick one rule and it's this one)
     assert result.domain == "Bacteria"
     assert result.phylum == "Proteobacteria"
     assert result.class_ == "Gammaproteobacteria"
@@ -177,8 +178,8 @@ def test_parse_taxon_path_handles_extra_ranks():
     assert result.family == "Alteromonadaceae"
     assert result.genus == "Alteromonas"
     assert result.species == "Alteromonas macleodii"
-    assert result.strain == "Alteromonas macleodii ATCC 27126;ExtraRank1;ExtraRank2"
-    assert result.full_path == raw
+    assert result.strain == "Alteromonas macleodii ATCC 27126, ExtraRank1, ExtraRank2"
+    assert result.full_path.count(";") == 7
 
 
 def test_parse_taxon_path_handles_whitespace():
@@ -367,13 +368,14 @@ def test_parse_taxon_path_round_trip_reconstructs_full_path():
         # Act
         result = parse_taxon_path(raw)
 
-        # Assert: joining the 8 rank fields back together with ";" recovers
-        # the exact original string
+        # Assert: joining the 8 rank fields back together with ";" gives
+        # full_path -- the original string, with any ";" inside the strain
+        # written as ", "
         rejoined = ";".join([
             result.domain, result.phylum, result.class_, result.order,
             result.family, result.genus, result.species, result.strain,
         ])
-        assert rejoined == raw
+        assert rejoined == result.full_path == raw.replace("y; cn bw sp", "y, cn bw sp")
 
 
 def test_parse_taxon_path_is_idempotent():

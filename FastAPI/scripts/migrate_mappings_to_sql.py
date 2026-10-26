@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from api.cache import get_all_sample_names  # pylint: disable=wrong-import-position,import-error
 from api.config import MAPPINGS_DIR, METAGENOME_SAMPLES_DIR, SQLITE_DB_PATH  # pylint: disable=wrong-import-position,import-error
+from api.taxon_lineage import normalize_lineage  # pylint: disable=wrong-import-position,import-error
 
 
 class TaxonPath(NamedTuple):
@@ -64,13 +65,13 @@ def parse_taxon_path(raw: str | None) -> TaxonPath:
 
     Args:
         raw: Raw lineage string, e.g. "Bacteria;Bacteroidetes;...", or
-            None. Split is capped at 7 semicolons, so anything past the
-            7th (a real semicolon-in-strain-name, or extra ranks) is
-            absorbed into `strain` intact rather than dropped.
+            None. Anything past the 7th semicolon (a real semicolon in a
+            strain name, or extra ranks) is kept as the strain, with its
+            inner ";" written as ", " (see api/taxon_lineage.py).
 
     Returns:
-        A TaxonPath with each rank (None where absent) and the original
-        raw string as full_path.
+        A TaxonPath with each rank (None where absent) and the lineage --
+        unchanged unless it had more than 8 parts -- as full_path.
     """
     if not raw:
         return TaxonPath(
@@ -85,6 +86,7 @@ def parse_taxon_path(raw: str | None) -> TaxonPath:
             full_path=raw,
         )
 
+    raw = normalize_lineage(raw)
     parts = raw.split(';', 7)
     cleaned = [p.strip() or None for p in parts]
     while len(cleaned) < 8:
@@ -232,7 +234,7 @@ def populate_mappings_for_sample(
                 sample,
                 gene_id,
                 row["scaffold_id"] or None,
-                taxon_lookup.get(taxonomy) if taxonomy else None,
+                taxon_lookup.get(normalize_lineage(taxonomy)) if taxonomy else None,
                 row["kegg"] or None,
             ))
             if row["cog"]:
