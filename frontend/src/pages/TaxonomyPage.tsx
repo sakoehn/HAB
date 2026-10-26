@@ -236,7 +236,10 @@ export function TaxonomyPage({
     // computeExclusionSeries' doc comment) — MultiEgcChart's legend shows
     // .name, not annotationId, for taxonomy series, so this doesn't need to
     // be human-readable itself.
-    const minusLabel = `${rootName} (minus ${excludedLoaded.length} exclusion${excludedLoaded.length !== 1 ? 's' : ''})`
+    // A checked branch inside another checked branch removes nothing extra,
+    // so it isn't counted.
+    const removedCount = filterRedundantExclusions(excludedLoaded).length
+    const minusLabel = `${rootName} (minus ${removedCount} exclusion${removedCount !== 1 ? 's' : ''})`
     const minus = {
       id:           `${state.rootId}__minus`,
       annotationId: `${state.rootId}__minus`,
@@ -493,9 +496,13 @@ export function TaxonomyPage({
                       total and the title kept claiming the exclusion. */}
                   {excludedFailed.length > 0 && (
                     <div className="state-box error" style={{ padding: '10px 14px', marginBottom: 12 }}>
-                      Failed to load {excludedFailed.length} exclusion{excludedFailed.length !== 1 ? 's' : ''}:
+                      Failed to load {excludedFailed.length}{' '}
+                      {state.selectionMode === 'keep'
+                        ? `checked branch${excludedFailed.length !== 1 ? 'es' : ''}`
+                        : `exclusion${excludedFailed.length !== 1 ? 's' : ''}`}:
                       {' '}{excludedFailed.map(bareTaxonName).join(', ')}.
-                      {' '}The chart below excludes only the {excludedLoaded.length} that loaded successfully.
+                      {' '}The chart below {state.selectionMode === 'keep' ? 'keeps' : 'excludes'} only
+                      the {excludedLoaded.length} that loaded successfully.
                       {' '}
                       <button
                         className="btn sm ghost"

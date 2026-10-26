@@ -453,3 +453,55 @@ describe('TaxonomyPage — rank CSV keeps same-named taxa apart', () => {
     expect(mockDownloadCsv.mock.calls[0][0]).toEqual(rows)
   })
 })
+
+describe('TaxonomyPage — labels count and word what the chart actually does', () => {
+  const point = (id: string, egc: number) => ({
+    source: 'taxonomy', sample: 's1', annotation_id: id, name: id,
+    timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '2021-05-09T13:00:00' },
+    value: { egc },
+  })
+  const cached = (id: string, egc: number) => ({ data: [point(id, egc)], status: 'ok' as const })
+  const legend = () => [...document.querySelectorAll('.legend-item')].map(e => e.textContent ?? '')
+
+  beforeEach(() => {
+    mockFetch.mockImplementation((url: string) =>
+      Promise.resolve(jsonResponse(url.includes('/api/series/annotations') ? { data: [point('Bacteria', 100)] } : { data: [] })),
+    )
+  })
+
+  it('a checked branch inside another checked branch is not counted twice', async () => {
+    render(
+      <Wrapper
+        onGoScaffoldExplore={vi.fn()}
+        initialState={{
+          excludedIds: new Set(['Bacteria;Actinobacteria', 'Bacteria;Actinobacteria;Actinomycetia']),
+          seriesCache: {
+            'Bacteria;Actinobacteria::taxonomy':               cached('Bacteria;Actinobacteria', 20),
+            'Bacteria;Actinobacteria;Actinomycetia::taxonomy': cached('Bacteria;Actinobacteria;Actinomycetia', 5),
+          },
+        }}
+      />,
+    )
+    await waitFor(() => expect(legend().some(t => t.includes('minus 1 exclusion'))).toBe(true))
+    expect(legend().some(t => t.includes('minus 2'))).toBe(false)
+  })
+
+  it('in Keep only mode the failure banner says what is kept, not excluded', async () => {
+    render(
+      <Wrapper
+        onGoScaffoldExplore={vi.fn()}
+        initialState={{
+          selectionMode: 'keep',
+          excludedIds: new Set(['Bacteria;Actinobacteria', 'Bacteria;Bacteroidetes']),
+          seriesCache: {
+            'Bacteria;Actinobacteria::taxonomy': cached('Bacteria;Actinobacteria', 20),
+            'Bacteria;Bacteroidetes::taxonomy':  { data: [], status: 'error' },
+          },
+        }}
+      />,
+    )
+    const banner = await screen.findByText(/Failed to load 1/i)
+    expect(banner.textContent).toMatch(/keeps only the 1/i)
+    expect(banner.textContent).not.toMatch(/excludes/i)
+  })
+})
