@@ -17,6 +17,11 @@ export default defineConfig({
     setupFiles: ['./src/vitest.setup.ts'],
     globals: true,
     css: false,
+    // Component tests that render the whole app take ~2s on an idle machine
+    // and ~5x that when the machine is busy (e.g. a CI runner); the 5s
+    // default made them fail at random there. 15s leaves room for that
+    // while still catching a genuinely hung test.
+    testTimeout: 15_000,
     environmentOptions: {
       jsdom: {
         url: 'http://localhost',
