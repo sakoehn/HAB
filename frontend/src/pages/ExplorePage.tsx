@@ -1452,6 +1452,18 @@ export function ExplorePage({
   // as nearly empty even though they're the ones actually on screen.
   const maxMean = Math.max(...sorted.map(r => r.mean_egc), 1)
 
+  // Sections opened at least once stay mounted (just hidden) when another
+  // is open, so Dataset Overview and Annotations by Parent keep what they
+  // loaded instead of starting over. Tracked during render so a section
+  // opened from elsewhere (e.g. a handoff) counts too.
+  const [visitedSections, setVisitedSections] = useState<Set<ExploreSection>>(
+    () => new Set(state.openSection ? [state.openSection] : []),
+  )
+  if (state.openSection && !visitedSections.has(state.openSection)) {
+    setVisitedSections(new Set(visitedSections).add(state.openSection))
+  }
+  const sectionStyle = (s: ExploreSection) => (state.openSection === s ? undefined : { display: 'none' })
+
   function toggleSection(s: ExploreSection) {
     setState(prev => ({ ...prev, openSection: prev.openSection === s ? null : s }))
   }
@@ -1521,8 +1533,8 @@ export function ExplorePage({
         </div>
 
         {/* ── Dataset Overview ── */}
-        {state.openSection === 'overview' && (
-          <div className="explore-panel expand-anim">
+        {visitedSections.has('overview') && (
+          <div className="explore-panel expand-anim" style={sectionStyle('overview')}>
             <DatasetOverviewPanel
               resetKey={resetKey}
               dataDateRange={dataDateRange}
@@ -1839,8 +1851,8 @@ export function ExplorePage({
         )}
 
         {/* ── Annotations by Parent ── */}
-        {state.openSection === 'by-parent' && (
-          <div className="explore-panel expand-anim">
+        {visitedSections.has('by-parent') && (
+          <div className="explore-panel expand-anim" style={sectionStyle('by-parent')}>
             <div style={{ padding: '20px 24px 16px', display: 'flex', gap: 12, alignItems: 'center' }}>
               <h2>Annotations by Parent</h2>
               <select
@@ -1858,6 +1870,7 @@ export function ExplorePage({
             </div>
             <div style={{ padding: '0 24px 24px' }}>
               <AnnotationsByParentPanel
+                key={resetKey}
                 source={state.parentSource}
                 dataDateRange={dataDateRange}
                 onGoScaffoldExplore={onGoScaffoldExplore}

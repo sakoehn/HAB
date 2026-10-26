@@ -67,13 +67,13 @@ beforeEach(() => {
 // production; tests need the same real state/setState wiring, not a mock,
 // since the bug being tested is specifically about what setState is called
 // with when a stale response resolves.
-function Harness({ initial }: { initial: Partial<ExploreState> }) {
+function Harness({ initial, resetKey = 0 }: { initial: Partial<ExploreState>; resetKey?: number }) {
   const [state, setState] = useState<ExploreState>({ ...makeDefaultExploreState(), ...initial })
   return (
     <ExplorePage
       state={state}
       setState={updater => setState(updater)}
-      resetKey={0}
+      resetKey={resetKey}
       dataDateRange={null}
       indexReady
       onSendToAnalyze={() => {}}
@@ -976,5 +976,52 @@ describe('ExplorePage — Top EGC Group column shows every real COG category', (
 
     await waitFor(() => expect(screen.getByText(/Amino acid transport and metabolism \(\+1 more\)/)).toBeInTheDocument())
     expect(screen.getByTitle(/Coenzyme transport and metabolism/)).toBeInTheDocument()
+  })
+})
+
+describe('ExplorePage — a section keeps what it loaded when you switch away and back', () => {
+  function mockTop() {
+    mockFetch.mockImplementation((url: string) =>
+      url.includes('/api/annotations/top')
+        ? Promise.resolve(jsonResponse({
+            data: [{ annotation_id: 'X1', name: 'X1', parent: 'P1', mean_egc: 10, max_egc: 20, sample_count: 128 }],
+            sample_count: 128,
+          }))
+        : Promise.resolve(jsonResponse({})),
+    )
+  }
+  const topCalls = (source: string) =>
+    mockFetch.mock.calls.filter(c => String(c[0]).includes('/api/annotations/top') && String(c[0]).includes(`source=${source}`)).length
+
+  it('Dataset Overview', async () => {
+    mockTop()
+    const user = userEvent.setup()
+    // by-Parent on a different source, so its own request isn't counted here.
+    render(<Harness initial={{ openSection: 'overview', parentSource: 'cog' }} />)
+    await user.click(screen.getByRole('button', { name: /Load Overview/i }))
+    await screen.findByText(/functional groups/)
+    await user.click(screen.getByRole('button', { name: /Annotations by Parent/ }))
+    await user.click(screen.getByRole('button', { name: /Dataset Overview/ }))
+    expect(screen.getByText(/functional groups/)).toBeVisible()
+    expect(topCalls('taxonomy')).toBe(1)
+  })
+
+  it('Annotations by Parent', async () => {
+    mockTop()
+    const user = userEvent.setup()
+    render(<Harness initial={{ openSection: 'by-parent', parentSource: 'cog' }} />)
+    await waitFor(() => expect(topCalls('cog')).toBe(1))
+    await user.click(screen.getByRole('button', { name: /Dataset Overview/ }))
+    await user.click(screen.getByRole('button', { name: /Annotations by Parent/ }))
+    await screen.findByText('P1')
+    expect(topCalls('cog')).toBe(1)
+  })
+
+  it('Clear Page still starts Annotations by Parent over', async () => {
+    mockTop()
+    const { rerender } = render(<Harness initial={{ openSection: 'by-parent', parentSource: 'cog' }} />)
+    await waitFor(() => expect(topCalls('cog')).toBe(1))
+    rerender(<Harness initial={{ openSection: 'by-parent', parentSource: 'cog' }} resetKey={1} />)
+    await waitFor(() => expect(topCalls('cog')).toBe(2))
   })
 })
