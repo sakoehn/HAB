@@ -39,14 +39,21 @@ def _listed_examples() -> dict[str, str]:
 
 @pytest.fixture(scope="module")
 def routes():
-    from fastapi.routing import APIRoute
+    """Every GET /api path the app serves -> {query parameter: required?},
+    from the app's own OpenAPI schema (version-stable: newer FastAPI keeps
+    included routers bundled in app.routes rather than listing each route)."""
     from main import app
 
-    return {
-        r.path: r
-        for r in app.routes
-        if isinstance(r, APIRoute) and "GET" in r.methods and r.path.startswith("/api/")
-    }
+    found = {}
+    for path, ops in app.openapi()["paths"].items():
+        if path.startswith("/api/") and "get" in ops:
+            found[path] = {
+                p["name"]: p.get("required", False)
+                for p in ops["get"].get("parameters", [])
+                if p.get("in") == "query"
+            }
+    assert len(found) > 20  # really found the routes
+    return found
 
 
 def test_every_listed_endpoint_is_a_real_route(routes):
@@ -65,12 +72,12 @@ def test_example_query_parameters_match_the_route(routes):
         route = routes.get(path)
         if route is None:
             continue  # reported by test_every_listed_endpoint_is_a_real_route
-        accepted = {p.alias or p.name: p for p in route.dependant.query_params}
+        accepted = route  # {query parameter: required?}
         given = {k for k, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True)}
         for name in sorted(given - set(accepted)):
             problems.append(f"{path}: example uses unknown parameter {name!r}")
-        for name, param in sorted(accepted.items()):
-            if param.field_info.is_required() and name not in given:
+        for name, required in sorted(accepted.items()):
+            if required and name not in given:
                 problems.append(f"{path}: example omits required parameter {name!r}")
     assert not problems, "\n".join(problems)
 

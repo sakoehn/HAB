@@ -34,12 +34,16 @@ def test_no_route_is_a_coroutine():
     """None of the routes await anything; all of their work is blocking
     sqlite3 calls, so every one of them must be a plain `def`."""
     from fastapi.routing import APIRoute
-    from main import app
+    from api import correlation_sql, routes
 
+    # Read from the routers themselves: newer FastAPI versions keep included
+    # routers bundled in app.routes rather than listing each route there.
+    all_routes = [r for r in routes.router.routes + correlation_sql.router.routes if isinstance(r, APIRoute)]
+    assert len(all_routes) > 20  # really found the routes
     async_routes = sorted(
         f"{route.path} -> {route.endpoint.__name__}"
-        for route in app.routes
-        if isinstance(route, APIRoute) and inspect.iscoroutinefunction(route.endpoint)
+        for route in all_routes
+        if inspect.iscoroutinefunction(route.endpoint)
     )
     assert async_routes == []
 
