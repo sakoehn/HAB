@@ -142,7 +142,7 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(3))
     expect(await screen.findByText('COG0001')).toBeInTheDocument()
-    expect(screen.queryByText(/still not done/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/taking longer than usual/i)).not.toBeInTheDocument()
   })
 
   // The elapsed-time text reflects real wall-clock time (Date.now()), not
@@ -182,8 +182,11 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     // 1 initial attempt + MAX_CIRCULAR_SHIFT_RETRIES (12) retries = 13 calls
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(13), { timeout: 10000 })
     // 12 retryable attempts x 10 real minutes each = 120 minutes = 2 hours.
-    expect(await screen.findByText(/still not done after about 120 minutes/i)).toBeInTheDocument()
-    expect(screen.getByText(/try spearman/i)).toBeInTheDocument()
+    const message = await screen.findByText(/taking longer than usual/i)
+    expect(message.textContent).toMatch(/about 120 minutes/i)
+    expect(message.textContent).toMatch(/still working on it/i)
+    expect(message.textContent).toMatch(/try again in a few minutes/i)
+    expect(message.textContent).toMatch(/try spearman/i)
   }, 15000)
 
   // A real 4xx (not a timeout) is a hard, immediate failure -- must
@@ -200,7 +203,7 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     await waitFor(() => expect(screen.getByText(/correlation failed/i)).toBeInTheDocument())
     expect(mockFetch).toHaveBeenCalledTimes(1) // no retries at all
     expect(screen.getByText(/HTTP 422/)).toBeInTheDocument()
-    expect(screen.queryByText(/still not done/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/taking longer than usual/i)).not.toBeInTheDocument()
   })
 
   // A 5xx IS worth retrying (a transient server-side issue, same as
@@ -219,12 +222,9 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
   })
 
-  it('still fails immediately (no retry) for a non-permutation method', async () => {
-    // The panel defaults to circular_shift itself, so this explicitly
-    // selects a
-    // fast/parametric method first to exercise the real thing under test
-    // (retry is circular_shift-specific, not a property of whichever
-    // method happens to be the default).
+  it('a non-retryable error (no response at all) still fails immediately, for any method', async () => {
+    // A plain network error isn't a timeout or a 5xx, so it isn't
+    // "still working" -- it's shown straight away, here for spearman.
     mockFetch.mockResolvedValueOnce(jsonResponse([]))
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
 
@@ -334,4 +334,49 @@ describe('CorrelatesPanel — explains that a first search can be slow', () => {
     await waitFor(() => expect(screen.getByText(/first time/i)).toBeInTheDocument())
     expect(screen.getByText(/first time/i).textContent).toMatch(/saved|cached/i)
   })
+})
+
+describe('CorrelatesPanel — every method keeps trying while a first search is slow', () => {
+  it('spearman retries after a timeout, says it is still working, and shows the results', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse([]))
+    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /Find Correlates/i }))
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+
+    let release!: () => void
+    mockFetch.mockReset()
+    mockFetch
+      .mockRejectedValueOnce(httpError(504, 'Gateway Time-out'))
+      .mockImplementationOnce(() => new Promise(resolve => {
+        release = () => resolve(jsonResponse({
+          results: [{ catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 }],
+          prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+        }))
+      }))
+    await user.click(screen.getByRole('button', { name: 'spearman' }))
+
+    expect(await screen.findByText(/still working/i)).toBeInTheDocument()
+    expect(screen.queryByText(/correlation failed/i)).not.toBeInTheDocument()
+    release()
+    expect(await screen.findByText('COG0001')).toBeInTheDocument()
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('after all retries a non-circular method also says it is still working, without the spearman tip', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse([]))
+    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /Find Correlates/i }))
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+
+    mockFetch.mockReset()
+    mockFetch.mockRejectedValue(httpError(504, 'Gateway Time-out'))
+    await user.click(screen.getByRole('button', { name: 'raw_pearson' }))
+
+    const message = await screen.findByText(/taking longer than usual/i, {}, { timeout: 10000 })
+    expect(message.textContent).toMatch(/try again in a few minutes/i)
+    expect(message.textContent).not.toMatch(/try spearman/i)
+    expect(mockFetch).toHaveBeenCalledTimes(13)
+  }, 15000)
 })

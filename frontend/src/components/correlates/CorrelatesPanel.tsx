@@ -109,6 +109,10 @@ export function CorrelatesPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetSource, method, metric])
 
+  // Every method retries when a request times out or the server answers
+  // 5xx: the first search of a combination can outlast the 60s proxy
+  // limit, but the server keeps computing and saving each pair, so a retry
+  // picks up where it left off. circular_shift is the slowest case:
   // circular_shift runs a real permutation test per candidate
   // (exhaustively over every valid shift beyond the lag window -- 103 of
   // them at the real n=128, each re-running the 13-lag search) instead of
@@ -123,10 +127,9 @@ export function CorrelatesPanel({
   // each one individually. A client-side timeout here is therefore not a
   // real failure for this method; it just means "ask again" gets you
   // further along, since already-cached pairs return instantly. Capped at
-  // MAX_CIRCULAR_SHIFT_RETRIES (not truly unlimited) so a genuinely dead
-  // backend still surfaces as an error eventually rather than retrying
-  // forever.
-  const MAX_CIRCULAR_SHIFT_RETRIES = 12 // ~12 x 10 min = up to 2h before giving up
+  // MAX_RETRIES (not truly unlimited) so a genuinely dead backend still
+  // surfaces eventually rather than retrying forever.
+  const MAX_RETRIES = 12
 
   async function fetchCorr(attempt = 0) {
     const requestId = ++requestSeqRef.current
@@ -175,7 +178,7 @@ export function CorrelatesPanel({
       const httpStatus = httpStatusFromError(err)
       setLastErrorStatus(httpStatus)
       const isRetryable = isAbortError(err) || (httpStatus != null && httpStatus >= 500)
-      if (method === 'circular_shift' && isRetryable && attempt < MAX_CIRCULAR_SHIFT_RETRIES) {
+      if (isRetryable && attempt < MAX_RETRIES) {
         setElapsedMinutes(Math.round((Date.now() - (fetchStartRef.current ?? Date.now())) / 60_000))
         void fetchCorr(attempt + 1)
         return
@@ -287,7 +290,7 @@ export function CorrelatesPanel({
             {status === 'loading' && (
               <div style={{ padding: '4px 0' }}>
                 <span className="sr-only">Computing correlations…</span>
-                {method === 'circular_shift' && (
+                {(method === 'circular_shift' || retryAttempt > 0) && (
                   <div style={{
                     padding: '9px 12px', font: '11px var(--mono)', color: 'var(--text-dim)',
                   }}>
@@ -298,7 +301,7 @@ export function CorrelatesPanel({
                       // 10-minute timeout, which a run of genuinely slow
                       // (not failed) retries roughly does, but is still
                       // measuring the real thing rather than assuming it.
-                      : `Still working — about ${elapsedMinutes} min so far. Large families can take a while with this method; it keeps retrying automatically.`}
+                      : `Still working — about ${elapsedMinutes} min so far. A first search can take a while; it keeps retrying automatically, so feel free to leave this open.`}
                   </div>
                 )}
                 {Array.from({ length: 7 }).map((_, i) => (
@@ -321,12 +324,12 @@ export function CorrelatesPanel({
                     message above was showing) -- a hard, non-retryable
                     error (4xx) stops on attempt 0 instead, with no
                     elapsed-time message to show. */}
-                {method === 'circular_shift' && retryAttempt > 0 ? (
+                {retryAttempt > 0 ? (
                   <>
-                    Still not done after about {elapsedMinutes} minute{elapsedMinutes === 1 ? '' : 's'} of
-                    trying — this family may just be too large for this
-                    method right now. Try spearman, or a smaller target
-                    source.{' '}
+                    This search is taking longer than usual (about {elapsedMinutes} minute
+                    {elapsedMinutes === 1 ? '' : 's'} so far). The server is still working on it
+                    and saving the results — try again in a few minutes.
+                    {method === 'circular_shift' && ' For a quicker look, try spearman or a smaller target source.'}{' '}
                   </>
                 ) : (
                   <>
