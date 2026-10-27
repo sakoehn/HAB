@@ -251,6 +251,7 @@ export function CorrelatesPanel({
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ font: '400 10px var(--mono)', color: 'var(--text-dim)' }}>Method:</span>
+              <HelpTooltip text="The first time a combination (this annotation, a target source, a method and a metric) is searched, every candidate has to be scored, which can take a while -- up to several minutes for a large family. Results are saved, so the same search is fast afterwards." />
               {(['spearman', 'log_pearson', 'raw_pearson', 'circular_shift'] as CorrMethod[]).map(m => (
                 <button
                   key={m}

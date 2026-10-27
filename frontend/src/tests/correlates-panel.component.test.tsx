@@ -322,3 +322,16 @@ describe('CorrelatesPanel — significant_count disclosure', () => {
     expect(screen.queryByText(/showing top/)).not.toBeInTheDocument()
   })
 })
+
+describe('CorrelatesPanel — explains that a first search can be slow', () => {
+  it('the Method row has a help tooltip saying the first search of a combination can take a while', async () => {
+    mockFetch.mockResolvedValue(jsonResponse([]))
+    const user = userEvent.setup()
+    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
+    await user.click(screen.getByRole('button', { name: /Find Correlates/i }))
+    const methodRow = (await screen.findByText('Method:')).parentElement!
+    await user.click(within(methodRow).getByTitle('Help'))
+    await waitFor(() => expect(screen.getByText(/first time/i)).toBeInTheDocument())
+    expect(screen.getByText(/first time/i).textContent).toMatch(/saved|cached/i)
+  })
+})
