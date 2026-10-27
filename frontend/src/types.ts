@@ -342,7 +342,7 @@ export type ScaffoldSortCol = 'date' | 'scaffold_count' | 'gene_count'
 
 // ── Explore section tabs ───────────────────────────────────────────────────
 
-export type ExploreSection = 'overview' | 'top-egc' | 'by-parent' | 'lookup' | 'scaffolds'
+export type ExploreSection = 'overview' | 'top-egc' | 'by-parent' | 'lookup' | 'scaffolds' | 'bulk-download'
 
 // ── Correlates tab ─────────────────────────────────────────────────────────
 

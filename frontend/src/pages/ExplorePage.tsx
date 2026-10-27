@@ -72,6 +72,7 @@ import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { GroupedEgcChart } from '../components/charts/GroupedEgcChart'
 import { ScaffoldBtn } from '../components/scaffolds/ScaffoldBtn'
 import { HierarchyBtn } from '../components/hierarchy/HierarchyBtn'
+import { BulkDownloadPanel } from '../components/download/BulkDownloadPanel'
 import { ScaffoldExplorePanel } from '../components/scaffolds/ScaffoldExplorePanel'
 import type { ExploreState } from './exploreState'
 
@@ -1517,6 +1518,12 @@ export function ExplorePage({
               label: 'Scaffold Information',
               desc:  'Scaffold and gene counts over time, per annotation term',
             },
+            {
+              id:   'bulk-download' as ExploreSection,
+              icon: '⬇',
+              label: 'Bulk Download',
+              desc:  'Download the time series of every taxon at one rank under a chosen taxon (e.g. every family in a class)',
+            },
           ] as const).map(card => (
             <button
               key={card.id}
@@ -2353,6 +2360,17 @@ export function ExplorePage({
           <div className="explore-panel expand-anim">
             <ScaffoldExplorePanel
               initialTerms={state.scaffoldInitialTerms}
+              dataDateRange={dataDateRange}
+            />
+          </div>
+        )}
+
+        {/* ── Bulk Download ── */}
+        {visitedSections.has('bulk-download') && (
+          <div className="explore-panel expand-anim" style={sectionStyle('bulk-download')}>
+            <BulkDownloadPanel
+              key={resetKey}
+              initialParent={state.bulkDownloadInitialParent}
               dataDateRange={dataDateRange}
             />
           </div>

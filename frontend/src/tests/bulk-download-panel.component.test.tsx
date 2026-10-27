@@ -1,0 +1,214 @@
+/**
+ * bulk-download-panel.component.test.tsx
+ * ======================================
+ * Tests for BulkDownloadPanel (components/download/BulkDownloadPanel.tsx)
+ * and its helpers (utils/bulkDownload.ts),
+ * the Explore page's "Bulk Download" section: pick a starting taxon and a
+ * deeper rank, see the size, download the CSV from /api/series/export.
+ *
+ * Coverage
+ * --------
+ *   rankOptionsBelow / buildExportQuery (pure helpers)
+ *   a handed-in starting taxon is shown and used for the summary request
+ *   the rank dropdown only offers ranks below the starting taxon, defaults
+ *     to the next one down, and keeps a still-valid choice when the start
+ *     changes
+ *   size line, the too-big-for-Excel note, the nothing-found and error
+ *     states, and the download link's URL
+ *   picking a start by search and going back to the whole dataset
+ *   date range is passed through to both requests
+ *   only taxonomy can be chosen as the source for now
+ *   a slower, superseded summary response is ignored
+ *
+ * Run: npx vitest run src/tests/bulk-download-panel.component.test.tsx
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+
+import { BulkDownloadPanel } from '../components/download/BulkDownloadPanel'
+import { buildExportQuery, rankOptionsBelow } from '../utils/bulkDownload'
+
+const mockFetch = vi.fn()
+vi.stubGlobal('fetch', mockFetch)
+
+function jsonResponse(data: unknown) {
+  return { ok: true, status: 200, json: async () => data }
+}
+
+const GAMMA = 'Bacteria;Proteobacteria;Gammaproteobacteria'
+
+function summary(over: Partial<{ taxa: number; samples: number; max_rows: number; sparse: boolean }> = {}) {
+  return { source: 'taxonomy', parent: GAMMA, rank: 'family', taxa: 76, samples: 128, max_rows: 9728, sparse: false, ...over }
+}
+
+function summaryUrls(): URL[] {
+  return mockFetch.mock.calls
+    .map(c => new URL(String(c[0]), 'http://x'))
+    .filter(u => u.pathname === '/api/series/export/summary')
+}
+
+function lastSummaryUrl(): URL {
+  const urls = summaryUrls()
+  return urls[urls.length - 1]
+}
+
+function rankSelect() {
+  return screen.getByLabelText('Download every') as HTMLSelectElement
+}
+
+beforeEach(() => {
+  mockFetch.mockReset()
+  mockFetch.mockResolvedValue(jsonResponse(summary()))
+})
+
+// ── Pure helpers ─────────────────────────────────────────────────────────────
+
+describe('rankOptionsBelow', () => {
+  it('offers every rank for the whole dataset', () => {
+    expect(rankOptionsBelow(null).map(o => o.value)).toEqual(
+      ['domain', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'strain'],
+    )
+  })
+
+  it('offers only ranks deeper than the starting taxon', () => {
+    expect(rankOptionsBelow(GAMMA).map(o => o.value)).toEqual(['order', 'family', 'genus', 'species', 'strain'])
+  })
+
+  it('offers nothing below a strain', () => {
+    expect(rankOptionsBelow('a;b;c;d;e;f;g;h')).toEqual([])
+  })
+})
+
+describe('buildExportQuery', () => {
+  it('encodes the parent and leaves out empty values', () => {
+    const q = new URLSearchParams(buildExportQuery({ source: 'taxonomy', parent: GAMMA, rank: 'family', dateFrom: '', dateTo: '' }))
+    expect(Object.fromEntries(q)).toEqual({ source: 'taxonomy', rank: 'family', parent: GAMMA })
+  })
+
+  it('leaves out the parent for the whole dataset and keeps dates', () => {
+    const q = new URLSearchParams(buildExportQuery({ source: 'taxonomy', parent: null, rank: 'phylum', dateFrom: '2021-06-01', dateTo: '2021-06-05' }))
+    expect(Object.fromEntries(q)).toEqual({ source: 'taxonomy', rank: 'phylum', date_from: '2021-06-01', date_to: '2021-06-05' })
+  })
+})
+
+// ── Component ────────────────────────────────────────────────────────────────
+
+describe('BulkDownloadPanel', () => {
+  it('starts from a handed-in taxon and defaults to the next rank down', async () => {
+    render(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Bacteria › Proteobacteria › Gammaproteobacteria')
+    await waitFor(() => expect(lastSummaryUrl()?.searchParams.get('parent')).toBe(GAMMA))
+    expect(lastSummaryUrl().searchParams.get('rank')).toBe('order')
+    expect([...rankSelect().options].map(o => o.value)).toEqual(['order', 'family', 'genus', 'species', 'strain'])
+  })
+
+  it('shows the size and links the download to the chosen rank', async () => {
+    const user = userEvent.setup()
+    render(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    await user.selectOptions(rankSelect(), 'family')
+    await waitFor(() => expect(lastSummaryUrl().searchParams.get('rank')).toBe('family'))
+    expect(await screen.findByTestId('bulk-size')).toHaveTextContent('76 families × 128 samples ≈ 9,728 rows')
+    const link = screen.getByRole('link', { name: /Download CSV/ })
+    const href = new URL(link.getAttribute('href')!, 'http://x')
+    expect(href.pathname).toBe('/api/series/export')
+    expect(Object.fromEntries(href.searchParams)).toEqual({ source: 'taxonomy', rank: 'family', parent: GAMMA })
+  })
+
+  it('explains when the file is too big for Excel', async () => {
+    mockFetch.mockResolvedValue(jsonResponse(summary({ taxa: 18347, max_rows: 2348416, sparse: true })))
+    render(<BulkDownloadPanel initialParent={{ lineage: 'Bacteria' }} />)
+    expect(await screen.findByTestId('bulk-sparse-note')).toHaveTextContent(/too large to open in Excel/i)
+  })
+
+  it('does not show the Excel note for a normal-sized file', async () => {
+    render(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    await screen.findByTestId('bulk-size')
+    expect(screen.queryByTestId('bulk-sparse-note')).toBeNull()
+  })
+
+  it('disables the download when nothing is under the starting taxon', async () => {
+    mockFetch.mockResolvedValue(jsonResponse(summary({ taxa: 0, max_rows: 0 })))
+    render(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    expect(await screen.findByTestId('bulk-size')).toHaveTextContent(/no orders/i)
+    expect(screen.queryByRole('link', { name: /Download CSV/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Download CSV/ })).toBeDisabled()
+  })
+
+  it('shows an error and disables the download when the summary fails', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 500, statusText: 'err', json: async () => ({}) })
+    render(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    expect(await screen.findByTestId('bulk-error')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Download CSV/ })).toBeDisabled()
+  })
+
+  it('keeps the chosen rank when the new start is still above it, otherwise moves to the next rank down', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    await user.selectOptions(rankSelect(), 'species')
+    rerender(<BulkDownloadPanel initialParent={{ lineage: `${GAMMA};Pseudomonadales;Pseudomonadaceae` }} />)
+    await waitFor(() => expect(lastSummaryUrl().searchParams.get('parent')).toBe(`${GAMMA};Pseudomonadales;Pseudomonadaceae`))
+    expect(rankSelect().value).toBe('species')
+
+    rerender(<BulkDownloadPanel initialParent={{ lineage: `${GAMMA};Pseudomonadales;Pseudomonadaceae;Pseudomonas;Pseudomonas putida` }} />)
+    await waitFor(() => expect(rankSelect().value).toBe('strain'))
+  })
+
+  it('picks a starting taxon by search, and can go back to the whole dataset', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/search/annotations')) {
+        return jsonResponse({ data: [{ annotation_id: GAMMA, name: 'Gammaproteobacteria', depth: 3 }], total: 1 })
+      }
+      return jsonResponse(summary())
+    })
+    render(<BulkDownloadPanel />)
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Whole dataset')
+
+    await user.click(screen.getByRole('button', { name: 'Search' }))
+    await user.type(screen.getByPlaceholderText(/Search for a taxon/), 'Gammaproteobacteria{Enter}')
+    const searchCall = mockFetch.mock.calls.map(c => String(c[0])).find(u => u.startsWith('/api/search/annotations'))!
+    expect(new URL(searchCall, 'http://x').searchParams.get('sources')).toBe('taxonomy')
+    await user.click(await screen.findByRole('button', { name: /Gammaproteobacteria/ }))
+
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Gammaproteobacteria')
+    await waitFor(() => expect(lastSummaryUrl().searchParams.get('parent')).toBe(GAMMA))
+
+    await user.click(screen.getByRole('button', { name: 'Whole dataset' }))
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Whole dataset')
+    await waitFor(() => expect(lastSummaryUrl().searchParams.has('parent')).toBe(false))
+  })
+
+  it('passes the date range to the summary and the download', async () => {
+    const { container } = render(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    const [from, to] = container.querySelectorAll('input[type="date"]')
+    fireEvent.change(from, { target: { value: '2021-06-01' } })
+    fireEvent.change(to, { target: { value: '2021-06-05' } })
+    await waitFor(() => expect(lastSummaryUrl().searchParams.get('date_to')).toBe('2021-06-05'))
+    expect(lastSummaryUrl().searchParams.get('date_from')).toBe('2021-06-01')
+    const href = new URL(screen.getByRole('link', { name: /Download CSV/ }).getAttribute('href')!, 'http://x')
+    expect(href.searchParams.get('date_from')).toBe('2021-06-01')
+    expect(href.searchParams.get('date_to')).toBe('2021-06-05')
+  })
+
+  it('only lets taxonomy be chosen as the source for now', () => {
+    render(<BulkDownloadPanel />)
+    const options = [...(screen.getByLabelText('Source') as HTMLSelectElement).options]
+    expect(options.filter(o => !o.disabled).map(o => o.value)).toEqual(['taxonomy'])
+    expect(options.filter(o => o.disabled).map(o => o.value)).toEqual(['kegg', 'cog', 'enzyme'])
+  })
+
+  it('ignores a slower response for a choice that has since changed', async () => {
+    const user = userEvent.setup()
+    let resolveFirst!: (v: unknown) => void
+    mockFetch.mockImplementationOnce(() => new Promise(r => { resolveFirst = r }))
+    mockFetch.mockResolvedValue(jsonResponse(summary({ taxa: 76 })))
+    render(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    await user.selectOptions(rankSelect(), 'family')
+    expect(await screen.findByTestId('bulk-size')).toHaveTextContent('76 families')
+    resolveFirst(jsonResponse(summary({ taxa: 12, max_rows: 1536 })))
+    await new Promise(r => setTimeout(r, 0))
+    expect(screen.getByTestId('bulk-size')).toHaveTextContent('76 families')
+  })
+})

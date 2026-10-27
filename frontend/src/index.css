@@ -145,3 +145,15 @@ select.field {
 .page-fade { animation: pageFade .25s ease; }
 
 
+
+/* Bulk Download section (Explore) */
+.bulk-label { font: 500 12px var(--sans); color: var(--text-dim); }
+.bulk-search-result {
+  display: grid; grid-template-columns: max-content max-content minmax(0, 1fr);
+  align-items: baseline; gap: 10px; width: 100%;
+  padding: 8px 12px; text-align: left;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  font: 13px var(--sans); color: var(--text); cursor: pointer;
+}
+.bulk-search-result:last-child { border-bottom: none; }
+.bulk-search-result:hover { background: var(--surface2); }

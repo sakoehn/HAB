@@ -42,6 +42,9 @@ export type ExploreState = {
   lookupRankFilter: Set<number>
   // Scaffold section
   scaffoldInitialTerms?: { annotationId: string; source: string }[]
+  // Bulk Download section: a starting taxon handed over from another page
+  // (a new object each time, so a repeat handoff of the same taxon applies)
+  bulkDownloadInitialParent?: { lineage: string }
 }
 
 export function makeDefaultExploreState(): ExploreState {
@@ -69,5 +72,6 @@ export function makeDefaultExploreState(): ExploreState {
     lookupLoadedSource: null,
     lookupRankFilter: new Set(),
     scaffoldInitialTerms: undefined,
+    bulkDownloadInitialParent: undefined,
   }
 }

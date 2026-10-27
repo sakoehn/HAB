@@ -1025,3 +1025,35 @@ describe('ExplorePage — a section keeps what it loaded when you switch away an
     await waitFor(() => expect(topCalls('cog')).toBe(2))
   })
 })
+
+describe('ExplorePage — Bulk Download section', () => {
+  const SUMMARY = { source: 'taxonomy', parent: null, rank: 'phylum', taxa: 111, samples: 128, max_rows: 14208, sparse: false }
+
+  it('opens from its card', async () => {
+    mockFetch.mockResolvedValue(jsonResponse(SUMMARY))
+    const user = userEvent.setup()
+    render(<Harness initial={{}} />)
+    expect(screen.queryByTestId('bulk-start')).toBeNull()
+    await user.click(screen.getByRole('button', { name: /Bulk Download/ }))
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Whole dataset')
+  })
+
+  it('starts from a taxon handed over by another page', async () => {
+    mockFetch.mockResolvedValue(jsonResponse(SUMMARY))
+    render(<Harness initial={{
+      openSection: 'bulk-download',
+      bulkDownloadInitialParent: { lineage: 'Bacteria;Proteobacteria;Gammaproteobacteria' },
+    }} />)
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Gammaproteobacteria')
+  })
+
+  it('keeps its choices when another section is opened and closed again', async () => {
+    mockFetch.mockResolvedValue(jsonResponse(SUMMARY))
+    const user = userEvent.setup()
+    render(<Harness initial={{ openSection: 'bulk-download' }} />)
+    await user.selectOptions(screen.getByLabelText('Download every'), 'genus')
+    await user.click(screen.getByRole('button', { name: /Annotation Lookup/ }))
+    await user.click(screen.getByRole('button', { name: /Bulk Download/ }))
+    expect((screen.getByLabelText('Download every') as HTMLSelectElement).value).toBe('genus')
+  })
+})
