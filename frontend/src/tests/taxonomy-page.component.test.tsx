@@ -505,3 +505,35 @@ describe('TaxonomyPage — labels count and word what the chart actually does', 
     expect(banner.textContent).not.toMatch(/excludes/i)
   })
 })
+
+describe('TaxonomyPage — bulk download shortcut', () => {
+  it('hands the current scope to the Bulk Download section', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ data: [] }))
+    const onGoBulkDownload = vi.fn()
+    const state = { ...makeDefaultTaxonomyState(), rootId: 'Bacteria;Proteobacteria;Gammaproteobacteria' }
+    render(
+      <TaxonomyPage
+        state={state}
+        setState={() => {}}
+        onGoScaffoldExplore={vi.fn()}
+        onGoBulkDownload={onGoBulkDownload}
+        onReset={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Download time series under this scope/ }))
+    expect(onGoBulkDownload).toHaveBeenCalledWith('Bacteria;Proteobacteria;Gammaproteobacteria')
+  })
+
+  it('has no shortcut before a scope is chosen', () => {
+    render(
+      <TaxonomyPage
+        state={makeDefaultTaxonomyState()}
+        setState={() => {}}
+        onGoScaffoldExplore={vi.fn()}
+        onGoBulkDownload={vi.fn()}
+        onReset={() => {}}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /Download time series under this scope/ })).toBeNull()
+  })
+})

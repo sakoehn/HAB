@@ -148,3 +148,42 @@ describe('App::handleSendToAnalyze (real navigation, not a hand-mocked simulatio
     })
   })
 })
+
+describe('App::handleGoBulkDownload (real navigation)', () => {
+  it('the Taxonomy page shortcut lands on Explore > Bulk Download starting from that scope', async () => {
+    const GAMMA = 'Bacteria;Proteobacteria;Gammaproteobacteria'
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      if (url.includes('/api/search/annotations'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({ data: [{ annotation_id: GAMMA, source: 'taxonomy', name: 'Gammaproteobacteria', depth: 3 }], total: 1 }),
+        })
+      if (url.includes('/api/series/export/summary'))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({ source: 'taxonomy', parent: GAMMA, rank: 'order', taxa: 20, samples: 128, max_rows: 2560, sparse: false }),
+        })
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    render(<App />)
+    await userEvent.click(await screen.findByText('Taxonomy', { selector: '.nav-label' }))
+    await userEvent.type(await screen.findByPlaceholderText(/Search for a taxon \(e\.g\. Bacteria\)/), 'Gammaproteobacteria')
+    await userEvent.click(screen.getByRole('button', { name: /^Find$/ }))
+    await userEvent.click(await screen.findByText('Gammaproteobacteria', { selector: '[title], span, div' }))
+    await userEvent.click(await screen.findByRole('button', { name: /Download time series under this scope/ }))
+
+    await waitFor(() => {
+      const exploreNavItem = screen.getByText('Explore', { selector: '.nav-label' }).closest('.nav-item')
+      expect(exploreNavItem).toHaveClass('active')
+    })
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Bacteria › Proteobacteria › Gammaproteobacteria')
+    await waitFor(() => expect(screen.getByTestId('bulk-size')).toHaveTextContent('20 orders'))
+  })
+})

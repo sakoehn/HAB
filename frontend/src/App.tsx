@@ -141,6 +141,17 @@ export default function App() {
     setPage('explore')
   }
 
+  function handleGoBulkDownload(lineage: string) {
+    setExploreState(prev => ({
+      ...prev,
+      openSection: 'bulk-download',
+      // A new object each time, so handing over the same taxon again still
+      // applies after the user has changed it in the panel.
+      bulkDownloadInitialParent: { lineage },
+    }))
+    setPage('explore')
+  }
+
   function handleGoScaffoldExploreGroup(
     members: { annotationId: string; source: string }[],
   ) {
@@ -310,6 +321,7 @@ export default function App() {
             setState={setTaxonomyState}
             dataDateRange={dataDateRange}
             onGoScaffoldExplore={handleGoScaffoldExplore}
+            onGoBulkDownload={handleGoBulkDownload}
             onReset={handleResetTaxonomy}
           />
         </div>

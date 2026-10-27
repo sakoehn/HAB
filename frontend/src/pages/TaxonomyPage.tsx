@@ -42,12 +42,15 @@ export function TaxonomyPage({
   setState,
   dataDateRange,
   onGoScaffoldExplore,
+  onGoBulkDownload,
   onReset
 }: {
   state:          TaxonomyState
   setState:       (updater: (prev: TaxonomyState) => TaxonomyState) => void
   dataDateRange?: { min: string; max: string } | null
   onGoScaffoldExplore?: (annotationId: string, source: string) => void
+  // Opens Explore > Bulk Download starting from the given lineage
+  onGoBulkDownload?: (lineage: string) => void
   onReset:        () => void
 }) {
   // ── Download taxa list by rank ──────────────────────────────────────────
@@ -411,6 +414,11 @@ export function TaxonomyPage({
               </span>
               <button className="btn ghost sm" onClick={changeRoot}>✕ change scope</button>
               <HelpTooltip text="Changing the scope taxon clears your current exclusions — they don't carry over to a new scope." />
+              {onGoBulkDownload && (
+                <button className="btn sm" onClick={() => state.rootId && onGoBulkDownload(state.rootId)}>
+                  ↓ Download time series under this scope →
+                </button>
+              )}
             </div>
           )}
         </div>
