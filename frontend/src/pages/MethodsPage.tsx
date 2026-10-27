@@ -205,7 +205,32 @@ export function MethodsPage() {
             family, using only the timepoints where both were detected; a pair needs at
             least 10 such timepoints. Four methods are available: raw Pearson, log-Pearson
             (Pearson on natural-log values), Spearman, and Spearman with a circular-shift
-            permutation p-value.
+            permutation p-value. All of them use the metric chosen in the panel (EGC or
+            relative abundance).
+          </Item>
+          <Item title="Raw Pearson" formula="r = cov(x, y) / (σx · σy)">
+            Pearson’s correlation on the values as they are: how closely the two series rise
+            and fall together in a straight-line relationship. Because it uses the actual
+            values, a few very large ones (e.g. a bloom spike) can dominate r.
+          </Item>
+          <Item title="Log-Pearson" formula="r = Pearson( ln x, ln y )">
+            Pearson’s correlation on the natural log of each value, so it compares relative
+            (fold) changes rather than absolute ones, and large values no longer dominate. Only
+            timepoints where both annotations were detected are used, so every value is
+            positive and has a log.
+          </Item>
+          <Item title="Spearman" formula="r = Pearson( rank(x), rank(y) )">
+            Pearson’s correlation on the values’ ranks: whether one series tends to be higher
+            when the other is, in any consistent (monotonic) way, not only a straight line.
+            Using ranks makes it robust to outliers and skewed values; tied values share the
+            average of their ranks.
+          </Item>
+          <Item title="P-values for these three methods">
+            Raw Pearson, log-Pearson and Spearman report the standard p-value for their r,
+            which assumes every timepoint is independent of the others. Samples taken 4 hours
+            apart are not, so these p-values are too optimistic; treat them as a way to rank
+            candidates, not as strict significance. The circular-shift p-value below is the
+            method designed for this.
           </Item>
           <Item
             title="Lags"

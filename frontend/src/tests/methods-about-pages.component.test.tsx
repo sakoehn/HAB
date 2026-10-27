@@ -51,6 +51,21 @@ describe('MethodsPage', () => {
   })
 })
 
+describe('MethodsPage — every correlation method is described', () => {
+  it('has its own item for raw Pearson, log-Pearson, Spearman and the circular shift', () => {
+    const { container } = render(<MethodsPage />)
+    const titles = [...container.querySelectorAll('strong')].map(el => el.textContent)
+    for (const t of ['Raw Pearson', 'Log-Pearson', 'Spearman', 'Circular-shift p-value']) {
+      expect(titles).toContain(t)
+    }
+  })
+
+  it('says the three classic p-values assume independent timepoints', () => {
+    const { container } = render(<MethodsPage />)
+    expect(container.textContent).toMatch(/independent/i)
+  })
+})
+
 describe('AboutPage', () => {
   it('keeps description, how-to, API reference and an authors section; drops the rest', () => {
     render(<AboutPage />)
