@@ -11,6 +11,7 @@ definitions and column meanings.
 """
 
 import sqlite3
+from collections.abc import Iterator
 
 from .ec_renumbering import resolve_or_drop_ec
 
@@ -1434,3 +1435,84 @@ def get_taxa_at_rank_sql(conn: sqlite3.Connection, depth: int) -> list[dict]:
         ORDER BY 1, 2
     """
     return [{"taxon": name, "lineage": path} for name, path in conn.execute(query)]
+
+
+def get_taxa_under_at_rank_sql(conn: sqlite3.Connection, parent: str | None, depth: int) -> list[dict]:
+    """Return every taxon at one rank under a parent lineage -- e.g. every
+    family under Gammaproteobacteria, or every species under a family
+    (ranks can be skipped). "unclassified ..." placeholder taxa are
+    included, since they hold the reads that stop above this rank.
+
+    Args:
+        conn: Open SQLite connection.
+        parent: Full lineage of the parent taxon, e.g.
+            "Bacteria;Proteobacteria;Gammaproteobacteria". None means the
+            whole dataset.
+        depth: Rank to list, 1 (domain) through 8 (strain).
+
+    Returns:
+        List of {"annotation_id", "name"} dicts sorted by annotation_id.
+        Empty if nothing is under `parent` at that rank.
+
+    Raises:
+        ValueError: If depth is outside 1-8.
+    """
+    if depth < 1 or depth > 8:
+        raise ValueError(f"depth must be 1-8, got {depth}")
+    if parent is None:
+        query = """
+            SELECT annotation_id, name FROM annotation_catalog
+            WHERE source = 'taxonomy' AND depth = ?
+            ORDER BY annotation_id
+        """
+        return [{"annotation_id": a, "name": n} for a, n in conn.execute(query, (depth,))]
+
+    # Every id starting with "<parent>;" sorts between "<parent>;" and
+    # "<parent><" (';' is followed by '<' in character order), so this
+    # range lookup uses the (source, annotation_id) index instead of
+    # scanning the whole table with substr().
+    query = """
+        SELECT annotation_id, name FROM annotation_catalog
+        WHERE source = 'taxonomy' AND annotation_id > ? AND annotation_id < ? AND depth = ?
+        ORDER BY annotation_id
+    """
+    rows = conn.execute(query, (parent + ";", parent + "<", depth))
+    return [{"annotation_id": a, "name": n} for a, n in rows]
+
+
+# Ids per query in iter_taxa_series_sql, well under SQLite's
+# bound-parameter limit.
+_SERIES_EXPORT_CHUNK = 500
+
+
+def iter_taxa_series_sql(conn: sqlite3.Connection, annotation_ids: list[str]) -> Iterator[dict]:
+    """Yield the per-sample rows for a list of taxonomy ids, for the bulk
+    time-series download. Looks the ids up exactly, a chunk at a time,
+    which is much faster than a lineage-prefix scan of annotation_series
+    (measured: 0.05s vs 3.4s for the 76 families under Gammaproteobacteria).
+
+    Args:
+        conn: Open SQLite connection.
+        annotation_ids: Taxonomy ids (full lineages), sorted, e.g. from
+            get_taxa_under_at_rank_sql.
+
+    Yields:
+        {"annotation_id", "name", "sample", "egc", "norm_egc"} dicts, one
+        per sample a taxon was detected in, grouped by taxon in id order.
+    """
+    for start in range(0, len(annotation_ids), _SERIES_EXPORT_CHUNK):
+        chunk = annotation_ids[start:start + _SERIES_EXPORT_CHUNK]
+        placeholders = ",".join("?" * len(chunk))
+        query = f"""
+            SELECT annotation_id, name, sample, egc, norm_egc FROM annotation_series
+            WHERE source = 'taxonomy' AND annotation_id IN ({placeholders})
+            ORDER BY annotation_id, sample
+        """
+        for annotation_id, name, sample, egc, norm_egc in conn.execute(query, chunk):
+            yield {
+                "annotation_id": annotation_id,
+                "name":          name,
+                "sample":        sample,
+                "egc":           egc,
+                "norm_egc":      norm_egc,
+            }
