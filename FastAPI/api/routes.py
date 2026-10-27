@@ -18,6 +18,8 @@ GET /annotations/top
 GET /annotations/scaffolds
 GET /annotations/scaffolds/summary
 GET /taxonomy/export
+GET /series/export/summary
+GET /series/export
 
 All business logic (pagination, search, EGC extraction) lives here or in
 cache.py / index.py — endpoints are intentionally thin.
@@ -36,10 +38,16 @@ mirrors the per-call connection pattern correlation_sql.py's _connect()
 already used successfully.
 """
 
+import csv
+import io
+import re
 import time
 from collections import OrderedDict
+from itertools import groupby
+from operator import itemgetter
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
 from .cache_sql import (
     _cog_node_depth,
@@ -72,6 +80,8 @@ from .cache_sql import (
     get_search_annotations,
     get_top_annotations_from_catalog_sql,
     get_taxa_at_rank_sql,
+    get_taxa_under_at_rank_sql,
+    iter_taxa_series_sql,
     strip_source_prefix,
     RANK_COLUMNS
 )
@@ -904,19 +914,23 @@ def annotation_scaffolds_summary(
     return {"annotation_id": annotation_id, "source": source.value, "total": len(rows), "data": rows}
 
 
+def _taxonomy_rank_depth(rank: str) -> int | None:
+    """Depth (1=domain..8=strain) for a rank name like "family", or None
+    if it isn't one."""
+    for d, column in RANK_COLUMNS.items():
+        # strip('"') undoes "order"'s SQL-reserved-word quoting;
+        # rstrip('_') undoes class_'s Python-keyword-avoidance suffix
+        if column.strip('"').rstrip('_') == rank:
+            return d
+    return None
+
+
 @router.get("/taxonomy/export")
 def taxonomy_rank_export(request: Request, rank: str):
     """Return every lineage at the given taxonomic rank (e.g. "genus",
     "order") as {"taxon", "lineage"}; same-named taxa in different lineages
     are listed separately."""
-    depth = None
-    for d, column in RANK_COLUMNS.items():
-        # strip('"') undoes "order"'s SQL-reserved-word quoting;
-        # rstrip('_') undoes class_'s Python-keyword-avoidance suffix
-        if column.strip('"').rstrip('_') == rank:
-            depth = d
-            break
-
+    depth = _taxonomy_rank_depth(rank)
     if depth is None:
         raise HTTPException(status_code=400, detail=f"Rank '{rank}' not found")
     db = connect_to_sql()
@@ -925,3 +939,156 @@ def taxonomy_rank_export(request: Request, rank: str):
     finally:
         close_sql_connection(db)
     return rows
+
+
+# ── Bulk time-series download ─────────────────────────────────────────────────
+
+# Above this many rows (Excel's row limit, minus the header) the CSV lists
+# only the samples each taxon was detected in, instead of also writing an
+# explicit 0 row for every sample it wasn't.
+_EXPORT_DENSE_ROW_LIMIT = 1_048_575
+
+# Rows written before each chunk is handed to the response.
+_EXPORT_CHUNK_ROWS = 5000
+
+_EXPORT_HEADER = ["taxon", "rank", "lineage", "sample", "date", "egc", "norm_egc", "detected"]
+
+
+def _series_export_plan(
+    db, source: AnnotationSource, parent: str | None, rank: str,
+    date_from: str | None, date_to: str | None,
+) -> dict:
+    """Check a bulk-download request and work out what it covers: the
+    taxa, the samples (in date order, with ISO dates) and whether the
+    file is too big to also list undetected samples. Raises HTTPException
+    for a bad request, so both routes reject it before anything is sent.
+    """
+    if source != AnnotationSource.taxonomy:
+        raise HTTPException(status_code=400, detail=f"Bulk download is not available for '{source.value}' yet")
+    depth = _taxonomy_rank_depth(rank)
+    if depth is None:
+        raise HTTPException(status_code=400, detail=f"Rank '{rank}' not found")
+    for label, value in (("date_from", date_from), ("date_to", date_to)):
+        if value is not None and _parse_any_datetime(value) is None:
+            raise HTTPException(status_code=400, detail=f"{label} is not a recognized date: {value!r}")
+    if parent is not None:
+        if not taxon_exists_sql(db, parent):
+            raise HTTPException(status_code=404, detail=f"Unknown taxon '{parent}'")
+        if depth <= len(parent.split(";")):
+            raise HTTPException(status_code=400, detail=f"Rank '{rank}' is not below '{parent}'")
+
+    taxa = get_taxa_under_at_rank_sql(db, parent, depth)
+    samples = []
+    for sample in sorted(get_all_sample_names_sql(db), key=timepoint_sort_key):
+        dt = (get_timepoint(sample) or {}).get("datetime")
+        if (date_from or date_to) and not is_within_date_range(dt, date_from, date_to):
+            continue
+        parsed = _parse_any_datetime(dt) if dt else None
+        samples.append((sample, parsed.strftime("%Y-%m-%d %H:%M") if parsed else ""))
+
+    max_rows = len(taxa) * len(samples)
+    return {"taxa": taxa, "samples": samples, "max_rows": max_rows, "sparse": max_rows > _EXPORT_DENSE_ROW_LIMIT}
+
+
+def _series_export_filename(parent: str | None, rank: str, date_from: str | None, date_to: str | None) -> str:
+    parts = [parent.rsplit(";", 1)[-1] if parent else "all", rank, "timeseries"]
+    if date_from or date_to:
+        parts.append(f"{date_from or 'start'}_to_{date_to or 'end'}")
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", "_".join(parts)) + ".csv"
+
+
+def _series_export_csv(db, plan: dict, rank: str):
+    """Yield the CSV in chunks: one row per taxon per sample, taxa in
+    lineage order and samples in date order within each taxon. Closes
+    `db` when done (or when the download is abandoned)."""
+    try:
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        writer.writerow(_EXPORT_HEADER)
+        groups = groupby(
+            iter_taxa_series_sql(db, [t["annotation_id"] for t in plan["taxa"]]),
+            key=itemgetter("annotation_id"),
+        )
+        group = next(groups, None)
+        pending = 0
+        for taxon in plan["taxa"]:
+            detected = {}
+            if group is not None and group[0] == taxon["annotation_id"]:
+                detected = {r["sample"]: r for r in group[1]}
+                group = next(groups, None)
+            for sample, date in plan["samples"]:
+                row = detected.get(sample)
+                if row is not None:
+                    writer.writerow([taxon["name"], rank, taxon["annotation_id"], sample, date, row["egc"], row["norm_egc"], "true"])
+                elif plan["sparse"]:
+                    continue
+                else:
+                    writer.writerow([taxon["name"], rank, taxon["annotation_id"], sample, date, 0, 0, "false"])
+                pending += 1
+                if pending >= _EXPORT_CHUNK_ROWS:
+                    yield buf.getvalue()
+                    buf.seek(0)
+                    buf.truncate(0)
+                    pending = 0
+        yield buf.getvalue()
+    finally:
+        close_sql_connection(db)
+
+
+@router.get("/series/export/summary")
+def series_export_summary(
+    request:   Request,
+    source:    AnnotationSource = Query(...),
+    rank:      str = Query(...),
+    parent:    str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to:   str | None = Query(None),
+):
+    """How big a /series/export download would be, shown before it starts:
+    number of taxa, samples, the most rows the file can have, and whether
+    it is too big to list undetected samples (sparse)."""
+    parent = parent or None
+    db = connect_to_sql()
+    try:
+        plan = _series_export_plan(db, source, parent, rank, date_from, date_to)
+    finally:
+        close_sql_connection(db)
+    return {
+        "source":   source.value,
+        "parent":   parent,
+        "rank":     rank,
+        "taxa":     len(plan["taxa"]),
+        "samples":  len(plan["samples"]),
+        "max_rows": plan["max_rows"],
+        "sparse":   plan["sparse"],
+    }
+
+
+@router.get("/series/export")
+def series_export(
+    request:   Request,
+    source:    AnnotationSource = Query(...),
+    rank:      str = Query(...),
+    parent:    str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to:   str | None = Query(None),
+):
+    """CSV of every taxon at `rank` under `parent` (the whole dataset if
+    omitted), one row per taxon per sample: taxon, rank, lineage, sample,
+    date, egc, norm_egc, detected. Undetected samples are written as 0
+    with detected=false, unless the file would pass Excel's row limit, in
+    which case only detected rows are written. Streamed, so a large file
+    never has to be built in memory first."""
+    parent = parent or None
+    db = connect_to_sql()
+    try:
+        plan = _series_export_plan(db, source, parent, rank, date_from, date_to)
+    except Exception:
+        close_sql_connection(db)
+        raise
+    filename = _series_export_filename(parent, rank, date_from, date_to)
+    return StreamingResponse(
+        _series_export_csv(db, plan, rank),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
