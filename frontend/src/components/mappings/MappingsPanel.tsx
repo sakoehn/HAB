@@ -278,10 +278,19 @@ export function MappingsPanel({
               >
                 {csvStatus === 'loading'
                   ? 'Exporting…'
-                  : samplesCapped ? `↓ CSV (all ${FULL_SAMPLE_COUNT})` : '↓ CSV'}
+                  : samplesCapped ? '↓ Export all' : '↓ CSV'}
               </button>
             )}
           </div>
+          {status === 'ok' && samplesCapped && allRows.length > 0 && (
+            <div
+              data-testid="mappings-export-all-note"
+              style={{ font: '11px var(--mono)', color: 'var(--text-dim)', margin: '-4px 0 10px' }}
+            >
+              Export all downloads every mapping row for this annotation across all{' '}
+              {FULL_SAMPLE_COUNT} samples as a CSV — not just the preview below. It can take a while.
+            </div>
+          )}
           {csvStatus === 'error' && (
             <div className="state-box error" style={{ padding: '8px 12px', marginTop: 4 }}>
               <span>Full CSV export failed -- try again, or export the {usedSampleCount ?? requestedSampleCount}-sample preview by narrowing to a specific gene/id first.</span>

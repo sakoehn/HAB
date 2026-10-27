@@ -309,9 +309,14 @@ describe('MappingsPanel — broad-category cap', () => {
     await open()
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
 
+    // A limited preview gets an "Export all" button, with a visible line
+    // saying what it exports.
+    expect(screen.queryByRole('button', { name: /CSV/i })).not.toBeInTheDocument()
+    expect(screen.getByTestId('mappings-export-all-note')).toHaveTextContent(/all 128 samples/i)
+
     mockFetch.mockResolvedValueOnce(jsonResponse({ data: [fullRow1, fullRow2] }))
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /CSV/i }))
+    await user.click(screen.getByRole('button', { name: /Export all/i }))
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
     expect(mockFetch.mock.calls[1][0]).toContain('bypass_cap=true')
@@ -330,6 +335,9 @@ describe('MappingsPanel — broad-category cap', () => {
     await open()
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
 
+    // Not limited: the button stays "CSV" and there's no export-all line.
+    expect(screen.queryByRole('button', { name: /Export all/i })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mappings-export-all-note')).not.toBeInTheDocument()
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /CSV/i }))
 
