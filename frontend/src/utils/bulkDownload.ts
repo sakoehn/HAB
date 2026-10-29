@@ -17,6 +17,12 @@ const LEVELS: Record<string, RankOption[]> = {
     { value: 'subsubclass', label: 'Sub-subclass', depth: 3 },
     { value: 'ec',          label: 'EC number',    depth: 4 },
   ],
+  kegg: [
+    { value: 'category',    label: 'Category',     depth: 1 },
+    { value: 'subcategory', label: 'Subcategory',  depth: 2 },
+    { value: 'pathway',     label: 'Pathway',      depth: 3 },
+    { value: 'ko',          label: 'KO',           depth: 4 },
+  ],
 }
 
 // Levels of `source` below `parentDepth` (0 for the whole dataset).
@@ -55,4 +61,18 @@ export function buildExportQuery({ source, parent, rank, dateFrom, dateTo, inclu
   if (dateTo)   q.set('date_to', dateTo)
   if (parent && includeParent) q.set('include_parent', 'true')
   return q.toString()
+}
+
+// Key of one path choice: a term and the immediate parent it is reached
+// through (a KO and a pathway).
+export function pathKey(term: string, pathParent: string): string {
+  return `${term}|${pathParent}`
+}
+
+// The body of a POST /api/series/export(/summary) carrying the user's
+// unticked paths: what a text/plain form with one "selection" field sends.
+// `excluded` holds "term|pathParent" keys.
+export function selectionJson(excluded: Set<string>): string {
+  const exclude = [...excluded].sort().map(key => key.split('|'))
+  return JSON.stringify({ exclude })
 }

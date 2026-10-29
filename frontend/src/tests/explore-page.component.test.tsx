@@ -1105,10 +1105,19 @@ describe('ExplorePage — Lookup card links to Bulk Download', () => {
     expect(screen.queryByRole('button', { name: /Bulk download from here/ })).toBeNull()
   })
 
-  it('has no link yet for KEGG, which Bulk Download does not offer yet', async () => {
+  it('has no link yet for COG, which Bulk Download does not offer yet', async () => {
+    const user = userEvent.setup()
+    lookupFetch({ annotation_id: 'C', name: 'Energy production and conversion', depth: 1 })
+    await lookUp(user, 'cog', 'C')
+    expect(screen.queryByRole('button', { name: /Bulk download from here/ })).toBeNull()
+  })
+
+  it('a KEGG pathway opens Bulk Download at KO level', async () => {
     const user = userEvent.setup()
     lookupFetch({ annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 3 })
     await lookUp(user, 'kegg', '00010')
-    expect(screen.queryByRole('button', { name: /Bulk download from here/ })).toBeNull()
+    await user.click(screen.getByRole('button', { name: /Bulk download from here/ }))
+    expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('kegg')
+    expect((screen.getByLabelText('Download every') as HTMLSelectElement).value).toBe('ko')
   })
 })

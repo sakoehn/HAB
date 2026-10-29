@@ -157,3 +157,17 @@ select.field {
 }
 .bulk-search-result:last-child { border-bottom: none; }
 .bulk-search-result:hover { background: var(--surface2); }
+.bulk-review-term { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.bulk-review-term:last-child { border-bottom: none; }
+.bulk-review-toggle {
+  display: inline-flex; align-items: baseline; gap: 8px; min-width: 0;
+  background: none; border: none; padding: 2px 0; cursor: pointer;
+  font: 13px var(--sans); color: var(--text); text-align: left;
+}
+.bulk-review-toggle:hover { color: var(--teal); }
+.bulk-review-path {
+  display: grid; grid-template-columns: max-content 80px minmax(0, 1fr);
+  align-items: baseline; gap: 10px; padding: 3px 0;
+  font: 12px var(--sans); color: var(--text); cursor: pointer;
+}
+.bulk-review-mean { font: 12px var(--mono); color: var(--text-dim); text-align: right; }

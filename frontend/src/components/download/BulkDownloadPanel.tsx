@@ -7,23 +7,27 @@
 // streams it to disk instead of the page building it in memory;
 // /api/series/export/summary supplies the size shown before downloading.
 //
-// Taxonomy and Enzyme are available. KEGG and COG are listed but disabled
-// until their backend support exists.
+// Taxonomy, Enzyme and KEGG are available; COG is listed but disabled until
+// its backend support exists. For KEGG, a KO in several pathways inside the
+// start can be reviewed (PathReviewList) and some of its pathways unticked;
+// those choices go with the size request and the download as a text/plain
+// form post, since they can be too many for a link.
 
 import React, { useEffect, useState } from 'react'
 
-import type { AnnotationItem, ApiStatus, BulkDownloadHandoff, HierarchyTreeNode } from '../../types'
+import type { AnnotationItem, ApiStatus, BulkDownloadHandoff, HierarchySource, HierarchyTreeNode } from '../../types'
 import { apiFetch } from '../../utils/api'
-import { buildExportQuery, levelLabel, levelOptionsBelow } from '../../utils/bulkDownload'
+import { buildExportQuery, levelLabel, levelOptionsBelow, selectionJson } from '../../utils/bulkDownload'
 import { DateRangePicker } from '../ui/DateRangePicker'
 import { HelpTooltip } from '../ui/HelpTooltip'
 import { TaxonomyBrowseTree } from '../taxonomy/TaxonomyBrowseTree'
 import { HierarchyBrowseTree } from '../hierarchy/HierarchyBrowseTree'
+import { PathReviewList, type ReviewTerm } from './PathReviewList'
 
 const SOURCES = [
   { value: 'taxonomy', label: 'Taxonomy',           enabled: true },
   { value: 'enzyme',   label: 'Enzyme',             enabled: true },
-  { value: 'kegg',     label: 'KEGG (coming soon)', enabled: false },
+  { value: 'kegg',     label: 'KEGG',               enabled: true },
   { value: 'cog',      label: 'COG (coming soon)',  enabled: false },
 ]
 
@@ -39,30 +43,46 @@ const LEVEL_PLURALS: Record<string, string> = {
   subclass:    'subclasses',
   subsubclass: 'sub-subclasses',
   ec:          'EC numbers',
+  category:    'categories',
+  subcategory: 'subcategories',
+  pathway:     'pathways',
+  ko:          'KOs',
+}
+
+// What a term's paths run through, for the review line ("in more than one
+// pathway").
+const PATH_NOUNS: Record<string, string> = {
+  kegg: 'pathway',
 }
 
 const SEARCH_PLACEHOLDERS: Record<string, string> = {
   taxonomy: 'Search for a taxon (e.g. Gammaproteobacteria)…',
   enzyme:   'Search for an EC number or name (e.g. 5.6.2, topoisomerase)…',
+  kegg:     'Search for a KEGG term or ID (e.g. glycolysis, 00010)…',
 }
 
 const COLUMNS_HELP: Record<string, string> = {
   taxonomy: 'Columns: taxon, rank, lineage, sample, date, egc, norm_egc, detected. Samples where a taxon was not detected are written as 0 with detected = false. "unclassified …" taxa hold the reads that were not classified down to this rank, so every rank adds up to the starting taxon\'s total.',
   enzyme:   'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false.',
+  kegg:     'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false. A KO in several ticked pathways gets one set of rows per pathway, each with also_in_other_paths = true and the same values, so don\'t add those copies together.',
 }
 
 // Shown under the size line for sources whose rows don't add up to the
 // starting term the way taxonomy's do.
 const SOURCE_NOTES: Record<string, string> = {
+  kegg:   'Rows may not add up to the starting term: a KO in several pathways counts in each of them, while the starting term counts it once. Tick "Also include the starting term\'s own total" to compare.',
   enzyme: 'Rows may not add up to the starting term. Genes known only to a higher level — a partial EC number such as 3.1.-, or an old number that was later split — count towards that level but towards no EC number below it, and a gene with two EC numbers counts under each. Tick "Also include the starting term\'s own total" to compare.',
 }
 
 type ExportSummary = {
-  taxa:     number
-  samples:  number
-  max_rows: number
-  sparse:   boolean
+  taxa:              number
+  samples:           number
+  max_rows:          number
+  sparse:            boolean
+  multi_path_terms?: number
 }
+
+const NO_CHOICES: Set<string> = new Set()
 
 type Start = { id: string; depth: number; name: string }
 
@@ -108,6 +128,17 @@ export function BulkDownloadPanel({
   const [searchResults, setSearchResults] = useState<AnnotationItem[]>([])
   const [searchStatus, setSearchStatus]   = useState<ApiStatus>('idle')
 
+  // Unticked paths ("term|pathParent") and whether the review list is open.
+  // Both belong to one source/start/level: changing any of those starts over.
+  const choiceKey = `${source}|${start?.id ?? ''}|${rank}`
+  const [choices, setChoices] = useState<{ key: string; excluded: Set<string> }>({ key: '', excluded: NO_CHOICES })
+  const excluded = choices.key === choiceKey ? choices.excluded : NO_CHOICES
+  const [reviewOpenFor, setReviewOpenFor] = useState<string | null>(null)
+  const reviewOpen = reviewOpenFor === choiceKey
+  const [reviewResult, setReviewResult] = useState<
+    { query: string; terms: ReviewTerm[]; status: 'ok' | 'error' } | null
+  >(null)
+
   // The last summary response, with the request it answers -- it only
   // counts while that is still the current choice, so a change shows
   // "Counting…" straight away and a slower, superseded response is never
@@ -118,7 +149,15 @@ export function BulkDownloadPanel({
 
   const rankOptions = levelOptionsBelow(source, start?.depth ?? 0)
 
+  // Path choices belong to one source/start/level; any change there clears
+  // them (choiceKey below also hides them from the moment it changes).
+  function clearChoices() {
+    setChoices({ key: '', excluded: NO_CHOICES })
+    setReviewOpenFor(null)
+  }
+
   function chooseStart(src: string, next: Start | null, keepRank = true) {
+    clearChoices()
     setStart(next)
     setPicker('none')
     // Keep the chosen level if it is still below the new start, otherwise
@@ -151,23 +190,50 @@ export function BulkDownloadPanel({
   const exportQuery = rank
     ? buildExportQuery({ source, parent: start?.id ?? null, rank, dateFrom, dateTo, includeParent })
     : ''
+  const selection = excluded.size > 0 ? selectionJson(excluded) : ''
+  // What the current summary must answer: the query plus any choices.
+  const summaryKey = exportQuery && `${exportQuery}#${selection}`
 
   useEffect(() => {
     if (!exportQuery) return
     let cancelled = false
-    apiFetch<ExportSummary>(`/api/series/export/summary?${exportQuery}`)
+    const url = `/api/series/export/summary?${exportQuery}`
+    const request: Promise<ExportSummary> = selection
+      ? fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: `selection=${selection}` })
+          .then(res => { if (!res.ok) throw new Error(`${res.status}`); return res.json() })
+      : apiFetch<ExportSummary>(url)
+    request
       .then(json => {
-        if (!cancelled) setSummaryResult({ query: exportQuery, summary: json, status: 'ok' })
+        if (!cancelled) setSummaryResult({ query: summaryKey, summary: json, status: 'ok' })
       })
       .catch(() => {
-        if (!cancelled) setSummaryResult({ query: exportQuery, summary: null, status: 'error' })
+        if (!cancelled) setSummaryResult({ query: summaryKey, summary: null, status: 'error' })
       })
     return () => { cancelled = true }
-  }, [exportQuery])
+  }, [exportQuery, selection, summaryKey])
+
+  const reviewQuery = rank
+    ? new URLSearchParams({ source, ...(start ? { parent: start.id } : {}), rank }).toString()
+    : ''
+
+  useEffect(() => {
+    if (!reviewOpen || !reviewQuery) return
+    let cancelled = false
+    apiFetch<{ terms: ReviewTerm[] }>(`/api/series/export/review?${reviewQuery}`)
+      .then(json => {
+        if (!cancelled) setReviewResult({ query: reviewQuery, terms: json.terms ?? [], status: 'ok' })
+      })
+      .catch(() => {
+        if (!cancelled) setReviewResult({ query: reviewQuery, terms: [], status: 'error' })
+      })
+    return () => { cancelled = true }
+  }, [reviewOpen, reviewQuery])
+
+  const reviewStatus: ApiStatus = reviewResult?.query === reviewQuery ? reviewResult.status : 'loading'
 
   const summaryStatus: ApiStatus = !exportQuery
     ? 'idle'
-    : summaryResult?.query === exportQuery ? summaryResult.status : 'loading'
+    : summaryResult?.query === summaryKey ? summaryResult.status : 'loading'
   const summary = summaryStatus === 'ok' ? summaryResult!.summary : null
 
   async function search() {
@@ -305,7 +371,7 @@ export function BulkDownloadPanel({
             <div style={{ marginTop: 10, border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px', maxHeight: 320, overflowY: 'auto' }}>
               {source === 'taxonomy'
                 ? <TaxonomyBrowseTree onSelectRoot={id => chooseStart(source, taxonomyStart(id))} />
-                : <HierarchyBrowseTree source="enzyme" onSelect={pickTreeNode} />}
+                : <HierarchyBrowseTree key={source} source={source as HierarchySource} onSelect={pickTreeNode} />}
             </div>
           )}
         </div>
@@ -317,7 +383,7 @@ export function BulkDownloadPanel({
             className="field"
             style={{ width: 200 }}
             value={rank}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setRank(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => { clearChoices(); setRank(e.target.value) }}
           >
             {rankOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
@@ -376,6 +442,33 @@ export function BulkDownloadPanel({
             term was detected. It may take a little while to download.
           </div>
         )}
+        {summaryStatus === 'ok' && !!summary?.multi_path_terms && (
+          <div data-testid="bulk-review-line" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', font: '12px var(--sans)', color: 'var(--amber)', marginTop: 6 }}>
+            <span>
+              ⚠ {summary.multi_path_terms.toLocaleString()} of these {rankPlural} are in more than one {PATH_NOUNS[source] ?? 'path'} here
+              {excluded.size > 0 && ` · ${excluded.size} path${excluded.size === 1 ? '' : 's'} unticked`}
+            </span>
+            <button className="btn sm" onClick={() => setReviewOpenFor(reviewOpen ? null : choiceKey)}>
+              {reviewOpen ? 'Hide review' : 'Review ▸'}
+            </button>
+          </div>
+        )}
+        {reviewOpen && reviewStatus === 'loading' && (
+          <div style={{ font: '12px var(--mono)', color: 'var(--text-dim)', marginTop: 8 }}>Loading the review list…</div>
+        )}
+        {reviewOpen && reviewStatus === 'error' && (
+          <div className="state-box error" style={{ padding: 12, marginTop: 8 }}>Could not load the review list.</div>
+        )}
+        {reviewOpen && reviewStatus === 'ok' && reviewResult && (
+          <PathReviewList
+            key={choiceKey}
+            terms={reviewResult.terms}
+            excluded={excluded}
+            onChange={next => setChoices({ key: choiceKey, excluded: next })}
+            termNoun={levelLabel(source, rankOptions.find(o => o.value === rank)?.depth ?? 0) ?? 'term'}
+            pathNoun={PATH_NOUNS[source] ?? 'path'}
+          />
+        )}
         {sourceNote && (
           <div data-testid="bulk-source-note" style={{ font: '12px var(--sans)', color: 'var(--text-dim)', marginTop: 6 }}>
             {sourceNote}
@@ -383,7 +476,18 @@ export function BulkDownloadPanel({
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14 }}>
-          {canDownload ? (
+          {canDownload && selection ? (
+            <form
+              data-testid="bulk-download-form"
+              method="post"
+              action={`/api/series/export?${exportQuery}`}
+              encType="text/plain"
+              style={{ display: 'contents' }}
+            >
+              <input type="hidden" name="selection" value={selection} />
+              <button type="submit" className="btn primary">↓ Download CSV</button>
+            </form>
+          ) : canDownload ? (
             <a
               className="btn primary"
               style={{ textDecoration: 'none' }}
