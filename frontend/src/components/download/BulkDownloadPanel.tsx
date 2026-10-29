@@ -68,11 +68,15 @@ const SEARCH_PLACEHOLDERS: Record<string, string> = {
   cog:      'Search for a COG category or COG (e.g. C, COG0028, ATP synthase)…',
 }
 
+// Excel reads some IDs as numbers when it opens a CSV: KEGG 00010 -> 10,
+// EC 1.10 -> 1.1 (587 KEGG ids and 274 EC numbers are affected).
+const EXCEL_ID_WARNING = ' If you open the file in Excel, Excel can turn IDs such as 00010 or 1.10 into numbers (10, 1.1); import those columns as text, or use R / pandas.'
+
 const COLUMNS_HELP: Record<string, string> = {
   taxonomy: 'Columns: taxon, rank, lineage, sample, date, egc, norm_egc, detected. Samples where a taxon was not detected are written as 0 with detected = false. "unclassified …" taxa hold the reads that were not classified down to this rank, so every rank adds up to the starting taxon\'s total.',
-  enzyme:   'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false.',
+  enzyme:   'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false.' + EXCEL_ID_WARNING,
   cog:      'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false. A COG in several ticked categories gets one set of rows per category, each with also_in_other_paths = true and the same values, so don\'t add those copies together.',
-  kegg:     'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false. A KO in several ticked pathways gets one set of rows per pathway, each with also_in_other_paths = true and the same values, so don\'t add those copies together.',
+  kegg:     'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false. A KO in several ticked pathways gets one set of rows per pathway, each with also_in_other_paths = true and the same values, so don\'t add those copies together.' + EXCEL_ID_WARNING,
 }
 
 // Shown under the size line for sources whose rows don't add up to the
@@ -271,7 +275,7 @@ export function BulkDownloadPanel({
   }
 
   const rankPlural = LEVEL_PLURALS[rank] ?? rank
-  const canDownload = summaryStatus === 'ok' && !!summary && summary.taxa > 0
+  const canDownload = summaryStatus === 'ok' && !!summary && summary.taxa > 0 && summary.samples > 0
   const startLevel = start ? levelLabel(source, start.depth) : undefined
   const sourceNote = SOURCE_NOTES[source]
 
@@ -442,7 +446,9 @@ export function BulkDownloadPanel({
           <div data-testid="bulk-size" style={{ font: '12px var(--mono)', color: 'var(--text-h)' }}>
             {summary.taxa === 0
               ? `No ${rankPlural} under this starting point${dateFrom || dateTo ? ' in this date range' : ''}.`
-              : `${summary.taxa.toLocaleString()} ${rankPlural} × ${summary.samples.toLocaleString()} samples ≈ ${summary.max_rows.toLocaleString()} rows`}
+              : summary.samples === 0
+                ? 'No samples in this date range.'
+                : `${summary.taxa.toLocaleString()} ${rankPlural} × ${summary.samples.toLocaleString()} samples ≈ ${summary.max_rows.toLocaleString()} rows`}
           </div>
         )}
         {summaryStatus === 'ok' && summary?.sparse && summary.taxa > 0 && (

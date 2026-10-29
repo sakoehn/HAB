@@ -594,3 +594,42 @@ describe('BulkDownloadPanel — COG', () => {
     expect(screen.getByTestId('bulk-source-note')).toHaveTextContent(/more than one COG counts under each/)
   })
 })
+
+
+// ── Final checks: empty date range, Excel warning ───────────────────────────
+
+describe('BulkDownloadPanel — a date range with no samples', () => {
+  it('says so and does not offer a header-only file', async () => {
+    mockFetch.mockResolvedValue(jsonResponse(summary({ taxa: 76, samples: 0, max_rows: 0 })))
+    render(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    expect(await screen.findByTestId('bulk-size')).toHaveTextContent('No samples in this date range.')
+    expect(screen.queryByRole('link', { name: /Download CSV/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Download CSV/ })).toBeDisabled()
+  })
+})
+
+describe('BulkDownloadPanel — column help warns about Excel and IDs', () => {
+  async function columnHelp(user: ReturnType<typeof userEvent.setup>) {
+    const helpButtons = screen.getAllByRole('button', { name: '?' })
+    await user.click(helpButtons[helpButtons.length - 1])
+    return document.body.textContent ?? ''
+  }
+
+  it('for KEGG and Enzyme, whose IDs Excel turns into numbers', async () => {
+    for (const source of ['kegg', 'enzyme']) {
+      mockFetch.mockResolvedValue(jsonResponse(summary()))
+      const user = userEvent.setup()
+      const { unmount } = render(<BulkDownloadPanel />)
+      await user.selectOptions(screen.getByLabelText('Source'), source)
+      expect(await columnHelp(user)).toMatch(/Excel can turn IDs such as 00010 or 1\.10 into numbers/)
+      unmount()
+    }
+  })
+
+  it('not for taxonomy', async () => {
+    mockFetch.mockResolvedValue(jsonResponse(summary()))
+    const user = userEvent.setup()
+    render(<BulkDownloadPanel />)
+    expect(await columnHelp(user)).not.toMatch(/Excel can turn IDs/)
+  })
+})
