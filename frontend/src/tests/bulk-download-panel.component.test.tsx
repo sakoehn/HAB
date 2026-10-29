@@ -581,6 +581,7 @@ describe('BulkDownloadPanel — COG', () => {
     expect(await screen.findByTestId('bulk-review-line')).toHaveTextContent('340 of these COGs are in more than one category here')
     await user.click(screen.getByRole('button', { name: /Review/ }))
     expect(await screen.findByTestId('bulk-review-note')).toHaveTextContent(/describes the category as a whole, not where this COG is active/)
+    expect(screen.getByTestId('bulk-review-note')).toHaveTextContent(/^Each COG's categories are sorted by the category's mean EGC/)
     expect(screen.getByPlaceholderText(/Filter COGs/)).toBeInTheDocument()
     expect(screen.getByTestId('bulk-review-COG0028')).toHaveTextContent('2 of 2 paths')
   })

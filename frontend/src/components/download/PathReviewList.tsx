@@ -33,12 +33,14 @@ export function PathReviewList({
   onChange,
   termNoun,
   pathNoun,
+  pathNounPlural,
 }: {
-  terms:    ReviewTerm[]
-  excluded: Set<string>
-  onChange: (next: Set<string>) => void
-  termNoun: string
-  pathNoun: string
+  terms:          ReviewTerm[]
+  excluded:       Set<string>
+  onChange:       (next: Set<string>) => void
+  termNoun:       string
+  pathNoun:       string
+  pathNounPlural: string
 }) {
   const [filter, setFilter]     = useState('')
   const [shown, setShown]       = useState(PAGE)
@@ -75,7 +77,7 @@ export function PathReviewList({
   return (
     <div style={{ marginTop: 10, border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
       <div data-testid="bulk-review-note" style={{ font: '12px var(--sans)', color: 'var(--text-dim)', marginBottom: 8 }}>
-        Each {termNoun}'s {pathNoun}s are sorted by the {pathNoun}'s mean EGC across all samples, most abundant
+        Each {termNoun}'s {pathNounPlural} are sorted by the {pathNoun}'s mean EGC across all samples, most abundant
         first. That number describes the {pathNoun} as a whole, not where this {termNoun} is active — treat it as a
         hint when choosing, not proof.
       </div>

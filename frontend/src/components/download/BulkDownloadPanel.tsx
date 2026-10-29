@@ -51,10 +51,14 @@ const LEVEL_PLURALS: Record<string, string> = {
 }
 
 // What a term's paths run through, for the review line ("in more than one
-// pathway").
+// pathway") and list.
 const PATH_NOUNS: Record<string, string> = {
   kegg: 'pathway',
   cog:  'category',
+}
+const PATH_NOUN_PLURALS: Record<string, string> = {
+  kegg: 'pathways',
+  cog:  'categories',
 }
 
 const SEARCH_PLACEHOLDERS: Record<string, string> = {
@@ -472,6 +476,7 @@ export function BulkDownloadPanel({
             onChange={next => setChoices({ key: choiceKey, excluded: next })}
             termNoun={levelLabel(source, rankOptions.find(o => o.value === rank)?.depth ?? 0) ?? 'term'}
             pathNoun={PATH_NOUNS[source] ?? 'path'}
+            pathNounPlural={PATH_NOUN_PLURALS[source] ?? 'paths'}
           />
         )}
         {sourceNote && (
