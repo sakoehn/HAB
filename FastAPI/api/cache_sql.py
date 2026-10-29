@@ -1598,3 +1598,77 @@ def get_paths_under_at_depth_sql(
         ids, names = list(row[:depth]), list(row[depth:])
         rows.append({"annotation_id": ids[-1], "name": names[-1], "lineage_ids": ids, "lineage_names": names})
     return rows
+
+
+def get_path_review_sql(
+    conn: sqlite3.Connection, source: str, parent: str | None, parent_depth: int, depth: int,
+) -> list[dict]:
+    """Return every term at `depth` under `parent` that is reached through
+    more than one path inside it -- in practice KEGG KOs in several
+    pathways and COGs in several categories -- for the Bulk Download review
+    list, where the user picks which of a term's paths to keep. Each term's
+    paths are sorted by the mean EGC (all samples) of the path's immediate
+    parent, most abundant first.
+
+    Args:
+        conn: Open SQLite connection.
+        source: "kegg", "cog" or "enzyme".
+        parent: Starting term id, or None for the whole dataset.
+        parent_depth: Level of `parent` (0 for the whole dataset).
+        depth: Level being downloaded.
+
+    Returns:
+        List of {"annotation_id", "name", "total_paths", "paths"} dicts
+        sorted by annotation_id, where total_paths also counts the term's
+        paths outside `parent` and each path is {"parent_id",
+        "parent_name", "parent_mean_egc", "lineage_ids", "lineage_names"}.
+        Empty when no term has more than one path (always, for Enzyme).
+    """
+    by_term: dict[str, list[dict]] = {}
+    for path in get_paths_under_at_depth_sql(conn, source, parent, parent_depth, depth):
+        by_term.setdefault(path["annotation_id"], []).append(path)
+    multi = {term: paths for term, paths in by_term.items() if len(paths) > 1}
+    if not multi:
+        return []
+
+    table, columns = _PATHS_TABLES[source]
+    target_col, parent_col = columns[depth][0], columns[depth - 1][0]
+    terms = sorted(multi)
+    parent_ids = sorted({p["lineage_ids"][-2] for paths in multi.values() for p in paths})
+    totals: dict[str, int] = {}
+    means: dict[str, float] = {}
+    for start in range(0, len(terms), _SERIES_EXPORT_CHUNK):
+        chunk = terms[start:start + _SERIES_EXPORT_CHUNK]
+        totals.update(conn.execute(
+            f"SELECT {target_col}, COUNT(DISTINCT {parent_col}) FROM {table} "
+            f"WHERE {target_col} IN ({','.join('?' * len(chunk))}) GROUP BY {target_col}",
+            chunk,
+        ))
+    for start in range(0, len(parent_ids), _SERIES_EXPORT_CHUNK):
+        chunk = parent_ids[start:start + _SERIES_EXPORT_CHUNK]
+        means.update(conn.execute(
+            f"SELECT annotation_id, mean_egc FROM annotation_catalog "
+            f"WHERE source = ? AND annotation_id IN ({','.join('?' * len(chunk))})",
+            [source, *chunk],
+        ))
+
+    review = []
+    for term in terms:
+        paths = [
+            {
+                "parent_id":       p["lineage_ids"][-2],
+                "parent_name":     p["lineage_names"][-2],
+                "parent_mean_egc": means.get(p["lineage_ids"][-2], 0.0),
+                "lineage_ids":     p["lineage_ids"],
+                "lineage_names":   p["lineage_names"],
+            }
+            for p in multi[term]
+        ]
+        paths.sort(key=lambda p: (-p["parent_mean_egc"], p["parent_id"]))
+        review.append({
+            "annotation_id": term,
+            "name":          multi[term][0]["name"],
+            "total_paths":   totals.get(term, len(paths)),
+            "paths":         paths,
+        })
+    return review
