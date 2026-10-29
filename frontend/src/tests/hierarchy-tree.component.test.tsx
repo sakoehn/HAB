@@ -134,3 +134,22 @@ describe('HierarchyTree — highlight', () => {
     expect(row).not.toHaveClass('hier-node-highlighted')
   })
 })
+
+describe('HierarchyTree — selectable rows (Bulk Download browse tree)', () => {
+  it('without onSelect, names are plain text (the popup is unchanged)', () => {
+    render(<HierarchyTree nodes={[makeNode()]} highlightId={null} onToggleExpand={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: /hexokinase/ })).toBeNull()
+    expect(screen.getByText('HK; hexokinase')).toBeInTheDocument()
+  })
+
+  it('with onSelect, clicking a name (at any depth) selects that node', async () => {
+    const onSelect = vi.fn()
+    const child = makeNode()
+    const parent = makeNode({ annotationId: '00010', depth: 3, name: 'Glycolysis', expanded: true, childrenLoaded: true, children: [child] })
+    render(<HierarchyTree nodes={[parent]} highlightId={null} onToggleExpand={vi.fn()} onSelect={onSelect} />)
+    await userEvent.click(screen.getByRole('button', { name: /hexokinase/ }))
+    expect(onSelect).toHaveBeenCalledWith(child)
+    await userEvent.click(screen.getByRole('button', { name: /Glycolysis/ }))
+    expect(onSelect).toHaveBeenLastCalledWith(parent)
+  })
+})

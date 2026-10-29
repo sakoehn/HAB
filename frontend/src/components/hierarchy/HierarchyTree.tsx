@@ -18,10 +18,14 @@ export function HierarchyTree({
   highlightId,
   onToggleExpand,
   status,
+  onSelect,
 }: {
   nodes:          HierarchyTreeNode[]
   highlightId:    string | null
   onToggleExpand: (node: HierarchyTreeNode) => void
+  // When given, every name is a button that picks that node (the Bulk
+  // Download browse tree); the popup leaves it out, so names stay text.
+  onSelect?:      (node: HierarchyTreeNode) => void
   // A failed root fetch leaves `nodes` empty exactly the same way a
   // genuinely childless root would, so callers pass `status` -- this
   // is reachable even when the popup's own path lookup (HierarchyModal's
@@ -45,6 +49,7 @@ export function HierarchyTree({
           node={node}
           highlightId={highlightId}
           onToggleExpand={onToggleExpand}
+          onSelect={onSelect}
         />
       ))}
     </div>
@@ -55,10 +60,12 @@ function HierarchyNodeRow({
   node,
   highlightId,
   onToggleExpand,
+  onSelect,
 }: {
   node:           HierarchyTreeNode
   highlightId:    string | null
   onToggleExpand: (node: HierarchyTreeNode) => void
+  onSelect?:      (node: HierarchyTreeNode) => void
 }) {
   const isHighlighted = node.annotationId === highlightId
   const rowRef = useRef<HTMLDivElement>(null)
@@ -89,7 +96,13 @@ function HierarchyNodeRow({
           {node.loadStatus === 'loading' ? '…' : node.expanded ? '▾' : '▸'}
         </button>
 
-        <span className="tax-node-name">{node.name}</span>
+        {onSelect ? (
+          <button className="tax-node-select" onClick={() => onSelect(node)} title={`Start from ${node.name}`}>
+            {node.name}
+          </button>
+        ) : (
+          <span className="tax-node-name">{node.name}</span>
+        )}
         {/* A failed child fetch (loadStatus:'error') would otherwise look
             just like a real empty/unexpanded node, with no sign the click
             failed. loadStatus stays 'error' (never auto-reset), so the
@@ -110,6 +123,7 @@ function HierarchyNodeRow({
               node={child}
               highlightId={highlightId}
               onToggleExpand={onToggleExpand}
+              onSelect={onSelect}
             />
           ))}
         </div>

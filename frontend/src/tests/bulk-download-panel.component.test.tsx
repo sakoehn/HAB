@@ -17,7 +17,9 @@
  *     states, and the download link's URL
  *   picking a start by search and going back to the whole dataset
  *   date range is passed through to both requests
- *   only taxonomy can be chosen as the source for now
+ *   taxonomy and enzyme can be chosen; kegg/cog not yet
+ *   enzyme: levels, search, browse tree, the note about totals not adding up
+ *   the "also include the starting term" option
  *   a slower, superseded summary response is ignored
  *
  * Run: npx vitest run src/tests/bulk-download-panel.component.test.tsx
@@ -28,7 +30,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { BulkDownloadPanel } from '../components/download/BulkDownloadPanel'
-import { buildExportQuery, rankOptionsBelow } from '../utils/bulkDownload'
+import { buildExportQuery, levelOptionsBelow, rankOptionsBelow } from '../utils/bulkDownload'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -192,11 +194,11 @@ describe('BulkDownloadPanel', () => {
     expect(href.searchParams.get('date_to')).toBe('2021-06-05')
   })
 
-  it('only lets taxonomy be chosen as the source for now', () => {
+  it('offers taxonomy and enzyme; kegg and cog are not available yet', () => {
     render(<BulkDownloadPanel />)
     const options = [...(screen.getByLabelText('Source') as HTMLSelectElement).options]
-    expect(options.filter(o => !o.disabled).map(o => o.value)).toEqual(['taxonomy'])
-    expect(options.filter(o => o.disabled).map(o => o.value)).toEqual(['kegg', 'cog', 'enzyme'])
+    expect(options.filter(o => !o.disabled).map(o => o.value)).toEqual(['taxonomy', 'enzyme'])
+    expect(options.filter(o => o.disabled).map(o => o.value)).toEqual(['kegg', 'cog'])
   })
 
   it('ignores a slower response for a choice that has since changed', async () => {
@@ -210,5 +212,125 @@ describe('BulkDownloadPanel', () => {
     resolveFirst(jsonResponse(summary({ taxa: 12, max_rows: 1536 })))
     await new Promise(r => setTimeout(r, 0))
     expect(screen.getByTestId('bulk-size')).toHaveTextContent('76 families')
+  })
+})
+
+// ── Enzyme and the starting-term option ─────────────────────────────────────
+
+describe('levelOptionsBelow', () => {
+  it('lists the enzyme levels below a starting level', () => {
+    expect(levelOptionsBelow('enzyme', 0).map(o => o.value)).toEqual(['class', 'subclass', 'subsubclass', 'ec'])
+    expect(levelOptionsBelow('enzyme', 3).map(o => [o.value, o.label])).toEqual([['ec', 'EC number']])
+    expect(levelOptionsBelow('enzyme', 4)).toEqual([])
+  })
+
+  it('matches rankOptionsBelow for taxonomy', () => {
+    expect(levelOptionsBelow('taxonomy', 3)).toEqual(rankOptionsBelow(GAMMA))
+  })
+})
+
+describe('buildExportQuery — starting term', () => {
+  it('adds include_parent only when asked and there is a start', () => {
+    const base = { source: 'enzyme', rank: 'ec', dateFrom: '', dateTo: '' }
+    expect(new URLSearchParams(buildExportQuery({ ...base, parent: '5.6.2', includeParent: true })).get('include_parent')).toBe('true')
+    expect(new URLSearchParams(buildExportQuery({ ...base, parent: '5.6.2', includeParent: false })).has('include_parent')).toBe(false)
+    expect(new URLSearchParams(buildExportQuery({ ...base, parent: null, includeParent: true })).has('include_parent')).toBe(false)
+  })
+})
+
+describe('BulkDownloadPanel — Enzyme', () => {
+  function enzymeFetch() {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/search/annotations')) {
+        return jsonResponse({ data: [{ annotation_id: '5.6.2', name: 'Enzymes altering nucleic acid conformation', depth: 3 }], total: 1 })
+      }
+      if (url.startsWith('/api/enzyme/children')) {
+        return jsonResponse({ data: [{ annotation_id: '5', name: 'Isomerases', depth: 1, category: 'Isomerases' }] })
+      }
+      return jsonResponse(summary({ taxa: 2, max_rows: 256 }))
+    })
+  }
+
+  async function switchToEnzyme(user: ReturnType<typeof userEvent.setup>) {
+    await user.selectOptions(screen.getByLabelText('Source'), 'enzyme')
+  }
+
+  it('switching to enzyme starts from the whole dataset with enzyme levels', async () => {
+    enzymeFetch()
+    const user = userEvent.setup()
+    render(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    await switchToEnzyme(user)
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Whole dataset')
+    expect([...rankSelect().options].map(o => o.value)).toEqual(['class', 'subclass', 'subsubclass', 'ec'])
+    await waitFor(() => expect(lastSummaryUrl().searchParams.get('source')).toBe('enzyme'))
+    expect(lastSummaryUrl().searchParams.get('rank')).toBe('class')
+    expect(lastSummaryUrl().searchParams.has('parent')).toBe(false)
+  })
+
+  it('searches enzyme terms and starts from the one picked', async () => {
+    enzymeFetch()
+    const user = userEvent.setup()
+    render(<BulkDownloadPanel />)
+    await switchToEnzyme(user)
+    await user.click(screen.getByRole('button', { name: 'Search' }))
+    await user.type(screen.getByPlaceholderText(/Search for/), 'nucleic{Enter}')
+    const searchCall = mockFetch.mock.calls.map(c => String(c[0])).find(u => u.startsWith('/api/search/annotations'))!
+    expect(new URL(searchCall, 'http://x').searchParams.get('sources')).toBe('enzyme')
+    await user.click(await screen.findByRole('button', { name: /5\.6\.2/ }))
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('5.6.2 Enzymes altering nucleic acid conformation')
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Sub-subclass')
+    expect([...rankSelect().options].map(o => o.value)).toEqual(['ec'])
+    await waitFor(() => expect(lastSummaryUrl().searchParams.get('parent')).toBe('5.6.2'))
+    expect(lastSummaryUrl().searchParams.get('rank')).toBe('ec')
+  })
+
+  it('browses the enzyme tree and starts from the node clicked', async () => {
+    enzymeFetch()
+    const user = userEvent.setup()
+    render(<BulkDownloadPanel />)
+    await switchToEnzyme(user)
+    await user.click(screen.getByRole('button', { name: 'Browse tree' }))
+    await user.click(await screen.findByRole('button', { name: 'Isomerases' }))
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('5 Isomerases')
+    await waitFor(() => expect(lastSummaryUrl().searchParams.get('parent')).toBe('5'))
+    expect(lastSummaryUrl().searchParams.get('rank')).toBe('subclass')
+  })
+
+  it('explains that enzyme rows may not add up; taxonomy does not show that note', async () => {
+    enzymeFetch()
+    const user = userEvent.setup()
+    render(<BulkDownloadPanel />)
+    expect(screen.queryByTestId('bulk-source-note')).toBeNull()
+    await switchToEnzyme(user)
+    expect(screen.getByTestId('bulk-source-note')).toHaveTextContent(/may not add up/i)
+  })
+
+  it('a taxonomy handoff switches back to taxonomy', async () => {
+    enzymeFetch()
+    const user = userEvent.setup()
+    const { rerender } = render(<BulkDownloadPanel />)
+    await switchToEnzyme(user)
+    rerender(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('taxonomy')
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Gammaproteobacteria')
+  })
+})
+
+describe('BulkDownloadPanel — also include the starting term', () => {
+  it('is only offered once a start is chosen', () => {
+    render(<BulkDownloadPanel />)
+    expect(screen.queryByLabelText(/Also include the starting/)).toBeNull()
+  })
+
+  it('adds include_parent to the summary and the download, and is off by default', async () => {
+    const user = userEvent.setup()
+    render(<BulkDownloadPanel initialParent={{ lineage: GAMMA }} />)
+    const box = screen.getByLabelText(/Also include the starting/) as HTMLInputElement
+    expect(box.checked).toBe(false)
+    await waitFor(() => expect(lastSummaryUrl().searchParams.has('include_parent')).toBe(false))
+    await user.click(box)
+    await waitFor(() => expect(lastSummaryUrl().searchParams.get('include_parent')).toBe('true'))
+    const href = new URL(screen.getByRole('link', { name: /Download CSV/ }).getAttribute('href')!, 'http://x')
+    expect(href.searchParams.get('include_parent')).toBe('true')
   })
 })
