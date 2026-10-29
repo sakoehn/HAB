@@ -43,7 +43,7 @@ const LEVEL_PLURALS: Record<string, string> = {
 
 const SEARCH_PLACEHOLDERS: Record<string, string> = {
   taxonomy: 'Search for a taxon (e.g. Gammaproteobacteria)…',
-  enzyme:   'Search for an EC number or name (e.g. 5.6.2, helicase)…',
+  enzyme:   'Search for an EC number or name (e.g. 5.6.2, topoisomerase)…',
 }
 
 const COLUMNS_HELP: Record<string, string> = {
