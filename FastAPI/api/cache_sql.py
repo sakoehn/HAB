@@ -1500,15 +1500,31 @@ def iter_taxa_series_sql(conn: sqlite3.Connection, annotation_ids: list[str]) ->
         {"annotation_id", "name", "sample", "egc", "norm_egc"} dicts, one
         per sample a taxon was detected in, grouped by taxon in id order.
     """
+    yield from iter_series_for_ids_sql(conn, "taxonomy", annotation_ids)
+
+
+def iter_series_for_ids_sql(conn: sqlite3.Connection, source: str, annotation_ids: list[str]) -> Iterator[dict]:
+    """Yield the per-sample rows for a list of ids of one source, for the
+    bulk time-series download. Looks the ids up exactly, a chunk at a time.
+
+    Args:
+        conn: Open SQLite connection.
+        source: "taxonomy", "kegg", "cog" or "enzyme".
+        annotation_ids: Ids of that source, sorted.
+
+    Yields:
+        {"annotation_id", "name", "sample", "egc", "norm_egc"} dicts, one
+        per sample an id was detected in, grouped by id in id order.
+    """
     for start in range(0, len(annotation_ids), _SERIES_EXPORT_CHUNK):
         chunk = annotation_ids[start:start + _SERIES_EXPORT_CHUNK]
         placeholders = ",".join("?" * len(chunk))
         query = f"""
             SELECT annotation_id, name, sample, egc, norm_egc FROM annotation_series
-            WHERE source = 'taxonomy' AND annotation_id IN ({placeholders})
+            WHERE source = ? AND annotation_id IN ({placeholders})
             ORDER BY annotation_id, sample
         """
-        for annotation_id, name, sample, egc, norm_egc in conn.execute(query, chunk):
+        for annotation_id, name, sample, egc, norm_egc in conn.execute(query, [source, *chunk]):
             yield {
                 "annotation_id": annotation_id,
                 "name":          name,
@@ -1516,3 +1532,69 @@ def iter_taxa_series_sql(conn: sqlite3.Connection, annotation_ids: list[str]) ->
                 "egc":           egc,
                 "norm_egc":      norm_egc,
             }
+
+
+# source -> (paths table, depth -> (id column, name column)) for the
+# sources whose hierarchy lives in a *_paths table.
+_PATHS_TABLES = {
+    "kegg":   ("kegg_paths",   KEGG_LEVEL_COLUMNS),
+    "cog":    ("cog_paths",    COG_LEVEL_COLUMNS),
+    "enzyme": ("enzyme_paths", ENZYME_LEVEL_COLUMNS),
+}
+
+
+def get_paths_under_at_depth_sql(
+    conn: sqlite3.Connection, source: str, parent: str | None, parent_depth: int, depth: int,
+) -> list[dict]:
+    """Return every term at one level under a starting term, for the bulk
+    time-series download of kegg/cog/enzyme -- e.g. every EC number under
+    a sub-subclass, or every KO under a pathway (levels can be skipped).
+    One row per distinct lineage, so a KO reached through several
+    pathways comes back once per pathway; an Enzyme term (one parent
+    each) comes back once. Only terms that have data are returned.
+
+    Args:
+        conn: Open SQLite connection.
+        source: "kegg", "cog" or "enzyme".
+        parent: Id of the starting term, e.g. "5.6.2". None means the
+            whole dataset.
+        parent_depth: Level of `parent` (0 for the whole dataset).
+        depth: Level to list; must be below `parent_depth`.
+
+    Returns:
+        List of {"annotation_id", "name", "lineage_ids", "lineage_names"}
+        dicts (lineages run top level first, ending with the term itself),
+        sorted by annotation_id then lineage.
+
+    Raises:
+        ValueError: For an unknown source or a level that doesn't exist or
+            isn't below `parent_depth`.
+    """
+    if source not in _PATHS_TABLES:
+        raise ValueError(f"no paths table for source {source!r}")
+    table, columns = _PATHS_TABLES[source]
+    if depth not in columns or not 0 <= parent_depth < depth:
+        raise ValueError(f"level {depth} is not below level {parent_depth} for {source}")
+    if parent is not None and parent_depth not in columns:
+        raise ValueError(f"no level {parent_depth} for {source}")
+
+    levels = range(1, depth + 1)
+    id_cols = [columns[d][0] for d in levels]
+    name_cols = [columns[d][1] for d in levels]
+    target_id = columns[depth][0]
+    where = f"{target_id} IS NOT NULL"
+    params: list = [source]
+    if parent is not None:
+        where += f" AND {columns[parent_depth][0]} = ?"
+        params.insert(0, parent)
+    query = f"""
+        SELECT DISTINCT {", ".join(id_cols)}, {", ".join(name_cols)} FROM {table}
+        WHERE {where}
+          AND EXISTS (SELECT 1 FROM annotation_catalog c WHERE c.source = ? AND c.annotation_id = {target_id})
+        ORDER BY {", ".join(id_cols[::-1])}
+    """
+    rows = []
+    for row in conn.execute(query, params):
+        ids, names = list(row[:depth]), list(row[depth:])
+        rows.append({"annotation_id": ids[-1], "name": names[-1], "lineage_ids": ids, "lineage_names": names})
+    return rows
