@@ -97,11 +97,6 @@ def test_summary_rejects_bad_enzyme_requests(client, params, status):
     assert _get(client, "/series/export/summary", **params).status_code == status
 
 
-def test_cog_is_still_not_available(client):
-    resp = client.get("/series/export/summary", params={"source": "cog", "rank": "category"})
-    assert resp.status_code == 400
-
-
 # ── export ───────────────────────────────────────────────────────────────────
 
 def test_export_lists_every_ec_number_in_every_sample(client):

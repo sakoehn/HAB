@@ -122,10 +122,6 @@ def test_rejects_bad_kegg_requests(client, params, status):
     assert client.get("/series/export/summary", params={"source": "kegg", **params}).status_code == status
 
 
-def test_cog_is_still_not_available(client):
-    assert client.get("/series/export/summary", params={"source": "cog", "rank": "category"}).status_code == 400
-
-
 # ── export ───────────────────────────────────────────────────────────────────
 
 def test_a_ko_in_several_pathways_gets_one_block_per_pathway(client, conn):

@@ -2,9 +2,9 @@
 test_series_export_csv_contract.py
 ==================================
 What every file from GET /series/export must look like and hold, checked
-against several real downloads (taxonomy, enzyme and kegg, with and
+against several real downloads (taxonomy, enzyme, kegg and cog, with and
 without the starting term, a date range, levels skipped, names containing
-commas, KOs in several pathways, and the detected-only "sparse" mode).
+commas, KOs in several pathways, COGs in several categories, and the detected-only "sparse" mode).
 
 The contract
 ------------
@@ -80,9 +80,11 @@ TAXONOMY_RANKS = {"domain": 1, "phylum": 2, "class": 3, "order": 4, "family": 5,
 LEVELS = {
     "enzyme": {"class": 1, "subclass": 2, "subsubclass": 3, "ec": 4},
     "kegg":   {"category": 1, "subcategory": 2, "pathway": 3, "ko": 4},
+    "cog":    {"category": 1, "cog": 2},
 }
-PATH_TABLES = {"enzyme": "enzyme_paths", "kegg": "kegg_paths"}
+PATH_TABLES = {"enzyme": "enzyme_paths", "kegg": "kegg_paths", "cog": "cog_paths"}
 COLUMNS = {1: ("a_id", "a_name"), 2: ("b_id", "b_name"), 3: ("c_id", "c_name"), 4: ("d_id", "d_name")}
+MAX_DEPTH = {"enzyme": 4, "kegg": 4, "cog": 2}
 
 GAMMA = "Bacteria;Proteobacteria;Gammaproteobacteria"
 AEROPYRUM_CAMINI = "Archaea;Crenarchaeota;Thermoprotei;Desulfurococcales;Desulfurococcaceae;Aeropyrum;Aeropyrum camini"
@@ -100,11 +102,14 @@ REQUESTS = {
     "kegg: KOs in several pathways":              {"source": "kegg", "parent": "09101", "rank": "ko"},
     "kegg: pathways, with the starting term":     {"source": "kegg", "parent": "09100", "rank": "pathway", "include_parent": "true"},
     "kegg: whole dataset subcategories":          {"source": "kegg", "rank": "subcategory", "date_to": "2021-06-01"},
+    "cog: COGs in several categories":            {"source": "cog", "rank": "cog"},
+    "cog: one category, with the starting term":  {"source": "cog", "parent": "E", "rank": "cog", "include_parent": "true"},
 }
 SPARSE_REQUESTS = {
     "taxonomy, sparse": {"source": "taxonomy", "parent": GAMMA, "rank": "family"},
     "enzyme, sparse":   {"source": "enzyme", "parent": "1.1.1", "rank": "ec", "include_parent": "true"},
     "kegg, sparse":     {"source": "kegg", "parent": "09101", "rank": "ko"},
+    "cog, sparse":      {"source": "cog", "parent": "C", "rank": "cog"},
 }
 
 
@@ -142,7 +147,7 @@ def _expected_samples(conn, date_from, date_to):
 
 
 def _path_depth(conn, source, term):
-    for depth, (id_col, _) in COLUMNS.items():
+    for depth, (id_col, _) in list(COLUMNS.items())[:MAX_DEPTH[source]]:
         if conn.execute(f"SELECT 1 FROM {PATH_TABLES[source]} WHERE {id_col} = ? LIMIT 1", (term,)).fetchone():
             return depth
     raise AssertionError(f"{term} not in {PATH_TABLES[source]}")

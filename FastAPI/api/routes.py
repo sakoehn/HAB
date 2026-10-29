@@ -972,6 +972,7 @@ _LINEAGE_SEP = " > "
 _EXPORT_LEVELS = {
     "enzyme": {"class": 1, "subclass": 2, "subsubclass": 3, "ec": 4},
     "kegg":   {"category": 1, "subcategory": 2, "pathway": 3, "ko": 4},
+    "cog":    {"category": 1, "cog": 2},
 }
 
 
@@ -1018,6 +1019,8 @@ def _paths_parent_depth(db, source: str, parent: str) -> int | None:
         return len(parent.split(".")) if _enzyme_node_exists(db, parent) else None
     if source == "kegg":
         return _kegg_node_depth(db, parent)
+    if source == "cog":
+        return _cog_node_depth(db, parent)
     return None
 
 
