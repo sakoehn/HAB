@@ -95,18 +95,22 @@ export function PathReviewList({
           const open = expanded.has(term.annotation_id)
           return (
             <div key={term.annotation_id} data-testid={`bulk-review-${term.annotation_id}`} className="bulk-review-term">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {/* Name on the left, wrapping within its own column; counts and
+                  All/None kept together on the right. */}
+              <div className="bulk-review-head">
                 <button className="bulk-review-toggle" onClick={() => toggleExpanded(term.annotation_id)}>
-                  <span>{open ? '▾' : '▸'}</span>
+                  <span className="bulk-review-chevron">{open ? '▾' : '▸'}</span>
                   <span style={{ font: '12px var(--mono)', color: 'var(--text-h)' }}>{term.annotation_id}</span>
-                  <span>{term.name}</span>
+                  <span className="bulk-review-name">{term.name}</span>
                 </button>
-                <span style={{ font: '11px var(--mono)', color: ticked === 0 ? 'var(--amber)' : 'var(--text-dim)' }}>
-                  {ticked} of {term.paths.length} paths
-                  {outside > 0 && ` · ${outside} more outside your start`}
-                </span>
-                <button className="btn sm ghost" onClick={() => setPaths(term, true)}>All</button>
-                <button className="btn sm ghost" onClick={() => setPaths(term, false)}>None</button>
+                <div className="bulk-review-actions">
+                  <span style={{ font: '11px var(--mono)', color: ticked === 0 ? 'var(--amber)' : 'var(--text-dim)' }}>
+                    {ticked} of {term.paths.length} paths
+                    {outside > 0 && ` · ${outside} more outside your start`}
+                  </span>
+                  <button className="btn sm ghost" onClick={() => setPaths(term, true)}>All</button>
+                  <button className="btn sm ghost" onClick={() => setPaths(term, false)}>None</button>
+                </div>
               </div>
               {open && (
                 <div style={{ padding: '4px 0 6px 22px' }}>
