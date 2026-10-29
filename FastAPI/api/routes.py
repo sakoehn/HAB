@@ -20,6 +20,9 @@ GET /annotations/scaffolds/summary
 GET /taxonomy/export
 GET /series/export/summary
 GET /series/export
+GET /series/export/review
+POST /series/export/summary
+POST /series/export
 
 All business logic (pagination, search, EGC extraction) lives here or in
 cache.py / index.py — endpoints are intentionally thin.
@@ -40,13 +43,14 @@ already used successfully.
 
 import csv
 import io
+import json
 import re
 import time
 from collections import OrderedDict
 from itertools import groupby
 from operator import itemgetter
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from .cache_sql import (
@@ -80,6 +84,7 @@ from .cache_sql import (
     get_search_annotations,
     get_top_annotations_from_catalog_sql,
     get_taxa_at_rank_sql,
+    get_path_review_sql,
     get_paths_under_at_depth_sql,
     get_taxa_under_at_rank_sql,
     iter_series_for_ids_sql,
@@ -966,6 +971,7 @@ _LINEAGE_SEP = " > "
 # not listed here (besides taxonomy) aren't available for bulk download yet.
 _EXPORT_LEVELS = {
     "enzyme": {"class": 1, "subclass": 2, "subsubclass": 3, "ec": 4},
+    "kegg":   {"category": 1, "subcategory": 2, "pathway": 3, "ko": 4},
 }
 
 
@@ -1003,19 +1009,22 @@ def _taxonomy_export_entries(db, parent: str | None, rank: str, include_parent: 
     if include_parent and parent is not None:
         parent_rank = _taxonomy_rank_name(len(parent.split(";")))
         start = {"annotation_id": parent, "labels": [parent.rsplit(";", 1)[-1], parent_rank, parent]}
-    return _EXPORT_HEADER, entries, start
+    return _EXPORT_HEADER, entries, start, 0
 
 
 def _paths_parent_depth(db, source: str, parent: str) -> int | None:
     """Level of a kegg/cog/enzyme term, or None if it isn't a real one."""
     if source == "enzyme":
         return len(parent.split(".")) if _enzyme_node_exists(db, parent) else None
+    if source == "kegg":
+        return _kegg_node_depth(db, parent)
     return None
 
 
-def _paths_export_entries(db, source: str, parent: str | None, rank: str, include_parent: bool):
-    levels = _EXPORT_LEVELS[source]
-    depth = levels.get(rank)
+def _paths_levels(db, source: str, parent: str | None, rank: str) -> tuple[int, int]:
+    """(depth of `rank`, depth of `parent` or 0) for a kegg/cog/enzyme
+    request, or HTTPException if either isn't valid."""
+    depth = _EXPORT_LEVELS[source].get(rank)
     if depth is None:
         raise HTTPException(status_code=400, detail=f"Level '{rank}' not found for {source}")
     parent_depth = 0
@@ -1025,6 +1034,14 @@ def _paths_export_entries(db, source: str, parent: str | None, rank: str, includ
             raise HTTPException(status_code=404, detail=f"Unknown {source} term '{parent}'")
         if depth <= parent_depth:
             raise HTTPException(status_code=400, detail=f"Level '{rank}' is not below '{parent}'")
+    return depth, parent_depth
+
+
+def _paths_export_entries(
+    db, source: str, parent: str | None, rank: str, include_parent: bool, exclude: set[tuple[str, str]],
+):
+    levels = _EXPORT_LEVELS[source]
+    depth, parent_depth = _paths_levels(db, source, parent, rank)
 
     level_names = {d: name for name, d in levels.items()}
 
@@ -1039,6 +1056,13 @@ def _paths_export_entries(db, source: str, parent: str | None, rank: str, includ
     path_counts: dict[str, int] = {}
     for path in paths:
         path_counts[path["annotation_id"]] = path_counts.get(path["annotation_id"], 0) + 1
+    multi_path_terms = sum(1 for n in path_counts.values() if n > 1)
+    # The user's unticked paths: (term, the path's immediate parent) pairs.
+    if exclude and depth > 1:
+        paths = [p for p in paths if (p["annotation_id"], p["lineage_ids"][-2]) not in exclude]
+        path_counts = {}
+        for path in paths:
+            path_counts[path["annotation_id"]] = path_counts.get(path["annotation_id"], 0) + 1
     entries = [
         {"annotation_id": p["annotation_id"], "labels": labels(p, rank, path_counts[p["annotation_id"]] > 1, False)}
         for p in paths
@@ -1050,12 +1074,13 @@ def _paths_export_entries(db, source: str, parent: str | None, rank: str, includ
             p for p in get_paths_under_at_depth_sql(db, source, None, 0, parent_depth) if p["annotation_id"] == parent
         )
         start = {"annotation_id": parent, "labels": labels(parent_path, level_names[parent_depth], False, True)}
-    return _EXPORT_PATHS_HEADER, entries, start
+    return _EXPORT_PATHS_HEADER, entries, start, multi_path_terms
 
 
 def _series_export_plan(
     db, source: AnnotationSource, parent: str | None, rank: str,
     date_from: str | None, date_to: str | None, include_parent: bool = False,
+    exclude: set[tuple[str, str]] | None = None,
 ) -> dict:
     """Check a bulk-download request and work out what it covers: the
     file's header, one entry per block of rows (one block per term, or per
@@ -1071,9 +1096,13 @@ def _series_export_plan(
             raise HTTPException(status_code=400, detail=f"{label} is not a recognized date: {value!r}")
 
     if source == AnnotationSource.taxonomy:
-        header, entries, start = _taxonomy_export_entries(db, parent, rank, include_parent)
+        if exclude:
+            raise HTTPException(status_code=400, detail="Path choices don't apply to taxonomy")
+        header, entries, start, multi = _taxonomy_export_entries(db, parent, rank, include_parent)
     else:
-        header, entries, start = _paths_export_entries(db, source.value, parent, rank, include_parent)
+        header, entries, start, multi = _paths_export_entries(
+            db, source.value, parent, rank, include_parent, exclude or set(),
+        )
 
     samples = _export_samples(db, date_from, date_to)
     blocks = len(entries) + (1 if start else 0)
@@ -1084,6 +1113,7 @@ def _series_export_plan(
         "entries":  entries,
         "start":    start,
         "terms":    len({e["annotation_id"] for e in entries}),
+        "multi_path_terms": multi,
         "samples":  samples,
         "max_rows": max_rows,
         "sparse":   max_rows > _EXPORT_DENSE_ROW_LIMIT,
@@ -1143,6 +1173,68 @@ def _series_export_csv(db, plan: dict):
         close_sql_connection(db)
 
 
+def _parse_selection(raw: bytes) -> set[tuple[str, str]]:
+    """The user's path choices from a POST body. The browser sends a
+    text/plain form, so the body is `selection=<json>` where the JSON is
+    {"exclude": [[term_id, path_parent_id], ...]}. Read by hand because
+    FastAPI's own form parsing would need the python-multipart package."""
+    text = raw.decode("utf-8", errors="replace").strip()
+    name, sep, value = text.partition("=")
+    if name != "selection" or not sep:
+        raise HTTPException(status_code=400, detail="Expected a 'selection' field")
+    try:
+        data = json.loads(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="selection is not valid JSON") from None
+    exclude = data.get("exclude", []) if isinstance(data, dict) else None
+    if not isinstance(exclude, list) or not all(
+        isinstance(pair, list) and len(pair) == 2 and all(isinstance(x, str) for x in pair) for pair in exclude
+    ):
+        raise HTTPException(status_code=400, detail="selection.exclude must be a list of [term, parent] pairs")
+    return {(term, path_parent) for term, path_parent in exclude}
+
+
+def _series_export_summary(
+    source: AnnotationSource, rank: str, parent: str | None, date_from: str | None, date_to: str | None,
+    include_parent: bool, exclude: set[tuple[str, str]] | None = None,
+) -> dict:
+    parent = parent or None
+    db = connect_to_sql()
+    try:
+        plan = _series_export_plan(db, source, parent, rank, date_from, date_to, include_parent, exclude)
+    finally:
+        close_sql_connection(db)
+    return {
+        "source":           source.value,
+        "parent":           parent,
+        "rank":             rank,
+        "taxa":             plan["terms"],
+        "samples":          len(plan["samples"]),
+        "max_rows":         plan["max_rows"],
+        "sparse":           plan["sparse"],
+        "multi_path_terms": plan["multi_path_terms"],
+    }
+
+
+def _series_export_response(
+    source: AnnotationSource, rank: str, parent: str | None, date_from: str | None, date_to: str | None,
+    include_parent: bool, exclude: set[tuple[str, str]] | None = None,
+) -> StreamingResponse:
+    parent = parent or None
+    db = connect_to_sql()
+    try:
+        plan = _series_export_plan(db, source, parent, rank, date_from, date_to, include_parent, exclude)
+    except Exception:
+        close_sql_connection(db)
+        raise
+    filename = _series_export_filename(source, parent, rank, date_from, date_to)
+    return StreamingResponse(
+        _series_export_csv(db, plan),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/series/export/summary")
 def series_export_summary(
     request:        Request,
@@ -1154,23 +1246,28 @@ def series_export_summary(
     include_parent: bool = Query(False),
 ):
     """How big a /series/export download would be, shown before it starts:
-    number of terms (`taxa`), samples, the most rows the file can have, and
-    whether it is too big to list undetected samples (sparse)."""
-    parent = parent or None
-    db = connect_to_sql()
-    try:
-        plan = _series_export_plan(db, source, parent, rank, date_from, date_to, include_parent)
-    finally:
-        close_sql_connection(db)
-    return {
-        "source":   source.value,
-        "parent":   parent,
-        "rank":     rank,
-        "taxa":     plan["terms"],
-        "samples":  len(plan["samples"]),
-        "max_rows": plan["max_rows"],
-        "sparse":   plan["sparse"],
-    }
+    number of terms (`taxa`), samples, the most rows the file can have,
+    whether it is too big to list undetected samples (sparse), and how many
+    terms are reached through more than one path inside the start
+    (multi_path_terms -- the KEGG/COG review list's size)."""
+    return _series_export_summary(source, rank, parent, date_from, date_to, include_parent)
+
+
+@router.post("/series/export/summary")
+def series_export_summary_with_choices(
+    request:        Request,
+    source:         AnnotationSource = Query(...),
+    rank:           str = Query(...),
+    parent:         str | None = Query(None),
+    date_from:      str | None = Query(None),
+    date_to:        str | None = Query(None),
+    include_parent: bool = Query(False),
+    selection:      bytes = Body(..., media_type="text/plain"),
+):
+    """The summary with the user's unticked paths left out (see
+    _parse_selection for the body)."""
+    exclude = _parse_selection(selection)
+    return _series_export_summary(source, rank, parent, date_from, date_to, include_parent, exclude)
 
 
 @router.get("/series/export")
@@ -1187,21 +1284,55 @@ def series_export(
     omitted), one row per term per sample. Taxonomy columns: taxon, rank,
     lineage, sample, date, egc, norm_egc, detected. kegg/cog/enzyme columns:
     annotation_id, name, level, lineage_ids, lineage, also_in_other_paths,
-    is_starting_term, then the same sample columns. include_parent adds the
-    starting term's own rows first. Undetected samples are written as 0
-    with detected=false, unless the file would pass Excel's row limit, in
-    which case only detected rows are written. Streamed, so a large file
-    never has to be built in memory first."""
+    is_starting_term, then the same sample columns; a KO in several
+    pathways gets one block of rows per pathway, flagged
+    also_in_other_paths. include_parent adds the starting term's own rows
+    first. Undetected samples are written as 0 with detected=false, unless
+    the file would pass Excel's row limit, in which case only detected rows
+    are written. Streamed, so a large file never has to be built in memory
+    first."""
+    return _series_export_response(source, rank, parent, date_from, date_to, include_parent)
+
+
+@router.post("/series/export")
+def series_export_with_choices(
+    request:        Request,
+    source:         AnnotationSource = Query(...),
+    rank:           str = Query(...),
+    parent:         str | None = Query(None),
+    date_from:      str | None = Query(None),
+    date_to:        str | None = Query(None),
+    include_parent: bool = Query(False),
+    selection:      bytes = Body(..., media_type="text/plain"),
+):
+    """The same CSV with the user's unticked paths left out. Sent as a
+    text/plain form post (see _parse_selection) because the choices can be
+    thousands of pairs -- too long for a link -- and a form post still lets
+    the browser stream the file straight to disk."""
+    exclude = _parse_selection(selection)
+    return _series_export_response(source, rank, parent, date_from, date_to, include_parent, exclude)
+
+
+@router.get("/series/export/review")
+def series_export_review(
+    request: Request,
+    source:  AnnotationSource = Query(...),
+    rank:    str = Query(...),
+    parent:  str | None = Query(None),
+):
+    """The review list for a download: every term reached through more than
+    one path inside the start, each with its paths most abundant first (see
+    get_path_review_sql). Empty for taxonomy and enzyme, whose terms have
+    one path each."""
     parent = parent or None
+    if source == AnnotationSource.taxonomy:
+        return {"terms": []}
+    if source.value not in _EXPORT_LEVELS:
+        raise HTTPException(status_code=400, detail=f"Bulk download is not available for '{source.value}' yet")
     db = connect_to_sql()
     try:
-        plan = _series_export_plan(db, source, parent, rank, date_from, date_to, include_parent)
-    except Exception:
+        depth, parent_depth = _paths_levels(db, source.value, parent, rank)
+        terms = get_path_review_sql(db, source.value, parent, parent_depth, depth)
+    finally:
         close_sql_connection(db)
-        raise
-    filename = _series_export_filename(source, parent, rank, date_from, date_to)
-    return StreamingResponse(
-        _series_export_csv(db, plan),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return {"terms": terms}

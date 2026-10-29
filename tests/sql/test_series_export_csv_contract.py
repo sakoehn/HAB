@@ -2,9 +2,9 @@
 test_series_export_csv_contract.py
 ==================================
 What every file from GET /series/export must look like and hold, checked
-against several real downloads (taxonomy and enzyme, with and without the
-starting term, a date range, ranks skipped, names containing commas, and
-the detected-only "sparse" mode).
+against several real downloads (taxonomy, enzyme and kegg, with and
+without the starting term, a date range, levels skipped, names containing
+commas, KOs in several pathways, and the detected-only "sparse" mode).
 
 The contract
 ------------
@@ -16,18 +16,22 @@ Shape
                        sample,date,egc,norm_egc,detected
   * Every row has exactly as many fields as the header, and names with
     commas or quotes come back unchanged when the file is read as CSV.
-  * Rows come in blocks, one block per term: the starting term's block
-    first (only when include_parent is on), then the terms in id order.
+  * Rows come in blocks: the starting term's block first (only when
+    include_parent is on), then one block per term -- or, for a term
+    reached through several paths (a KEGG KO in several pathways), one
+    block per path -- in id order.
 
 Which terms
-  * Exactly the terms at the requested level under the starting term,
-    each once (computed independently from the database here), each
-    labelled with that level; the starting-term block carries the starting
-    term's own level.
+  * Exactly the terms (and, for kegg/cog/enzyme, the paths to them) at the
+    requested level under the starting term, each once, computed
+    independently from the database here; each labelled with that level.
+    The starting-term block carries the starting term's own level.
   * Labels match the database: taxonomy taxon = the taxon's name and
-    lineage = its id; enzyme name = the term's name, lineage_ids runs from
-    the top level down to the term's own id, lineage holds the matching
-    names, both joined by " > ".
+    lineage = its id; kegg/cog/enzyme name = the term's name, lineage_ids
+    runs from the top level down to the term's own id, lineage holds the
+    matching names, both joined by " > ".
+  * also_in_other_paths is "true" exactly when the term has more than one
+    block in the file.
 
 Samples and dates
   * In a normal file every block lists every sample in the date range,
@@ -38,9 +42,10 @@ Samples and dates
 Values
   * detected=true rows carry exactly the egc and norm_egc stored for that
     term and sample; detected=false rows are terms with no stored value
-    for that sample, written as 0 and 0.
+    for that sample, written as 0 and 0. A term's repeated blocks carry
+    the same values.
   * Nothing is left out: every stored value for every term in the file,
-    in the date range, appears in that term's block.
+    in the date range, appears in each of that term's blocks.
 
 Run:
     pytest tests/sql/test_series_export_csv_contract.py -v
@@ -72,8 +77,12 @@ PATHS_HEADER = [
     "sample", "date", "egc", "norm_egc", "detected",
 ]
 TAXONOMY_RANKS = {"domain": 1, "phylum": 2, "class": 3, "order": 4, "family": 5, "genus": 6, "species": 7, "strain": 8}
-ENZYME_LEVELS = {"class": 1, "subclass": 2, "subsubclass": 3, "ec": 4}
-ENZYME_COLUMNS = {1: ("a_id", "a_name"), 2: ("b_id", "b_name"), 3: ("c_id", "c_name"), 4: ("d_id", "d_name")}
+LEVELS = {
+    "enzyme": {"class": 1, "subclass": 2, "subsubclass": 3, "ec": 4},
+    "kegg":   {"category": 1, "subcategory": 2, "pathway": 3, "ko": 4},
+}
+PATH_TABLES = {"enzyme": "enzyme_paths", "kegg": "kegg_paths"}
+COLUMNS = {1: ("a_id", "a_name"), 2: ("b_id", "b_name"), 3: ("c_id", "c_name"), 4: ("d_id", "d_name")}
 
 GAMMA = "Bacteria;Proteobacteria;Gammaproteobacteria"
 AEROPYRUM_CAMINI = "Archaea;Crenarchaeota;Thermoprotei;Desulfurococcales;Desulfurococcaceae;Aeropyrum;Aeropyrum camini"
@@ -88,10 +97,14 @@ REQUESTS = {
     "enzyme: with the starting term":             {"source": "enzyme", "parent": "5.6.2", "rank": "ec", "include_parent": "true"},
     "enzyme: levels skipped, class to EC":        {"source": "enzyme", "parent": "5", "rank": "ec", "date_from": "2021-05-27"},
     "enzyme: whole dataset":                      {"source": "enzyme", "rank": "class"},
+    "kegg: KOs in several pathways":              {"source": "kegg", "parent": "09101", "rank": "ko"},
+    "kegg: pathways, with the starting term":     {"source": "kegg", "parent": "09100", "rank": "pathway", "include_parent": "true"},
+    "kegg: whole dataset subcategories":          {"source": "kegg", "rank": "subcategory", "date_to": "2021-06-01"},
 }
 SPARSE_REQUESTS = {
     "taxonomy, sparse": {"source": "taxonomy", "parent": GAMMA, "rank": "family"},
     "enzyme, sparse":   {"source": "enzyme", "parent": "1.1.1", "rank": "ec", "include_parent": "true"},
+    "kegg, sparse":     {"source": "kegg", "parent": "09101", "rank": "ko"},
 }
 
 
@@ -128,26 +141,44 @@ def _expected_samples(conn, date_from, date_to):
     return [(s, dt.strftime("%Y-%m-%d %H:%M")) for dt, s in sorted(out)]
 
 
-def _expected_terms(conn, req):
-    """{id: name} of every term the file must contain (starting term excluded)."""
+def _path_depth(conn, source, term):
+    for depth, (id_col, _) in COLUMNS.items():
+        if conn.execute(f"SELECT 1 FROM {PATH_TABLES[source]} WHERE {id_col} = ? LIMIT 1", (term,)).fetchone():
+            return depth
+    raise AssertionError(f"{term} not in {PATH_TABLES[source]}")
+
+
+def _lineages(conn, source, depth, parent=None):
+    """{(id, 'a > b > id'): ('Name A > Name B > Name', name)} for every
+    path to a term with data at `depth` (under `parent`, if given)."""
+    cols = [COLUMNS[d] for d in range(1, depth + 1)]
+    select = ", ".join(f"{i}, {n}" for i, n in cols)
+    sql = f"SELECT DISTINCT {select} FROM {PATH_TABLES[source]} WHERE {cols[-1][0]} IS NOT NULL"
+    params = []
+    if parent:
+        sql += f" AND {COLUMNS[_path_depth(conn, source, parent)][0]} = ?"
+        params.append(parent)
+    have = {r[0] for r in conn.execute("SELECT annotation_id FROM annotation_catalog WHERE source = ?", (source,))}
+    out = {}
+    for row in conn.execute(sql, params):
+        ids, names = list(row[0::2]), list(row[1::2])
+        if ids[-1] in have:
+            out[(ids[-1], " > ".join(ids))] = (" > ".join(names), names[-1])
+    return out
+
+
+def _expected_blocks(conn, req):
+    """Block key -> expected labels, starting term excluded. Taxonomy keys
+    are lineages (one block per taxon); other keys are (id, lineage_ids)."""
     parent = req.get("parent")
     if req["source"] == "taxonomy":
-        depth = TAXONOMY_RANKS[req["rank"]]
-        prefix = (parent or "") + ";" if parent else ""
-        rows = conn.execute(
+        prefix = parent + ";" if parent else ""
+        return dict(conn.execute(
             "SELECT annotation_id, name FROM annotation_catalog WHERE source = 'taxonomy' AND depth = ? "
             "AND substr(annotation_id, 1, ?) = ?",
-            (depth, len(prefix), prefix),
-        )
-        return dict(rows)
-    depth = ENZYME_LEVELS[req["rank"]]
-    id_col, name_col = ENZYME_COLUMNS[depth]
-    sql = f"SELECT DISTINCT {id_col}, {name_col} FROM enzyme_paths WHERE {id_col} IS NOT NULL"
-    params = ()
-    if parent:
-        sql += f" AND {ENZYME_COLUMNS[len(parent.split('.'))][0]} = ?"
-        params = (parent,)
-    return dict(conn.execute(sql, params))
+            (TAXONOMY_RANKS[req["rank"]], len(prefix), prefix),
+        ))
+    return _lineages(conn, req["source"], LEVELS[req["source"]][req["rank"]], parent)
 
 
 def _stored_values(conn, source, ids):
@@ -162,13 +193,6 @@ def _stored_values(conn, source, ids):
         ):
             values[(aid, sample)] = (egc, norm)
     return values
-
-
-def _enzyme_lineage(conn, ec_id):
-    depth = len(ec_id.split("."))
-    cols = ", ".join(f"{ENZYME_COLUMNS[d][0]}, {ENZYME_COLUMNS[d][1]}" for d in range(1, depth + 1))
-    row = conn.execute(f"SELECT DISTINCT {cols} FROM enzyme_paths WHERE {ENZYME_COLUMNS[depth][0]} = ?", (ec_id,)).fetchone()
-    return list(row[0::2]), list(row[1::2])
 
 
 # ── The contract ─────────────────────────────────────────────────────────────
@@ -188,36 +212,46 @@ def _check_contract(resp, req, conn, sparse):
     assert all(len(r) == len(header) for r in raw)
     rows = [dict(zip(header, r)) for r in raw]
 
-    id_of = (lambda r: r["lineage"]) if taxonomy else (lambda r: r["annotation_id"])
+    term_of = (lambda r: r["lineage"]) if taxonomy else (lambda r: r["annotation_id"])
+    key_of = (lambda r: r["lineage"]) if taxonomy else (lambda r: (r["annotation_id"], r["lineage_ids"]))
 
-    # Split into blocks of consecutive rows for the same term.
+    # Split into blocks of consecutive rows with the same key.
     blocks = []
     for r in rows:
-        if blocks and id_of(blocks[-1][0]) == id_of(r):
+        if blocks and key_of(blocks[-1][0]) == key_of(r):
             blocks[-1].append(r)
         else:
             blocks.append([r])
 
-    # Starting term first, then the terms in id order, each exactly once.
+    # Starting term first, then the blocks in id order, each exactly once.
     if include_start:
         start, blocks = blocks[0], blocks[1:]
-        assert id_of(start[0]) == parent
+        assert term_of(start[0]) == parent
         if taxonomy:
             assert start[0]["rank"] == [k for k, v in TAXONOMY_RANKS.items() if v == len(parent.split(";"))][0]
         else:
             assert all(r["is_starting_term"] == "true" for r in start)
-            assert start[0]["level"] == [k for k, v in ENZYME_LEVELS.items() if v == len(parent.split("."))][0]
+            parent_depth = _path_depth(conn, source, parent)
+            assert start[0]["level"] == [k for k, v in LEVELS[source].items() if v == parent_depth][0]
+            ((parent_lineage_ids, (parent_lineage, _)),) = [
+                (k[1], v) for k, v in _lineages(conn, source, parent_depth).items() if k[0] == parent
+            ]
+            assert (start[0]["lineage_ids"], start[0]["lineage"]) == (parent_lineage_ids, parent_lineage)
         all_blocks = [start, *blocks]
     else:
         all_blocks = blocks
-    ids = [id_of(b[0]) for b in blocks]
-    assert ids == sorted(ids)
-    assert len(ids) == len(set(ids)), "a term appears in more than one block"
+    terms = [term_of(b[0]) for b in blocks]
+    assert terms == sorted(terms)
+    keys = [key_of(b[0]) for b in blocks]
+    assert len(keys) == len(set(keys)), "a block appears twice"
 
-    expected = _expected_terms(conn, req)
-    assert set(ids) == set(expected)
+    expected = _expected_blocks(conn, req)
+    assert set(keys) == set(expected)
 
     # Labels.
+    blocks_per_term = {}
+    for t in terms:
+        blocks_per_term[t] = blocks_per_term.get(t, 0) + 1
     for b in blocks:
         r = b[0]
         if taxonomy:
@@ -226,22 +260,23 @@ def _check_contract(resp, req, conn, sparse):
             if parent:
                 assert r["lineage"].startswith(parent + ";")
         else:
-            lineage_ids, lineage_names = _enzyme_lineage(conn, r["annotation_id"])
-            assert r["name"] == expected[r["annotation_id"]] == lineage_names[-1]
-            assert r["lineage_ids"] == " > ".join(lineage_ids)
-            assert r["lineage"] == " > ".join(lineage_names)
+            lineage, name = expected[key_of(r)]
+            assert r["name"] == name
+            assert r["lineage"] == lineage
+            assert r["lineage_ids"].split(" > ")[-1] == r["annotation_id"]
             if parent:
-                assert parent in lineage_ids
+                assert parent in r["lineage_ids"].split(" > ")
+            repeated = "true" if blocks_per_term[r["annotation_id"]] > 1 else "false"
             assert all(x["level"] == req["rank"] for x in b)
-            assert all(x["is_starting_term"] == "false" and x["also_in_other_paths"] == "false" for x in b)
+            assert all(x["is_starting_term"] == "false" and x["also_in_other_paths"] == repeated for x in b)
 
     # Samples, dates and values.
     samples = _expected_samples(conn, req.get("date_from"), req.get("date_to"))
     sample_dates = dict(samples)
     sample_order = [s for s, _ in samples]
-    stored = _stored_values(conn, source, [id_of(b[0]) for b in all_blocks])
+    stored = _stored_values(conn, source, {term_of(b[0]) for b in all_blocks})
     for b in all_blocks:
-        term = id_of(b[0])
+        term = term_of(b[0])
         listed = [r["sample"] for r in b]
         if sparse:
             assert listed == [s for s in sample_order if s in set(listed)], "samples out of date order"
@@ -276,13 +311,16 @@ def test_csv_contract_sparse(client, conn, monkeypatch, name):
     _check_contract(client.get("/series/export", params=req), req, conn, sparse=True)
 
 
-def test_names_with_commas_are_really_exercised(client):
-    """Guards the fixtures above: both comma requests must actually contain
-    a comma-bearing name, or the round-trip checks prove nothing."""
+def test_fixtures_really_exercise_commas_and_repeated_kos(client):
+    """Guards the requests above: the comma requests must contain
+    comma-bearing names and the KEGG one KOs in several pathways, or the
+    round-trip and repeated-block checks prove nothing."""
     tax = client.get("/series/export", params=REQUESTS["taxonomy: strain names containing commas"]).text
     enz = client.get("/series/export", params=REQUESTS["enzyme: EC numbers, names with commas"]).text
+    kegg = client.get("/series/export", params=REQUESTS["kegg: KOs in several pathways"]).text
     assert '"Aeropyrum camini SY1, JCM 12091"' in tax
     assert '"D-xylose 1-dehydrogenase (NADP+, D-xylono-1,5-lactone-forming)"' in enz
+    assert ",true,false," in kegg  # also_in_other_paths=true on a non-starting row
 
 
 def test_summary_matches_the_file(client):
