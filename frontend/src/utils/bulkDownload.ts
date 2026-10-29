@@ -24,6 +24,12 @@ export function levelOptionsBelow(source: string, parentDepth: number): RankOpti
   return (LEVELS[source] ?? []).filter(o => o.depth > parentDepth)
 }
 
+// Whether Bulk Download can start from a term: its source is offered and
+// it has a level below it (the Lookup card's "Bulk download from here").
+export function canBulkDownloadFrom(source: string, depth: number | null): boolean {
+  return depth != null && levelOptionsBelow(source, depth).length > 0
+}
+
 // Display name of a source's level, e.g. ('enzyme', 3) -> 'Sub-subclass'.
 export function levelLabel(source: string, depth: number): string | undefined {
   return LEVELS[source]?.find(o => o.depth === depth)?.label

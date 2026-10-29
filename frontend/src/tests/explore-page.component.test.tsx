@@ -1057,3 +1057,58 @@ describe('ExplorePage — Bulk Download section', () => {
     expect((screen.getByLabelText('Download every') as HTMLSelectElement).value).toBe('genus')
   })
 })
+
+
+describe('ExplorePage — Lookup card links to Bulk Download', () => {
+  const SUMMARY = { source: 'enzyme', parent: '5.6.2', rank: 'ec', taxa: 2, samples: 128, max_rows: 256, sparse: false }
+
+  function lookupFetch(result: Record<string, unknown>) {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations')) {
+        return Promise.resolve(jsonResponse({ data: [{ mean_egc: 1, max_egc: 1, sample_count: 128, parent: null, ...result }], total: 1 }))
+      }
+      if (url.includes('/api/series/export/summary')) return Promise.resolve(jsonResponse(SUMMARY))
+      return Promise.resolve(jsonResponse({ data: [] }))
+    })
+  }
+
+  async function lookUp(user: ReturnType<typeof userEvent.setup>, source: string, q: string) {
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: source }} />)
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), q)
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+    await waitFor(() => expect(document.querySelector('.lookup-result')).toBeTruthy())
+  }
+
+  it('an Enzyme sub-subclass opens Bulk Download starting from it', async () => {
+    const user = userEvent.setup()
+    lookupFetch({ annotation_id: '5.6.2', name: 'Enzymes altering nucleic acid conformation', depth: 3 })
+    await lookUp(user, 'enzyme', '5.6.2')
+    await user.click(screen.getByRole('button', { name: /Bulk download from here/ }))
+    expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('enzyme')
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('5.6.2 Enzymes altering nucleic acid conformation')
+    expect((screen.getByLabelText('Download every') as HTMLSelectElement).value).toBe('ec')
+  })
+
+  it('a taxon opens Bulk Download starting from its lineage', async () => {
+    const user = userEvent.setup()
+    lookupFetch({ annotation_id: 'Bacteria;Proteobacteria', name: 'Proteobacteria', depth: 2 })
+    await lookUp(user, 'taxonomy', 'Proteobacteria')
+    await user.click(screen.getByRole('button', { name: /Bulk download from here/ }))
+    expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('taxonomy')
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Bacteria › Proteobacteria')
+  })
+
+  it('has no link for a term with nothing below it (an EC number)', async () => {
+    const user = userEvent.setup()
+    lookupFetch({ annotation_id: '5.6.2.1', name: 'DNA topoisomerase', depth: 4 })
+    await lookUp(user, 'enzyme', '5.6.2.1')
+    expect(screen.queryByRole('button', { name: /Bulk download from here/ })).toBeNull()
+  })
+
+  it('has no link yet for KEGG, which Bulk Download does not offer yet', async () => {
+    const user = userEvent.setup()
+    lookupFetch({ annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 3 })
+    await lookUp(user, 'kegg', '00010')
+    expect(screen.queryByRole('button', { name: /Bulk download from here/ })).toBeNull()
+  })
+})

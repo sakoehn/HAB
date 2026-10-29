@@ -1,6 +1,6 @@
 // The Explore page state App.tsx keeps across navigation, and its default.
 
-import type { ApiStatus, ExploreSection, ExploreSortCol, SortDir, TopAnnotation } from '../types'
+import type { ApiStatus, BulkDownloadHandoff, ExploreSection, ExploreSortCol, SortDir, TopAnnotation } from '../types'
 
 export type ExploreState = {
   openSection:  ExploreSection | null
@@ -42,9 +42,11 @@ export type ExploreState = {
   lookupRankFilter: Set<number>
   // Scaffold section
   scaffoldInitialTerms?: { annotationId: string; source: string }[]
-  // Bulk Download section: a starting taxon handed over from another page
-  // (a new object each time, so a repeat handoff of the same taxon applies)
-  bulkDownloadInitialParent?: { lineage: string }
+  // Bulk Download section: a starting term handed over from another page or
+  // the Lookup card (a new object each time, so a repeat handoff of the same
+  // term applies). `lineage` is the term's id -- a taxonomy lineage, or an
+  // EC number etc. when `source` says so (taxonomy if omitted).
+  bulkDownloadInitialParent?: BulkDownloadHandoff
 }
 
 export function makeDefaultExploreState(): ExploreState {

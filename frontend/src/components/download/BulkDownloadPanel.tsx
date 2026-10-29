@@ -12,7 +12,7 @@
 
 import React, { useEffect, useState } from 'react'
 
-import type { AnnotationItem, ApiStatus, HierarchyTreeNode } from '../../types'
+import type { AnnotationItem, ApiStatus, BulkDownloadHandoff, HierarchyTreeNode } from '../../types'
 import { apiFetch } from '../../utils/api'
 import { buildExportQuery, levelLabel, levelOptionsBelow } from '../../utils/bulkDownload'
 import { DateRangePicker } from '../ui/DateRangePicker'
@@ -76,20 +76,29 @@ function taxonomyStart(lineage: string): Start {
   return { id: lineage, depth: idDepth('taxonomy', lineage), name: lineage.split(';').pop() ?? lineage }
 }
 
+function handoffStart(handoff: BulkDownloadHandoff): { source: string; start: Start } {
+  const source = handoff.source ?? 'taxonomy'
+  if (source === 'taxonomy') return { source, start: taxonomyStart(handoff.lineage) }
+  return {
+    source,
+    start: { id: handoff.lineage, depth: handoff.depth ?? idDepth(source, handoff.lineage), name: handoff.name ?? '' },
+  }
+}
+
 export function BulkDownloadPanel({
   initialParent,
   dataDateRange,
 }: {
-  // A new object each time another page hands a taxon over (e.g. the
-  // Taxonomy page's shortcut), so the same lineage handed over twice
+  // A new object each time a term is handed over (the Taxonomy page's
+  // shortcut, the Lookup card's link), so the same term handed over twice
   // still applies after the user has changed it here in between.
-  initialParent?: { lineage: string }
+  initialParent?: BulkDownloadHandoff
   dataDateRange?: { min: string; max: string } | null
 }) {
-  const initialStart = initialParent ? taxonomyStart(initialParent.lineage) : null
-  const [source, setSource]     = useState('taxonomy')
-  const [start, setStart]       = useState<Start | null>(initialStart)
-  const [rank, setRank]         = useState(() => levelOptionsBelow('taxonomy', initialStart?.depth ?? 0)[0]?.value ?? '')
+  const initial = initialParent ? handoffStart(initialParent) : null
+  const [source, setSource]     = useState(initial?.source ?? 'taxonomy')
+  const [start, setStart]       = useState<Start | null>(initial?.start ?? null)
+  const [rank, setRank]         = useState(() => levelOptionsBelow(initial?.source ?? 'taxonomy', initial?.start.depth ?? 0)[0]?.value ?? '')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo]     = useState('')
   const [includeParent, setIncludeParent] = useState(false)
@@ -126,15 +135,16 @@ export function BulkDownloadPanel({
     chooseStart(src, null, false)
   }
 
-  // A newly handed-over taxon replaces the current start (switching back to
-  // taxonomy if needed). Applied during render, as ExplorePage does for
+  // A newly handed-over term replaces the current start (switching source
+  // if needed). Applied during render, as ExplorePage does for
   // visitedSections, rather than in an effect.
   const [appliedInitialParent, setAppliedInitialParent] = useState(initialParent)
   if (initialParent !== appliedInitialParent) {
     setAppliedInitialParent(initialParent)
     if (initialParent) {
-      if (source !== 'taxonomy') changeSource('taxonomy')
-      chooseStart('taxonomy', taxonomyStart(initialParent.lineage), source === 'taxonomy')
+      const next = handoffStart(initialParent)
+      if (source !== next.source) changeSource(next.source)
+      chooseStart(next.source, next.start, source === next.source)
     }
   }
 

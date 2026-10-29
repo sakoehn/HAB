@@ -342,6 +342,9 @@ export type ScaffoldSortCol = 'date' | 'scaffold_count' | 'gene_count'
 
 // ── Explore section tabs ───────────────────────────────────────────────────
 
+// A starting term handed to Explore > Bulk Download (see exploreState.ts).
+export type BulkDownloadHandoff = { lineage: string; source?: string; depth?: number; name?: string }
+
 export type ExploreSection = 'overview' | 'top-egc' | 'by-parent' | 'lookup' | 'scaffolds' | 'bulk-download'
 
 // ── Correlates tab ─────────────────────────────────────────────────────────

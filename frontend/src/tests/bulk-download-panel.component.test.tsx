@@ -30,7 +30,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { BulkDownloadPanel } from '../components/download/BulkDownloadPanel'
-import { buildExportQuery, levelOptionsBelow, rankOptionsBelow } from '../utils/bulkDownload'
+import { buildExportQuery, canBulkDownloadFrom, levelOptionsBelow, rankOptionsBelow } from '../utils/bulkDownload'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -332,5 +332,29 @@ describe('BulkDownloadPanel — also include the starting term', () => {
     await waitFor(() => expect(lastSummaryUrl().searchParams.get('include_parent')).toBe('true'))
     const href = new URL(screen.getByRole('link', { name: /Download CSV/ }).getAttribute('href')!, 'http://x')
     expect(href.searchParams.get('include_parent')).toBe('true')
+  })
+})
+
+
+describe('canBulkDownloadFrom', () => {
+  it('is true only when the source is offered and something is below the term', () => {
+    expect(canBulkDownloadFrom('taxonomy', 2)).toBe(true)
+    expect(canBulkDownloadFrom('taxonomy', 8)).toBe(false)
+    expect(canBulkDownloadFrom('enzyme', 3)).toBe(true)
+    expect(canBulkDownloadFrom('enzyme', 4)).toBe(false)
+    expect(canBulkDownloadFrom('kegg', 3)).toBe(false)
+    expect(canBulkDownloadFrom('enzyme', null)).toBe(false)
+  })
+})
+
+describe('BulkDownloadPanel — handoff of a non-taxonomy term', () => {
+  it('switches to that source and starts from the term', async () => {
+    mockFetch.mockResolvedValue(jsonResponse(summary({ taxa: 2, max_rows: 256 })))
+    render(<BulkDownloadPanel initialParent={{ lineage: '5.6.2', source: 'enzyme', depth: 3, name: 'Enzymes altering nucleic acid conformation' }} />)
+    expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('enzyme')
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('5.6.2 Enzymes altering nucleic acid conformation')
+    await waitFor(() => expect(lastSummaryUrl().searchParams.get('source')).toBe('enzyme'))
+    expect(lastSummaryUrl().searchParams.get('parent')).toBe('5.6.2')
+    expect(lastSummaryUrl().searchParams.get('rank')).toBe('ec')
   })
 })

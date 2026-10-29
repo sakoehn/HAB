@@ -73,6 +73,7 @@ import { GroupedEgcChart } from '../components/charts/GroupedEgcChart'
 import { ScaffoldBtn } from '../components/scaffolds/ScaffoldBtn'
 import { HierarchyBtn } from '../components/hierarchy/HierarchyBtn'
 import { BulkDownloadPanel } from '../components/download/BulkDownloadPanel'
+import { canBulkDownloadFrom } from '../utils/bulkDownload'
 import { ScaffoldExplorePanel } from '../components/scaffolds/ScaffoldExplorePanel'
 import type { ExploreState } from './exploreState'
 
@@ -2332,6 +2333,25 @@ export function ExplorePage({
                             >
                               → View Timeseries in Analyze
                             </button>
+                            {canBulkDownloadFrom(effectiveLookupSource, depth) && (
+                              <button
+                                className="btn sm"
+                                style={{ marginLeft: 8 }}
+                                onClick={() => setState(prev => ({
+                                  ...prev,
+                                  openSection: 'bulk-download',
+                                  bulkDownloadInitialParent: {
+                                    lineage: r.annotation_id,
+                                    source:  effectiveLookupSource,
+                                    depth:   depth ?? undefined,
+                                    name:    r.name ?? undefined,
+                                  },
+                                }))}
+                                title={`Download the time series of every term below ${r.annotation_id}`}
+                              >
+                                ↓ Bulk download from here
+                              </button>
+                            )}
                           </div>
                         </div>
                       )
