@@ -1105,10 +1105,20 @@ describe('ExplorePage — Lookup card links to Bulk Download', () => {
     expect(screen.queryByRole('button', { name: /Bulk download from here/ })).toBeNull()
   })
 
-  it('has no link yet for COG, which Bulk Download does not offer yet', async () => {
+  it('a COG category opens Bulk Download at COG level', async () => {
     const user = userEvent.setup()
     lookupFetch({ annotation_id: 'C', name: 'Energy production and conversion', depth: 1 })
     await lookUp(user, 'cog', 'C')
+    await user.click(screen.getByRole('button', { name: /Bulk download from here/ }))
+    expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('cog')
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('C Energy production and conversion')
+    expect((screen.getByLabelText('Download every') as HTMLSelectElement).value).toBe('cog')
+  })
+
+  it('has no link for a single COG (nothing below it)', async () => {
+    const user = userEvent.setup()
+    lookupFetch({ annotation_id: 'COG0028', name: 'Acetolactate synthase large subunit', depth: 2 })
+    await lookUp(user, 'cog', 'COG0028')
     expect(screen.queryByRole('button', { name: /Bulk download from here/ })).toBeNull()
   })
 

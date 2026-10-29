@@ -23,6 +23,10 @@ const LEVELS: Record<string, RankOption[]> = {
     { value: 'pathway',     label: 'Pathway',      depth: 3 },
     { value: 'ko',          label: 'KO',           depth: 4 },
   ],
+  cog: [
+    { value: 'category',    label: 'Category',     depth: 1 },
+    { value: 'cog',         label: 'COG',          depth: 2 },
+  ],
 }
 
 // Levels of `source` below `parentDepth` (0 for the whole dataset).

@@ -17,7 +17,8 @@
  *     states, and the download link's URL
  *   picking a start by search and going back to the whole dataset
  *   date range is passed through to both requests
- *   taxonomy, enzyme and kegg can be chosen; cog not yet
+ *   every source can be chosen
+ *   cog: levels, the review list worded for categories, its note
  *   kegg: the review list of KOs in several pathways and the choices sent
  *     with the size request and the download
  *   enzyme: levels, search, browse tree, the note about totals not adding up
@@ -196,11 +197,12 @@ describe('BulkDownloadPanel', () => {
     expect(href.searchParams.get('date_to')).toBe('2021-06-05')
   })
 
-  it('offers taxonomy, enzyme and kegg; cog is not available yet', () => {
+  it('offers every source', () => {
     render(<BulkDownloadPanel />)
     const options = [...(screen.getByLabelText('Source') as HTMLSelectElement).options]
-    expect(options.filter(o => !o.disabled).map(o => o.value)).toEqual(['taxonomy', 'enzyme', 'kegg'])
-    expect(options.filter(o => o.disabled).map(o => o.value)).toEqual(['cog'])
+    expect(options.map(o => [o.value, o.disabled])).toEqual([
+      ['taxonomy', false], ['enzyme', false], ['kegg', false], ['cog', false],
+    ])
   })
 
   it('ignores a slower response for a choice that has since changed', async () => {
@@ -346,7 +348,9 @@ describe('canBulkDownloadFrom', () => {
     expect(canBulkDownloadFrom('enzyme', 4)).toBe(false)
     expect(canBulkDownloadFrom('kegg', 3)).toBe(true)
     expect(canBulkDownloadFrom('kegg', 4)).toBe(false)
-    expect(canBulkDownloadFrom('cog', 1)).toBe(false)
+    expect(canBulkDownloadFrom('cog', 1)).toBe(true)
+    expect(canBulkDownloadFrom('cog', 2)).toBe(false)
+    expect(canBulkDownloadFrom('nonsense', 1)).toBe(false)
     expect(canBulkDownloadFrom('enzyme', null)).toBe(false)
   })
 })
@@ -536,5 +540,56 @@ describe('BulkDownloadPanel — KEGG review list', () => {
     keggFetch()
     renderKeggKos()
     expect(screen.getByTestId('bulk-source-note')).toHaveTextContent(/counts in each of them/)
+  })
+})
+
+// ── COG ──────────────────────────────────────────────────────────────────────
+
+describe('levelOptionsBelow — COG', () => {
+  it('lists the COG levels', () => {
+    expect(levelOptionsBelow('cog', 0).map(o => [o.value, o.label])).toEqual([['category', 'Category'], ['cog', 'COG']])
+    expect(levelOptionsBelow('cog', 1).map(o => o.value)).toEqual(['cog'])
+  })
+})
+
+describe('BulkDownloadPanel — COG', () => {
+  const COG_REVIEW = {
+    terms: [{
+      annotation_id: 'COG0028', name: 'Acetolactate synthase large subunit', total_paths: 2,
+      paths: [
+        { parent_id: 'E', parent_name: 'Amino acid transport and metabolism', parent_mean_egc: 900000,
+          lineage_ids: ['E', 'COG0028'], lineage_names: ['Amino acid transport and metabolism', 'Acetolactate synthase large subunit'] },
+        { parent_id: 'H', parent_name: 'Coenzyme transport and metabolism', parent_mean_egc: 300000,
+          lineage_ids: ['H', 'COG0028'], lineage_names: ['Coenzyme transport and metabolism', 'Acetolactate synthase large subunit'] },
+      ],
+    }],
+  }
+
+  function cogFetch() {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/series/export/review')) return jsonResponse(COG_REVIEW)
+      return jsonResponse({ ...summary({ taxa: 4612, max_rows: 4952 * 128 }), multi_path_terms: 340 })
+    })
+  }
+
+  it('whole dataset to COGs: the review line and list talk about categories', async () => {
+    cogFetch()
+    const user = userEvent.setup()
+    render(<BulkDownloadPanel />)
+    await user.selectOptions(screen.getByLabelText('Source'), 'cog')
+    await user.selectOptions(rankSelect(), 'cog')
+    expect(await screen.findByTestId('bulk-review-line')).toHaveTextContent('340 of these COGs are in more than one category here')
+    await user.click(screen.getByRole('button', { name: /Review/ }))
+    expect(await screen.findByTestId('bulk-review-note')).toHaveTextContent(/describes the category as a whole, not where this COG is active/)
+    expect(screen.getByPlaceholderText(/Filter COGs/)).toBeInTheDocument()
+    expect(screen.getByTestId('bulk-review-COG0028')).toHaveTextContent('2 of 2 paths')
+  })
+
+  it('explains that COG rows can add up to more than the category', async () => {
+    cogFetch()
+    const user = userEvent.setup()
+    render(<BulkDownloadPanel />)
+    await user.selectOptions(screen.getByLabelText('Source'), 'cog')
+    expect(screen.getByTestId('bulk-source-note')).toHaveTextContent(/more than one COG counts under each/)
   })
 })

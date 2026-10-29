@@ -7,11 +7,11 @@
 // streams it to disk instead of the page building it in memory;
 // /api/series/export/summary supplies the size shown before downloading.
 //
-// Taxonomy, Enzyme and KEGG are available; COG is listed but disabled until
-// its backend support exists. For KEGG, a KO in several pathways inside the
-// start can be reviewed (PathReviewList) and some of its pathways unticked;
-// those choices go with the size request and the download as a text/plain
-// form post, since they can be too many for a link.
+// Every source is available. A term reached through several paths inside the
+// start -- a KEGG KO in several pathways, a COG in several categories -- can
+// be reviewed (PathReviewList) and some of its paths unticked; those choices
+// go with the size request and the download as a text/plain form post,
+// since they can be too many for a link.
 
 import React, { useEffect, useState } from 'react'
 
@@ -28,7 +28,7 @@ const SOURCES = [
   { value: 'taxonomy', label: 'Taxonomy',           enabled: true },
   { value: 'enzyme',   label: 'Enzyme',             enabled: true },
   { value: 'kegg',     label: 'KEGG',               enabled: true },
-  { value: 'cog',      label: 'COG (coming soon)',  enabled: false },
+  { value: 'cog',      label: 'COG',                enabled: true },
 ]
 
 const LEVEL_PLURALS: Record<string, string> = {
@@ -47,29 +47,34 @@ const LEVEL_PLURALS: Record<string, string> = {
   subcategory: 'subcategories',
   pathway:     'pathways',
   ko:          'KOs',
+  cog:         'COGs',
 }
 
 // What a term's paths run through, for the review line ("in more than one
 // pathway").
 const PATH_NOUNS: Record<string, string> = {
   kegg: 'pathway',
+  cog:  'category',
 }
 
 const SEARCH_PLACEHOLDERS: Record<string, string> = {
   taxonomy: 'Search for a taxon (e.g. Gammaproteobacteria)…',
   enzyme:   'Search for an EC number or name (e.g. 5.6.2, topoisomerase)…',
   kegg:     'Search for a KEGG term or ID (e.g. glycolysis, 00010)…',
+  cog:      'Search for a COG category or COG (e.g. C, COG0028, ATP synthase)…',
 }
 
 const COLUMNS_HELP: Record<string, string> = {
   taxonomy: 'Columns: taxon, rank, lineage, sample, date, egc, norm_egc, detected. Samples where a taxon was not detected are written as 0 with detected = false. "unclassified …" taxa hold the reads that were not classified down to this rank, so every rank adds up to the starting taxon\'s total.',
   enzyme:   'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false.',
+  cog:      'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false. A COG in several ticked categories gets one set of rows per category, each with also_in_other_paths = true and the same values, so don\'t add those copies together.',
   kegg:     'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false. A KO in several ticked pathways gets one set of rows per pathway, each with also_in_other_paths = true and the same values, so don\'t add those copies together.',
 }
 
 // Shown under the size line for sources whose rows don't add up to the
 // starting term the way taxonomy's do.
 const SOURCE_NOTES: Record<string, string> = {
+  cog:    'Rows can add up to more than the starting category: a gene with more than one COG counts under each of them, while the category counts it once; from the whole dataset, a COG in several categories also counts in each. Tick "Also include the starting term\'s own total" to compare.',
   kegg:   'Rows may not add up to the starting term: a KO in several pathways counts in each of them, while the starting term counts it once. Tick "Also include the starting term\'s own total" to compare.',
   enzyme: 'Rows may not add up to the starting term. Genes known only to a higher level — a partial EC number such as 3.1.-, or an old number that was later split — count towards that level but towards no EC number below it, and a gene with two EC numbers counts under each. Tick "Also include the starting term\'s own total" to compare.',
 }
