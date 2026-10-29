@@ -80,8 +80,9 @@ from .cache_sql import (
     get_search_annotations,
     get_top_annotations_from_catalog_sql,
     get_taxa_at_rank_sql,
+    get_paths_under_at_depth_sql,
     get_taxa_under_at_rank_sql,
-    iter_taxa_series_sql,
+    iter_series_for_ids_sql,
     strip_source_prefix,
     RANK_COLUMNS
 )
@@ -944,7 +945,7 @@ def taxonomy_rank_export(request: Request, rank: str):
 # ── Bulk time-series download ─────────────────────────────────────────────────
 
 # Above this many rows (Excel's row limit, minus the header) the CSV lists
-# only the samples each taxon was detected in, instead of also writing an
+# only the samples each term was detected in, instead of also writing an
 # explicit 0 row for every sample it wasn't.
 _EXPORT_DENSE_ROW_LIMIT = 1_048_575
 
@@ -953,31 +954,27 @@ _EXPORT_CHUNK_ROWS = 5000
 
 _EXPORT_HEADER = ["taxon", "rank", "lineage", "sample", "date", "egc", "norm_egc", "detected"]
 
+# kegg/cog/enzyme files carry ids and names separately, with lineages
+# joined by " > " (KEGG names themselves contain ";").
+_EXPORT_PATHS_HEADER = [
+    "annotation_id", "name", "level", "lineage_ids", "lineage", "also_in_other_paths", "is_starting_term",
+    "sample", "date", "egc", "norm_egc", "detected",
+]
+_LINEAGE_SEP = " > "
 
-def _series_export_plan(
-    db, source: AnnotationSource, parent: str | None, rank: str,
-    date_from: str | None, date_to: str | None,
-) -> dict:
-    """Check a bulk-download request and work out what it covers: the
-    taxa, the samples (in date order, with ISO dates) and whether the
-    file is too big to also list undetected samples. Raises HTTPException
-    for a bad request, so both routes reject it before anything is sent.
-    """
-    if source != AnnotationSource.taxonomy:
-        raise HTTPException(status_code=400, detail=f"Bulk download is not available for '{source.value}' yet")
-    depth = _taxonomy_rank_depth(rank)
-    if depth is None:
-        raise HTTPException(status_code=400, detail=f"Rank '{rank}' not found")
-    for label, value in (("date_from", date_from), ("date_to", date_to)):
-        if value is not None and _parse_any_datetime(value) is None:
-            raise HTTPException(status_code=400, detail=f"{label} is not a recognized date: {value!r}")
-    if parent is not None:
-        if not taxon_exists_sql(db, parent):
-            raise HTTPException(status_code=404, detail=f"Unknown taxon '{parent}'")
-        if depth <= len(parent.split(";")):
-            raise HTTPException(status_code=400, detail=f"Rank '{rank}' is not below '{parent}'")
+# Level names /series/export accepts per source, mapped to depth. Sources
+# not listed here (besides taxonomy) aren't available for bulk download yet.
+_EXPORT_LEVELS = {
+    "enzyme": {"class": 1, "subclass": 2, "subsubclass": 3, "ec": 4},
+}
 
-    taxa = get_taxa_under_at_rank_sql(db, parent, depth)
+
+def _taxonomy_rank_name(depth: int) -> str:
+    return RANK_COLUMNS[depth].strip('"').rstrip('_')
+
+
+def _export_samples(db, date_from: str | None, date_to: str | None) -> list[tuple[str, str]]:
+    """(sample, ISO date) pairs in date order, limited to the date range."""
     samples = []
     for sample in sorted(get_all_sample_names_sql(db), key=timepoint_sort_key):
         dt = (get_timepoint(sample) or {}).get("datetime")
@@ -985,51 +982,162 @@ def _series_export_plan(
             continue
         parsed = _parse_any_datetime(dt) if dt else None
         samples.append((sample, parsed.strftime("%Y-%m-%d %H:%M") if parsed else ""))
-
-    max_rows = len(taxa) * len(samples)
-    return {"taxa": taxa, "samples": samples, "max_rows": max_rows, "sparse": max_rows > _EXPORT_DENSE_ROW_LIMIT}
+    return samples
 
 
-def _series_export_filename(parent: str | None, rank: str, date_from: str | None, date_to: str | None) -> str:
-    parts = [parent.rsplit(";", 1)[-1] if parent else "all", rank, "timeseries"]
+def _taxonomy_export_entries(db, parent: str | None, rank: str, include_parent: bool):
+    depth = _taxonomy_rank_depth(rank)
+    if depth is None:
+        raise HTTPException(status_code=400, detail=f"Rank '{rank}' not found")
+    if parent is not None:
+        if not taxon_exists_sql(db, parent):
+            raise HTTPException(status_code=404, detail=f"Unknown taxon '{parent}'")
+        if depth <= len(parent.split(";")):
+            raise HTTPException(status_code=400, detail=f"Rank '{rank}' is not below '{parent}'")
+
+    entries = [
+        {"annotation_id": t["annotation_id"], "labels": [t["name"], rank, t["annotation_id"]]}
+        for t in get_taxa_under_at_rank_sql(db, parent, depth)
+    ]
+    start = None
+    if include_parent and parent is not None:
+        parent_rank = _taxonomy_rank_name(len(parent.split(";")))
+        start = {"annotation_id": parent, "labels": [parent.rsplit(";", 1)[-1], parent_rank, parent]}
+    return _EXPORT_HEADER, entries, start
+
+
+def _paths_parent_depth(db, source: str, parent: str) -> int | None:
+    """Level of a kegg/cog/enzyme term, or None if it isn't a real one."""
+    if source == "enzyme":
+        return len(parent.split(".")) if _enzyme_node_exists(db, parent) else None
+    return None
+
+
+def _paths_export_entries(db, source: str, parent: str | None, rank: str, include_parent: bool):
+    levels = _EXPORT_LEVELS[source]
+    depth = levels.get(rank)
+    if depth is None:
+        raise HTTPException(status_code=400, detail=f"Level '{rank}' not found for {source}")
+    parent_depth = 0
+    if parent is not None:
+        parent_depth = _paths_parent_depth(db, source, parent)
+        if parent_depth is None:
+            raise HTTPException(status_code=404, detail=f"Unknown {source} term '{parent}'")
+        if depth <= parent_depth:
+            raise HTTPException(status_code=400, detail=f"Level '{rank}' is not below '{parent}'")
+
+    level_names = {d: name for name, d in levels.items()}
+
+    def labels(path: dict, level: str, repeated: bool, is_start: bool) -> list:
+        return [
+            path["annotation_id"], path["name"], level,
+            _LINEAGE_SEP.join(path["lineage_ids"]), _LINEAGE_SEP.join(path["lineage_names"]),
+            "true" if repeated else "false", "true" if is_start else "false",
+        ]
+
+    paths = get_paths_under_at_depth_sql(db, source, parent, parent_depth, depth)
+    path_counts: dict[str, int] = {}
+    for path in paths:
+        path_counts[path["annotation_id"]] = path_counts.get(path["annotation_id"], 0) + 1
+    entries = [
+        {"annotation_id": p["annotation_id"], "labels": labels(p, rank, path_counts[p["annotation_id"]] > 1, False)}
+        for p in paths
+    ]
+
+    start = None
+    if include_parent and parent is not None:
+        parent_path = next(
+            p for p in get_paths_under_at_depth_sql(db, source, None, 0, parent_depth) if p["annotation_id"] == parent
+        )
+        start = {"annotation_id": parent, "labels": labels(parent_path, level_names[parent_depth], False, True)}
+    return _EXPORT_PATHS_HEADER, entries, start
+
+
+def _series_export_plan(
+    db, source: AnnotationSource, parent: str | None, rank: str,
+    date_from: str | None, date_to: str | None, include_parent: bool = False,
+) -> dict:
+    """Check a bulk-download request and work out what it covers: the
+    file's header, one entry per block of rows (one block per term, or per
+    term per path for a KO in several pathways), the optional starting-term
+    block, the samples (in date order, with ISO dates) and whether the file
+    is too big to also list undetected samples. Raises HTTPException for a
+    bad request, so both routes reject it before anything is sent.
+    """
+    if source != AnnotationSource.taxonomy and source.value not in _EXPORT_LEVELS:
+        raise HTTPException(status_code=400, detail=f"Bulk download is not available for '{source.value}' yet")
+    for label, value in (("date_from", date_from), ("date_to", date_to)):
+        if value is not None and _parse_any_datetime(value) is None:
+            raise HTTPException(status_code=400, detail=f"{label} is not a recognized date: {value!r}")
+
+    if source == AnnotationSource.taxonomy:
+        header, entries, start = _taxonomy_export_entries(db, parent, rank, include_parent)
+    else:
+        header, entries, start = _paths_export_entries(db, source.value, parent, rank, include_parent)
+
+    samples = _export_samples(db, date_from, date_to)
+    blocks = len(entries) + (1 if start else 0)
+    max_rows = blocks * len(samples)
+    return {
+        "source":   source.value,
+        "header":   header,
+        "entries":  entries,
+        "start":    start,
+        "terms":    len({e["annotation_id"] for e in entries}),
+        "samples":  samples,
+        "max_rows": max_rows,
+        "sparse":   max_rows > _EXPORT_DENSE_ROW_LIMIT,
+    }
+
+
+def _series_export_filename(
+    source: AnnotationSource, parent: str | None, rank: str, date_from: str | None, date_to: str | None,
+) -> str:
+    if source == AnnotationSource.taxonomy:
+        parts = [parent.rsplit(";", 1)[-1] if parent else "all", rank, "timeseries"]
+    else:
+        parts = [source.value, parent or "all", rank, "timeseries"]
     if date_from or date_to:
         parts.append(f"{date_from or 'start'}_to_{date_to or 'end'}")
     return re.sub(r"[^A-Za-z0-9._-]+", "_", "_".join(parts)) + ".csv"
 
 
-def _series_export_csv(db, plan: dict, rank: str):
-    """Yield the CSV in chunks: one row per taxon per sample, taxa in
-    lineage order and samples in date order within each taxon. Closes
-    `db` when done (or when the download is abandoned)."""
+def _series_export_csv(db, plan: dict):
+    """Yield the CSV in chunks: the starting term's block first (if asked
+    for), then one block of rows per entry in id order, samples in date
+    order within each block. Closes `db` when done (or when the download
+    is abandoned)."""
     try:
         buf = io.StringIO()
         writer = csv.writer(buf, lineterminator="\n")
-        writer.writerow(_EXPORT_HEADER)
-        groups = groupby(
-            iter_taxa_series_sql(db, [t["annotation_id"] for t in plan["taxa"]]),
-            key=itemgetter("annotation_id"),
-        )
-        group = next(groups, None)
+        writer.writerow(plan["header"])
         pending = 0
-        for taxon in plan["taxa"]:
-            detected = {}
-            if group is not None and group[0] == taxon["annotation_id"]:
-                detected = {r["sample"]: r for r in group[1]}
-                group = next(groups, None)
-            for sample, date in plan["samples"]:
-                row = detected.get(sample)
-                if row is not None:
-                    writer.writerow([taxon["name"], rank, taxon["annotation_id"], sample, date, row["egc"], row["norm_egc"], "true"])
-                elif plan["sparse"]:
-                    continue
-                else:
-                    writer.writerow([taxon["name"], rank, taxon["annotation_id"], sample, date, 0, 0, "false"])
-                pending += 1
-                if pending >= _EXPORT_CHUNK_ROWS:
-                    yield buf.getvalue()
-                    buf.seek(0)
-                    buf.truncate(0)
-                    pending = 0
+        for entries in ([plan["start"]] if plan["start"] else [], plan["entries"]):
+            # entries are sorted by annotation_id, the same order the
+            # series rows come back in, so the two can be walked together.
+            ids = list(dict.fromkeys(e["annotation_id"] for e in entries))
+            groups = groupby(iter_series_for_ids_sql(db, plan["source"], ids), key=itemgetter("annotation_id"))
+            group = next(groups, None)
+            for annotation_id, same_id in groupby(entries, key=itemgetter("annotation_id")):
+                detected = {}
+                if group is not None and group[0] == annotation_id:
+                    detected = {r["sample"]: r for r in group[1]}
+                    group = next(groups, None)
+                for entry in same_id:
+                    for sample, date in plan["samples"]:
+                        row = detected.get(sample)
+                        if row is not None:
+                            writer.writerow([*entry["labels"], sample, date, row["egc"], row["norm_egc"], "true"])
+                        elif plan["sparse"]:
+                            continue
+                        else:
+                            writer.writerow([*entry["labels"], sample, date, 0, 0, "false"])
+                        pending += 1
+                        if pending >= _EXPORT_CHUNK_ROWS:
+                            yield buf.getvalue()
+                            buf.seek(0)
+                            buf.truncate(0)
+                            pending = 0
         yield buf.getvalue()
     finally:
         close_sql_connection(db)
@@ -1037,27 +1145,28 @@ def _series_export_csv(db, plan: dict, rank: str):
 
 @router.get("/series/export/summary")
 def series_export_summary(
-    request:   Request,
-    source:    AnnotationSource = Query(...),
-    rank:      str = Query(...),
-    parent:    str | None = Query(None),
-    date_from: str | None = Query(None),
-    date_to:   str | None = Query(None),
+    request:        Request,
+    source:         AnnotationSource = Query(...),
+    rank:           str = Query(...),
+    parent:         str | None = Query(None),
+    date_from:      str | None = Query(None),
+    date_to:        str | None = Query(None),
+    include_parent: bool = Query(False),
 ):
     """How big a /series/export download would be, shown before it starts:
-    number of taxa, samples, the most rows the file can have, and whether
-    it is too big to list undetected samples (sparse)."""
+    number of terms (`taxa`), samples, the most rows the file can have, and
+    whether it is too big to list undetected samples (sparse)."""
     parent = parent or None
     db = connect_to_sql()
     try:
-        plan = _series_export_plan(db, source, parent, rank, date_from, date_to)
+        plan = _series_export_plan(db, source, parent, rank, date_from, date_to, include_parent)
     finally:
         close_sql_connection(db)
     return {
         "source":   source.value,
         "parent":   parent,
         "rank":     rank,
-        "taxa":     len(plan["taxa"]),
+        "taxa":     plan["terms"],
         "samples":  len(plan["samples"]),
         "max_rows": plan["max_rows"],
         "sparse":   plan["sparse"],
@@ -1066,29 +1175,33 @@ def series_export_summary(
 
 @router.get("/series/export")
 def series_export(
-    request:   Request,
-    source:    AnnotationSource = Query(...),
-    rank:      str = Query(...),
-    parent:    str | None = Query(None),
-    date_from: str | None = Query(None),
-    date_to:   str | None = Query(None),
+    request:        Request,
+    source:         AnnotationSource = Query(...),
+    rank:           str = Query(...),
+    parent:         str | None = Query(None),
+    date_from:      str | None = Query(None),
+    date_to:        str | None = Query(None),
+    include_parent: bool = Query(False),
 ):
-    """CSV of every taxon at `rank` under `parent` (the whole dataset if
-    omitted), one row per taxon per sample: taxon, rank, lineage, sample,
-    date, egc, norm_egc, detected. Undetected samples are written as 0
+    """CSV of every term at `rank` under `parent` (the whole dataset if
+    omitted), one row per term per sample. Taxonomy columns: taxon, rank,
+    lineage, sample, date, egc, norm_egc, detected. kegg/cog/enzyme columns:
+    annotation_id, name, level, lineage_ids, lineage, also_in_other_paths,
+    is_starting_term, then the same sample columns. include_parent adds the
+    starting term's own rows first. Undetected samples are written as 0
     with detected=false, unless the file would pass Excel's row limit, in
     which case only detected rows are written. Streamed, so a large file
     never has to be built in memory first."""
     parent = parent or None
     db = connect_to_sql()
     try:
-        plan = _series_export_plan(db, source, parent, rank, date_from, date_to)
+        plan = _series_export_plan(db, source, parent, rank, date_from, date_to, include_parent)
     except Exception:
         close_sql_connection(db)
         raise
-    filename = _series_export_filename(parent, rank, date_from, date_to)
+    filename = _series_export_filename(source, parent, rank, date_from, date_to)
     return StreamingResponse(
-        _series_export_csv(db, plan, rank),
+        _series_export_csv(db, plan),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
