@@ -10,7 +10,7 @@ The portal lets researchers browse, chart, and statistically correlate four kind
 - **Compare** — overlay multiple annotations or groups on one chart.
 - **Explore** — browse top annotations by abundance, drill into scaffold-level detail.
 - **Taxonomy** — browse and filter the full taxonomic tree, export by rank.
-- **Correlation finder** — for any annotation, finds other annotations whose abundance co-varies with it (Spearman, log-Pearson, or raw Pearson; on raw EGC or normalized relative abundance), corrected for both the multi-lag search (Bonferroni) and the multiple-candidate family (Benjamini-Hochberg FDR). Same-source results exclude siblings/ancestors/descendants automatically to avoid compositional and containment artifacts.
+- **Correlation finder** — for any annotation, finds other annotations whose abundance co-varies with it (Spearman, log-Pearson, or raw Pearson; on raw EGC or normalized relative abundance). P-values account for autocorrelation through an effective sample size (Pyper & Peterman 1998) and are corrected for both the multi-lag search (Bonferroni) and the multiple-candidate family (Benjamini-Hochberg FDR); every candidate is listed by |r| with the significant ones marked. Same-source results exclude siblings/ancestors/descendants automatically to avoid compositional and containment artifacts.
 
 ### How values are calculated
 

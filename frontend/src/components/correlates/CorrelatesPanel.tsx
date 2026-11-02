@@ -340,6 +340,7 @@ export function CorrelatesPanel({
                     <>
                       {' · '}
                       {significantCount.toLocaleString()} of {testedCount.toLocaleString()} significant (q&lt;0.05, BH-corrected)
+                      <HelpTooltip text="Samples taken 4 hours apart aren't independent, so the 128 samples are worth about 30 independent observations. With that little evidence only strong correlations can be confirmed as significant, and how strong depends on how smooth the two series are and how many timepoints they share. Weaker matches are still listed for exploration. See the Methods page for details." />
                     </>
                   )}
                   {testedCount != null && testedCount > data.length && (

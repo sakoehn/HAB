@@ -38,31 +38,63 @@ describe('MethodsPage', () => {
     }
   })
 
-  it('states the real lag window and permutation scheme, not the stale ones', () => {
+  it('states the real lag window, not the stale one', () => {
     const { container } = render(<MethodsPage />)
     const text = container.textContent ?? ''
     const n = METHODS_FACTS.correlationLags.length
     const maxLag = Math.max(...METHODS_FACTS.correlationLags)
     expect(text).toContain(`${n} lags`)
     expect(text).toContain(`±${maxLag} samples`)
-    expect(text).toContain(`top ${METHODS_FACTS.circularShiftScreenTopN}`)
     expect(text).not.toMatch(/\b9 lags\b/)
     expect(text).not.toMatch(/1000 random/i)
+  })
+
+  it('states the real result limits', () => {
+    const { container } = render(<MethodsPage />)
+    const text = container.textContent ?? ''
+    expect(text).toContain(`top ${METHODS_FACTS.familyLimitDefault}`)
+    expect(text).toContain(`up to ${METHODS_FACTS.familyLimitMax}`)
   })
 })
 
 describe('MethodsPage — every correlation method is described', () => {
-  it('has its own item for raw Pearson, log-Pearson, Spearman and the circular shift', () => {
+  function titles() {
     const { container } = render(<MethodsPage />)
-    const titles = [...container.querySelectorAll('strong')].map(el => el.textContent)
-    for (const t of ['Raw Pearson', 'Log-Pearson', 'Spearman', 'Circular-shift p-value']) {
-      expect(titles).toContain(t)
-    }
+    return [...container.querySelectorAll('strong')].map(el => el.textContent)
+  }
+
+  it('has its own item for raw Pearson, log-Pearson and Spearman, and none for the circular shift', () => {
+    const t = titles()
+    for (const name of ['Raw Pearson', 'Log-Pearson', 'Spearman']) expect(t).toContain(name)
+    expect(t).not.toContain('Circular-shift p-value')
   })
 
-  it('says the three classic p-values assume independent timepoints', () => {
+  it('explains the effective-sample-size p-value and its source', () => {
     const { container } = render(<MethodsPage />)
-    expect(container.textContent).toMatch(/independent/i)
+    const text = container.textContent ?? ''
+    expect(titles()).toContain('P-values: effective sample size')
+    expect(text).toMatch(/Pyper & Peterman \(1998\)/)
+    expect(text).toMatch(/not independent/i)
+  })
+
+  it('states the ~30-effective-samples limit and what it means for |r|', () => {
+    const { container } = render(<MethodsPage />)
+    const text = container.textContent ?? ''
+    expect(text).toMatch(/about 30 independent/i)
+    expect(text).toMatch(/only strong correlations/i)
+  })
+
+  it('says every candidate is tested and weaker ones are still listed', () => {
+    const { container } = render(<MethodsPage />)
+    const text = container.textContent ?? ''
+    expect(text).toMatch(/every candidate/i)
+    expect(text).toMatch(/not significant/i)
+  })
+
+  it('no longer describes the permutation test or its shortlist', () => {
+    const { container } = render(<MethodsPage />)
+    const text = container.textContent ?? ''
+    expect(text).not.toMatch(/circular|permutation|shortlist|at_p_floor/i)
   })
 })
 
@@ -81,5 +113,14 @@ describe('AboutPage', () => {
     const { container } = render(<AboutPage />)
     expect(container.textContent).not.toMatch(/inverted index/i)
     expect(container.textContent).not.toMatch(/26 top-level categories/)
+  })
+
+  it('API reference describes the current correlation methods and family response', () => {
+    const { container } = render(<AboutPage />)
+    const text = container.textContent ?? ''
+    expect(text).not.toMatch(/circular_shift|prescreen/)
+    expect(text).toMatch(/raw_pearson, log_pearson or spearman/)
+    expect(text).toMatch(/significant_count, tested_count/)
+    expect(text).toMatch(/significant \(q < 0\.05\)/)
   })
 })

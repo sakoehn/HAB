@@ -274,6 +274,19 @@ describe('CorrelatesPanel — full ranked list with significance marked', () => 
     expect(screen.getByText('COG0002')).toBeInTheDocument()
   })
 
+  it('explains next to the count why only strong correlations can be significant', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001), row(2, 'COG0002', 0.61, 0.4)],
+      significant_count: 1, tested_count: 2,
+    })
+
+    const legend = (await screen.findByText(/1 of 2 significant/)).closest('.corr-legend') as HTMLElement
+    await userEvent.click(within(legend).getAllByTitle('Help')[0])
+    const tip = await screen.findByText(/about 30 independent/i)
+    expect(tip.textContent).toMatch(/only strong correlations/i)
+    expect(tip.textContent).toMatch(/Methods/)
+  })
+
   it('discloses the true number tested when `limit` cut the list shorter', async () => {
     await openWith({
       results: [row(1, 'COG0001', 0.92, 0.001)],

@@ -203,10 +203,10 @@ export function MethodsPage() {
           <Item title="What is compared">
             The Correlates panel scores a reference annotation against every candidate in a
             family, using only the timepoints where both were detected; a pair needs at
-            least 10 such timepoints. Four methods are available: raw Pearson, log-Pearson
-            (Pearson on natural-log values), Spearman, and Spearman with a circular-shift
-            permutation p-value. All of them use the metric chosen in the panel (EGC or
-            relative abundance).
+            least 10 such timepoints. Three methods are available: raw Pearson, log-Pearson
+            (Pearson on natural-log values) and Spearman. All of them use the metric chosen
+            in the panel (EGC or relative abundance), and all share the same significance
+            test, described below.
           </Item>
           <Item title="Raw Pearson" formula="r = cov(x, y) / (σx · σy)">
             Pearson’s correlation on the values as they are: how closely the two series rise
@@ -225,12 +225,33 @@ export function MethodsPage() {
             Using ranks makes it robust to outliers and skewed values; tied values share the
             average of their ranks.
           </Item>
-          <Item title="P-values for these three methods">
-            Raw Pearson, log-Pearson and Spearman report the standard p-value for their r,
-            which assumes every timepoint is independent of the others. Samples taken 4 hours
-            apart are not, so these p-values are too optimistic; treat them as a way to rank
-            candidates, not as strict significance. The circular-shift p-value below is the
-            method designed for this.
+          <Item
+            title="P-values: effective sample size"
+            formula="1 / N_eff = 1/N + (2/N) · Σ j=1…N/5 ( (N − j)/N ) · ρx(j) · ρy(j)    ·    t = r · √( (N_eff − 2) / (1 − r²) )"
+          >
+            Samples taken 4 hours apart are not independent: each one looks a lot like the
+            one before it. A standard p-value counts every timepoint as separate evidence, so
+            for smooth time series it is far too optimistic (about half of unrelated but
+            smooth pairs pass). Instead, the number of timepoints N is discounted by how
+            strongly each series resembles itself at increasing time offsets (its
+            autocorrelation ρ), following Pyper &amp; Peterman (1998), and r is tested with
+            N_eff − 2 degrees of freedom. The autocorrelation is measured on the same values
+            that were correlated (raw, logged or ranked), after dropping timepoints where
+            either annotation is missing. N_eff never exceeds the real number of timepoints.
+          </Item>
+          <Item title="What this means: about 30 independent observations">
+            In practice the 128 samples are worth about 30 independent observations (median
+            29, middle half 23–37, across one real search of 3,211 enzyme families against
+            photosystem II protein D1). With that little evidence, and after the corrections
+            below, only strong correlations can be confirmed as significant. How strong
+            depends on the pair. Smoother series carry less evidence: in that search
+            ferredoxin:thioredoxin reductase (r = 0.60, worth about 54 independent
+            observations) was significant, while RuBisCO (r = 0.66, smoother, worth about 24)
+            was not significant. Pairs detected at only a few timepoints carry little
+            evidence too: an r of 0.90 from 10 shared timepoints was not significant either.
+            Trends shared across the bloom count as a
+            real relationship and are not removed, but because they make series smooth, they
+            need a high r to be confirmed.
           </Item>
           <Item
             title="Lags"
@@ -238,35 +259,17 @@ export function MethodsPage() {
           >
             Each candidate is scored at {N_LAGS} lags — every offset from 0 to ±{MAX_LAG}{' '}
             samples, i.e. up to a full day of lead or lag — and the lag with the largest |r|
-            is kept. For the first three methods, that lag’s p-value is Bonferroni-corrected
-            (× {N_LAGS}) for having searched {N_LAGS} lags.
+            is kept. That lag’s p-value is Bonferroni-corrected (× {N_LAGS}) for having
+            searched {N_LAGS} lags.
           </Item>
-          <Item
-            title="Circular-shift p-value"
-            formula="p = ( 1 + shifts at least as extreme ) / ( 1 + evaluable shifts )"
-          >
-            Samples taken 4 hours apart are not independent, so ordinary p-values are far too
-            optimistic for time series (about half of unrelated but autocorrelated pairs
-            pass). This method instead shifts the reference series around in a circle, which
-            keeps each series’ own autocorrelation but destroys any real relationship, and
-            re-runs the full {N_LAGS}-lag search at every shift. Every valid shift is used
-            exactly once, excluding shifts too close to the real alignment (within 2 ×{' '}
-            {MAX_LAG} + 1 samples, so the lag search can’t reconstruct it). The lag search is
-            built into the null, so no Bonferroni correction is applied. When no shift is as
-            extreme as the real data, p is the smallest value the test can report for that
-            pair — an upper bound, not a precise estimate; the API flags these results
-            (at_p_floor).
-          </Item>
-          <Item title="Shortlist and false discovery rate">
-            Because the permutation test is slow, candidates are first ranked by the fast
-            method and only the top {METHODS_FACTS.circularShiftScreenTopN} — ranked by
-            |r| × √(n − 3), so a strong correlation from few timepoints can’t outrank a
-            slightly weaker one backed by all 128 — receive the circular-shift test; the
-            panel discloses when this happened. A Benjamini–Hochberg correction is then
-            applied across every candidate scored in the request, and only candidates with
-            q &lt; 0.05 are shown, capped at the top {METHODS_FACTS.familyLimitDefault} by |r|
-            (up to {METHODS_FACTS.familyLimitMax} through the API’s limit parameter). The
-            panel shows the true significant count when more than that exist.
+          <Item title="False discovery rate and the results list">
+            Every candidate in the family is tested. A Benjamini–Hochberg correction is
+            applied across all of them, and candidates with q &lt; 0.05 are marked
+            significant. The list shows every candidate ranked by |r|, significant or not,
+            so weaker matches can still be explored; it is capped at the top{' '}
+            {METHODS_FACTS.familyLimitDefault} by |r| (up to {METHODS_FACTS.familyLimitMax}{' '}
+            through the API’s limit parameter), and the panel shows how many candidates were
+            tested and how many are significant.
           </Item>
         </Section>
 
