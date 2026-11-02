@@ -261,7 +261,7 @@ describe('CorrelatesPanel — full ranked list with significance marked', () => 
     })
 
     expect(await screen.findByText(/1 of 2 significant/)).toBeInTheDocument()
-    expect(screen.getByText(/ranked by \|r\|/)).toBeInTheDocument()
+    expect(screen.getByText(/significant first, then by \|r\|/)).toBeInTheDocument()
   })
 
   it('says so when nothing is significant, while still listing the candidates', async () => {

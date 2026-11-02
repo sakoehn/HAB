@@ -145,7 +145,7 @@ export function AboutPage() {
               ['/api/correlation?catalog_id_a=…&catalog_id_b=…&metric=egc&method=spearman',
                'Score (or read the cached score for) one specific pair. method: raw_pearson, log_pearson or spearman. Returns r, p (effective-sample-size p-value, Bonferroni-corrected across lags), lag_samples, n_pairs'],
               ['/api/correlations/family?ref_source=…&ref_annotation_id=…&target_source=…&metric=egc&method=spearman&limit=50',
-               'Returns {results, significant_count, tested_count}. results: every eligible candidate in target_source scored against the reference (same-source parents/children/siblings excluded), sorted by |r| descending and capped at limit; each carries p, its Benjamini-Hochberg q across the whole family, and significant (q < 0.05). significant_count and tested_count are totals before limit truncates results.'],
+               'Returns {results, significant_count, tested_count}. results: every eligible candidate in target_source scored against the reference (same-source parents/children/siblings excluded), significant ones first, then the rest, each group sorted by |r| descending, and capped at limit; each carries p, its Benjamini-Hochberg q across the whole family, and significant (q < 0.05). significant_count and tested_count are totals before limit truncates results.'],
               ['/api/annotations/scaffolds/summary?source=…&annotation_id=…',
                'Per-sample scaffold and gene counts for one annotation'],
               ['/api/annotations/scaffolds?source=…&annotation_id=…&sample=…&page=1&page_size=500',

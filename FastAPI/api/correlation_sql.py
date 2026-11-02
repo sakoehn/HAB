@@ -681,11 +681,12 @@ def correlation_family_endpoint(
         # flagged rather than hidden.
         for entry in scored:
             entry["significant"] = bool(entry["q"] < 0.05)
-        # Results otherwise come back in catalog-id order (roughly
-        # alphabetical by annotation id), not by match strength -- sort by
-        # |r| descending and cap the list so the first screen is the
-        # strongest correlates, not an arbitrary alphabetical slice.
-        scored.sort(key=lambda entry: abs(entry["r"]), reverse=True)
+        # Significant candidates first, then the rest, each by |r|
+        # descending. Pure |r| order let r values from only ~10 shared
+        # timepoints fill the first screen and push a well-supported
+        # significant match past `limit` (seen live: psbA vs enzyme,
+        # ferredoxin:thioredoxin reductase hidden behind 50 such rows).
+        scored.sort(key=lambda entry: (not entry["significant"], -abs(entry["r"])))
         # Both counts are real totals BEFORE `limit` (default 50) is
         # applied, so the panel can show "top 50 of 4,637 tested, 3
         # significant" instead of a bare 50.

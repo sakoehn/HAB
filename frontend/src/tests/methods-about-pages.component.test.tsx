@@ -103,6 +103,7 @@ describe('MethodsPage — every correlation method is described', () => {
     const text = container.textContent ?? ''
     expect(text).toMatch(/every candidate/i)
     expect(text).toMatch(/not significant/i)
+    expect(text).toMatch(/significant candidates first/i)
   })
 
   it('no longer describes the permutation test or its shortlist', () => {
@@ -136,5 +137,6 @@ describe('AboutPage', () => {
     expect(text).toMatch(/raw_pearson, log_pearson or spearman/)
     expect(text).toMatch(/significant_count, tested_count/)
     expect(text).toMatch(/significant \(q < 0\.05\)/)
+    expect(text).toMatch(/significant ones first/)
   })
 })

@@ -335,7 +335,7 @@ export function CorrelatesPanel({
             {status === 'ok' && data.length > 0 && (
               <>
                 <div className="corr-legend">
-                  {METHOD_LABEL[method]} · {METRIC_LABEL[metric]} · ranked by |r|
+                  {METHOD_LABEL[method]} · {METRIC_LABEL[metric]} · significant first, then by |r|
                   {significantCount != null && testedCount != null && (
                     <>
                       {' · '}
@@ -349,7 +349,7 @@ export function CorrelatesPanel({
                       <span className="corr-legend-warn">
                         showing top {data.length} of {testedCount.toLocaleString()} tested
                       </span>
-                      <HelpTooltip text="Results are capped for performance. These are the strongest matches by |r|; every candidate was tested, and the significant count covers all of them." />
+                      <HelpTooltip text="Results are capped for performance. Significant matches are always shown first, then the strongest of the rest by |r|; every candidate was tested, and the significant count covers all of them." />
                     </>
                   )}
                   {data.some(d => d.n_pairs < 30) && (

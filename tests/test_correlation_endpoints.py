@@ -390,6 +390,49 @@ class TestCorrelationFamilyEndpoint:
         catalog_ids_in_order = [entry["catalog_id"] for entry in response.json()["results"]]
         assert catalog_ids_in_order == [2, 5, 3]
 
+    def _add_strong_but_unsupported_candidate(self):
+        # Candidate 6: the highest |r| in the family (0.95) but not
+        # significant -- the real-data case of an r from only 10 shared
+        # timepoints outranking a well-supported significant match.
+        conn = sqlite3.connect(correlation_sql.SQLITE_DB_PATH)
+        conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (6, 'kegg', 'K00006')")
+        conn.execute(
+            "INSERT INTO correlations_cache "
+            "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
+            "VALUES (1, 6, 0.95, 'egc', 'raw_pearson', 0, 0.6, 10)"
+        )
+        conn.commit()
+        conn.close()
+
+    def test_significant_candidates_come_first_then_the_rest_by_absolute_r(self, client):
+        self._add_strong_but_unsupported_candidate()
+        response = client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "raw_pearson",
+            },
+        )
+
+        results = response.json()["results"]
+        assert [entry["catalog_id"] for entry in results] == [2, 5, 6, 3]
+        assert [entry["significant"] for entry in results] == [True, True, False, False]
+
+    def test_limit_never_hides_a_significant_candidate_behind_a_higher_r_one(self, client):
+        self._add_strong_but_unsupported_candidate()
+        response = client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "raw_pearson",
+                "limit": 2,
+            },
+        )
+
+        body = response.json()
+        assert [entry["catalog_id"] for entry in body["results"]] == [2, 5]
+        assert body["significant_count"] == 2
+
     def test_limit_caps_the_returned_list_to_the_strongest_matches(self, client):
         response = client.get(
             "/correlations/family",

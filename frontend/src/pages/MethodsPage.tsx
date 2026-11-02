@@ -265,11 +265,13 @@ export function MethodsPage() {
           <Item title="False discovery rate and the results list">
             Every candidate in the family is tested. A Benjamini–Hochberg correction is
             applied across all of them, and candidates with q &lt; 0.05 are marked
-            significant. The list shows every candidate ranked by |r|, significant or not,
-            so weaker matches can still be explored; it is capped at the top{' '}
-            {METHODS_FACTS.familyLimitDefault} by |r| (up to {METHODS_FACTS.familyLimitMax}{' '}
-            through the API’s limit parameter), and the panel shows how many candidates were
-            tested and how many are significant.
+            significant. The list shows every candidate, significant or not, so weaker
+            matches can still be explored: significant candidates first, then the rest, each
+            group ranked by |r|. Without that, r values from only a handful of shared
+            timepoints could fill the list and push a well-supported significant match out of
+            view. It is capped at the top {METHODS_FACTS.familyLimitDefault} (up to{' '}
+            {METHODS_FACTS.familyLimitMax} through the API’s limit parameter), and the panel
+            shows how many candidates were tested and how many are significant.
           </Item>
         </Section>
 
