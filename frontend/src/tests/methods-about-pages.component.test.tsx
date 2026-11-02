@@ -57,6 +57,20 @@ describe('MethodsPage', () => {
   })
 })
 
+describe('MethodsPage — every calculation is described', () => {
+  it('has its own item for each value the charts and tables show', () => {
+    const { container } = render(<MethodsPage />)
+    const titles = [...container.querySelectorAll('strong')].map(el => el.textContent)
+    for (const t of [
+      'EGC — Estimated Gene Copies', 'Relative Abundance (norm_egc)', 'Z-score Normalisation',
+      'LOWESS Smoothing', 'Descriptive Statistics',
+    ]) {
+      expect(titles).toContain(t)
+    }
+    expect(container.textContent).toMatch(/Bessel-corrected/)
+  })
+})
+
 describe('MethodsPage — every correlation method is described', () => {
   function titles() {
     const { container } = render(<MethodsPage />)

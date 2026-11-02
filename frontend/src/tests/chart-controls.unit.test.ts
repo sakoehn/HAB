@@ -49,9 +49,6 @@
  *   overcorrected --text-dim — documents the interim value that passed WCAG
  *                              but was brighter than --text (backwards)
  *
- * About page calculations content:
- *   required terms      — EGC, norm_egc, Z-score, LOWESS, Spearman, CLR, etc.
- *
  * Run: npx vitest run src/tests/chart-controls.unit.test.ts
  */
 
@@ -558,69 +555,6 @@ describe('dark mode text contrast — WCAG 2.1', () => {
 
   it('surface color (#1a2035) fails readability on dark bg (should not be used for text)', () => {
     expect(contrastRatio('#1a2035', DARK_BG)).toBeLessThan(4.5)
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────
-// About page calculations content
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Mirrors the actual text rendered in AboutPage.tsx calculations section.
-// Any rename of a method in the UI should fail these tests.
-const ABOUT_CALC_TEXT = `
-  EGC — Estimated Gene Copies
-  EGC(annotation, sample) = sum scaffold ( gene_count × coverage )
-  Relative Abundance (norm_egc)
-  norm_egc = EGC(annotation, sample) / total_coverage(sample)
-  Z-score Normalisation
-  Z = ( EGC − μ ) / σ where σ = population std dev (÷ n)
-  LOWESS Smoothing
-  local weighted linear regression span = ceil(bandwidth × n) tricube kernel
-  Spearman CLR Correlation
-  CLR-transformed EGC
-  Descriptive Statistics
-  Q1 Q3 Type 7 linear interpolation n−1 Bessel-corrected scaffold coverage
-`
-
-const REQUIRED_TERMS = [
-  'EGC',
-  'norm_egc',
-  'Relative Abundance',
-  'Z-score',
-  'LOWESS',
-  'Spearman',
-  'CLR',
-  'scaffold',
-  'coverage',
-  'n−1',
-  'Q1',
-  'Q3',
-] as const
-
-describe('About page — calculations section content', () => {
-  for (const term of REQUIRED_TERMS) {
-    it(`contains "${term}"`, () => {
-      expect(ABOUT_CALC_TEXT).toContain(term)
-    })
-  }
-
-  it('all four normalization modes are described', () => {
-    expect(ABOUT_CALC_TEXT).toContain('EGC')       // raw
-    expect(ABOUT_CALC_TEXT).toContain('norm_egc')  // L1
-    expect(ABOUT_CALC_TEXT).toContain('Z-score')   // Z-score
-    expect(ABOUT_CALC_TEXT).toContain('LOWESS')    // smoothing
-  })
-
-  it('CLR transformation is mentioned (compositional metagenomics)', () => {
-    expect(ABOUT_CALC_TEXT).toContain('CLR')
-  })
-
-  it('Bessel correction is mentioned for sample std dev', () => {
-    expect(ABOUT_CALC_TEXT).toContain('Bessel')
-  })
-
-  it('quartile interpolation type is specified', () => {
-    expect(ABOUT_CALC_TEXT).toContain('Type 7')
   })
 })
 
