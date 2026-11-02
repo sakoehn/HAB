@@ -196,7 +196,7 @@ export type CorrelateResult = {
   n_pairs:       number
 }
 
-export type CorrMethod = 'spearman' | 'log_pearson' | 'raw_pearson' | 'circular_shift'
+export type CorrMethod = 'spearman' | 'log_pearson' | 'raw_pearson'
 
 export type CorrelationFamilyResult = {
   catalog_id:    number
@@ -206,30 +206,21 @@ export type CorrelationFamilyResult = {
   r:             number
   p:             number
   q:             number
+  significant:   boolean   // q < 0.05
   lag_samples:   number
   lag_hours:     number
   n_pairs:       number
 }
 
 // /api/correlations/family's real response envelope (not a bare array).
-// prescreened=true means method=circular_shift was run only against the
-// prescreen_top_n strongest candidates (by a fast method) out of
-// prescreen_pool_size real candidates in the family, not the whole
-// family -- circular_shift is ~120x slower per candidate than a
-// parametric method (measured against the real db), so scoring a
-// multi-thousand-candidate family
-// in full is still real work, not an instant pass. When false,
-// prescreen_pool_size/prescreen_top_n are both null.
+// `results` is every scored candidate ranked by |r| (capped at the
+// request's limit), significant or not.
 export type CorrelationFamilyResponse = {
   results:           CorrelationFamilyResult[]
-  // The true count of significant (q<0.05)
-  // candidates BEFORE `limit` truncates `results` -- lets the panel show
-  // "top N of {significant_count}" instead of a bare N that looks the same
-  // whether N was the whole answer or a silent cut of a much larger one.
+  // Both are true totals BEFORE `limit` truncates `results`, so the panel
+  // can show "top 50 of 4,637 tested, 3 significant" instead of a bare 50.
   significant_count: number
-  prescreened:         boolean
-  prescreen_pool_size: number | null
-  prescreen_top_n:     number | null
+  tested_count:      number
 }
 
 // ── Chart / UI state ───────────────────────────────────────────────────────

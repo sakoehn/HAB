@@ -2,9 +2,10 @@
 // "Find Correlates" panel rendered below each chart card in Analyze page.
 // Hits /api/correlations/family (SQL backend Tier 2): enumerates every
 // eligible candidate in a chosen source, scores each against the reference
-// annotation, and applies Benjamini-Hochberg FDR across that family. The
-// backend already gates results to q < 0.05 -- everything this panel
-// receives is significant, there's no client-side threshold to apply.
+// annotation, and applies Benjamini-Hochberg FDR across that family. Every
+// scored candidate comes back ranked by |r|, each flagged significant
+// (q < 0.05) or not -- the panel shows them all and marks the significant
+// ones, so weaker matches stay visible for exploration.
 //
 // Source selection is 4 always-visible buttons (kegg/cog/enzyme/taxonomy,
 // including the annotation's own source) rather than a cross/within tab --
@@ -33,7 +34,6 @@ const METHOD_LABEL: Record<CorrMethod, string> = {
   spearman:       'Spearman r',
   log_pearson:    'log-Pearson r',
   raw_pearson:    'Pearson r',
-  circular_shift: 'Spearman r (permutation p)',
 }
 
 const METRIC_LABEL: Record<ChartMetric, string> = {
@@ -68,14 +68,10 @@ export function CorrelatesPanel({
   const [open,   setOpen]   = useState(false)
   const [data,   setData]   = useState<CorrelationFamilyResult[]>([])
   const [status, setStatus] = useState<ApiStatus>('idle')
-  // The real total before `limit` cuts the
-  // list -- null only in the idle/loading/error states before a real
-  // response has landed.
+  // Real totals before `limit` cuts the list -- null only in the
+  // idle/loading/error states before a real response has landed.
   const [significantCount, setSignificantCount] = useState<number | null>(null)
-  // Set only when method=circular_shift screened the family down before
-  // running the expensive permutation test -- null otherwise, including
-  // for every other method.
-  const [prescreen, setPrescreen] = useState<{ poolSize: number; topN: number } | null>(null)
+  const [testedCount, setTestedCount] = useState<number | null>(null)
 
   // Default to enzyme (the smallest real family, ~3.5k candidates) rather
   // than taxonomy (~60k, by far the largest) -- on a cold cache this is
@@ -84,12 +80,10 @@ export function CorrelatesPanel({
   // pre-selected when the panel first opens.
   const defaultTarget = source === 'enzyme' ? 'cog' : 'enzyme'
   const [targetSource, setTargetSource] = useState<string>(defaultTarget)
-  // spearman's parametric p-value ignores autocorrelation -- real EGC
-  // series have lag-1 autocorrelation of 0.60-0.72, which lets 22-51% of
-  // genuinely unrelated pairs pass q<0.05. circular_shift's permutation
-  // null preserves each series' autocorrelation, so it's the default. User
-  // can still pick spearman/log_pearson/raw_pearson for a faster look.
-  const [method, setMethod] = useState<CorrMethod>('circular_shift')
+  // Spearman by default: rank-based, so robust to the monotonic but
+  // nonlinear relationships common in EGC data. Every method's p-value
+  // accounts for autocorrelation via an effective sample size.
+  const [method, setMethod] = useState<CorrMethod>('spearman')
   const [metric, setMetric] = useState<ChartMetric>('norm_egc')
   const requestSeqRef = useRef(0)
   const [retryAttempt, setRetryAttempt] = useState(0)
@@ -112,21 +106,12 @@ export function CorrelatesPanel({
   // Every method retries when a request times out or the server answers
   // 5xx: the first search of a combination can outlast the 60s proxy
   // limit, but the server keeps computing and saving each pair, so a retry
-  // picks up where it left off. circular_shift is the slowest case:
-  // circular_shift runs a real permutation test per candidate
-  // (exhaustively over every valid shift beyond the lag window -- 103 of
-  // them at the real n=128, each re-running the 13-lag search) instead of
-  // one parametric pass -- measured directly against the real db at ~120x
-  // slower per candidate than a fast parametric method (spearman:
-  // ~3ms/pair, circular_shift: ~0.38s/pair). With prescreening capping
-  // this to the strongest 200 candidates, a worst-case family finishes in
-  // well under 2 minutes -- the retry affordance below is a safety net for
-  // a slow cold cache. correlation_family_endpoint is a synchronous route, which
-  // FastAPI runs in a background thread -- so even after this request's
-  // own timeout fires, the server keeps scoring candidates and caching
-  // each one individually. A client-side timeout here is therefore not a
-  // real failure for this method; it just means "ask again" gets you
-  // further along, since already-cached pairs return instantly. Capped at
+  // picks up where it left off. correlation_family_endpoint is a
+  // synchronous route, which FastAPI runs in a background thread -- so
+  // even after this request's own timeout fires, the server keeps scoring
+  // candidates and caching each one individually. A client-side timeout
+  // here is therefore not a real failure; it just means "ask again" gets
+  // you further along, since already-cached pairs return instantly. Capped at
   // MAX_RETRIES (not truly unlimited) so a genuinely dead backend still
   // surfaces eventually rather than retrying forever.
   const MAX_RETRIES = 12
@@ -135,6 +120,7 @@ export function CorrelatesPanel({
     const requestId = ++requestSeqRef.current
     setData([])
     setSignificantCount(null)
+    setTestedCount(null)
     setStatus('loading')
     setRetryAttempt(attempt)
     if (attempt === 0) {
@@ -163,11 +149,7 @@ export function CorrelatesPanel({
       if (requestId !== requestSeqRef.current) return
       setData(result?.results ?? [])
       setSignificantCount(result?.significant_count ?? null)
-      setPrescreen(
-        result?.prescreened && result.prescreen_pool_size != null && result.prescreen_top_n != null
-          ? { poolSize: result.prescreen_pool_size, topN: result.prescreen_top_n }
-          : null,
-      )
+      setTestedCount(result?.tested_count ?? null)
       setStatus('ok')
     } catch (err) {
       if (requestId !== requestSeqRef.current) return
@@ -255,18 +237,14 @@ export function CorrelatesPanel({
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ font: '400 10px var(--mono)', color: 'var(--text-dim)' }}>Method:</span>
               <HelpTooltip text="The first time a combination (this annotation, a target source, a method and a metric) is searched, every candidate has to be scored, which can take a while -- up to several minutes for a large family. Results are saved, so the same search is fast afterwards." />
-              {(['spearman', 'log_pearson', 'raw_pearson', 'circular_shift'] as CorrMethod[]).map(m => (
+              {(['spearman', 'log_pearson', 'raw_pearson'] as CorrMethod[]).map(m => (
                 <button
                   key={m}
                   className={`toggle-pill sm ${method === m ? 'on' : ''}`}
                   onClick={() => setMethod(m)}
-                  title={
-                    m === 'circular_shift'
-                      ? 'Same Spearman r as the "spearman" option, but the significance test accounts for autocorrelation in the time series (a circular-shift permutation) instead of assuming independent timepoints. More statistically defensible, and noticeably slower on a cold (uncached) query. For a large family, this only runs the full permutation test on the strongest candidates from a fast pre-screen, not every candidate -- see the note above the results when that happens.'
-                      : `Score correlations using ${METHOD_LABEL[m]}`
-                  }
+                  title={`Score correlations using ${METHOD_LABEL[m]}`}
                 >
-                  {m === 'circular_shift' ? 'circular_shift' : m}
+                  {m}
                 </button>
               ))}
             </div>
@@ -290,18 +268,14 @@ export function CorrelatesPanel({
             {status === 'loading' && (
               <div style={{ padding: '4px 0' }}>
                 <span className="sr-only">Computing correlations…</span>
-                {(method === 'circular_shift' || retryAttempt > 0) && (
+                {retryAttempt > 0 && (
                   <div style={{
                     padding: '9px 12px', font: '11px var(--mono)', color: 'var(--text-dim)',
                   }}>
-                    {retryAttempt === 0
-                      ? 'This method is slower and can take a while on a large family. It keeps trying on its own, so feel free to leave this open.'
-                      // Real elapsed time, not retryAttempt * 10 --
-                      // that assumed every retry consumed the full
-                      // 10-minute timeout, which a run of genuinely slow
-                      // (not failed) retries roughly does, but is still
-                      // measuring the real thing rather than assuming it.
-                      : `Still working — about ${elapsedMinutes} min so far. A first search can take a while; it keeps retrying automatically, so feel free to leave this open.`}
+                    {/* Real elapsed time, not retryAttempt * 10 -- that
+                        would assume every retry consumed the full
+                        10-minute timeout. */}
+                    {`Still working — about ${elapsedMinutes} min so far. A first search can take a while; it keeps retrying automatically, so feel free to leave this open.`}
                   </div>
                 )}
                 {Array.from({ length: 7 }).map((_, i) => (
@@ -328,8 +302,7 @@ export function CorrelatesPanel({
                   <>
                     This search is taking longer than usual (about {elapsedMinutes} minute
                     {elapsedMinutes === 1 ? '' : 's'} so far). The server is still working on it
-                    and saving the results — try again in a few minutes.
-                    {method === 'circular_shift' && ' For a quicker look, try spearman or a smaller target source.'}{' '}
+                    and saving the results — try again in a few minutes.{' '}
                   </>
                 ) : (
                   <>
@@ -352,35 +325,30 @@ export function CorrelatesPanel({
                 </button>
               </div>
             )}
-            {status === 'ok' && prescreen && (
-              <div className="corr-empty" style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ font: '11px var(--mono)', color: 'var(--text-dim)' }}>
-                  This family has {prescreen.poolSize.toLocaleString()} candidates —
-                  circular_shift only ran its full permutation test on the
-                  strongest {prescreen.topN} (by a fast pre-screen), not all
-                  of them.
-                </span>
-                <HelpTooltip text="circular_shift is far slower than the other methods, so testing every candidate in a large family isn't practical. The candidates are first ranked by a fast method (Spearman r), and only the strongest ones go through the full, statistically rigorous permutation test. A real correlate with an unusually weak raw r could in theory be missed, but the q-values shown describe significance among the tested candidates, not the whole family." />
-              </div>
-            )}
             {status === 'ok' && data.length === 0 && (
               <div className="corr-empty">
                 <span className="corr-empty-icon">∅</span>
-                No significant correlates (q &lt; 0.05).
+                No candidates could be scored.
               </div>
             )}
 
             {status === 'ok' && data.length > 0 && (
               <>
                 <div className="corr-legend">
-                  {METHOD_LABEL[method]} · {METRIC_LABEL[metric]} · q&lt;0.05 (BH-corrected)
-                  {significantCount != null && significantCount > data.length && (
+                  {METHOD_LABEL[method]} · {METRIC_LABEL[metric]} · ranked by |r|
+                  {significantCount != null && testedCount != null && (
+                    <>
+                      {' · '}
+                      {significantCount.toLocaleString()} of {testedCount.toLocaleString()} significant (q&lt;0.05, BH-corrected)
+                    </>
+                  )}
+                  {testedCount != null && testedCount > data.length && (
                     <>
                       {' · '}
                       <span className="corr-legend-warn">
-                        showing top {data.length} of {significantCount.toLocaleString()} significant
+                        showing top {data.length} of {testedCount.toLocaleString()} tested
                       </span>
-                      <HelpTooltip text="Results are capped for performance. These are the strongest matches by |r|, not the whole significant set -- there are more real correlates than shown here." />
+                      <HelpTooltip text="Results are capped for performance. These are the strongest matches by |r|; every candidate was tested, and the significant count covers all of them." />
                     </>
                   )}
                   {data.some(d => d.n_pairs < 30) && (
@@ -440,8 +408,12 @@ export function CorrelatesPanel({
                             <HelpTooltip text="Positive lag = the other annotation tends to peak earlier than this one. Negative = it peaks later." />
                           </span>
                           <span
-                            className="corr-stat-p corr-stat-sig"
-                            title="Benjamini-Hochberg FDR-corrected q-value across this candidate family"
+                            className={`corr-stat-p ${row.significant ? 'corr-stat-sig' : 'corr-stat-ns'}`}
+                            title={
+                              row.significant
+                                ? 'Significant: Benjamini-Hochberg FDR-corrected q-value below 0.05 across this candidate family'
+                                : 'Not significant: q-value (Benjamini-Hochberg FDR-corrected across this candidate family) is 0.05 or above'
+                            }
                           >
                             q={row.q < 0.001 ? '<.001' : row.q.toFixed(3)}
                           </span>

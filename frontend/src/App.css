@@ -1596,7 +1596,7 @@ select.field { cursor: pointer; }
   border-radius: 3px;
 }
 .corr-stat-sig { color: var(--teal);  background: rgba(61,217,184,.1); }
-.corr-stat-ns  { color: var(--amber); background: rgba(217,119,6,.08); }
+.corr-stat-ns  { color: var(--text-dim); background: transparent; }
 
 .corr-stat-n {
   font: 400 10.5px var(--mono);

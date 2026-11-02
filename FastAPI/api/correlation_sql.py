@@ -675,19 +675,24 @@ def correlation_family_endpoint(
                 })
 
         scored = _apply_fdr(scored)
-        significant = [entry for entry in scored if entry["q"] < 0.05]
+        # Every scored candidate is returned, not just the significant ones:
+        # with ~30 effective samples only |r| >~ 0.77 can clear q < 0.05,
+        # so the weaker matches are still worth showing for exploration,
+        # flagged rather than hidden.
+        for entry in scored:
+            entry["significant"] = bool(entry["q"] < 0.05)
         # Results otherwise come back in catalog-id order (roughly
         # alphabetical by annotation id), not by match strength -- sort by
         # |r| descending and cap the list so the first screen is the
         # strongest correlates, not an arbitrary alphabetical slice.
-        significant.sort(key=lambda entry: abs(entry["r"]), reverse=True)
-        # significant_count is the real total BEFORE `limit` (default 50) is
-        # applied, so the caller can tell "exactly 50 significant results"
-        # from "3,000, showing the top 50" and the panel can show
-        # "top N of {significant_count}" instead of just N.
+        scored.sort(key=lambda entry: abs(entry["r"]), reverse=True)
+        # Both counts are real totals BEFORE `limit` (default 50) is
+        # applied, so the panel can show "top 50 of 4,637 tested, 3
+        # significant" instead of a bare 50.
         return {
-            "results":           significant[:limit],
-            "significant_count": len(significant),
+            "results":           scored[:limit],
+            "significant_count": sum(entry["significant"] for entry in scored),
+            "tested_count":      len(scored),
         }
     finally:
         conn.close()

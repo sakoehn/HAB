@@ -173,10 +173,8 @@ const DEFAULT_MAPPINGS = {
   ],
   total: 1,
 }
-// /api/correlations/family returns { results: [...], prescreened, ... }
-// (already q<0.05 filtered server-side within results) -- prescreened is
-// false here since these tests use the default (fast) method, which
-// never triggers the circular_shift-only prescreen path.
+// /api/correlations/family returns { results, significant_count, tested_count }
+// -- every scored candidate ranked by |r|, each flagged significant or not.
 const DEFAULT_CORRELATES = {
   results: [
     {
@@ -186,14 +184,14 @@ const DEFAULT_CORRELATES = {
       r:             0.72,
       p:             0.002,
       q:             0.02,
+      significant:   true,
       lag_samples:   0,
       lag_hours:     0,
       n_pairs:       40,
     },
   ],
-  prescreened:         false,
-  prescreen_pool_size: null,
-  prescreen_top_n:     null,
+  significant_count: 1,
+  tested_count:      1,
 }
 
 function setupDefaultMocks() {
@@ -1931,9 +1929,9 @@ describe('CorrelatesPanel', () => {
             results: [{
               catalog_id: 9, annotation_id: 'Bacteria;Proteobacteria;Rhizobiaceae;Bosea',
               name: 'Bosea', depth: 6,
-              r: 0.72, p: 0.02, q: 0.03, lag_samples: 0, lag_hours: 0, n_pairs: 40,
+              r: 0.72, p: 0.02, q: 0.03, significant: true, lag_samples: 0, lag_hours: 0, n_pairs: 40,
             }],
-            prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+            significant_count: 1, tested_count: 1,
           }),
         })
       if (url.includes('/api/timepoints'))
@@ -1991,9 +1989,9 @@ describe('CorrelatesPanel', () => {
           json: async () => ({
             results: [{
               catalog_id: 7, annotation_id: 'Bacteria', name: 'Bacteria',
-              r: 0.72, p: 0.02, q: 0.03, lag_samples: 0, lag_hours: 0, n_pairs: 12,
+              r: 0.72, p: 0.02, q: 0.03, significant: true, lag_samples: 0, lag_hours: 0, n_pairs: 12,
             }],
-            prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+            significant_count: 1, tested_count: 1,
           }),
         })
       if (url.includes('/api/timepoints'))
@@ -2020,13 +2018,10 @@ describe('CorrelatesPanel', () => {
   })
 
   it('Retry button refetches after the first request fails', async () => {
-    // The panel defaults to method=circular_shift, which has its OWN automatic-retry-on-timeout
-    // behavior (tested separately in correlates-panel.component.test.tsx)
-    // -- a single rejection there doesn't surface "Correlation failed"
-    // immediately. Let that initial default-method fetch succeed, then
-    // switch to spearman (a plain, non-permutation method) before
-    // exercising the generic error+manual-retry-button UX this test is
-    // actually about.
+    // Let the initial default-method fetch succeed, then switch method
+    // so a fresh request fails with a plain (non-retryable) network error
+    // -- the automatic retry-on-timeout behavior is tested separately in
+    // correlates-panel.component.test.tsx.
     let correlateCalls = 0
     let rejectNextCorrelateCall = false
     mockFetch.mockImplementation((url: string) => {
@@ -2061,11 +2056,11 @@ describe('CorrelatesPanel', () => {
     await waitFor(() => screen.getByText(/Find Correlates/i))
     await userEvent.click(screen.getByText(/Find Correlates/i))
 
-    // Default-method (circular_shift) fetch on open succeeds.
+    // Default-method (spearman) fetch on open succeeds.
     await waitFor(() => expect(correlateCalls).toBe(1))
 
     rejectNextCorrelateCall = true
-    await userEvent.click(screen.getByRole('button', { name: 'spearman' }))
+    await userEvent.click(screen.getByRole('button', { name: 'log_pearson' }))
 
     await waitFor(() => {
       expect(screen.getByText(/Correlation failed/i)).toBeInTheDocument()

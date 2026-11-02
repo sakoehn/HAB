@@ -329,7 +329,9 @@ class TestCorrelationFamilyEndpoint:
 
         assert response.status_code == 404
 
-    def test_filters_to_significant_candidates_only(self, client):
+    def test_returns_every_scored_candidate_with_a_significance_flag(self, client):
+        # The full ranked list is kept for exploration; significance is a
+        # per-row flag, not a filter.
         response = client.get(
             "/correlations/family",
             params={
@@ -339,10 +341,19 @@ class TestCorrelationFamilyEndpoint:
         )
 
         assert response.status_code == 200
-        body = response.json()
-        catalog_ids = {entry["catalog_id"] for entry in body["results"]}
+        flags = {entry["catalog_id"]: entry["significant"] for entry in response.json()["results"]}
+        assert flags == {2: True, 5: True, 3: False}  # candidate 3's q lands well above 0.05
 
-        assert catalog_ids == {2, 5}  # candidate 3's q lands well above 0.05
+    def test_significant_flag_is_q_below_0_05(self, client):
+        response = client.get(
+            "/correlations/family",
+            params={
+                "ref_source": "taxonomy", "ref_annotation_id": "Bacteria",
+                "target_source": "kegg", "metric": "egc", "method": "raw_pearson",
+            },
+        )
+        for entry in response.json()["results"]:
+            assert entry["significant"] == (entry["q"] < 0.05)
 
     def test_significant_entry_carries_the_expected_shape(self, client):
         response = client.get(
@@ -356,6 +367,7 @@ class TestCorrelationFamilyEndpoint:
         entry = response.json()["results"][0]
         assert entry["r"] == 0.9
         assert entry["q"] < 0.05
+        assert entry["significant"] is True
         assert entry["name"] == "Nitrogenase"
         assert entry["depth"] == 3
         assert entry["lag_samples"] == 3
@@ -376,7 +388,7 @@ class TestCorrelationFamilyEndpoint:
         )
 
         catalog_ids_in_order = [entry["catalog_id"] for entry in response.json()["results"]]
-        assert catalog_ids_in_order == [2, 5]
+        assert catalog_ids_in_order == [2, 5, 3]
 
     def test_limit_caps_the_returned_list_to_the_strongest_matches(self, client):
         response = client.get(
@@ -390,7 +402,7 @@ class TestCorrelationFamilyEndpoint:
 
         results = response.json()["results"]
         assert len(results) == 1
-        assert results[0]["catalog_id"] == 2  # the stronger of the two significant matches
+        assert results[0]["catalog_id"] == 2  # the strongest match by |r|
 
     def test_significant_count_reflects_the_true_total_even_when_limit_cuts_it_shorter(self, client):
         # A request that caps `results` at
@@ -409,6 +421,7 @@ class TestCorrelationFamilyEndpoint:
         body = response.json()
         assert len(body["results"]) == 1
         assert body["significant_count"] == 2  # pairs (1,2) and (1,5) -- (1,3) isn't significant
+        assert body["tested_count"] == 3       # (1,2), (1,3), (1,5); constant (1,4) can't be scored
 
     def test_constant_candidate_is_omitted_not_a_crash(self, client):
         # Candidate 4 (K00004) is constant across every sample -- must come
@@ -649,12 +662,14 @@ class TestCorrelationFamilyEveryCandidateTested:
 
     def test_strong_candidate_is_significant_and_unrelated_one_is_not(self, two_candidate_client):
         body = self._family(two_candidate_client).json()
-        assert [entry["catalog_id"] for entry in body["results"]] == [2]
+        flags = [(entry["catalog_id"], entry["significant"]) for entry in body["results"]]
+        assert flags == [(2, True), (3, False)]
         assert body["significant_count"] == 1
+        assert body["tested_count"] == 2
 
     def test_response_no_longer_carries_prescreen_fields(self, two_candidate_client):
         body = self._family(two_candidate_client).json()
-        assert set(body) == {"results", "significant_count"}
+        assert set(body) == {"results", "significant_count", "tested_count"}
 
     def test_circular_shift_is_rejected(self, two_candidate_client):
         assert self._family(two_candidate_client, method="circular_shift").status_code == 400

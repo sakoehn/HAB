@@ -2,22 +2,15 @@
  * correlates-panel.component.test.tsx
  * =====================================
  * Component tests for CorrelatesPanel (components/correlates/CorrelatesPanel.tsx)
- * -- covers the circular_shift "keep going" behavior.
+ * -- the method/default selection, the full ranked list with its
+ * significance marking, and the "keep going" retry behavior.
  *
- * circular_shift runs a full permutation test (exhaustively over every
- * valid shift beyond the lag window -- 103 of them at the real n=128) and
- * can still take real
- * time on a large family -- long enough that the panel's 10-minute
- * client-side request timeout can fire while the server is still
- * legitimately computing in the
- * background (correlation_family_endpoint is a synchronous route, run in
- * a thread pool that keeps going even after the client gives up, caching
- * each candidate individually as it's scored). So for circular_shift
- * specifically, a timeout doesn't show a dead-end "Correlation failed"
- * error -- it automatically re-issues the request (up to
- * MAX_CIRCULAR_SHIFT_RETRIES times) instead of surfacing an error --
- * each retry benefits from whatever the background computation already
- * cached, so it's strictly making progress, not just spinning.
+ * A cold family can outlast the panel's client-side request timeout while
+ * the server keeps computing in the background (correlation_family_endpoint
+ * is a synchronous route, run in a thread pool that keeps going after the
+ * client gives up, caching each candidate as it's scored). So a timeout or
+ * 5xx re-issues the request instead of showing a dead-end error -- each
+ * retry benefits from whatever the background computation already cached.
  *
  * Run: npx vitest run src/tests/correlates-panel.component.test.tsx
  */
@@ -55,39 +48,35 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-// The panel defaults to method=circular_shift itself (not spearman) -- opening it fetches once
-// immediately under whatever the default is. This helper then explicitly
-// clicks 'spearman' to force a KNOWN, non-circular_shift baseline
-// regardless of what that default happens to be, so selectCircularShift
-// below always produces a genuine method transition (and therefore a
-// real new fetch -- the panel's useEffect depends on `method`, and
-// clicking a method pill that's already selected is a same-value setState
-// no-op React won't re-render/re-fetch for). Both setup fetches are
-// consumed here with harmless resolved responses and cleared from mock
-// call history, so a caller's own mockFetch queue (configured AFTER
-// calling this, then followed by selecting circular_shift) counts only
-// the circular_shift attempts it actually cares about.
+// Opening the panel fetches once under the default method (spearman).
+// That setup fetch is consumed with a harmless response and cleared from
+// the mock's call history, so a caller's own mockFetch queue (configured
+// AFTER calling this, then followed by selectAnotherMethod) counts only
+// the attempts it actually cares about. Selecting a different method is
+// what triggers the new fetch -- clicking the already-selected pill is a
+// same-value setState no-op React won't re-fetch for.
 async function openPanel() {
   const user = userEvent.setup()
   mockFetch.mockResolvedValueOnce(jsonResponse([]))
   await user.click(screen.getByRole('button', { name: /Find Correlates/i }))
   await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
-  mockFetch.mockResolvedValueOnce(jsonResponse([]))
-  await user.click(screen.getByRole('button', { name: 'spearman' }))
-  await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
   mockFetch.mockClear()
   return user
 }
 
-async function selectCircularShift(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole('button', { name: 'circular_shift' }))
+async function selectAnotherMethod(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'log_pearson' }))
 }
 
-// The default method is circular_shift (a permutation test that
-// preserves each series' autocorrelation), not spearman (parametric,
-// ignores autocorrelation).
-describe('CorrelatesPanel — defaults to circular_shift', () => {
-  it('fetches with method=circular_shift the first time the panel opens, before any method is explicitly selected', async () => {
+function row(catalog_id: number, annotation_id: string, r: number, q: number) {
+  return {
+    catalog_id, annotation_id, name: 'x', depth: 2, r, p: q, q,
+    significant: q < 0.05, lag_samples: 0, lag_hours: 0, n_pairs: 128,
+  }
+}
+
+describe('CorrelatesPanel — methods', () => {
+  it('fetches with method=spearman the first time the panel opens', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse([]))
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
 
@@ -95,31 +84,31 @@ describe('CorrelatesPanel — defaults to circular_shift', () => {
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
     const [url] = mockFetch.mock.calls[0]
-    expect(String(url)).toContain('method=circular_shift')
+    expect(String(url)).toContain('method=spearman')
   })
 
-  it('the circular_shift pill is visibly selected on open, not spearman', async () => {
+  it('offers spearman, log_pearson and raw_pearson, with spearman selected', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse([]))
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
 
     await userEvent.setup().click(screen.getByRole('button', { name: /Find Correlates/i }))
-    await waitFor(() => screen.getByRole('button', { name: 'circular_shift' }))
+    await waitFor(() => screen.getByRole('button', { name: 'spearman' }))
 
-    expect(screen.getByRole('button', { name: 'circular_shift' }).className).toContain('on')
-    expect(screen.getByRole('button', { name: 'spearman' }).className).not.toContain('on')
+    expect(screen.getByRole('button', { name: 'spearman' }).className).toContain('on')
+    expect(screen.getByRole('button', { name: 'log_pearson' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'raw_pearson' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'circular_shift' })).not.toBeInTheDocument()
   })
 })
 
-describe('CorrelatesPanel — circular_shift keeps retrying instead of failing on timeout', () => {
-  it('shows a first-attempt loading message, not shown for a non-permutation method', async () => {
+describe('CorrelatesPanel — keeps retrying instead of failing on timeout', () => {
+  it('shows no "slow method" message on a first attempt', async () => {
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
     const user = await openPanel()
 
     mockFetch.mockReturnValue(new Promise(() => {})) // never resolves -- stays in 'loading'
-    await selectCircularShift(user)
-    expect(await screen.findByText(/slower and can take a while/i)).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'spearman' }))
+    await selectAnotherMethod(user)
+    expect(await screen.findByText(/computing correlations/i)).toBeInTheDocument()
     expect(screen.queryByText(/slower and can take a while/i)).not.toBeInTheDocument()
   })
 
@@ -133,12 +122,9 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
       .mockRejectedValueOnce(abortError())
       .mockRejectedValueOnce(abortError())
       .mockResolvedValueOnce(jsonResponse({
-        results: [
-          { catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 },
-        ],
-        prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+        results: [row(1, 'COG0001', 0.9, 0.02)], significant_count: 1, tested_count: 1,
       }))
-    await selectCircularShift(user)
+    await selectAnotherMethod(user)
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(3))
     expect(await screen.findByText('COG0001')).toBeInTheDocument()
@@ -162,12 +148,12 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
         return Promise.reject(abortError())
       })
       .mockReturnValue(new Promise(() => {})) // second attempt hangs -- stays in 'loading'
-    await selectCircularShift(user)
+    await selectAnotherMethod(user)
 
     expect(await screen.findByText(/still working — about 10 min so far/i)).toBeInTheDocument()
   })
 
-  it('only shows a real error after exhausting all retries, with method-specific guidance and the real elapsed time', async () => {
+  it('only shows a real error after exhausting all retries, with the real elapsed time', async () => {
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
     const user = await openPanel()
 
@@ -177,7 +163,7 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
       now += 10 * 60_000 // each of the 12 retryable attempts "takes" 10 real minutes
       return Promise.reject(abortError())
     })
-    await selectCircularShift(user)
+    await selectAnotherMethod(user)
 
     // 1 initial attempt + MAX_CIRCULAR_SHIFT_RETRIES (12) retries = 13 calls
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(13), { timeout: 10000 })
@@ -186,7 +172,6 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     expect(message.textContent).toMatch(/about 120 minutes/i)
     expect(message.textContent).toMatch(/still working on it/i)
     expect(message.textContent).toMatch(/try again in a few minutes/i)
-    expect(message.textContent).toMatch(/try spearman/i)
   }, 15000)
 
   // A real 4xx (not a timeout) is a hard, immediate failure -- must
@@ -198,7 +183,7 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     const user = await openPanel()
 
     mockFetch.mockRejectedValue(httpError(422, 'Unprocessable Entity'))
-    await selectCircularShift(user)
+    await selectAnotherMethod(user)
 
     await waitFor(() => expect(screen.getByText(/correlation failed/i)).toBeInTheDocument())
     expect(mockFetch).toHaveBeenCalledTimes(1) // no retries at all
@@ -215,16 +200,16 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
     mockFetch
       .mockRejectedValueOnce(httpError(503, 'Service Unavailable'))
       .mockResolvedValueOnce(jsonResponse({
-        results: [], prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+        results: [], significant_count: 0, tested_count: 0,
       }))
-    await selectCircularShift(user)
+    await selectAnotherMethod(user)
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
   })
 
   it('a non-retryable error (no response at all) still fails immediately, for any method', async () => {
     // A plain network error isn't a timeout or a 5xx, so it isn't
-    // "still working" -- it's shown straight away, here for spearman.
+    // "still working" -- it's shown straight away.
     mockFetch.mockResolvedValueOnce(jsonResponse([]))
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
 
@@ -234,92 +219,88 @@ describe('CorrelatesPanel — circular_shift keeps retrying instead of failing o
 
     mockFetch.mockReset()
     mockFetch.mockRejectedValue(new Error('network error'))
-    await user.click(screen.getByRole('button', { name: 'spearman' }))
+    await user.click(screen.getByRole('button', { name: 'log_pearson' }))
 
     expect(await screen.findByText(/check server connection/i)).toBeInTheDocument()
     expect(mockFetch).toHaveBeenCalledTimes(1)
   })
 })
 
-describe('CorrelatesPanel — prescreen disclosure', () => {
-  it('shows the prescreen banner and explanatory tooltip when the family was screened', async () => {
-    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
-    const user = await openPanel()
-
-    mockFetch.mockResolvedValue(jsonResponse({
-      results: [
-        { catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 },
-      ],
-      prescreened: true, prescreen_pool_size: 3559, prescreen_top_n: 200,
-    }))
-    await selectCircularShift(user)
-
-    const banner = (await screen.findByText(/3,559 candidates/)).closest('.corr-empty') as HTMLElement
-    expect(within(banner).getByText(/strongest 200/)).toBeInTheDocument()
-
-    // The explanation of what prescreening means for the q-values shown --
-    // HelpTooltip is click-to-reveal, so the real text only renders after clicking it.
-    await user.click(within(banner).getByTitle('Help'))
-    expect(await screen.findByText(/significance among the tested candidates, not the whole family/i)).toBeInTheDocument()
-  })
-
-  it('does not show the prescreen banner when the family was small enough not to need it', async () => {
-    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
-    const user = await openPanel()
-
-    mockFetch.mockResolvedValue(jsonResponse({
-      results: [], prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
-    }))
-    await selectCircularShift(user)
-
-    await screen.findByText(/no significant correlates/i)
-    expect(screen.queryByText(/candidates/)).not.toBeInTheDocument()
-  })
-
-  it('does not show the prescreen banner for non-circular_shift methods', async () => {
-    mockFetch.mockResolvedValue(jsonResponse({
-      results: [], prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
-    }))
-    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
-
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /Find Correlates/i }))
-
-    await screen.findByText(/no significant correlates/i)
-    expect(screen.queryByText(/candidates/)).not.toBeInTheDocument()
-  })
-})
-
-describe('CorrelatesPanel — significant_count disclosure', () => {
-  it('discloses the true total when `limit` cut the list shorter', async () => {
+describe('CorrelatesPanel — full ranked list with significance marked', () => {
+  async function openWith(response: unknown) {
     render(<CorrelatesPanel annotationId="K00001" source="kegg" onAddAnnotation={vi.fn()} />)
-    mockFetch.mockResolvedValueOnce(jsonResponse({
-      results: [
-        { catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 },
-      ],
-      significant_count: 2847,
-      prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
-    }))
-
+    mockFetch.mockResolvedValueOnce(jsonResponse(response))
     await userEvent.click(screen.getByRole('button', { name: /Find Correlates/i }))
+  }
 
-    expect(await screen.findByText(/showing top 1 of 2,847 significant/)).toBeInTheDocument()
+  it('shows non-significant candidates too, with only the significant q marked', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001), row(2, 'COG0002', 0.61, 0.4)],
+      significant_count: 1, tested_count: 2,
+    })
+
+    const sigQ = await screen.findByText('q=0.001')
+    const nsQ = screen.getByText('q=0.400')
+    expect(sigQ.className).toContain('corr-stat-sig')
+    expect(nsQ.className).not.toContain('corr-stat-sig')
+    expect(nsQ.className).toContain('corr-stat-ns')
+    expect(screen.getByText('COG0002')).toBeInTheDocument()
   })
 
-  it('does not show the cap disclosure when every significant result is already shown', async () => {
-    render(<CorrelatesPanel annotationId="K00001" source="kegg" onAddAnnotation={vi.fn()} />)
-    mockFetch.mockResolvedValueOnce(jsonResponse({
-      results: [
-        { catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 },
-      ],
-      significant_count: 1,
-      prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
-    }))
+  it('says how many of the tested candidates are significant', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001), row(2, 'COG0002', 0.61, 0.4)],
+      significant_count: 1, tested_count: 2,
+    })
 
-    await userEvent.click(screen.getByRole('button', { name: /Find Correlates/i }))
+    expect(await screen.findByText(/1 of 2 significant/)).toBeInTheDocument()
+    expect(screen.getByText(/ranked by \|r\|/)).toBeInTheDocument()
+  })
+
+  it('says so when nothing is significant, while still listing the candidates', async () => {
+    await openWith({
+      results: [row(2, 'COG0002', 0.61, 0.4)],
+      significant_count: 0, tested_count: 1,
+    })
+
+    expect(await screen.findByText(/0 of 1 significant/)).toBeInTheDocument()
+    expect(screen.getByText('COG0002')).toBeInTheDocument()
+  })
+
+  it('discloses the true number tested when `limit` cut the list shorter', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001)],
+      significant_count: 3, tested_count: 4637,
+    })
+
+    expect(await screen.findByText(/showing top 1 of 4,637 tested/)).toBeInTheDocument()
+    expect(screen.getByText(/3 of 4,637 significant/)).toBeInTheDocument()
+  })
+
+  it('does not show the cap disclosure when every tested candidate is already shown', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001)],
+      significant_count: 1, tested_count: 1,
+    })
 
     await screen.findByText(/COG0001/)
     expect(screen.queryByText(/showing top/)).not.toBeInTheDocument()
+  })
+
+  it('says no candidates could be scored when the list is empty', async () => {
+    await openWith({ results: [], significant_count: 0, tested_count: 0 })
+
+    expect(await screen.findByText(/no candidates could be scored/i)).toBeInTheDocument()
+  })
+
+  it('never shows a pre-screen notice', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001)],
+      significant_count: 1, tested_count: 1,
+    })
+
+    await screen.findByText(/COG0001/)
+    expect(screen.queryByText(/pre-screen/i)).not.toBeInTheDocument()
   })
 })
 
@@ -337,7 +318,7 @@ describe('CorrelatesPanel — explains that a first search can be slow', () => {
 })
 
 describe('CorrelatesPanel — every method keeps trying while a first search is slow', () => {
-  it('spearman retries after a timeout, says it is still working, and shows the results', async () => {
+  it('retries after a timeout, says it is still working, and shows the results', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse([]))
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
     const user = userEvent.setup()
@@ -350,11 +331,10 @@ describe('CorrelatesPanel — every method keeps trying while a first search is 
       .mockRejectedValueOnce(httpError(504, 'Gateway Time-out'))
       .mockImplementationOnce(() => new Promise(resolve => {
         release = () => resolve(jsonResponse({
-          results: [{ catalog_id: 1, annotation_id: 'COG0001', name: 'x', depth: 2, r: 0.9, p: 0.01, q: 0.02, lag_samples: 0, lag_hours: 0, n_pairs: 128 }],
-          prescreened: false, prescreen_pool_size: null, prescreen_top_n: null,
+          results: [row(1, 'COG0001', 0.9, 0.02)], significant_count: 1, tested_count: 1,
         }))
       }))
-    await user.click(screen.getByRole('button', { name: 'spearman' }))
+    await user.click(screen.getByRole('button', { name: 'log_pearson' }))
 
     expect(await screen.findByText(/still working/i)).toBeInTheDocument()
     expect(screen.queryByText(/correlation failed/i)).not.toBeInTheDocument()
@@ -363,7 +343,7 @@ describe('CorrelatesPanel — every method keeps trying while a first search is 
     expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 
-  it('after all retries a non-circular method also says it is still working, without the spearman tip', async () => {
+  it('after all retries says it is still working, without suggesting another method', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse([]))
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
     const user = userEvent.setup()
