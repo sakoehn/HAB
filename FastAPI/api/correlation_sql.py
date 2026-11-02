@@ -29,12 +29,12 @@ router = APIRouter()
 # return 400 before doing any work. Otherwise a typo would only surface
 # deep inside the per-candidate scoring loop (core_scoring / load_vector),
 # as a 500 after a whole family's worth of computation.
-VALID_METHODS = {"raw_pearson", "log_pearson", "spearman", "circular_shift"}
+VALID_METHODS = {"raw_pearson", "log_pearson", "spearman"}
 VALID_METRICS = {"egc", "norm_egc"}
 
 # ── Per-family compute lock ───────────────────────────────────────────────────
 # correlation_family_endpoint is a synchronous route, run in FastAPI's
-# thread pool -- a slow (circular_shift) request that outlives its own
+# thread pool -- a slow request that outlives its own
 # client-side timeout keeps running in its thread regardless, which is
 # what makes the frontend's auto-retry-on-timeout useful in the first
 # place. But without this lock, each retry's thread ALSO starts its own
@@ -42,7 +42,7 @@ VALID_METRICS = {"egc", "norm_egc"}
 # attempts/retries for the identical (ref, target, metric, method)
 # redundantly recompute the same still-uncached candidates in parallel --
 # competing for CPU rather than helping. Confirmed happening in practice
-# (not just theoretical): after ~2 retries on a real circular_shift
+# (not just theoretical): after ~2 retries on a real (then much slower)
 # family, the process had 8 threads with real accumulated CPU time, and
 # the per-candidate rate had roughly doubled (7.5s/candidate measured vs.
 # 3.6s/candidate in isolation).
@@ -97,19 +97,48 @@ def _get_family_lock(key: tuple) -> threading.Lock:
 
 
 # ── Math primitives ───────────────────────────────────────────────────────────
-def _rank(vec: list[float]):
-    vec = np.array(vec)
-    return stats.rankdata(vec)
+def _autocorrelations(x: np.ndarray, max_lag: int) -> np.ndarray:
+    """Sample autocorrelation of x at lags 1..max_lag."""
+    d = x - x.mean()
+    full = np.correlate(d, d, "full")[len(d) - 1:len(d) + max_lag]
+    return full[1:] / full[0]
 
-def _spearman_from_ranks(ra: list[float], rb: list[float]):
-    stat, pval = stats.pearsonr(ra, rb)
-    return (stat, pval)
+def _effective_n(a, b) -> float:
+    """
+    How many independent observations a correlation between a and b is
+    really worth (Pyper & Peterman 1998). EGC series are smooth -- each
+    sample looks a lot like the one 4 hours before it -- so 128 samples
+    carry far less evidence than 128 independent points (median ~30 on
+    the real data). Treating them as 128 is what made the plain
+    p-value pass ~half of unrelated pairs.
 
-def _spearman(a: list[float], b: list[float]):
-    if len(a) < 10: return None
-    rank_a = _rank(a)
-    rank_b = _rank(b)
-    return _spearman_from_ranks(rank_a, rank_b)
+        1/N_eff = 1/N + (2/N) * sum_{j=1..N/5} ((N-j)/N) * acf_a(j) * acf_b(j)
+
+    Capped at N: opposite-signed autocorrelations can push the raw
+    estimate above N, and there can't be more evidence than points.
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    n = len(a)
+    max_lag = n // 5
+    if max_lag == 0:
+        return float(n)
+    j = np.arange(1, max_lag + 1)
+    s = np.sum((n - j) / n * _autocorrelations(a, max_lag) * _autocorrelations(b, max_lag))
+    if s <= 0:
+        return float(n)
+    return 1.0 / (1.0 / n + (2.0 / n) * s)
+
+def _effective_n_pvalue(r: float, n_eff: float) -> float:
+    """Two-sided t-test p-value for r with n_eff - 2 degrees of freedom.
+    Below 3 effective observations there is nothing left to test with."""
+    df = n_eff - 2
+    if df < 1:
+        return 1.0
+    if r * r >= 1:
+        return 0.0
+    t = abs(r) * math.sqrt(df / (1 - r * r))
+    return float(2 * stats.t.sf(t, df))
 
 def _spearman_at_lags(ref:  list[float], cand: list[float], lags: list[int], method: str):
     best_r = None
@@ -412,23 +441,18 @@ def core_scoring(vec_a: list[float], vec_b: list[float], method: str):
         b.append(vec_b[i])
     if len(a)< 10: return None
 
-    # compute
+    # transform: each coefficient is Pearson on a different version of the data
     if method == 'raw_pearson':
-        r, pval = stats.pearsonr(a, b)
+        x, y = a, b
     elif method == 'log_pearson':
-        log_a = [math.log(v) for v in a]
-        log_b = [math.log(v) for v in b]
-        r, pval = stats.pearsonr(log_a, log_b)
+        x = [math.log(v) for v in a]
+        y = [math.log(v) for v in b]
     elif method == 'spearman':
-        spear = _spearman(a, b)
-        if spear is not None:
-            r = spear[0]
-            pval = spear[1]
-        else:
-            return None
+        x, y = stats.rankdata(a), stats.rankdata(b)
     else:
         raise ValueError(f"{method} not found.")
-    if math.isnan(r) or math.isnan(pval):
+    r, _naive_p = stats.pearsonr(x, y)
+    if math.isnan(r):
         # A candidate with the same value at every co-observed timepoint
         # (zero variance) makes pearsonr return NaN for both r and p --
         # treat that exactly like "not enough data", not a real score.
@@ -438,107 +462,17 @@ def core_scoring(vec_a: list[float], vec_b: list[float], method: str):
         # concurrent-write race, and crashes re-reading a row that was
         # never written.
         return None
+    # The autocorrelation is measured on the same transformed, gap-free
+    # values that were just correlated.
+    pval = _effective_n_pvalue(r, _effective_n(x, y))
     return (r, pval, len(a))
 
-def _circular_shift_pvalue(ref: list[float | None], cand: list[float | None], observed_r: float) -> float:
-    """
-    Circular block-shift permutation p-value. The parametric p-value from
-    scipy.stats.pearsonr assumes every timepoint
-    is an independent observation, which real EGC series (sampled every
-    4 hours) are not -- the effective sample size is far below the raw
-    point count, so that p-value is systematically too optimistic
-    (measured: ~51% of unrelated but autocorrelated pairs pass q<0.05).
-    A circular shift preserves each series' own autocorrelation structure
-    while destroying any real cross-series relationship, which is exactly
-    the null this test needs.
-
-    Re-searches the FULL CORRELATION_LAGS window on every shift, instead
-    of fixing the lag at the observed best -- comparing a best-of-all-lags
-    observed statistic against a single-lag null would understate the
-    p-value. This also means the multi-lag multiplicity is already
-    accounted for in the null itself -- the caller must NOT
-    Bonferroni-correct this p-value afterward (see score_pair).
-
-    Every shift in [2*max_lag+1, n-2*max_lag-1] is evaluated exactly once
-    (no random sampling). Shifts closer to zero are excluded: the inner
-    lag search can move the effective offset by up to max_lag in either
-    direction, so a shift of max_lag+1 combined with an inner lag of
-    -max_lag would land just 1 sample from the real alignment. Shifts
-    where no lag has enough co-observed points to score are dropped from
-    both numerator and denominator, and p is smoothed to
-    (1 + extreme) / (1 + evaluable) so it is never exactly 0.
-
-    Args:
-        ref: Full aligned reference vector (raw values, None gaps
-            included) -- NOT pre-filtered. Shifting must move the whole
-            aligned series as a rigid block, gaps included, to keep its
-            real autocorrelation structure intact; core_scoring's usual
-            pairwise-complete filtering still runs per lag inside
-            _spearman_at_lags on every shift.
-        cand: Full aligned candidate vector, never shifted (only the
-            reference is circularly shifted).
-        observed_r: The real (unshifted) best-lag Spearman r, already
-            computed by the caller.
-
-    Returns:
-        (p, at_floor) where p is (1 + #shifts at least as extreme as
-        observed_r) / (1 + #evaluable shifts) -- "evaluable" excludes any
-        shift where no lag had enough co-observed points to score -- and
-        at_floor is True iff NO evaluated shift was as extreme as
-        observed_r, meaning p is already the smallest value THIS PAIR's
-        permutation test could possibly report (not a precise measurement
-        close to zero). This floor is
-        pair-specific, not a single dataset-wide constant: a sparse
-        candidate (real EGC data ranges from ~1 to 128 of 128 samples
-        detected, confirmed directly across all four annotation sources)
-        has fewer evaluable shifts and therefore a COARSER (larger) floor
-        than a fully-detected one, so this can't be approximated from n
-        alone -- it has to be reported per pair. (p=1.0, at_floor=False)
-        if no shift in the valid range was evaluable at all (series too
-        short for this null to mean anything, e.g. n <= 4*max_lag + 1).
-    """
-    n = len(ref)
-    max_lag = max(abs(lag) for lag in CORRELATION_LAGS)
-    # Inclusive bounds on a valid shift: 2*max_lag, not max_lag, because the
-    # inner lag-search below can itself move the effective offset by up to
-    # max_lag in either direction (see the docstring).
-    lo, hi = 2 * max_lag + 1, n - 2 * max_lag - 1
-    if lo > hi:
-        return 1.0, False
-
-    count_as_extreme = 0
-    evaluable = 0
-    for shift in range(lo, hi + 1):
-        shifted_ref = ref[shift:] + ref[:shift]
-        perm_r, _perm_lag, _perm_p, _perm_n = _spearman_at_lags(shifted_ref, cand, CORRELATION_LAGS, "spearman")
-        if perm_r is None:
-            continue
-        evaluable += 1
-        if abs(perm_r) >= abs(observed_r):
-            count_as_extreme += 1
-
-    if evaluable == 0:
-        return 1.0, False
-    return (1 + count_as_extreme) / (1 + evaluable), count_as_extreme == 0
-
-
 def score_pair(ref: list[float], cand: list[float], method):
-    """Returns (r, p, lag, n_pairs, at_p_floor). at_p_floor is only ever
-    meaningful for method='circular_shift' (whether p was forced to this
-    pair's permutation-test resolution limit, not a precise
-    measurement) -- always None for every
-    parametric method, which has no such floor."""
-    if method == "circular_shift":
-        # Underlying r/lag statistic is always Spearman (rank-based,
-        # robust to monotonic-but-nonlinear EGC relationships) --
-        # circular_shift changes how the P-VALUE is computed, not which
-        # correlation statistic is used.
-        best_r, best_lag, _best_p, best_n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, "spearman")
-        if best_r is None or best_lag is None:
-            return None
-        perm_p, at_p_floor = _circular_shift_pvalue(ref, cand, best_r)
-        return best_r, perm_p, best_lag, best_n, at_p_floor
-
+    """Returns (r, p, lag, n_pairs, at_p_floor). p is the best lag's
+    effective-N p-value, Bonferroni-corrected across every lag searched.
+    at_p_floor is always None -- it only ever described a permutation
+    test that has since been removed, and is kept so cached rows and
+    responses keep the same shape."""
     best_r, best_lag, best_p, best_n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, method)
     if best_r is None or best_lag is None or best_p is None: return None
     bonf_p = _bonferroni_correct(best_p, len(CORRELATION_LAGS))
@@ -566,9 +500,8 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
     if row:
 
         lag = row[6]
-        # row[9] (at_p_floor) is NULL for every non-circular_shift row and
-        # for any circular_shift row cached before this column existed --
-        # genuinely unknown in both cases, kept as None rather than guessed.
+        # row[9] (at_p_floor) is always NULL for rows written by the
+        # current methods; kept as None rather than guessed.
         at_p_floor = bool(row[9]) if row[9] is not None else None
         return {'r': row[3], 'p': row[7], 'lag_samples': -lag if reference_is_high else lag, 'n_pairs': row[8], 'at_p_floor': at_p_floor}
     else:
@@ -662,44 +595,6 @@ def correlate_endpoint(catalog_id_a: int, catalog_id_b: int, metric: str, method
 
 # ── Endpoint: Tier 2, family + FDR ────────────────────────────────
 
-# circular_shift is ~120x slower per candidate than a parametric method
-# (measured: spearman ~3ms/pair, circular_shift ~0.38s/pair against the
-# real db) -- a real family (measured against this database, COG0055
-# as reference) is 3,500-13,000 candidates, so running the full
-# permutation test on every one of them is still ~22-82 minutes even
-# fully cold, not instant. Pre-filtering to the
-# strongest candidates by the fast method first, then running the
-# expensive permutation test only on those, cuts that to minutes while
-# only formally (permutation-)testing the candidates most likely to be
-# real. This does change what the resulting q-values mean: they control
-# the false discovery rate among the pre-filtered shortlist, not among
-# the whole family -- disclosed via prescreened/prescreen_pool_size in
-# the response so the frontend can show this, not hide it.
-CIRCULAR_SHIFT_SCREEN_TOP_N = 200
-
-
-def _prescreen_rank_key(r: float, n_pairs: int) -> float:
-    """An n-aware ranking statistic for the prescreen shortlist below, so a sparse candidate's raw |r| can't
-    crowd out a fully-sampled candidate's real signal just because raw
-    |r| says nothing about how much data actually produced it.
-
-    Measured on a real 3,197-candidate pool, ranking by raw |r| alone:
-    86 of the 200 shortlisted candidates had fewer than 30 of 128 real
-    data points (one admitted at n=10, |r|=0.661), while 2,037
-    fully-sampled (n>=120) candidates were excluded entirely -- the
-    strongest excluded one at |r|=0.5652, losing its slot by just 0.0016
-    to that 10-point candidate.
-
-    Fisher-z-style |r|*sqrt(n-3) increases with both |r| and n, so two candidates at the same |r|
-    rank by sample size, and two at the same n still rank by |r| --
-    reflecting how much evidence actually backs each candidate's
-    correlation, not just its raw size. n_pairs is always >= 10 here
-    (core_scoring's own floor), so n-3 is always a safe, positive
-    sqrt argument.
-    """
-    return abs(r) * math.sqrt(n_pairs - 3)
-
-
 @router.get("/correlations/family")
 def correlation_family_endpoint(
     ref_source: str, ref_annotation_id: str, target_source: str, metric: str, method: str,
@@ -736,9 +631,7 @@ def correlation_family_endpoint(
         # Found live in production, 2026-09-25: a single load_vector call
         # measured ~75ms on this instance's storage; across a
         # 12,863-candidate kegg family that's ~16 minutes of pure waste
-        # reloading the same reference vector, on top of an already very
-        # long prescreening pass (measured ~1.2 pairs/sec -- ~3 hours for
-        # that family alone, well past the frontend's ~2h retry ceiling).
+        # reloading the same reference vector.
         _vector_cache: dict[tuple[str, str], list] = {}
         def get_vector(source: str, annotation_id: str) -> list:
             key = (source, annotation_id)
@@ -752,8 +645,6 @@ def correlation_family_endpoint(
                 _sample_order_box.append(load_sample_order(conn))
             return _sample_order_box[0]
 
-        prescreened = False
-        prescreen_pool_size = None
         # Serializes concurrent/retried requests for this EXACT family so
         # they cooperate on the cache instead of redundantly recomputing
         # the same still-uncached candidates in parallel -- see
@@ -762,21 +653,6 @@ def correlation_family_endpoint(
         # by whichever request got there first, so its own pass is fast.
         family_lock = _get_family_lock((ref_catalog_id, target_source, metric, method))
         with family_lock:
-            if method == "circular_shift" and len(candidates) > CIRCULAR_SHIFT_SCREEN_TOP_N:
-                prescreened = True
-                prescreen_pool_size = len(candidates)
-                fast_scored = []
-                for cand in candidates:
-                    result = _get_or_compute_correlation(
-                        conn, ref_catalog_id, cand["id"], metric, "spearman",
-                        get_sample_order=get_sample_order, get_vector=get_vector,
-                    )
-                    if result is None:
-                        continue
-                    fast_scored.append((_prescreen_rank_key(result["r"], result["n_pairs"]), cand))
-                fast_scored.sort(key=lambda pair: pair[0], reverse=True)
-                candidates = [cand for _rank_key, cand in fast_scored[:CIRCULAR_SHIFT_SCREEN_TOP_N]]
-
             scored = []
             for cand in candidates:
                 result = _get_or_compute_correlation(
@@ -795,10 +671,6 @@ def correlation_family_endpoint(
                     "lag_samples":   result["lag_samples"],
                     "lag_hours":     result["lag_samples"] * LAG_HOURS_PER_SAMPLE,
                     "n_pairs":       result["n_pairs"],
-                    # True means `p` above is this pair's permutation-test resolution limit,
-                    # not a precise measurement -- None means unknown
-                    # (non-circular_shift method, or cached before this
-                    # disclosure existed). See _circular_shift_pvalue.
                     "at_p_floor":    result.get("at_p_floor"),
                 })
 
@@ -816,9 +688,6 @@ def correlation_family_endpoint(
         return {
             "results":           significant[:limit],
             "significant_count": len(significant),
-            "prescreened":         prescreened,
-            "prescreen_pool_size": prescreen_pool_size,
-            "prescreen_top_n":     CIRCULAR_SHIFT_SCREEN_TOP_N if prescreened else None,
         }
     finally:
         conn.close()

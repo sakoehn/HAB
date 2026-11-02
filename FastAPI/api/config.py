@@ -70,10 +70,6 @@ TIDE_SHIFT_HOURS = 1
 CORRELATION_LAGS    = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6]
 LAG_HOURS_PER_SAMPLE = 4
 
-# circular_shift's null enumerates every valid shift exactly once (see
-# _circular_shift_pvalue in correlation_sql.py), so there is no sample
-# count or random seed to configure here.
-
 # ── SQLite connection ─────────────────────────────────────────────────────────
 #
 # Connection settings for the SQLite backend (see FastAPI/scripts/migrate_mappings_to_sql.py

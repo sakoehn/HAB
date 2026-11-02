@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "FastAPI"))
 
-from api.correlation_sql import _get_or_compute_correlation
+from api.correlation_sql import _get_or_compute_correlation, score_pair
 
 SCHEMA = """
 CREATE TABLE annotation_catalog(
@@ -400,8 +400,7 @@ class TestOperationalErrorDuringCacheWrite:
     # A lock-timeout mid-write (plausible against a large,
     # heavily-contended real db) raises sqlite3.OperationalError. Left
     # uncaught it would 500 the whole family request and discard every
-    # other candidate's already-computed result, potentially minutes to
-    # hours of circular_shift work. A different
+    # other candidate's already-computed result. A different
     # failure mode from the IntegrityError race above: nobody else won
     # here, nothing was ever actually written by anyone, so there's no
     # winner row to read back -- the fix is to roll back the failed
@@ -442,92 +441,25 @@ class TestOperationalErrorDuringCacheWrite:
         assert rows == 0  # the failed write really never persisted anything
 
 
-class TestCircularShiftMethod:
-    # "circular_shift" through the real read-through
-    # cache -- confirms the stored p_value is the raw permutation
-    # fraction (never Bonferroni-scaled, unlike every other method -- see
-    # score_pair), and that it shares the cache table safely alongside
-    # the other 3 methods without ever colliding on the same row.
-    #
-    # The module-level SAMPLES (12 points) that every other test class in
-    # this file uses is too short for circular_shift's null -- max|lag|=6 leaves
-    # NO valid interior shift at n=12 (see test_correlation_math.py's
-    # TestCircularShiftPvalue for the exact boundary), so a meaningful
-    # permutation p-value needs its own larger sample set here.
-
-    BIG_SAMPLES = [f"s{i:02d}" for i in range(1, 31)]  # 30 -- 5 valid shifts (2*max_lag margin)
-
-    def test_computes_and_caches_a_real_result(self, conn):
-        insert_catalog(conn, 1, "kegg", "K00001")
-        insert_catalog(conn, 2, "kegg", "K00002")
-        # Non-monotonic -- avoids the shift/re-lag self-similarity pitfall
-        # a strictly increasing series has under Spearman (see
-        # test_correlation_math.py's test_perfect_correlation_gives_low_pvalue
-        # for the full explanation); a near-noiseless copy still gives a
-        # very strong real relationship to detect.
-        base = {s: 10.0 + i + 3.0 * ((i % 3) - 1) for i, s in enumerate(self.BIG_SAMPLES)}
-        copy = {s: v + 0.05 for s, v in base.items()}
-        insert_series(conn, "kegg", "K00001", base)
-        insert_series(conn, "kegg", "K00002", copy)
-
-        result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="circular_shift")
-
-        assert result is not None
-        assert result["r"] > 0.9
-        assert 0.0 <= result["p"] <= 1.0
-
-        row = conn.execute(
-            "SELECT r, p_value, method FROM correlations_cache WHERE catalog_id_a=1 AND catalog_id_b=2"
-        ).fetchone()
-        assert row is not None
-        assert row[2] == "circular_shift"
-        # The exact formula at this fixture's real size (30 samples, 5
-        # valid shifts under the 2*max_lag margin): a near-perfect, non-monotonic
-        # relationship should hit the floor, (1+0)/(1+5) = 1/6 -- not just
-        # "some small p".
-        assert row[1] == pytest.approx(1 / 6)
-        # This p IS the floor (no shift
-        # scored as extreme as the real alignment) -- at_p_floor must say
-        # so, through the cache-write path, not just the fresh-compute one.
-        assert result["at_p_floor"] is True
-
-    def test_too_few_samples_for_any_valid_shift_returns_p_one_not_a_bogus_fraction(self, conn):
-        """The no-valid-shift edge, exercised through the real cache layer this
-        time: with the module-level 12-sample fixture every other test
-        class in this file relies on, there is no valid interior shift at
-        all (lo=7 > hi=5) -- the pre-fix code would have still drawn 1000
-        random shifts from [1, 11] (some of them inside the lag buffer)
-        and reported a misleadingly precise-looking fraction. Post-fix,
-        this must come back as exactly 1.0, not some arbitrary number."""
+class TestStoredPvalue:
+    def test_cached_p_is_score_pairs_effective_n_p(self, conn):
+        """The cache stores exactly what score_pair returns (effective-N p,
+        Bonferroni-corrected across lags) -- nothing re-scaled on the way in."""
         insert_catalog(conn, 1, "kegg", "K00001")
         insert_catalog(conn, 2, "kegg", "K00002")
         base = {s: 10.0 + i + 3.0 * ((i % 3) - 1) for i, s in enumerate(SAMPLES)}
-        copy = {s: v + 0.05 for s, v in base.items()}
+        other = {s: 5.0 + ((i * 7) % 5) for i, s in enumerate(SAMPLES)}
         insert_series(conn, "kegg", "K00001", base)
-        insert_series(conn, "kegg", "K00002", copy)
+        insert_series(conn, "kegg", "K00002", other)
 
-        result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="circular_shift")
+        result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="spearman")
 
-        assert result is not None
-        assert result["r"] > 0.9  # the r statistic itself is unaffected -- only p defaults to 1.0
-        assert result["p"] == 1.0
-        # This 1.0 means "no valid shift to test against," not "hit
-        # the floor" -- at_p_floor must stay False here, not True.
-        assert result["at_p_floor"] is False
-
-    def test_constant_candidate_returns_none_not_crash(self, conn):
-        """At the cache layer, the same NaN-guard/graceful-None behavior
-        other methods get must hold for circular_shift too."""
-        insert_catalog(conn, 1, "kegg", "K00001")
-        insert_catalog(conn, 2, "kegg", "K00002")
-        insert_series(conn, "kegg", "K00001", {s: 10.0 + i for i, s in enumerate(SAMPLES)})
-        insert_series(conn, "kegg", "K00002", {s: 7.0 for s in SAMPLES})  # constant
-
-        result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="circular_shift")
-
-        assert result is None
-        rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
-        assert rows == 0
+        expected = score_pair(list(base.values()), list(other.values()), "spearman")
+        assert result["p"] == pytest.approx(expected[1])
+        stored = conn.execute(
+            "SELECT p_value FROM correlations_cache WHERE catalog_id_a=1 AND catalog_id_b=2"
+        ).fetchone()[0]
+        assert stored == pytest.approx(expected[1])
 
     def test_shares_the_cache_table_without_colliding_with_other_methods(self, conn):
         """The same (catalog_id_a, catalog_id_b, metric) pair, scored
@@ -542,10 +474,10 @@ class TestCircularShiftMethod:
         insert_series(conn, "kegg", "K00002", copy)
 
         _get_or_compute_correlation(conn, 1, 2, metric="egc", method="raw_pearson")
-        _get_or_compute_correlation(conn, 1, 2, metric="egc", method="circular_shift")
+        _get_or_compute_correlation(conn, 1, 2, metric="egc", method="spearman")
 
         rows = conn.execute(
             "SELECT method FROM correlations_cache WHERE catalog_id_a=1 AND catalog_id_b=2"
         ).fetchall()
-        assert {r[0] for r in rows} == {"raw_pearson", "circular_shift"}
+        assert {r[0] for r in rows} == {"raw_pearson", "spearman"}
         assert len(rows) == 2

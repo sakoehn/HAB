@@ -187,17 +187,9 @@ CREATE TABLE IF NOT EXISTS correlations_cache(
     lag_samples     INTEGER NOT NULL,
     p_value     REAL NOT NULL,
     n_pairs     INTEGER NOT NULL,
-    -- For method='circular_shift' only,
-    -- whether p_value was forced to this specific pair's resolution limit
-    -- (no permuted shift was ever as extreme as the real alignment, so
-    -- p is already the smallest value that pair's permutation test could
-    -- possibly report, NOT a precise measurement near zero). NULL for
-    -- every non-circular_shift row (not applicable), and also NULL for
-    -- any circular_shift row cached before this column existed -- those
-    -- are genuinely unknown, not backfilled, since recomputing them means
-    -- re-running the permutation test itself. See
-    -- scripts/add_at_p_floor_column.py for the one-time ALTER TABLE this
-    -- needed on an existing database.
+    -- Only ever set by the removed circular_shift permutation test; NULL
+    -- for every row the current methods write. Kept so existing databases
+    -- (see scripts/add_at_p_floor_column.py) don't need a schema change.
     at_p_floor  INTEGER,
     UNIQUE (catalog_id_a, catalog_id_b, metric, method)
 );
