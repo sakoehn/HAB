@@ -102,14 +102,21 @@ describe('CorrelatesPanel — methods', () => {
 })
 
 describe('CorrelatesPanel — keeps retrying instead of failing on timeout', () => {
-  it('shows no "slow method" message on a first attempt', async () => {
-    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
-    const user = await openPanel()
-
+  // The removed circular_shift default showed a "this method is slower"
+  // message as soon as the panel opened. No method is slow any more, so a
+  // first attempt -- including the one the panel fires on open -- shows
+  // only the loading skeleton; any message waits for a real retry.
+  it('shows no extra message while the first search runs, for the default or any other method', async () => {
     mockFetch.mockReturnValue(new Promise(() => {})) // never resolves -- stays in 'loading'
-    await selectAnotherMethod(user)
-    expect(await screen.findByText(/computing correlations/i)).toBeInTheDocument()
-    expect(screen.queryByText(/slower and can take a while/i)).not.toBeInTheDocument()
+    render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /Find Correlates/i }))
+
+    for (const method of ['spearman', 'log_pearson', 'raw_pearson']) {
+      if (method !== 'spearman') await user.click(screen.getByRole('button', { name: method }))
+      expect(await screen.findByText(/computing correlations/i)).toBeInTheDocument()
+      expect(screen.queryByText(/slower|can take a while|still working/i)).not.toBeInTheDocument()
+    }
   })
 
   it('automatically retries on failure and eventually succeeds, without ever showing an error', async () => {
