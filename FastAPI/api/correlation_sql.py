@@ -140,6 +140,55 @@ def _effective_n_pvalue(r: float, n_eff: float) -> float:
     t = abs(r) * math.sqrt(df / (1 - r * r))
     return float(2 * stats.t.sf(t, df))
 
+def _lag_tests_m_eff(ref: list[float], cand: list[float], method: str, lags: list[int] = CORRELATION_LAGS) -> float:
+    """
+    How many separate tests the lag search is really worth for this pair
+    (Li & Ji 2005). score_pair keeps the best of 13 lags, so its p-value
+    has to pay for 13 tries -- but for smooth series r barely changes
+    between neighbouring lags, so those tries are nearly the same test.
+    Charging the full 13 hid real relationships (the urease subunits vs
+    ureC, r ~0.92).
+
+    For two unrelated series, r at lag a and r at lag b are correlated by
+    roughly sum_h acf_x(h) * acf_y(h + a - b), normalised by the a == b
+    value (Bartlett). The eigenvalues of that lags x lags matrix say how
+    many independent directions the tests span: an eigenvalue >= 1 counts
+    as one test plus its fractional part, a smaller one counts as its
+    fraction. Jumpy series land near 13, smooth ones near 3-4, and pairs
+    sharing a bloom-wide trend near 2.
+
+    Measured on the co-observed, transformed lag-0 values -- the same
+    values effective-N uses. Falls back to every lag when there is too
+    little to measure.
+    """
+    n_lags = len(lags)
+    pair = _transformed_pair(ref, cand, method)
+    if pair is None:
+        return float(n_lags)
+    x, y = np.asarray(pair[0], dtype=float), np.asarray(pair[1], dtype=float)
+    max_lag = len(x) // 5
+    if np.ptp(x) == 0 or np.ptp(y) == 0:
+        return float(n_lags)
+    acf_x = _autocorrelations(x, max_lag)
+    acf_y = _autocorrelations(y, max_lag)
+    # Two-sided autocorrelation, index max_lag + h = acf(h); y is padded
+    # with zeros so it can be shifted by any lag difference.
+    two_sided_x = np.concatenate([acf_x[::-1], [1.0], acf_x])
+    span = max(lags) - min(lags)
+    padded_y = np.concatenate([np.zeros(span), acf_y[::-1], [1.0], acf_y, np.zeros(span)])
+
+    def cross(shift):
+        start = span + shift
+        return float(two_sided_x @ padded_y[start:start + len(two_sided_x)])
+
+    c0 = cross(0)
+    if c0 <= 0:
+        return float(n_lags)
+    corr = np.array([[np.clip(cross(a - b) / c0, -1.0, 1.0) for b in lags] for a in lags])
+    eigenvalues = np.abs(np.linalg.eigvalsh(corr))
+    m_eff = sum((lam >= 1) + (lam - math.floor(lam)) for lam in eigenvalues)
+    return float(min(n_lags, max(1.0, m_eff)))
+
 def _spearman_at_lags(ref:  list[float], cand: list[float], lags: list[int], method: str):
     best_r = None
     best_lag = None
@@ -431,7 +480,9 @@ def _apply_fdr(scored_family: list[dict]) -> list[dict]:
     return scored_family
 
 # ── Helper Functions ───────────────────────────────────────────────────────────
-def core_scoring(vec_a: list[float], vec_b: list[float], method: str):
+def _transformed_pair(vec_a: list[float], vec_b: list[float], method: str):
+    """The co-observed points (both present and > 0), transformed for the
+    chosen coefficient, or None if fewer than 10 remain."""
     # filter
     a,b = [], []
     for i in range(len(vec_a)):
@@ -443,14 +494,18 @@ def core_scoring(vec_a: list[float], vec_b: list[float], method: str):
 
     # transform: each coefficient is Pearson on a different version of the data
     if method == 'raw_pearson':
-        x, y = a, b
+        return a, b
     elif method == 'log_pearson':
-        x = [math.log(v) for v in a]
-        y = [math.log(v) for v in b]
+        return [math.log(v) for v in a], [math.log(v) for v in b]
     elif method == 'spearman':
-        x, y = stats.rankdata(a), stats.rankdata(b)
+        return stats.rankdata(a), stats.rankdata(b)
     else:
         raise ValueError(f"{method} not found.")
+
+def core_scoring(vec_a: list[float], vec_b: list[float], method: str):
+    pair = _transformed_pair(vec_a, vec_b, method)
+    if pair is None: return None
+    x, y = pair
     r, _naive_p = stats.pearsonr(x, y)
     if math.isnan(r):
         # A candidate with the same value at every co-observed timepoint
@@ -465,17 +520,18 @@ def core_scoring(vec_a: list[float], vec_b: list[float], method: str):
     # The autocorrelation is measured on the same transformed, gap-free
     # values that were just correlated.
     pval = _effective_n_pvalue(r, _effective_n(x, y))
-    return (r, pval, len(a))
+    return (r, pval, len(x))
 
 def score_pair(ref: list[float], cand: list[float], method):
     """Returns (r, p, lag, n_pairs, at_p_floor). p is the best lag's
-    effective-N p-value, Bonferroni-corrected across every lag searched.
+    effective-N p-value, Bonferroni-corrected by the number of separate
+    tests the lag search is worth for this pair (_lag_tests_m_eff).
     at_p_floor is always None -- it only ever described a permutation
     test that has since been removed, and is kept so cached rows and
     responses keep the same shape."""
     best_r, best_lag, best_p, best_n = _spearman_at_lags(ref, cand, CORRELATION_LAGS, method)
     if best_r is None or best_lag is None or best_p is None: return None
-    bonf_p = _bonferroni_correct(best_p, len(CORRELATION_LAGS))
+    bonf_p = _bonferroni_correct(best_p, _lag_tests_m_eff(ref, cand, method))
     return best_r, bonf_p, best_lag, best_n, None
 
 # ── Internal: Tier 1 read-through cache ─────────────────────────
