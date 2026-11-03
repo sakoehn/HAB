@@ -1,0 +1,11 @@
+depth-3 (C-level) nodes stored as 'pathway': 571 {'[PATH:': 490, 'neither (Metabolism)': 1, '[BR:': 56, 'neither (Not Included in Pathway or Brite)': 24}
+  examples of non-PATH C nodes: [('09113', 'Global maps only'), ('01000', 'Enzymes [BR:ko01000]'), ('01001', 'Protein kinases [BR:ko01001]'), ('01009', 'Protein phosphatases and associated prot'), ('01002', 'Peptidases and inhibitors [BR:ko01002]'), ('01003', 'Glycosyltransferases [BR:ko01003]')]
+  largest C-level groups by KO count: [('02000', 2260, 'Transporters [BR:ko02000]'), ('99980', 1589, 'Enzymes with EC numbers'), ('03000', 1519, 'Transcription factors [BR:ko03000]'), ('04131', 1468, 'Membrane trafficking [BR:ko04131]'), ('03036', 1241, 'Chromosome and associated proteins '), ('01002', 1064, 'Peptidases and inhibitors [BR:ko010')]
+KOs in ko00001: 28571
+K00844: real immediate parents=14 (PATH 13, BRITE/other 1 ['Membrane trafficking [BR:ko0']) -> KOs excluded as siblings/relatives: 2248 of 28571; with only PATH parents it would be 864
+K02703: real immediate parents=2 (PATH 1, BRITE/other 1 ['Photosynthesis proteins [BR:']) -> KOs excluded as siblings/relatives: 138 of 28571; with only PATH parents it would be 63
+K01601: real immediate parents=2 (PATH 2, BRITE/other 0 []) -> KOs excluded as siblings/relatives: 151 of 28571; with only PATH parents it would be 151
+K01428: real immediate parents=4 (PATH 4, BRITE/other 0 []) -> KOs excluded as siblings/relatives: 391 of 28571; with only PATH parents it would be 391
+K03924: real immediate parents=1 (PATH 0, BRITE/other 1 ['Enzymes with EC numbers']) -> KOs excluded as siblings/relatives: 1589 of 28571; with only PATH parents it would be 1
+K00001: real immediate parents=5 (PATH 5, BRITE/other 0 []) -> KOs excluded as siblings/relatives: 368 of 28571; with only PATH parents it would be 368
+K02014: real immediate parents=1 (PATH 0, BRITE/other 1 ['Transporters [BR:ko02000]']) -> KOs excluded as siblings/relatives: 2260 of 28571; with only PATH parents it would be 1
