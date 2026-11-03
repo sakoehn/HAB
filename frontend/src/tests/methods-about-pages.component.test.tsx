@@ -106,6 +106,15 @@ describe('MethodsPage — every correlation method is described', () => {
     expect(text).toMatch(/significant candidates first/i)
   })
 
+  it('describes the per-pair lag correction, not a flat × 13, and that shared trends count', () => {
+    const { container } = render(<MethodsPage />)
+    const text = container.textContent ?? ''
+    expect(text).toMatch(/Li & Ji 2005/)
+    expect(text).toMatch(/but not always by 13/)
+    expect(text).not.toMatch(/× ?13/)
+    expect(text).toMatch(/shared across the bloom count as a\s+real relationship/i)
+  })
+
   it('no longer describes the permutation test or its shortlist', () => {
     const { container } = render(<MethodsPage />)
     const text = container.textContent ?? ''

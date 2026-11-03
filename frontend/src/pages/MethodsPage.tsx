@@ -250,8 +250,10 @@ export function MethodsPage() {
             was not significant. Pairs detected at only a few timepoints carry little
             evidence too: an r of 0.90 from 10 shared timepoints was not significant either.
             Trends shared across the bloom count as a
-            real relationship and are not removed, but because they make series smooth, they
-            need a high r to be confirmed.
+            real relationship and are not removed: how genes behave across bloom states is
+            exactly what the correlations are for. A shared trend makes both series smooth, so
+            the pair is worth fewer independent observations, but it also gets a smaller lag
+            correction (below).
           </Item>
           <Item
             title="Lags"
@@ -259,8 +261,16 @@ export function MethodsPage() {
           >
             Each candidate is scored at {N_LAGS} lags — every offset from 0 to ±{MAX_LAG}{' '}
             samples, i.e. up to a full day of lead or lag — and the lag with the largest |r|
-            is kept. That lag’s p-value is Bonferroni-corrected (× {N_LAGS}) for having
-            searched {N_LAGS} lags.
+            is kept. Because the best of several tries is kept, that lag’s p-value is
+            Bonferroni-corrected — but not always by {N_LAGS}. For smooth series r barely
+            changes from one lag to the next, so the {N_LAGS} lags are really only a few
+            separate tests. Each pair is charged for the number of separate tests its lags are
+            worth (Li &amp; Ji 2005), worked out from how quickly each series changes: close to{' '}
+            {N_LAGS} for jumpy series, about 4 for a typical pair, and about 2 for pairs that
+            rise or fall together through the bloom. Charging every pair the full {N_LAGS} hid
+            real relationships: the five other urease subunits against urease alpha (ureC,
+            r = 0.91–0.93, each worth only about 11 independent observations) are significant
+            with a correction of 2, but were not with {N_LAGS}.
           </Item>
           <Item title="False discovery rate and the results list">
             Every candidate in the family is tested. A Benjamini–Hochberg correction is
