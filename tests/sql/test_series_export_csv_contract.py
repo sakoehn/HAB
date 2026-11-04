@@ -83,6 +83,17 @@ LEVELS = {
     "cog":    {"category": 1, "cog": 2},
 }
 PATH_TABLES = {"enzyme": "enzyme_paths", "kegg": "kegg_paths", "cog": "cog_paths"}
+
+
+def _expected_level(source, level, lineage_ids):
+    """The level column. KEGG's pathway level also holds the two top-level
+    sections that are not pathways, 09180 (Brite protein-family tables) and
+    09190 (Not Included in Pathway or Brite); a row there says which.
+    Worked out from the section at the top of the row's lineage, not the
+    [PATH:]/[BR:] name marker the app reads, so the two have to agree."""
+    if source != "kegg" or level != "pathway":
+        return level
+    return {"09180": "brite_table", "09190": "kegg_group"}.get(lineage_ids.split(" > ")[0], "pathway")
 COLUMNS = {1: ("a_id", "a_name"), 2: ("b_id", "b_name"), 3: ("c_id", "c_name"), 4: ("d_id", "d_name")}
 MAX_DEPTH = {"enzyme": 4, "kegg": 4, "cog": 2}
 
@@ -102,6 +113,8 @@ REQUESTS = {
     "kegg: KOs in several pathways":              {"source": "kegg", "parent": "09101", "rank": "ko"},
     "kegg: pathways, with the starting term":     {"source": "kegg", "parent": "09100", "rank": "pathway", "include_parent": "true"},
     "kegg: whole dataset subcategories":          {"source": "kegg", "rank": "subcategory", "date_to": "2021-06-01"},
+    "kegg: BRITE tables and other groups":        {"source": "kegg", "rank": "pathway", "date_from": "2021-06-10"},
+    "kegg: KOs in a BRITE table, with the start": {"source": "kegg", "parent": "02000", "rank": "ko", "include_parent": "true"},
     "cog: COGs in several categories":            {"source": "cog", "rank": "cog"},
     "cog: one category, with the starting term":  {"source": "cog", "parent": "E", "rank": "cog", "include_parent": "true"},
 }
@@ -237,7 +250,9 @@ def _check_contract(resp, req, conn, sparse):
         else:
             assert all(r["is_starting_term"] == "true" for r in start)
             parent_depth = _path_depth(conn, source, parent)
-            assert start[0]["level"] == [k for k, v in LEVELS[source].items() if v == parent_depth][0]
+            assert start[0]["level"] == _expected_level(
+                source, [k for k, v in LEVELS[source].items() if v == parent_depth][0], start[0]["lineage_ids"],
+            )
             ((parent_lineage_ids, (parent_lineage, _)),) = [
                 (k[1], v) for k, v in _lineages(conn, source, parent_depth).items() if k[0] == parent
             ]
@@ -272,7 +287,7 @@ def _check_contract(resp, req, conn, sparse):
             if parent:
                 assert parent in r["lineage_ids"].split(" > ")
             repeated = "true" if blocks_per_term[r["annotation_id"]] > 1 else "false"
-            assert all(x["level"] == req["rank"] for x in b)
+            assert all(x["level"] == _expected_level(source, req["rank"], r["lineage_ids"]) for x in b)
             assert all(x["is_starting_term"] == "false" and x["also_in_other_paths"] == repeated for x in b)
 
     # Samples, dates and values.

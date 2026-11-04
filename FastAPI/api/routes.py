@@ -1217,6 +1217,20 @@ def _paths_levels(db, source: str, parent: str | None, rank: str) -> tuple[int, 
     return depth, parent_depth
 
 
+def _kegg_level3_name(name: str | None) -> str:
+    """The level column for a KEGG third-level entry. KEGG's file also puts
+    its Brite protein-family tables ([BR:...], e.g. Transporters) and its
+    "Not Included in Pathway or Brite" bins at the pathway level, so only a
+    [PATH:...] entry is called a pathway; the frontend labels them the same
+    way (stats.ts keggLevel3Label)."""
+    name = name or ""
+    if "[PATH:" in name:
+        return "pathway"
+    if "[BR:" in name:
+        return "brite_table"
+    return "kegg_group"
+
+
 def _paths_export_entries(
     db, source: str, parent: str | None, rank: str, include_parent: bool, exclude: set[tuple[str, str]],
 ):
@@ -1226,6 +1240,8 @@ def _paths_export_entries(
     level_names = {d: name for name, d in levels.items()}
 
     def labels(path: dict, level: str, repeated: bool, is_start: bool) -> list:
+        if source == "kegg" and level == "pathway":
+            level = _kegg_level3_name(path["name"])
         return [
             path["annotation_id"], path["name"], level,
             _LINEAGE_SEP.join(path["lineage_ids"]), _LINEAGE_SEP.join(path["lineage_names"]),
