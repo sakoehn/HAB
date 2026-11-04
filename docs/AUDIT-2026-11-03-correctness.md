@@ -10,13 +10,15 @@
 
 **Headline.** The core numbers are right. EGC, relative abundance, the hierarchy roll-up, EC renumbering, taxonomy lineage keying, the per-sample sums on the Taxonomy page, the chart x-axis and time zones, day/night bands (within 0.6 min of an independent solar computation), the tide alignment (0.000 m against NOAA at 240 points), Z-score, LOWESS, descriptive statistics, and the correlation finder's lag sign, effective-N p-value, Li & Ji penalty, family exclusions and FDR all check out, most of them numerically. What is wrong is at the edges where data reaches the user: a CSV export that is silently cut to an arbitrary 50,000 rows while promising "every row"; search boxes that cannot find the id forms the Methods page prints; exact ids buried under substring matches; a handoff that cannot find any taxon below domain; a "sibling" rule in the correlation finder that quietly drops thousands of KEGG candidates because BRITE protein-family tables are stored as pathways; and group totals that exceed the category's own total. The correlation finder's slowness has a measured cause and a validated 18–24× fix.
 
-Each item has an ID (F = this audit), **Where**, **What**, **Effect**, **Verified** (how, and by whom), **Fix**, and **Verify** (what a fixed state looks like). Severity: **High** = wrong or partial information presented to users as correct or complete, or a core function that does not work; **Medium** = wrong in realistic edge cases, or misleading; **Low** = hygiene.
+Each item has an ID (F = this audit), an **In plain terms** paragraph for non-specialists (what the issue is, when it shows up, why it matters), then **Where**, **What**, **Effect**, **Verified** (how, and by whom), **Fix**, and **Verify** (what a fixed state looks like). Severity: **High** = wrong or partial information presented to users as correct or complete, or a core function that does not work; **Medium** = wrong in realistic edge cases, or misleading; **Low** = hygiene.
 
 ---
 
 ## 1. High
 
 ### F1. Mappings "Export all" CSV is silently cut to 50,000 arbitrary rows
+
+**In plain terms:** when you ask the Mappings panel to export every gene record for a large annotation, the server stops after the first 50,000 records and the file is handed over with no sign that it is incomplete. This happens for any annotation with more than 50,000 gene records across the 128 samples, which includes every COG category, every KEGG class and subcategory, and any abundant organism. The records you get are not a sensible subset either: they are whichever came first in the database's internal order, so whole samples are missing. Anyone analysing that file would believe they had the complete dataset.
 
 **Where:** `FastAPI/api/cache_sql.py:1325-1372` (every variant of the id subquery ends in `LIMIT {_MAPPINGS_ROW_LIMIT}` regardless of `bypass_cap`); `FastAPI/api/routes.py:399-406` (`bypass_cap` skips only the sample budgeting); `frontend/src/components/mappings/MappingsPanel.tsx:166-181` (`downloadFullCsv` reads `r.data` and never looks at `results_were_truncated`); `MappingsPanel.tsx:290-291` ("Export all downloads every mapping row for this annotation across all 128 samples").
 
@@ -32,6 +34,8 @@ Each item has an ID (F = this audit), **Where**, **What**, **Effect**, **Verifie
 
 ### F2. Search cannot find ids written with their `KO:`/`EC:` prefix, and `EC:…` returns the wrong source
 
+**In plain terms:** if you type an enzyme or KEGG id the way the Methods page writes them, with the EC: or KO: prefix, the search boxes on Analyze, Compare, Taxonomy and the Lookup page either find nothing or find the wrong thing. For EC:1.1.1.1 you get a list of KEGG orthologs whose names happen to mention similar EC numbers, and not the enzyme itself. This shows up whenever a user copies an id from a paper, from KEGG, or from this app's own documentation. A user who trusts the result charts or correlates the wrong annotation.
+
 **Where:** `FastAPI/api/routes.py:496-504`, `FastAPI/api/cache_sql.py:897-913` (`get_search_annotations` matches `q` and `annotation_id` verbatim; `strip_source_prefix` is applied by `/series/annotations` and `/mappings/search` but not here); callers `AnalyzePage.tsx:820-826`, `ComparePage.tsx:388-393`, `TaxonomyPage.tsx:83-85`, `ExplorePage.tsx:1349` (Lookup); documented id forms `MethodsPage.tsx:69-73` ("EC:1.1.1.1 · EC:4.2.1.17").
 
 **What:** the catalog stores bare ids (`1.1.1.1`, `K00001`). `q=KO:K00001` matches nothing. `q=EC:1.1.1.1` matches only KO *names* containing that text (`fabG [EC:1.1.1.100]`, `paaH [EC:1.1.1.157]`, …).
@@ -45,6 +49,8 @@ Each item has an ID (F = this audit), **Where**, **What**, **Effect**, **Verifie
 **Verify:** `q=EC:1.1.1.1&sources=enzyme` returns 1.1.1.1 first; `q=KO:K00001` returns K00001.
 
 ### F3. An exact id is not ranked first, so a looked-up id can be absent from the Lookup result and is never auto-selected
+
+**In plain terms:** searching for an id such as 2.7.1.1 also matches every longer id that starts with it, like 2.7.1.10 and 2.7.1.170, and the results are ordered by abundance rather than by whether they are the thing you typed. On the Lookup page, which shows only 25 results, the exact id can be missing from the list entirely, so there is no way to open it from there. This affects any EC number that is a prefix of other numbers, which is most of them, and KEGG pathway codes that appear inside KO ids. The page tells the user that exact ids return one result, which is not what happens.
 
 **Where:** `FastAPI/api/routes.py:507` (sort by `mean_egc` only), `FastAPI/api/cache_sql.py:907-913` (`LIKE '%q%'` on id and name, no exact-match term); `frontend/src/pages/ExplorePage.tsx:1349` (`page_size=25`), `:1356` (auto-select only when exactly one result), `:1900` ("exact IDs return one result; general terms return a ranked list").
 
@@ -60,6 +66,8 @@ Each item has an ID (F = this audit), **Where**, **What**, **Effect**, **Verifie
 
 ### F4. "View Timeseries in Analyze" cannot find any taxonomy row below domain level
 
+**In plain terms:** the "View Timeseries in Analyze" button on the Lookup page sends the full lineage string, such as Archaea;Euryarchaeota, to the Analyze search box, and the Analyze search only matches taxonomy by the bare name. So for any taxon below the domain level the button lands you on a page saying no annotations were found. It works for the four domains and for KEGG, COG and EC ids, which is why it was not noticed.
+
 **Where:** `frontend/src/App.tsx:171-183` (`handleSendToAnalyze` puts `annotationId` into `queryFields` and sets `autoRunSearch`) → `frontend/src/pages/AnalyzePage.tsx:810-838` (`runSearch` sends it as free-text `q`); origin `ExplorePage.tsx:2331`. Backend `cache_sql.py:899-909` matches taxonomy rows on `name` only.
 
 **What:** for taxonomy the id is the full lineage (`Archaea;Euryarchaeota`); as a free-text query it matches nothing. Works only for the four domain names and for kegg/cog/enzyme ids.
@@ -73,6 +81,8 @@ Each item has an ID (F = this audit), **Where**, **What**, **Effect**, **Verifie
 **Verify:** the handoff from a genus-level taxonomy row lands on Analyze with that exact taxon selected.
 
 ### F5. Same-source KEGG correlations silently exclude every KO that shares a BRITE protein-family table with the reference; BRITE tables are listed as pathways
+
+**In plain terms:** KEGG's hierarchy file contains real metabolic pathways but also large catalogue tables such as "Transporters" or "Transcription factors", which group thousands of genes by protein family rather than by what they do together. The pipeline stores these tables as if they were pathways. Two things follow. First, when you look for KEGG correlates of a KEGG reference, the finder excludes "siblings", meaning anything sharing a parent, to avoid trivially related results; because the catalogue tables count as parents, a search starting from a transporter silently throws away all 2,260 other transporters, including the ones a user would most want to see, and the panel only says siblings were excluded. Second, the Explore page's pathway rankings and the pathway-level bulk downloads list these catalogue tables alongside real pathways, and because they are so large they come out on top.
 
 **Where:** `Notebooks/EGC_KEGG_TREE.ipynb` cell 5 (parses every A-section of `ko00001.keg`, including `A09180 Brite Hierarchies` and `A09190 Not Included in Pathway or Brite`) and cell 7 (walks every occurrence); `FastAPI/scripts/migrate_kegg_paths_to_sql.py:97-130` (one `kegg_paths` row per occurrence, no section tag); `FastAPI/api/routes.py:974` (`"pathway": 3`); `FastAPI/api/correlation_sql.py:269-282` (siblings = every `d_id` under any of the reference's immediate `c_id` parents).
 
@@ -89,6 +99,8 @@ Each item has an ID (F = this audit), **Where**, **What**, **Effect**, **Verifie
 **Verify:** K02014 vs kegg tests ~12,800 candidates (not ~10,600); the panel or Methods page says what a sibling is.
 
 ### F6. "Σ Mean EGC" group totals exceed the category's own EGC and cover only the members in the top 200
+
+**In plain terms:** on the Dataset Overview and Annotations by Parent views, a category's size is shown as the sum of its members' mean EGC. For KEGG and COG a member can belong to several categories, and the hierarchy itself counts each gene only once per category, so adding the members together double-counts and gives a number larger than the category's own total. On live data "Metabolism" comes out 55% too large and "Carbohydrate metabolism" 61% too large, while taxonomy categories are almost exact. The sum also only includes members that made it into the top-200 list. A reader comparing category sizes, or comparing KEGG against taxonomy, is comparing numbers computed on different bases.
 
 **Where:** `frontend/src/pages/ExplorePage.tsx:225-245` (Overview `sumEgc`), `:432` ("Top Functional Groups by Σ Mean EGC"), `:728-756` (By Parent `sumEgc`), `:850`, `:861` (tooltip: "useful for ranking which functional categories dominate the dataset"). Both panels load `/annotations/top?limit=200` and sum `mean_egc` of the members among those 200 rows, filing multi-parent rows under every real parent.
 
@@ -108,6 +120,8 @@ Each item has an ID (F = this audit), **Where**, **What**, **Effect**, **Verifie
 
 ### F7. Z-score is standardised over the visible date window; the Methods page says "across the bloom"
 
+**In plain terms:** the Z-score option expresses each point as the number of standard deviations from the series mean. The chart computes that mean and spread from only the points visible in the chosen date range, while the Methods page says it is across the whole bloom. So narrowing the date range changes the Z value of every point, and the axis label does not say so. The exported CSV records that the values were standardised but not over which window.
+
 **Where:** `frontend/src/components/charts/EgcChart.tsx:204-240` (`filteredPoints` → `unsmoothedPoints` → `applyZScore`), `MultiEgcChart.tsx:107-164`, `GroupedEgcChart.tsx:72-117`; `MethodsPage.tsx` Z-score item; `chartCsv.ts:21,45,80` (`standardized: true` with no window recorded).
 
 **What:** μ and σ come from the points surviving the date range (and, on Analyze, the Timepoints date/time pills), not the full series. The same sample's Z changes with the window; the axis still says "σ from mean". `applyZScore` itself is correct (population σ, n<2 unchanged, constant → 0).
@@ -122,6 +136,8 @@ Each item has an ID (F = this audit), **Where**, **What**, **Effect**, **Verifie
 
 ### F8. Correlation "leads/lags by N h" is a nominal conversion; across the 8–12 h gaps the true offset is up to 12–16 h larger
 
+**In plain terms:** the correlation finder reports a lead or lag in hours by counting samples and multiplying by four. The sampling schedule has a few gaps of 8 or 12 hours, so a shift of three samples is sometimes 12 hours and sometimes 16 or 20. A row labelled "lags by 12h" is therefore approximate, and the window advertised as "up to a full day" can reach well beyond that for part of the series. Nothing in the UI or on the Methods page says the hours are nominal.
+
 **Where:** `FastAPI/api/correlation_sql.py:728` (`lag_hours = lag_samples * 4`); `CorrelatesPanel.tsx:182-187, 406-409`; `MethodsPage.tsx:262-266` ("0–24 h at 4 h per sample", "up to a full day of lead or lag"). Acknowledged only in a backend docstring (`correlation_loaders.py:51-57`).
 
 **What:** lags are index shifts over `sample_order`; hours multiply by 4 regardless of the gaps. Under plausible gap placements (128 samples over ~133 four-hour slots; `artifacts/correlation-math/gap_arith.py`): at lag 1, 2–4% of contributing pairs have a true offset of 8–12 h; at lag 3, 6–12% span 12–20 h; at lag 6, 12–25% span 24–32 h (40 h if two gaps are adjacent). The r at that lag is computed with those misaligned pairs mixed in.
@@ -134,6 +150,8 @@ Each item has an ID (F = this audit), **Where**, **What**, **Effect**, **Verifie
 
 ### F9. Under the null, 37% of candidates are labelled with the window-edge lag (±24 h)
 
+**In plain terms:** for each candidate the finder tries 13 time shifts and reports the one with the strongest correlation. For two series that are not related at all, that strongest shift is most often one of the two extreme shifts, plus or minus 24 hours, simply because that is how the maximum of a smooth random curve behaves. The panel prints the shift for every row, so weak non-significant rows often read "leads by 24h" as if that were a property of the pair. It is an artefact of the search, not of the data.
+
 **Where:** `correlation_sql.py:192-218` (best |r| over 13 lags); `CorrelatesPanel.tsx:360-410` shows the lag for every row, significant or not.
 
 **What:** for smooth series the cross-correlation across neighbouring lags is a smooth random function whose maximum over a bounded window sits at an endpoint far more often than anywhere else. Simulation (independent AR(1) φ=0.85, n=128, Spearman, 8,000 null pairs): |lag| = 6 chosen 37.1% of the time, |lag| = 1..5 about 11% each, lag 0 only 5.4%. Among the top 5% of null pairs by |r| (the non-significant tail the panel shows), 32% carry "leads/lags by 24h". True relationships are unaffected: a true lag-0 pair with r ≈ 0.68 is reported at lag 0 in 1000/1000 runs; a true lead of 3 samples is recovered 999/1000. The coordinator's independent run of the performance prototype on synthetic data showed the same pile-up (±6 chosen for 24% of 2,520 candidates).
@@ -145,6 +163,8 @@ Each item has an ID (F = this audit), **Where**, **What**, **Effect**, **Verifie
 **Fix:** show the lag only for significant rows (or grey it out otherwise) and mark lags at the window edge as "at search limit (≥ 24 h)"; mention on the Methods page that for unrelated pairs the chosen lag tends to the edge of the window.
 
 ### F10. Per-pair false-positive rate is 5.8% with full data and up to 7.3% with structured missingness; the cause is the autocorrelation estimator (root cause of open item CR2)
+
+**In plain terms:** to get an honest p-value from autocorrelated time series, the finder estimates how many independent observations the 128 samples are really worth. The formula it uses expects an autocorrelation estimate that has been corrected for the shrinking number of pairs at long lags; the code feeds it the uncorrected estimate, so long-lag autocorrelation is discounted twice and the effective sample size comes out slightly too generous. The measured effect is that about 6% of unrelated pairs pass at the 5% level instead of 5%, rising to about 7% when a candidate is detected only in part of the series. The family-wise FDR correction absorbs this in practice, so the significant / not-significant verdicts are not affected, but the raw p-values are slightly optimistic. The fix is two lines, but it changes cached p-values, so it has to ship with a cache clear.
 
 **Where:** `correlation_sql.py:100-104` (`_autocorrelations`: biased estimator, denominator over all N terms) feeding `_effective_n` at `:127`, which then applies the `(N−j)/N` weight.
 
@@ -176,6 +196,8 @@ Family-wise: one reference vs 2,000 null candidates + 20 true positives, BH via 
 
 ### F11. Top EGC Annotations ranks roll-up categories next to their members and cannot show the top N at a rank
 
+**In plain terms:** a category's EGC is the sum of everything under it, so a list of the top 25 annotations by EGC is almost entirely top-level classes and subcategories, never individual KOs or enzymes. The rank buttons on the Top EGC view only filter the rows already fetched, so you cannot ask for the top 25 KOs; you get however many KOs happened to be in the top N overall, which at N = 25 is none. The Methods page says top-level categories are shown separately on the Explore page, which is true of the other views but not this one.
+
 **Where:** `FastAPI/api/routes.py:762-831` (`/annotations/top` has no depth parameter); `ExplorePage.tsx:1252` (fetches `limit=N`), `:1420-1436` (rank pills filter the already-fetched rows), `:1639` ("doesn't re-fetch, just filters what's already loaded"); `MethodsPage.tsx:122-125` says top-level categories "are shown separately on the Explore page instead of being ranked next to the groups they already contain", which is true of Dataset Overview and Annotations by Parent but not this view.
 
 **What:** every ancestor's EGC is the sum of its descendants, so the server's top N is dominated by roll-ups. Live: `source=kegg&limit=25` returns 8 depth-1, 13 depth-2, 4 depth-3 and zero KOs; `taxonomy&limit=25` mixes all eight ranks. The rank pills can only subtract, so "top 25 KOs" is unobtainable and a filtered list has an unspecified length.
@@ -188,6 +210,8 @@ Family-wise: one reference vs 2,000 null candidates + 20 true positives, BH via 
 
 ### F12. Scaffold Information and Bulk Download searches have no sequence guard; a late result lands under the new source and is added with the wrong source
 
+**In plain terms:** in the Scaffold Information and Bulk Download panels, if you start a search and then change the source dropdown before the results arrive, the results from the old source are shown under the new source's label, and clicking one adds it tagged with the wrong source, which then fails to load. It takes a quick hand or a slow server to trigger, which is exactly the situation on an uncached request.
+
 **Where:** `frontend/src/components/scaffolds/ScaffoldExplorePanel.tsx:309-324` (`runSearch`), `:326-332` (`handleSourceChange` clears results but cannot cancel the in-flight response), `:623` (`addTerm(r.annotation_id, searchSrc)` uses the live dropdown, not `r.source`). Same pattern in `BulkDownloadPanel.tsx:252-266` / `:268`.
 
 **Effect:** search "Bacillus" in taxonomy, switch to kegg while loading: taxonomy results appear under kegg; clicking adds a term tagged `kegg` with a lineage id, which reads "failed to load" (summary 404). In Bulk Download the mismatched start term makes the size request fail. Two quick searches can show the older query's results.
@@ -198,6 +222,8 @@ Family-wise: one reference vs 2,000 null candidates + 20 true positives, BH via 
 
 ### F13. Compare page: duplicate entries, colour collisions and silently dropped groups on handoff
 
+**In plain terms:** three bookkeeping slips on the Compare page. Using "Select top N" and then "Add selected" can add an annotation that is already on the chart, so it is drawn twice in two colours and uses up one of the four slots. Sending a series over from Analyze resets the colour sequence, so the new series can get the same colour as one already there and the two lines cannot be told apart. And if two different groups happen to carry the same label, such as "iron (2)", the second one is dropped without any notice.
+
 **Where:** `ComparePage.tsx:456-462` ("Select top N" builds keys from `searchResults.slice(0, slotsRemaining)` without excluding rows already added) and `:415-451` (`addSelectedAnnotations` has no duplicate check, unlike `addAnnotation` at `:469-472`); `:148` (`resetSourceCounters()` on every handoff) with `:163-166`; `:134-140` (handoff keys are `group:${label}` and the label is `${searchTerm} (${n})`, so two different "iron (2)" groups collide; filtered-out items are not added to `handoffSkipped`).
 
 **Effect:** with K00001 open, search "K000", "Select top 3", "+ Add 2 selected": K00001 gets two chips and is drawn twice (two colours, both in the CSV), using one of the four slots. Add K00001 on Compare (kegg shade 0), go to Analyze, send K02014: also shade 0, indistinguishable lines. A second "iron (2)" group handed over vanishes with no notice.
@@ -207,6 +233,8 @@ Family-wise: one reference vs 2,000 null candidates + 20 true positives, BH via 
 **Fix:** exclude rows already in `state.entries` from select-all and `toAdd`; do not reset colour counters on handoff (only when the page becomes empty); key handoff groups by their sorted member set and report skipped ones.
 
 ### F14. Same-named taxa at different depths get an identical hint and cannot be told apart
+
+**In plain terms:** when two taxa share a name, the app appends a hint such as "in Archaea" to tell them apart. If they share a name because the lineage repeats it at several ranks, which JGI's "unclassified X" placeholders do, the hint is the same for both and they cannot be told apart on the Compare page chips or in the chart legend.
 
 **Where:** `frontend/src/utils/taxonomy.ts:247-273` (`homonymHints`); used by `LeftResultList.tsx:151,333-341`, `ComparePage.tsx:508-510,768`, the MultiEgcChart legend.
 
@@ -220,6 +248,8 @@ Family-wise: one reference vs 2,000 null candidates + 20 true positives, BH via 
 
 ### F15. External link for an EC class/subclass/sub-subclass opens an empty KEGG page
 
+**In plain terms:** for an enzyme class or subclass such as 1.1.1, the external link points to a KEGG page that does not exist, so for every non-leaf enzyme entry the only link offered is a dead end.
+
 **Where:** `frontend/src/components/ui/ExternalLinks.tsx:153-163` (partial EC padded to `ec:1.1.1.-` and linked to `genome.jp/entry/ec:1.1.1.-`); `tests/external-links.component.test.tsx:184` pins `ec:2.7.-.-`.
 
 **Effect:** the Lookup card and Analyze info drawer for every non-leaf enzyme node offer one link, which opens "KEGG ENZYME: 1.1.1.-" with body "No such data". ExPASy is correctly suppressed for partial ids.
@@ -229,6 +259,8 @@ Family-wise: one reference vs 2,000 null candidates + 20 true positives, BH via 
 **Fix:** BRITE browser query (`show_brite?htext=ko01000.keg&query=1.1.1`) and/or the ExPASy class page; update the pinned test.
 
 ### F16. The Mappings panel never shows the gene or scaffold of a row, and "rows" are genes
+
+**In plain terms:** each row in the Mappings panel is one gene, but neither the table nor the CSV shows the gene id or the scaffold it sits on. Identical-looking rows cannot be distinguished, the row count is really a gene count without saying so, and the export cannot be matched back to the JGI files or to the scaffold panels.
 
 **Where:** `frontend/src/components/mappings/MappingsPanel.tsx:380-405` (columns: Date, Time, Taxonomy, KEGG, Enzyme, COG) and `mappingsData.ts:85-105` (CSV has the same fields). The API row carries `gene_id` and `contig_id`; `get_mappings_sql` returns one row per gene (`cache_sql.py:1360-1409`, `GROUP BY mappings.id`, several COGs/ECs comma-joined).
 
@@ -240,6 +272,8 @@ Family-wise: one reference vs 2,000 null candidates + 20 true positives, BH via 
 
 ### F17. `include_parent=true` returns 500 for a parent that has no detected data (API only)
 
+**In plain terms:** an API-only bug. Asking for a bulk export with include_parent for a term that exists in the hierarchy but was never detected in any sample returns a server error instead of a clear "no data" response. The web UI cannot trigger it.
+
 **Where:** `FastAPI/api/routes.py:1076-1078` (`next(p for p in get_paths_under_at_depth_sql(...) if p["annotation_id"] == parent)` with no default; `get_paths_under_at_depth_sql` only returns terms with a catalog row).
 
 **Effect:** `/series/export` and `/series/export/summary` answer 500 instead of 404 for a term present in the paths tables but never detected. The Bulk Download panel picks start terms from the catalog, so the UI cannot reach it. The lookup also fetches every term at `parent_depth` to find one.
@@ -249,6 +283,8 @@ Family-wise: one reference vs 2,000 null candidates + 20 true positives, BH via 
 **Fix:** `next(..., None)` → 404, or query the paths table directly.
 
 ### F18. Candidates with fewer than 10 shared timepoints are dropped silently; "every candidate in the family is tested" is not quite true
+
+**In plain terms:** candidates that share fewer than 10 detected timepoints with the reference cannot be scored and are dropped silently. The panel's "N tested" count excludes them and the Methods page says every candidate is tested, so a user cannot tell that some candidates were never considered.
 
 **Where:** `MethodsPage.tsx:281-282`; `correlation_sql.py:718-719, 752` (`tested_count = len(scored)`).
 
@@ -314,6 +350,8 @@ Grouped by area. Each is a one-liner with the location; none changes a headline 
 
 ### X1. Correlation finder: a measured cause and a validated 18–24× redesign
 
+**In plain terms:** the first search for a given reference is slow because the server scores the roughly 13,000 candidates one at a time in Python, with about 50 small library calls and one disk flush per candidate; on the production disk it also reads each candidate's values with a separate query. Loading all candidates into one array and scoring them together with numpy, then writing the cache in one transaction, gives identical results and is 18 to 24 times faster on a synthetic copy of the data. Until it is implemented, users wait a minute or more on a cold search and the proxy can time out.
+
 This is the slowness the user reported. All numbers are from a synthetic on-disk SQLite db built with the real schema and indexes (`artifacts/correlation-perf/build_bench_db.py`: 32,000 catalog rows, 3.14 M `annotation_series` rows, 128 samples, AR(1) log-normal values, 15–25% missing, 10% sparse rows), run through the real app code by pointing `correlation_sql.SQLITE_DB_PATH` at it. Machine: i9-14900K, NVMe, warm page cache. **Production I/O is not reproduced**: the code's own comment records `load_vector` at ~75 ms live vs 0.06 ms here, so the live cold path is slower than these numbers by roughly 13,000 × 75 ms ≈ 16 min of random reads on top of the CPU time below.
 
 **Where the time goes (measured, current code).** Cold 13,000-candidate kegg family through `correlation_family_endpoint`: raw_pearson 54.2 s, log_pearson 54.4 s, spearman 72.9–95.7 s. Warm (all cached): 0.07 s. Per candidate:
@@ -366,6 +404,8 @@ Scoring alone: 0.107 ms (Pearson) / 0.261 ms (Spearman) per candidate vs 3.0 / 4
 
 ### X2. Date-filtered `/annotations/top` scans the whole source partition (54 s live)
 
+**In plain terms:** setting a date range on the Dataset Overview or Top EGC views makes the server read every row for that source, about 5 million for taxonomy, to find the ones in range. That took 54 seconds live, close to the 60-second proxy timeout. The fix is to make the query use the per-sample index that already exists.
+
 **Where:** `FastAPI/api/cache_sql.py:807-823` (`WHERE source = ? AND sample IN (...) GROUP BY annotation_id`).
 
 **What:** the planner uses `idx_annotation_series_source_annotation_id (source=?)` and walks every row of the source (taxonomy ≈ 5 M of 7 M rows) to test `sample IN (...)`. Live: `source=taxonomy&limit=5&date_from=2021-06-02&date_to=2021-06-04` (18 samples) took **54.1 s**, within sight of the 60 s nginx timeout; the result is cached for 30 min per exact range. Dataset Overview and Top EGC Annotations both issue this request whenever a date range is set.
@@ -373,6 +413,8 @@ Scoring alone: 0.107 ms (Pearson) / 0.261 ms (Spearman) per candidate vs 3.0 / 4
 **Better plan:** the `UNIQUE(source, sample, annotation_id)` autoindex supports `(source=?, sample=?)` seeks and each sample's rows are contiguous (the migration inserts per source per sample). On a 1.2 M-row fixture, `EXPLAIN` shows `SEARCH … (source=?)` as written and `SEARCH … (source=? AND sample=?)` with `INDEXED BY sqlite_autoindex_annotation_series_1`; `ANALYZE` alone did not change the plan. Rewrite with a row-value predicate `(source, sample) IN (VALUES (?,?), …)`, or aggregate per sample in Python (≤ 128 indexed queries), or add an explicit `(source, sample)` index. Expected: work proportional to the samples in range instead of the whole partition; seconds rather than a minute on the production disk. Script: `artifacts/api/plan_timing.py`.
 
 ### X3. First `get_all_sample_names_sql` after a restart is a full scan of the 74 M-entry mappings index
+
+**In plain terms:** the first request after the server restarts scans the entire 74-million-entry gene index just to list the 128 sample names. That can take minutes, and every request arriving in that window repeats it.
 
 **Where:** `FastAPI/api/cache_sql.py:106` (`SELECT DISTINCT sample FROM mappings ORDER BY sample`), cached per process with no lock.
 
