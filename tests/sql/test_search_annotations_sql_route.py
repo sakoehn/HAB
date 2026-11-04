@@ -260,3 +260,47 @@ def test_surrounding_spaces_are_ignored(client):
     plain  = client.get("/search/annotations", params={"q": "synthase", "sources": "cog", "page_size": 5000}).json()
     assert plain["total"] > 0
     assert padded["total"] == plain["total"]
+
+
+# Ids are stored bare ("K00001", "1.1.1.1"), but KEGG, papers and the
+# Methods page write them with a KO:/EC: prefix. A prefix typed into any
+# search box is dropped before matching, so both forms find the same thing.
+
+def _ids(client, **params):
+    body = client.get("/search/annotations", params={"page_size": 5000, **params}).json()
+    return {(r["source"], r["annotation_id"]) for r in body["data"]}
+
+
+@pytest.mark.parametrize("typed", ["EC:1.1.1.1", "ec:1.1.1.1", "EC: 1.1.1.1"])
+def test_ec_prefix_finds_the_enzyme(client, typed):
+    prefixed = _ids(client, q=typed, sources=["enzyme"])
+    assert ("enzyme", "1.1.1.1") in prefixed
+    assert prefixed == _ids(client, q="1.1.1.1", sources=["enzyme"])
+
+
+def test_ec_prefix_across_all_sources_matches_the_bare_search(client):
+    sources = ["kegg", "cog", "enzyme", "taxonomy"]
+    prefixed = _ids(client, q="EC:1.1.1.1", sources=sources)
+    assert ("enzyme", "1.1.1.1") in prefixed
+    assert ("kegg", "K00001") in prefixed  # alcohol dehydrogenase [EC:1.1.1.1], by name
+    assert prefixed == _ids(client, q="1.1.1.1", sources=sources)
+
+
+@pytest.mark.parametrize("typed", ["KO:K00001", "ko:K00001"])
+def test_ko_prefix_finds_the_kegg_ortholog(client, typed):
+    assert _ids(client, q=typed, sources=["kegg"]) == _ids(client, q="K00001", sources=["kegg"]) == {("kegg", "K00001")}
+
+
+def test_prefixed_short_id_is_still_the_exact_class_lookup(client):
+    resp = client.get("/search/annotations", params={"q": "EC:3", "sources": ["enzyme", "cog"]})
+    assert [(r["source"], r["annotation_id"]) for r in resp.json()["data"]] == [("enzyme", "3")]
+
+
+def test_prefixed_exact_annotation_id(client):
+    assert _ids(client, annotation_id="KO:K00001", sources=["kegg"]) == {("kegg", "K00001")}
+    assert _ids(client, annotation_id="EC:1.1.1.1", sources=["enzyme"]) == {("enzyme", "1.1.1.1")}
+
+
+def test_a_bare_prefix_is_searched_as_text_not_rejected(client):
+    resp = client.get("/search/annotations", params={"q": "EC:", "sources": ["kegg"]})
+    assert resp.status_code == 200

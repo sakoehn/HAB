@@ -1165,6 +1165,17 @@ def strip_source_prefix(source: str, annotation_id: str) -> str:
     return annotation_id
 
 
+def strip_any_source_prefix(text: str) -> str:
+    """Drop a leading "KO:" or "EC:" (any case, spaces after the colon
+    allowed) from search text whose source isn't known, so "EC:1.1.1.1"
+    searches the same as "1.1.1.1". Text that is only a prefix is left as
+    it is, rather than becoming an empty search."""
+    head, sep, rest = text.partition(":")
+    if sep and head.strip().upper() in ("KO", "EC") and rest.strip():
+        return rest.strip()
+    return text
+
+
 def _expand_to_leaf_ids(conn: sqlite3.Connection, source: str, annotation_id: str) -> list[str]:
     """Resolve annotation_id to every real leaf id it reaches -- itself,
     if it's already a leaf, or every descendant leaf if it's a pathway/

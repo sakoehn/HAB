@@ -90,6 +90,7 @@ from .cache_sql import (
     get_paths_under_at_depth_sql,
     get_taxa_under_at_rank_sql,
     iter_series_for_ids_sql,
+    strip_any_source_prefix,
     strip_source_prefix,
     RANK_COLUMNS
 )
@@ -640,11 +641,14 @@ def search_annotations(
     # only real IDs that short are the 25 COG category letters and the 7 EC
     # classes ("E", "3"), which used to be unsearchable here (a 400) from
     # every search box in the app.
-    search_q, search_id = (q.strip() if q is not None else None), annotation_id
     if q is not None and not q.strip():
         raise HTTPException(status_code=400, detail="Search text is blank.")
-    if q is not None and len(q.strip()) < 3 and not annotation_id:
-        search_q, search_id = None, q.strip().upper()
+    # Ids are stored bare, but are often written "KO:K00001" / "EC:1.1.1.1"
+    # (KEGG, papers, the Methods page); either form finds the same rows.
+    search_q = strip_any_source_prefix(q.strip()) if q is not None else None
+    search_id = strip_any_source_prefix(annotation_id) if annotation_id else annotation_id
+    if search_q is not None and len(search_q) < 3 and not annotation_id:
+        search_q, search_id = None, search_q.upper()
     source_values = [s.value for s in sources]
     db = connect_to_sql()
     try:
