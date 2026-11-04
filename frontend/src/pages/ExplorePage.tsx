@@ -1383,7 +1383,7 @@ export function ExplorePage({
   function topRankLabel(row: TopAnnotation): string {
     if (row.depth == null) return '—'
     const domain = effectiveTopSource === 'taxonomy' ? row.annotation_id.split(';')[0] : null
-    return depthLabel(row.depth, effectiveTopSource, domain)
+    return depthLabel(row.depth, effectiveTopSource, domain, row.name)
   }
 
   // The Group column's display -- real
@@ -2257,7 +2257,7 @@ export function ExplorePage({
                                     color:       'var(--text-dim)',
                                     fontWeight:  400,
                                   }}>
-                                    ({depthLabel(depth, effectiveLookupSource, rawCategory)})
+                                    ({depthLabel(depth, effectiveLookupSource, rawCategory, r.name)})
                                   </span>
                                 </span>
                               </div>

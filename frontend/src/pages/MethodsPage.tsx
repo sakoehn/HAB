@@ -55,7 +55,7 @@ const ANNOTATION_TYPES = [
   {
     label: 'Functional',
     title: 'KEGG Orthology (KO)',
-    desc:  'KEGG Orthology terms represent functional orthologs across species and link genes to metabolic pathways, biological processes, and molecular functions. Hierarchy: pathway class → subcategory → pathway → KO.',
+    desc:  'KEGG Orthology terms represent functional orthologs across species and link genes to metabolic pathways, biological processes, and molecular functions. Hierarchy: pathway class → subcategory → pathway → KO. KEGG also files its Brite protein-family tables (e.g. Transporters) and its “Not Included in Pathway or Brite” groups at the pathway level; the app labels these “BRITE table” and “KEGG group”.',
     ex:    'K02014 · K00001 · K16950',
   },
   {
@@ -271,6 +271,15 @@ export function MethodsPage() {
             real relationships: the five other urease subunits against urease alpha (ureC,
             r = 0.91–0.93, each worth only about 11 independent observations) are significant
             with a correction of 2, but were not with {N_LAGS}.
+          </Item>
+          <Item title="Which candidates are compared">
+            When the reference and the candidates come from the same source, the
+            reference’s ancestors and descendants are left out, since their totals contain
+            each other’s genes, and so are its siblings (annotations sharing one of its
+            immediate parents). For KEGG, only a real pathway makes two KOs siblings: the
+            Brite protein-family tables and “Not Included” groups filed alongside the
+            pathways still count as ancestors, but sharing one does not exclude a candidate,
+            so a transporter is still compared with every other transporter.
           </Item>
           <Item title="False discovery rate and the results list">
             Every candidate in the family is tested. A Benjamini–Hochberg correction is

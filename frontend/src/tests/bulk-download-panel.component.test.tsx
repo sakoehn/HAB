@@ -419,7 +419,7 @@ function postCalls(path: string) {
 describe('levelOptionsBelow — KEGG', () => {
   it('lists the KEGG levels', () => {
     expect(levelOptionsBelow('kegg', 0).map(o => [o.value, o.label])).toEqual([
-      ['category', 'Category'], ['subcategory', 'Subcategory'], ['pathway', 'Pathway'], ['ko', 'KO'],
+      ['category', 'Category'], ['subcategory', 'Subcategory'], ['pathway', 'Pathway / BRITE table'], ['ko', 'KO'],
     ])
     expect(levelOptionsBelow('kegg', 2).map(o => o.value)).toEqual(['pathway', 'ko'])
   })

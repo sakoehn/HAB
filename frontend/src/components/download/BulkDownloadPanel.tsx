@@ -83,7 +83,7 @@ const COLUMNS_HELP: Record<string, string> = {
 // starting term the way taxonomy's do.
 const SOURCE_NOTES: Record<string, string> = {
   cog:    'Rows can add up to more than the starting category: a gene with more than one COG counts under each of them, while the category counts it once; from the whole dataset, a COG in several categories also counts in each. Tick "Also include the starting term\'s own total" to compare.',
-  kegg:   'Rows may not add up to the starting term: a KO in several pathways counts in each of them, while the starting term counts it once. Tick "Also include the starting term\'s own total" to compare.',
+  kegg:   'Rows may not add up to the starting term: a KO in several pathways counts in each of them, while the starting term counts it once. Tick "Also include the starting term\'s own total" to compare. The KEGG pathway level also holds its Brite protein-family tables (names ending [BR:…], such as Transporters) and its "Not Included in Pathway or Brite" groups, so these are listed with the pathways.',
   enzyme: 'Rows may not add up to the starting term. Genes known only to a higher level — a partial EC number such as 3.1.-, or an old number that was later split — count towards that level but towards no EC number below it, and a gene with two EC numbers counts under each. Tick "Also include the starting term\'s own total" to compare.',
 }
 

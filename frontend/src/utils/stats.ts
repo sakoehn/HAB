@@ -71,9 +71,22 @@ export function resolveLookupDepth(r: TopAnnotation): number | null {
 // hierarchy depth means something different per domain. Extracted out of
 // ExplorePage so it's a real, independently-testable function rather than
 // a hand-copied mirror in a test file.
+//
+// KEGG's third level is not only pathways: KEGG's file also puts its Brite
+// protein-family tables (names ending "[BR:...]", e.g. Transporters) and
+// its "Not Included in Pathway or Brite" bins there. Given the entry's
+// name, the label says which; without one it names the whole level.
 
-export function depthLabel(depth: number, source: string, category?: string | null): string {
-  if (source === 'kegg')     return ({ 1: 'pathway class', 2: 'subcategory', 3: 'pathway', 4: 'leaf (KO)' } as Record<number, string>)[depth] ?? String(depth)
+function keggLevel3Label(name: string | null | undefined): string {
+  if (name == null)          return 'pathway / BRITE table'
+  if (name.includes('[PATH:')) return 'pathway'
+  if (name.includes('[BR:'))   return 'BRITE table'
+  return 'KEGG group'
+}
+
+export function depthLabel(depth: number, source: string, category?: string | null, name?: string | null): string {
+  if (source === 'kegg' && depth === 3) return keggLevel3Label(name)
+  if (source === 'kegg')     return ({ 1: 'pathway class', 2: 'subcategory', 4: 'leaf (KO)' } as Record<number, string>)[depth] ?? String(depth)
   if (source === 'cog')      return ({ 1: 'category', 2: 'leaf (COG)' } as Record<number, string>)[depth] ?? String(depth)
   if (source === 'enzyme')   return ({ 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' } as Record<number, string>)[depth] ?? String(depth)
   if (source === 'taxonomy') return taxonomyRankLabel(depth, category)

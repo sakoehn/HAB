@@ -20,7 +20,7 @@ const LEVELS: Record<string, RankOption[]> = {
   kegg: [
     { value: 'category',    label: 'Category',     depth: 1 },
     { value: 'subcategory', label: 'Subcategory',  depth: 2 },
-    { value: 'pathway',     label: 'Pathway',      depth: 3 },
+    { value: 'pathway',     label: 'Pathway / BRITE table', depth: 3 },
     { value: 'ko',          label: 'KO',           depth: 4 },
   ],
   cog: [
