@@ -751,11 +751,19 @@ export function AnalyzePage({
 
   useEffect(() => { firstInputRef.current?.focus() }, [])
 
-  // Run a search handed over from another page, once.
+  // Run a search handed over from another page, once, and open the chart
+  // of the annotation it was sent for.
   useEffect(() => {
     if (!state.autoRunSearch) return
-    setState(prev => ({ ...prev, autoRunSearch: false }))
+    const target = state.openOnArrival
+    setState(prev => ({ ...prev, autoRunSearch: false, openOnArrival: null }))
     runSearch()
+    if (target) {
+      addSingleCard({
+        annotation_id: target.annotationId, source: target.source, name: target.name,
+        depth: target.depth, parent: target.parent, sample: '', timepoint: null, value: null,
+      } as AnnotationItem & { parent: string | null })
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.autoRunSearch])
 

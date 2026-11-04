@@ -76,6 +76,7 @@ import { BulkDownloadPanel } from '../components/download/BulkDownloadPanel'
 import { canBulkDownloadFrom } from '../utils/bulkDownload'
 import { ScaffoldExplorePanel } from '../components/scaffolds/ScaffoldExplorePanel'
 import type { ExploreState } from './exploreState'
+import type { AnalyzeHandoff } from './analyzeState'
 
 // ── ExploreState + default ─────────────────────────────────────────────────
 // Co-located here — only ExplorePage uses this shape.
@@ -1112,7 +1113,7 @@ export function ExplorePage({
   resetKey:            number
   dataDateRange:       { min: string; max: string } | null
   indexReady:          boolean
-  onSendToAnalyze:     (annotationId: string) => void
+  onSendToAnalyze:     (target: AnalyzeHandoff) => void
   onGoScaffoldExplore: (annotationId: string, source: string) => void
   onReset:             () => void
 }) {
@@ -2331,7 +2332,13 @@ export function ExplorePage({
                           }}>
                             <button
                               className="btn sm primary"
-                              onClick={() => onSendToAnalyze(r.annotation_id)}
+                              onClick={() => onSendToAnalyze({
+                                annotationId: r.annotation_id,
+                                source:       r.source ?? effectiveLookupSource,
+                                name:         r.name,
+                                depth:        r.depth ?? null,
+                                parent:       r.parent,
+                              })}
                               title={`Search for ${r.annotation_id} in Analyze`}
                             >
                               → View Timeseries in Analyze

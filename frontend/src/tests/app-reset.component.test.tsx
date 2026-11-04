@@ -85,7 +85,7 @@ describe('per-page reset isolation', () => {
 })
 
 describe('App::handleSendToAnalyze (real navigation, not a hand-mocked simulation)', () => {
-  it('"View Timeseries in Analyze" from an Explore lookup result lands on Analyze with that id as the only query field', async () => {
+  it('"View Timeseries in Analyze" from an Explore lookup result lands on Analyze with the chart of that annotation open and its id searched', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/timepoints'))
         return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
@@ -146,6 +146,56 @@ describe('App::handleSendToAnalyze (real navigation, not a hand-mocked simulatio
       expect(mockFetch.mock.calls.some(([u]) => String(u).includes('/api/search/annotations?q=K02014'))).toBe(true)
       expect(document.querySelector('.al-row-id')?.textContent).toContain('K02014')
     })
+    // The annotation's chart opens straight away -- "View Timeseries"
+    // shows the time series, not just a list to pick it from.
+    await waitFor(() => expect(mockFetch.mock.calls.some(([u]) =>
+      String(u).includes('/api/series/annotations?source=kegg&annotation_id=K02014'))).toBe(true))
+    expect(await screen.findByRole('button', { name: /View Annotation Mappings/i })).toBeInTheDocument()
+  })
+
+  it('a taxon below domain lands with its own chart open and its name searched, not "No annotations found"', async () => {
+    // A taxon's id is its whole lineage; the real search matches taxonomy
+    // on the bare name only, so a lineage as search text finds nothing.
+    const TAXON = {
+      annotation_id: 'Archaea;Euryarchaeota', source: 'taxonomy', name: 'Euryarchaeota',
+      parent: 'Archaea', depth: 2, mean_egc: 1, max_egc: 1, sample_count: 128, match: 'exact',
+    }
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/timepoints'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
+      if (url.includes('/api/status'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
+      if (url.includes('/api/search/annotations')) {
+        const q = new URL(url, 'http://x').searchParams.get('q') ?? ''
+        const hit = !q.includes(';') && TAXON.name.toLowerCase().includes(q.toLowerCase())
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: hit ? [TAXON] : [], total: hit ? 1 : 0 }) })
+      }
+      if (url.includes('/api/series/annotations'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_SERIES })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    render(<App />)
+    await userEvent.click(await screen.findByText('Explore'))
+    await screen.findByText('Explore Annotations')
+    await userEvent.click(await screen.findByText('Annotation Lookup', { selector: '.explore-card-label' }))
+    await userEvent.selectOptions(screen.getByDisplayValue('kegg'), 'taxonomy')
+    await userEvent.type(await screen.findByPlaceholderText(/ID \(K02014\)/i), 'Euryarchaeota')
+    await userEvent.click(screen.getByRole('button', { name: /^Search$/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /View Timeseries in Analyze/i }))
+
+    await waitFor(() => {
+      const analyzeNavItem = screen.getByText('Analyze', { selector: '.nav-label' }).closest('.nav-item')
+      expect(analyzeNavItem).toHaveClass('active')
+    })
+    expect(await screen.findByPlaceholderText(/e\.g\. iron/i)).toHaveValue('Euryarchaeota')
+    await waitFor(() => expect(document.querySelector('.al-row-name')?.textContent).toContain('Euryarchaeota'))
+    expect(screen.queryByText(/No annotations found/i)).not.toBeInTheDocument()
+    // The chart is the exact lineage picked in Lookup, so a same-named
+    // taxon elsewhere in the tree can never be opened instead.
+    await waitFor(() => expect(mockFetch.mock.calls.some(([u]) =>
+      String(u).includes(`/api/series/annotations?source=taxonomy&annotation_id=${encodeURIComponent('Archaea;Euryarchaeota')}`))).toBe(true))
+    expect(await screen.findByRole('button', { name: /View Annotation Mappings/i })).toBeInTheDocument()
   })
 })
 

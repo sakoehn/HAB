@@ -2,6 +2,18 @@
 
 import type { AnnotationItem, ApiStatus, RightCard, SeriesCache } from '../types'
 
+// One exact annotation another page asks Analyze to open ("View Timeseries
+// in Analyze"). Opened by identity, not found by searching, because a
+// taxon's id is its lineage, which the search doesn't match, and two taxa
+// can share a name.
+export type AnalyzeHandoff = {
+  annotationId: string
+  source:       string
+  name:         string | null
+  depth:        number | null
+  parent:       string | null
+}
+
 export type AnalyzeState = {
   queryFields:   string[]
   // The terms that actually produced
@@ -23,6 +35,9 @@ export type AnalyzeState = {
   // Set by another page that hands Analyze a query to look up ("View
   // Timeseries in Analyze"): run that search once on arrival, then clear.
   autoRunSearch?: boolean
+  // Set alongside autoRunSearch: the annotation whose chart to open on
+  // arrival, then cleared.
+  openOnArrival?: AnalyzeHandoff | null
 }
 
 export function makeDefaultAnalyzeState(): AnalyzeState {

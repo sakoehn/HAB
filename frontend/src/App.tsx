@@ -13,7 +13,8 @@ import { apiFetch } from './utils/api'
 import { ThemeToggle, ResetBtn } from './components/ui/controls'
 import './App.css'
 import { AnalyzePage } from './pages/AnalyzePage'
-import { makeDefaultAnalyzeState, type AnalyzeState } from './pages/analyzeState'
+import { makeDefaultAnalyzeState, type AnalyzeHandoff, type AnalyzeState } from './pages/analyzeState'
+import { bareTaxonName } from './utils/taxonomy'
 import { ComparePage } from './pages/ComparePage'
 import { makeDefaultCompareState, type CompareState } from './pages/compareState'
 import { ExplorePage } from './pages/ExplorePage'
@@ -168,10 +169,13 @@ export default function App() {
     setPage('explore')
   }
 
-  function handleSendToAnalyze(annotationId: string) {
+  function handleSendToAnalyze(target: AnalyzeHandoff) {
     setAnalyzeState(prev => ({
       ...prev,
-      queryFields:   [annotationId],
+      // Something the search can find: a taxon is searched by its own name
+      // (its id is the whole lineage), every other source by its id.
+      queryFields:   [target.source === 'taxonomy' ? bareTaxonName(target.annotationId) : target.annotationId],
+      openOnArrival: target,
       resultsByTerm: [],
       totalsByTerm:  [],
       searchStatus:  'idle',
