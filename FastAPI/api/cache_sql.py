@@ -1082,6 +1082,25 @@ def estimate_mapping_row_count_sql(
     return row[0] if row else 0
 
 
+def mapping_rows_per_sample_sql(conn: sqlite3.Connection, source: str, annotation_id: str) -> dict[str, int]:
+    """{sample: number of mapping rows get_mappings_sql returns for this
+    node in that sample}, for the samples where it was detected.
+
+    Read from annotation_series.gene_count, which counts each gene once per
+    node per sample -- the same one-row-per-gene that get_mappings_sql
+    returns -- so a result's size is known without running the query.
+
+    Args:
+        conn: Open SQLite connection.
+        source: Annotation source.
+        annotation_id: The node (bare, no KO:/EC: prefix).
+    """
+    return dict(conn.execute(
+        "SELECT sample, gene_count FROM annotation_series WHERE source = ? AND annotation_id = ?",
+        (source, annotation_id),
+    ).fetchall())
+
+
 def samples_within_row_budget(
     conn: sqlite3.Connection, source: str, annotation_id: str, samples: list[str], budget: int,
 ) -> list[str]:
@@ -1109,10 +1128,7 @@ def samples_within_row_budget(
     """
     if not samples:
         return samples
-    rows = dict(conn.execute(
-        "SELECT sample, gene_count FROM annotation_series WHERE source = ? AND annotation_id = ?",
-        (source, annotation_id),
-    ).fetchall())
+    rows = mapping_rows_per_sample_sql(conn, source, annotation_id)
     total = 0
     for i, sample in enumerate(samples):
         total += rows.get(sample) or 0
@@ -1231,12 +1247,15 @@ def _enzyme_labels_credited_to(conn: sqlite3.Connection, node_id: str) -> list[s
     )
 
 
-def get_mappings_sql(
+def iter_mappings_sql(
     conn: sqlite3.Connection, source: str, annotation_id: str,
     samples: list[str] | None = None, bypass_cap: bool = False,
-) -> list[dict]:
-    """Return every mapping row (gene/sample/scaffold, plus its
-    annotations across all four sources) reachable from `annotation_id`.
+    row_limit: int | None = _MAPPINGS_ROW_LIMIT,
+) -> Iterator[dict]:
+    """Yield every mapping row (gene/sample/scaffold, plus its
+    annotations across all four sources) reachable from `annotation_id`,
+    one row per gene, straight from the cursor so a large result is never
+    held in memory.
 
     For kegg/enzyme/cog, annotation_id no longer has to be a leaf id --
     a pathway, EC class, or COG category expands to every real leaf id
@@ -1268,16 +1287,19 @@ def get_mappings_sql(
             its response metadata when its own bypass_cap query param is
             set (the full CSV export). Defaults to False so every other
             caller keeps the safety net.
+        row_limit: Most rows to return. None removes the limit, for the
+            streamed export, which asks for one sample at a time and has
+            already checked the total against its own ceiling.
 
-    Returns:
-        List of dicts keyed sample, gene_id, contig_id, kegg_id, cog_id,
+    Yields:
+        Dicts keyed sample, gene_id, contig_id, kegg_id, cog_id,
         enzyme, taxonomy.
 
     Raises:
         ValueError: If source is not one of the four known sources.
     """
     if samples is not None and not samples:
-        return []
+        return
 
     if source in ("kegg", "cog", "enzyme"):
         # kegg_paths/enzyme_paths store bare ids at every level (no "KO:"/
@@ -1297,7 +1319,7 @@ def get_mappings_sql(
         # such genes and no leaves of its own (e.g. 3.1.27, all "3.1.27.-").
         extra_enzyme_labels = _enzyme_labels_credited_to(conn, expand_id) if source == "enzyme" else []
         if not leaf_ids and not extra_enzyme_labels:
-            return []
+            return
         if samples is not None and len(leaf_ids) > _MANY_LEAVES_THRESHOLD and not bypass_cap:
             samples = samples[:_MAX_SAMPLES_FOR_MANY_LEAVES]
 
@@ -1319,6 +1341,8 @@ def get_mappings_sql(
     def _sample_filter(column: str) -> str:
         return f" AND {column} IN ({sample_placeholders})" if samples is not None else ""
 
+    limit_sql = f"LIMIT {int(row_limit)}" if row_limit is not None else ""
+
     if source == "kegg":
         kegg_ids = [f"KO:{leaf}" for leaf in leaf_ids]
         placeholders = ", ".join("?" * len(kegg_ids))
@@ -1326,7 +1350,7 @@ def get_mappings_sql(
             SELECT id
             FROM mappings
             WHERE kegg_id IN ({placeholders}){_sample_filter('mappings.sample')}
-            LIMIT {_MAPPINGS_ROW_LIMIT}
+            {limit_sql}
         """
         where_params = tuple(kegg_ids) + sample_filter_params
     elif source == "cog":
@@ -1345,7 +1369,7 @@ def get_mappings_sql(
             SELECT DISTINCT gene_cog.mapping_id AS id
             FROM gene_cog
             WHERE gene_cog.cog_id IN ({placeholders}){_sample_filter('gene_cog.sample')}
-            LIMIT {_MAPPINGS_ROW_LIMIT}
+            {limit_sql}
         """
         where_params = tuple(leaf_ids) + sample_filter_params
     elif source == "enzyme":
@@ -1356,7 +1380,7 @@ def get_mappings_sql(
                 SELECT DISTINCT gene_enzyme.mapping_id AS id
                 FROM gene_enzyme
                 WHERE gene_enzyme.ec_id IN ({placeholders}){_sample_filter('gene_enzyme.sample')}
-                LIMIT {_MAPPINGS_ROW_LIMIT}
+                {limit_sql}
         """
         where_params = tuple(ec_ids) + sample_filter_params
     elif source == "taxonomy":
@@ -1367,7 +1391,7 @@ def get_mappings_sql(
                 SELECT id FROM taxon_paths
                 WHERE full_path = ? OR substr(full_path, 1, ?) = ?
             ){_sample_filter('mappings.sample')}
-            LIMIT {_MAPPINGS_ROW_LIMIT}
+            {limit_sql}
         """
         where_params = (annotation_id, len(annotation_id) + 1, annotation_id + ';') + sample_filter_params
 
@@ -1390,13 +1414,12 @@ def get_mappings_sql(
             {where_sql}
         )
         GROUP BY mappings.id
+        ORDER BY mappings.id
     """
     cursor = conn.execute(main_query, where_params)
 
-    rows = cursor.fetchall()
-    results = []
-    for row in rows:
-        results.append({
+    for row in cursor:
+        yield {
             "sample": row[0],
             "gene_id": row[1],
             "contig_id": row[2],
@@ -1404,8 +1427,16 @@ def get_mappings_sql(
             "cog_id": _sort_group_concat(row[4]),
             "enzyme": _sort_group_concat(row[5]),
             "taxonomy": row[6],
-        })
-    return results
+        }
+
+
+def get_mappings_sql(
+    conn: sqlite3.Connection, source: str, annotation_id: str,
+    samples: list[str] | None = None, bypass_cap: bool = False,
+    row_limit: int | None = _MAPPINGS_ROW_LIMIT,
+) -> list[dict]:
+    """iter_mappings_sql's rows as a list. See iter_mappings_sql."""
+    return list(iter_mappings_sql(conn, source, annotation_id, samples, bypass_cap, row_limit))
 
 def get_taxa_at_rank_sql(conn: sqlite3.Connection, depth: int) -> list[dict]:
     """Return every distinct lineage at one rank of taxon_paths (e.g. every

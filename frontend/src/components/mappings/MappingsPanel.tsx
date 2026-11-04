@@ -15,11 +15,10 @@
 //     combinations really are redundant)
 //   - Sortable columns (date, time, taxonomy, kegg_id, enzyme, cog_id)
 //   - Pagination (100 rows per page)
-//   - CSV export: uses the already-loaded (possibly capped) rows normally;
-//     for a capped broad-category result, does a separate uncapped fetch
-//     first (bypass_cap=true) so the download isn't limited by the fast
-//     on-screen preview's cap -- a deliberate, explicit action a researcher
-//     opts into and is willing to wait on, unlike passive browsing
+//   - CSV export: "↓ CSV" downloads the loaded rows when they are complete;
+//     when the preview was limited (sample cap or the 50,000-row limit),
+//     "Export all" opens MappingsExportBox, which streams every gene record
+//     from the server instead
 
 import React, { useState, useMemo, useRef } from 'react'
 
@@ -28,6 +27,7 @@ import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime } from '../../utils/format'
 import { SkeletonTable } from '../ui/Skeleton'
 import { NumberField } from '../ui/controls'
+import { MappingsExportBox } from './MappingsExportBox'
 import {
   sortMappingRows, paginateRows, totalPages, buildMappingsUrl,
   isLikelyLeafAnnotation, buildMappingCsvRow,
@@ -86,7 +86,7 @@ export function MappingsPanel({
   // capped-notice banner needs both numbers ("5 instead of the requested
   // 128"), and sampleCount alone can't hold both once it's corrected.
   const [requestedSampleCount, setRequestedSampleCount] = useState(128)
-  const [csvStatus, setCsvStatus]     = useState<ApiStatus>('idle')
+  const [exportOpen, setExportOpen]   = useState(false)
   // Distinguishes WHY a request got capped: either annotationId resolved
   // to many real leaf ids (a genuine category/pathway/class -- leafCount
   // > 1), or it's a single leaf that's just individually high-volume
@@ -156,39 +156,15 @@ export function MappingsPanel({
     }
   }
 
-  // Full, uncapped CSV export for a broad category ("all 128 samples",
-  // not whatever number happened to be left in the Samples field after a
-  // cap overwrote it -- see loadMappings). The on-screen table stays
-  // fast/capped (samplesCapped), but a download is an explicit, one-off
-  // action a researcher opts into and is willing to wait on.
-  const FULL_SAMPLE_COUNT = 128
+  // The loaded rows are the whole answer unless the preview was limited;
+  // then the CSV has to come from the server's full export instead.
+  const previewIsPartial = samplesCapped || resultsWereTruncated
 
-  async function downloadFullCsv() {
-    if (!samplesCapped) {
-      downloadCsv(
-        sortedRows.map(r => buildMappingCsvRow(r, annotationId, source)),
-        `${annotationId}_mappings.csv`,
-      )
-      return
-    }
-    setCsvStatus('loading')
-    try {
-      // Uncapped, all-128-samples -- can take noticeably longer than the
-      // capped preview (up to several minutes for a high-volume cog/enzyme
-      // id, see MAPPINGS_TIMEOUT_MS above), but this is an explicit,
-      // opted-into export, not a passive browse.
-      const r = await apiFetch<{ data: MappingSearchRow[] }>(
-        buildMappingsUrl(annotationId, source, FULL_SAMPLE_COUNT, uniqueOnly, true),
-        300_000,
-      )
-      downloadCsv(
-        sortMappingRows(r.data ?? [], sortCol, sortDir).map(row => buildMappingCsvRow(row, annotationId, source)),
-        `${annotationId}_mappings.csv`,
-      )
-      setCsvStatus('ok')
-    } catch {
-      setCsvStatus('error')
-    }
+  function downloadPreviewCsv() {
+    downloadCsv(
+      sortedRows.map(r => buildMappingCsvRow(r, annotationId, source)),
+      `${annotationId}_mappings.csv`,
+    )
   }
 
   function toggleSort(col: MappingSortCol) {
@@ -270,31 +246,31 @@ export function MappingsPanel({
               Load
             </button>
             {status === 'ok' && allRows.length > 0 && (
-              <button
-                className="btn sm"
-                onClick={downloadFullCsv}
-                disabled={csvStatus === 'loading'}
-                title={samplesCapped ? `Export all ${FULL_SAMPLE_COUNT} samples (not just the ${usedSampleCount ?? requestedSampleCount}-sample preview) -- may take a while` : undefined}
-              >
-                {csvStatus === 'loading'
-                  ? 'Exporting…'
-                  : samplesCapped ? '↓ Export all' : '↓ CSV'}
-              </button>
+              previewIsPartial ? (
+                <button
+                  className="btn sm"
+                  onClick={() => setExportOpen(o => !o)}
+                  aria-expanded={exportOpen}
+                  title="Download every gene record for this annotation, not just the preview below"
+                >
+                  ↓ Export all{exportOpen ? ' ▴' : ' ▾'}
+                </button>
+              ) : (
+                <button className="btn sm" onClick={downloadPreviewCsv}>↓ CSV</button>
+              )
             )}
           </div>
-          {status === 'ok' && samplesCapped && allRows.length > 0 && (
+          {status === 'ok' && previewIsPartial && allRows.length > 0 && (
             <div
               data-testid="mappings-export-all-note"
               style={{ font: '11px var(--mono)', color: 'var(--text-dim)', margin: '-4px 0 10px' }}
             >
-              Export all downloads every mapping row for this annotation across all{' '}
-              {FULL_SAMPLE_COUNT} samples as a CSV — not just the preview below. It can take a while.
+              Export all downloads every gene record for this annotation as a CSV, all samples or a
+              date range you pick — not just the preview below.
             </div>
           )}
-          {csvStatus === 'error' && (
-            <div className="state-box error" style={{ padding: '8px 12px', marginTop: 4 }}>
-              <span>Full CSV export failed -- try again, or export the {usedSampleCount ?? requestedSampleCount}-sample preview by narrowing to a specific gene/id first.</span>
-            </div>
+          {status === 'ok' && previewIsPartial && exportOpen && (
+            <MappingsExportBox annotationId={annotationId} source={source} uniquePairs={uniqueOnly} />
           )}
 
           {/* ── States ── */}
@@ -369,10 +345,9 @@ export function MappingsPanel({
                     {annotationId} has an extremely large number of individual gene
                     records{samplesCapped ? '' : ` across the ${usedSampleCount ?? requestedSampleCount} sample${(usedSampleCount ?? requestedSampleCount) === 1 ? '' : 's'} shown`} —
                     only the first 50,000 are included below. This is a hard safety
-                    limit (a prior version of this page crashed trying to load
-                    everything at once), and no CSV export of this annotation
-                    (including "Export all") can go past it either — a complete
-                    export of every record isn't available for an annotation this large.
+                    limit for the on-screen table (a prior version of this page
+                    crashed trying to load everything at once). Use "Export all"
+                    for a file with every record.
                   </span>
                 </div>
               )}

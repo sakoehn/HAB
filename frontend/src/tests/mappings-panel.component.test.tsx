@@ -25,7 +25,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { MappingsPanel } from '../components/mappings/MappingsPanel'
@@ -44,6 +44,20 @@ vi.mock('../utils/api', async importOriginal => {
   const actual = await importOriginal<typeof import('../utils/api')>()
   return { ...actual, downloadCsv: mockDownloadCsv }
 })
+
+// The export box limits its date pickers to the dataset's range from the
+// shared samples hook; stubbed so its own fetch doesn't use up the mocked
+// responses below.
+vi.mock('../utils/useAllSamples', () => ({
+  useAllSamples: () => ({
+    allSamples: [
+      { sample: 's1', datetime: '5/27/21 8:00' },
+      { sample: 's2', datetime: '6/10/21 20:00' },
+    ],
+    allSamplesLoading: false,
+    allSamplesError: false,
+  }),
+}))
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -297,34 +311,117 @@ describe('MappingsPanel — broad-category cap', () => {
     expect(screen.getByText(/first 50,000/i)).toBeInTheDocument()
   })
 
-  it('CSV export re-fetches uncapped (bypass_cap) when the preview was capped, and downloads that data, not the capped preview', async () => {
-    const cappedRow = makeRow('5/27/21 8:00', 'K00001')
-    const fullRow1   = makeRow('5/27/21 8:00', 'K00001')
-    const fullRow2   = makeRow('6/1/21 8:00', 'K00002')
-
+  it('a capped preview offers Export all, which shows the full size and links to the streamed export', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({
-      data: [cappedRow], sample_count: 5, samples_were_capped: true,
+      data: [makeRow('5/27/21 8:00')], sample_count: 5, samples_were_capped: true,
     }))
     render(<MappingsPanel annotationId="H" source="cog" />)
     await open()
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
 
-    // A limited preview gets an "Export all" button, with a visible line
-    // saying what it exports.
-    expect(screen.queryByRole('button', { name: /CSV/i })).not.toBeInTheDocument()
-    expect(screen.getByTestId('mappings-export-all-note')).toHaveTextContent(/all 128 samples/i)
+    expect(screen.queryByRole('button', { name: /^↓ CSV/i })).not.toBeInTheDocument()
+    expect(screen.getByTestId('mappings-export-all-note')).toHaveTextContent(/every gene record/i)
 
-    mockFetch.mockResolvedValueOnce(jsonResponse({ data: [fullRow1, fullRow2] }))
+    mockFetch.mockResolvedValue(jsonResponse({
+      annotation_id: 'H', source: 'cog', samples: 128, rows: 253_121, max_rows: 5_000_000,
+    }))
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /Export all/i }))
 
-    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
-    expect(mockFetch.mock.calls[1][0]).toContain('bypass_cap=true')
-    expect(mockFetch.mock.calls[1][0]).toContain('sample_count=128')
+    await waitFor(() => expect(screen.getByTestId('mappings-export-size')).toHaveTextContent('253,121'))
+    expect(mockFetch.mock.calls.some(c => String(c[0]).startsWith('/api/mappings/export/summary?annotation_id=H&source=cog'))).toBe(true)
+    // The download is a plain link the browser streams to disk -- never a
+    // capped JSON fetch turned into a CSV in the page.
+    const link = screen.getByRole('link', { name: /Download CSV/i })
+    expect(link).toHaveAttribute('href', '/api/mappings/export?annotation_id=H&source=cog&unique_pairs=true')
+    expect(link).toHaveAttribute('download')
+    expect(mockFetch.mock.calls.some(c => String(c[0]).includes('bypass_cap'))).toBe(false)
+    expect(mockDownloadCsv).not.toHaveBeenCalled()
+  })
 
-    await waitFor(() => expect(mockDownloadCsv).toHaveBeenCalledTimes(1))
-    const [rows] = mockDownloadCsv.mock.calls[0]
-    expect(rows).toHaveLength(2) // the full uncapped fetch, not the 1-row capped preview
+  it('a preview cut at the 50,000-row limit (not sample-capped) also offers Export all, and says it has every record', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      data: [makeRow('5/27/21 8:00')], sample_count: 128, samples_were_capped: false,
+      results_were_truncated: true, leaf_count: 1,
+    }))
+    render(<MappingsPanel annotationId="Bacteria;Proteobacteria" source="taxonomy" />)
+    await open()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+
+    expect(screen.getByText(/first 50,000/i)).toBeInTheDocument()
+    expect(screen.queryByText(/isn't available/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Export all/i })).toBeInTheDocument()
+  })
+
+  it('above 1,000,000 rows the download asks for confirmation first, naming the size and the Excel limit', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      data: [makeRow('5/27/21 8:00')], sample_count: 5, samples_were_capped: true,
+    }))
+    render(<MappingsPanel annotationId="H" source="cog" />)
+    await open()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+    mockFetch.mockResolvedValue(jsonResponse({
+      annotation_id: 'H', source: 'cog', samples: 128, rows: 2_400_000, max_rows: 5_000_000,
+    }))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /Export all/i }))
+    await waitFor(() => expect(screen.getByTestId('mappings-export-size')).toHaveTextContent('2,400,000'))
+
+    expect(screen.queryByRole('link', { name: /Download/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Download CSV/i }))
+    const warning = screen.getByTestId('mappings-export-confirm')
+    expect(warning).toHaveTextContent(/2,400,000/)
+    expect(warning).toHaveTextContent(/Excel/)
+    expect(within(warning).getByRole('link', { name: /Download anyway/i }))
+      .toHaveAttribute('href', '/api/mappings/export?annotation_id=H&source=cog&unique_pairs=true')
+
+    await user.click(within(warning).getByRole('button', { name: /Cancel/i }))
+    expect(screen.queryByTestId('mappings-export-confirm')).not.toBeInTheDocument()
+  })
+
+  it("above the server's limit there is no download, only a way to narrow it", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      data: [makeRow('5/27/21 8:00')], sample_count: 5, samples_were_capped: true,
+    }))
+    render(<MappingsPanel annotationId="Bacteria" source="taxonomy" />)
+    await open()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+    mockFetch.mockResolvedValue(jsonResponse({
+      annotation_id: 'Bacteria', source: 'taxonomy', samples: 128, rows: 59_780_871, max_rows: 5_000_000,
+    }))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /Export all/i }))
+
+    const tooBig = await screen.findByTestId('mappings-export-too-big')
+    expect(tooBig).toHaveTextContent('59,780,871')
+    expect(tooBig).toHaveTextContent('5,000,000')
+    expect(tooBig).toHaveTextContent(/date range/i)
+    expect(screen.queryByRole('link', { name: /Download/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Download CSV/i })).not.toBeInTheDocument()
+  })
+
+  it('a date range re-asks for the size and goes into the download link', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      data: [makeRow('5/27/21 8:00')], sample_count: 5, samples_were_capped: true,
+    }))
+    render(<MappingsPanel annotationId="H" source="cog" />)
+    await open()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1))
+    mockFetch.mockImplementation(async (url: string) => jsonResponse(
+      url.includes('date_from')
+        ? { annotation_id: 'H', source: 'cog', samples: 18, rows: 30_000, max_rows: 5_000_000 }
+        : { annotation_id: 'H', source: 'cog', samples: 128, rows: 253_121, max_rows: 5_000_000 },
+    ))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /Export all/i }))
+    await waitFor(() => expect(screen.getByTestId('mappings-export-size')).toHaveTextContent('253,121'))
+
+    const [fromInput] = screen.getByTestId('mappings-export').querySelectorAll('input[type="date"]')
+    fireEvent.change(fromInput, { target: { value: '2021-06-02' } })
+
+    await waitFor(() => expect(screen.getByTestId('mappings-export-size')).toHaveTextContent('30,000'))
+    expect(screen.getByTestId('mappings-export-size')).toHaveTextContent('18 samples')
+    expect(screen.getByRole('link', { name: /Download CSV/i }).getAttribute('href')).toContain('date_from=2021-06-02')
   })
 
   it('CSV export does NOT re-fetch when the preview was never capped -- uses the already-loaded rows', async () => {

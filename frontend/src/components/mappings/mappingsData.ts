@@ -65,6 +65,42 @@ export function buildMappingsUrl(
   return bypassCap ? `${base}&bypass_cap=true` : base
 }
 
+// ── Export all (/api/mappings/export) ──────────────────────────────────────
+
+// Above this many rows the download asks for confirmation first: it's past
+// Excel's row limit and can take a long time to arrive.
+export const MAPPINGS_EXPORT_CONFIRM_ROWS = 1_000_000
+
+// Average size of one exported row, measured on real exports from all four
+// sources (266-288 bytes), for the "about N MB" estimate.
+const MAPPINGS_EXPORT_BYTES_PER_ROW = 270
+
+export type MappingsExportSummary = {
+  annotation_id: string
+  source:        string
+  samples:       number
+  rows:          number
+  max_rows:      number
+}
+
+export function buildMappingsExportQuery(
+  annotationId: string,
+  source:       string,
+  dateFrom = '',
+  dateTo   = '',
+): string {
+  let q = `annotation_id=${encodeURIComponent(annotationId)}&source=${source}`
+  if (dateFrom) q += `&date_from=${dateFrom}`
+  if (dateTo)   q += `&date_to=${dateTo}`
+  return q
+}
+
+export function estimateExportSize(rows: number): string {
+  const mb = rows * MAPPINGS_EXPORT_BYTES_PER_ROW / 1_000_000
+  if (mb >= 1000) return `${(mb / 1000).toFixed(1)} GB`
+  return `${Math.max(1, Math.round(mb))} MB`
+}
+
 // Leaf ids have a fixed, well-known shape per source (mirrors the same
 // shape assumptions cache_sql.py's _expand_to_leaf_ids already relies on
 // server-side: a COG category is always a bare letter, never "COG####";

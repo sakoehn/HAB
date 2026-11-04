@@ -80,6 +80,8 @@ from .cache_sql import (
     get_top_annotations_sql,
     taxon_exists_sql,
     get_mappings_sql,
+    iter_mappings_sql,
+    mapping_rows_per_sample_sql,
     samples_within_row_budget,
     get_search_annotations,
     get_top_annotations_from_catalog_sql,
@@ -459,6 +461,151 @@ def search_mappings(
         "leaf_count":              leaf_count,
         **paginate(results, page, page_size),
     }
+
+
+# ── Mappings export ("Export all" in the Mappings panel) ─────────────────────
+
+# Above this many gene records the export is refused rather than started:
+# it covers every single organism and pathway, but not a whole domain or a
+# top-level KEGG/COG class (tens of millions of rows, many GB).
+_MAPPINGS_EXPORT_MAX_ROWS = 5_000_000
+
+_MAPPINGS_EXPORT_HEADER = [
+    "annotation_id", "source", "sample", "date", "time", "gene_id", "scaffold_id",
+    "taxonomy", "kegg_id", "enzyme", "cog_id",
+]
+
+
+def _mappings_export_plan(
+    db, source: AnnotationSource, annotation_id: str, date_from: str | None, date_to: str | None,
+) -> dict:
+    """Check an export request and work out its size: the samples in the
+    date range (in date order, with ISO dates), each one's row count, and
+    the total. Raises HTTPException for a bad request."""
+    for label, value in (("date_from", date_from), ("date_to", date_to)):
+        if value is not None and _parse_any_datetime(value) is None:
+            raise HTTPException(status_code=400, detail=f"{label} is not a recognized date: {value!r}")
+    bare_id = strip_source_prefix(source.value, annotation_id)
+    if db.execute(
+        "SELECT 1 FROM annotation_catalog WHERE source = ? AND annotation_id = ? LIMIT 1",
+        (source.value, bare_id),
+    ).fetchone() is None:
+        raise HTTPException(status_code=404, detail=f"No {source.value} annotation {annotation_id!r}")
+    rows_per_sample = mapping_rows_per_sample_sql(db, source.value, bare_id)
+    samples = _export_samples(db, date_from, date_to)
+    return {
+        "samples":         samples,
+        "rows_per_sample": rows_per_sample,
+        "rows":            sum(rows_per_sample.get(sample, 0) for sample, _ in samples),
+    }
+
+
+def _mappings_export_csv(db, source: str, annotation_id: str, plan: dict, unique_pairs: bool):
+    """Yield the CSV sample by sample, in date order, genes in the order
+    they were loaded (gene id order) within a sample. Rows go out every
+    _EXPORT_CHUNK_ROWS as they are read, and the header goes out first, so
+    the proxy never waits long for data even on a slow disk. Closes `db`
+    when done (or when the download is abandoned)."""
+    try:
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        writer.writerow(_MAPPINGS_EXPORT_HEADER)
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+        pending = 0
+        seen_keys: set[tuple] = set()
+        for sample, iso_date in plan["samples"]:
+            if not plan["rows_per_sample"].get(sample):
+                continue
+            date, _, time_of_day = iso_date.partition(" ")
+            for r in iter_mappings_sql(db, source, annotation_id, samples=[sample], bypass_cap=True, row_limit=None):
+                if unique_pairs:
+                    # Samples arrive in date order, so the first row of each
+                    # combination kept is its earliest, as in /mappings/search.
+                    key = (r["taxonomy"], r["kegg_id"], r["enzyme"], r["cog_id"])
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                writer.writerow([
+                    annotation_id, source, sample, date, time_of_day, r["gene_id"], r["contig_id"],
+                    r["taxonomy"] or "", r["kegg_id"] or "", r["enzyme"] or "", r["cog_id"] or "",
+                ])
+                pending += 1
+                if pending >= _EXPORT_CHUNK_ROWS:
+                    yield buf.getvalue()
+                    buf.seek(0)
+                    buf.truncate(0)
+                    pending = 0
+        yield buf.getvalue()
+    finally:
+        close_sql_connection(db)
+
+
+@router.get("/mappings/export/summary")
+def mappings_export_summary(
+    request:       Request,
+    annotation_id: str = Query(...),
+    source:        AnnotationSource = Query(...),
+    date_from:     str | None = Query(None),
+    date_to:       str | None = Query(None),
+):
+    """Size of a /mappings/export before downloading it: how many samples
+    the date range covers and how many gene records (rows) the file will
+    hold. "Unique pairs only" can make the file smaller than `rows`, never
+    larger. `max_rows` is the largest export the server will start."""
+    db = connect_to_sql()
+    try:
+        plan = _mappings_export_plan(db, source, annotation_id, date_from, date_to)
+    finally:
+        close_sql_connection(db)
+    return {
+        "annotation_id": annotation_id,
+        "source":        source.value,
+        "samples":       len(plan["samples"]),
+        "rows":          plan["rows"],
+        "max_rows":      _MAPPINGS_EXPORT_MAX_ROWS,
+    }
+
+
+@router.get("/mappings/export")
+def mappings_export(
+    request:       Request,
+    annotation_id: str = Query(...),
+    source:        AnnotationSource = Query(...),
+    date_from:     str | None = Query(None),
+    date_to:       str | None = Query(None),
+    unique_pairs:  bool = Query(False),
+):
+    """CSV of every gene record for an annotation (a node includes every
+    gene under it) in the date range, all samples if no range is given:
+    one row per gene per sample, with its gene id, scaffold and
+    annotations in all four sources. Not limited to 50,000 rows like
+    /mappings/search; instead an export over _MAPPINGS_EXPORT_MAX_ROWS is
+    refused with 413 before anything is sent. Streamed one sample at a
+    time, so a large file never has to be held in memory."""
+    db = connect_to_sql()
+    try:
+        plan = _mappings_export_plan(db, source, annotation_id, date_from, date_to)
+        if plan["rows"] > _MAPPINGS_EXPORT_MAX_ROWS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"This export would be {plan['rows']:,} rows, over the "
+                       f"{_MAPPINGS_EXPORT_MAX_ROWS:,}-row limit. Narrow the date range, "
+                       f"or use Bulk Download for per-sample totals.",
+            )
+    except Exception:
+        close_sql_connection(db)
+        raise
+    parts = [annotation_id, "mappings"]
+    if date_from or date_to:
+        parts.append(f"{date_from or 'start'}_to_{date_to or 'end'}")
+    filename = re.sub(r"[^A-Za-z0-9._-]+", "_", "_".join(parts)) + ".csv"
+    return StreamingResponse(
+        _mappings_export_csv(db, source.value, annotation_id, plan, unique_pairs),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/search/annotations")
