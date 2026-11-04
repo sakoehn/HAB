@@ -214,3 +214,46 @@ def test_same_date_written_two_ways_shares_one_cache_entry(client, monkeypatch):
     b = client.get("/annotations/top", params={"source": "cog", "limit": 10, "date_from": "2021-05-20T00:00:00"}).json()
     assert a["data"] == b["data"]
     assert len(routes_mod._TOP_ANN_CACHE_SQL) == 1
+
+
+# ids=: a page that grouped the top list by parent asks for the parents'
+# own totals, which may not be in the top 200, worked out the same way and
+# over the same dates as the list itself.
+
+def _by_id(body):
+    return {r["annotation_id"]: r for r in body["data"]}
+
+
+@pytest.mark.parametrize("dates", [{}, {"date_from": "2021-06-02", "date_to": "2021-06-04"}])
+def test_ids_return_the_same_values_as_the_top_list(client, dates):
+    top = client.get("/annotations/top", params={"source": "kegg", "limit": 200, **dates}).json()
+    wanted = [r["annotation_id"] for r in top["data"][:3]] + [top["data"][-1]["annotation_id"]]
+    picked = client.get("/annotations/top", params={"source": "kegg", "ids": wanted, **dates}).json()
+    assert set(_by_id(picked)) == set(wanted)
+    for aid in wanted:
+        assert _by_id(picked)[aid] == _by_id(top)[aid]
+    assert picked["sample_count"] == top["sample_count"]
+
+
+def test_ids_reach_annotations_outside_the_top_200(client):
+    top = _by_id(client.get("/annotations/top", params={"source": "cog", "limit": 200}).json())
+    outside = next(
+        r["annotation_id"] for r in client.get(
+            "/search/annotations", params={"q": "COG01", "sources": "cog", "page_size": 500},
+        ).json()["data"] if r["annotation_id"] not in top
+    )
+    picked = client.get("/annotations/top", params={"source": "cog", "ids": [outside]}).json()
+    assert [r["annotation_id"] for r in picked["data"]] == [outside]
+
+
+def test_ids_with_a_date_range_cover_only_those_dates(client):
+    whole = _by_id(client.get("/annotations/top", params={"source": "cog", "ids": ["E"]}).json())["E"]
+    part = _by_id(client.get(
+        "/annotations/top", params={"source": "cog", "ids": ["E"], "date_from": "2021-06-02", "date_to": "2021-06-04"},
+    ).json())["E"]
+    assert part["sample_count"] < whole["sample_count"]
+
+
+def test_too_many_ids_is_rejected(client):
+    resp = client.get("/annotations/top", params={"source": "kegg", "ids": [f"K{i:05d}" for i in range(201)]})
+    assert resp.status_code == 422

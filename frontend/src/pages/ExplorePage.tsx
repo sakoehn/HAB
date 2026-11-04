@@ -56,6 +56,7 @@ function topLevelEntryLabel(r: TopAnnotation, source: string): string {
   return r.name ? `${r.annotation_id} · ${r.name}` : r.annotation_id
 }
 import { apiFetch, downloadCsv } from '../utils/api'
+import { categoryIdsOf, fetchOwnTotals } from '../utils/groupTotals'
 import {
   extractEgc, computeTrend, sumMembersByTimestamp,
   resolveLookupCategory, resolveLookupScaffoldCount, resolveLookupDepth, depthLabel,
@@ -117,6 +118,15 @@ const CHART_GROUP_COLORS = [
   'var(--chart-4)', 'var(--amber)',
 ]
 
+// Hover text for a group's size: the category's own total next to the sum
+// of its listed members, which is what the size used to be.
+function groupTotalTitle(group: { ownEgc: number | null; sumEgc: number; count: number }): string {
+  const sum = `Σ of the ${group.count} listed member${group.count === 1 ? '' : 's'}: ${group.sumEgc.toExponential(2)}`
+  return group.ownEgc != null
+    ? `Category total ${group.ownEgc.toExponential(2)} (each gene counted once) · ${sum} (members can overlap; top 200 only)`
+    : `${sum}. The category's own total could not be loaded.`
+}
+
 export function DatasetOverviewPanel({
   resetKey,
   dataDateRange,
@@ -139,6 +149,10 @@ export function DatasetOverviewPanel({
   // when not applicable or when the lookup failed, which falls back to each
   // row's single stored parent.
   const [realParents, setRealParents]   = useState<RealParents | null>(null)
+  // Each group's size: its category's own total over the loaded dates (see
+  // utils/groupTotals.ts), fetched with the rows. Empty when it couldn't
+  // be loaded, which falls back to the member sum.
+  const [ownTotals, setOwnTotals]       = useState<Record<string, number>>({})
 
   // `rows` is only ever correct for whatever (source, dateFrom, dateTo) was
   // actually sent with the request that produced it -- not necessarily what
@@ -161,6 +175,7 @@ export function DatasetOverviewPanel({
     setSeriesTruncatedFrom(null)
     setTopLevelOpen(false)
     setRealParents(null)
+    setOwnTotals({})
     requestSeqRef.current++ // anything still loading belongs to the old page
   }, [resetKey])
 
@@ -186,6 +201,11 @@ export function DatasetOverviewPanel({
         }
         if (requestId !== requestSeqRef.current) return
       }
+      const own = await fetchOwnTotals(
+        params.source, categoryIdsOf(r.data ?? [], parents), r.data ?? [], params.dateFrom, params.dateTo,
+      ).catch(() => ({}))
+      if (requestId !== requestSeqRef.current) return
+      setOwnTotals(own)
       setRealParents(parents)
       setRows(r.data ?? [])
       setSampleCount(r.sample_count)
@@ -204,7 +224,7 @@ export function DatasetOverviewPanel({
     [rows],
   )
 
-  const parentGroups = useMemo(() => {
+  const memberGroups = useMemo(() => {
     const loadedSource = loadedParams?.source ?? source
     const map = new Map<string, { label: string; items: TopAnnotation[] }>()
     const addTo = (key: string, label: string, row: TopAnnotation) => {
@@ -231,8 +251,17 @@ export function DatasetOverviewPanel({
         count:  items.length,
         items,
       }))
-      .sort((a, b) => b.sumEgc - a.sumEgc)
   }, [rows, loadedParams, realParents, source])
+
+  const parentGroups = useMemo(
+    () => memberGroups
+      .map(g => {
+        const ownEgc = ownTotals[g.parent] ?? null
+        return { ...g, ownEgc, size: ownEgc ?? g.sumEgc }
+      })
+      .sort((a, b) => b.size - a.size),
+    [memberGroups, ownTotals],
+  )
 
   const top5Groups = parentGroups.slice(0, 5)
 
@@ -430,8 +459,8 @@ export function DatasetOverviewPanel({
               justifyContent:  'space-between',
             }}>
               <span>
-                Top Functional Groups by Σ Mean EGC
-                <HelpTooltip text="Each group here is formed by an annotation's own immediate parent, with no regard for hierarchy depth -- a broad category and one of its own sub-categories can both appear as separate groups in this same list. When that happens their totals are not independent peers: the sub-category's whole total is already included inside its parent category's total, so summing group totals together (or comparing them side by side in the chart below) can overstate how much of the dataset each one really represents." />
+                Top Functional Groups by Mean EGC
+                <HelpTooltip text="A group's size is its category's own mean EGC, in which each gene counts once -- not the sum of the members listed under it, which can overlap (a KEGG KO in several pathways counts in each) and covers only the top 200 annotations. Hover a number for the member sum. Each group here is formed by an annotation's own immediate parent, with no regard for hierarchy depth -- a broad category and one of its own sub-categories can both appear as separate groups in this same list. When that happens their totals are not independent peers: the sub-category's whole total is already included inside its parent category's total, so summing group totals together (or comparing them side by side in the chart below) can overstate how much of the dataset each one really represents." />
               </span>
               {seriesStatus === 'idle' && (
                 <button className="btn sm" onClick={loadTemporalChart}>
@@ -452,7 +481,7 @@ export function DatasetOverviewPanel({
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
               {parentGroups.slice(0, 10).map((group, i) => {
-                const maxSum = parentGroups[0]?.sumEgc ?? 1
+                const maxSum = parentGroups[0]?.size ?? 1
                 const color  = CHART_GROUP_COLORS[i] ?? 'var(--text-dim)'
                 return (
                   <div key={group.parent} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -489,19 +518,22 @@ export function DatasetOverviewPanel({
                       <div style={{
                         height:       '100%',
                         borderRadius: 2,
-                        width:        `${(group.sumEgc / maxSum) * 100}%`,
+                        width:        `${(group.size / maxSum) * 100}%`,
                         background:   i < 5 ? color : 'var(--text-dim)',
                         opacity:      i < 5 ? 1 : 0.4,
                       }} />
                     </div>
-                    <span style={{
-                      font:      '400 11px var(--mono)',
-                      color:     'var(--text-dim)',
-                      width:     88,
-                      textAlign: 'right',
-                      flexShrink: 0,
-                    }}>
-                      {group.sumEgc.toExponential(2)}
+                    <span
+                      style={{
+                        font:      '400 11px var(--mono)',
+                        color:     'var(--text-dim)',
+                        width:     88,
+                        textAlign: 'right',
+                        flexShrink: 0,
+                      }}
+                      title={groupTotalTitle(group)}
+                    >
+                      {group.ownEgc == null && 'Σ '}{group.size.toExponential(2)}
                     </span>
                     <span style={{
                       font:      '400 10px var(--mono)',
@@ -654,6 +686,10 @@ export function AnnotationsByParentPanel({
   // zero real parents). Drives both the visible warning below and the
   // single-parent fallback in parentGroups.
   const [multiParentsFetchFailed, setMultiParentsFetchFailed] = useState(false)
+  // Each group's size: its category's own total (see utils/groupTotals.ts),
+  // fetched with the rows. Empty when it couldn't be loaded, which falls
+  // back to the member sum.
+  const [ownTotals, setOwnTotals] = useState<Record<string, number>>({})
 
   function loadTop() {
     const requestId = ++requestSeqRef.current
@@ -662,6 +698,7 @@ export function AnnotationsByParentPanel({
     setAllRows([])
     setMultiParents({})
     setMultiParentsFetchFailed(false)
+    setOwnTotals({})
     setExpandedParents(new Set())
     setGroupSeriesData({})
     apiFetch<{ data: TopAnnotation[] }>(
@@ -673,12 +710,13 @@ export function AnnotationsByParentPanel({
         setAllRows(rows)
         setLoadedSource(requestedSource)
 
+        let parents: RealParents | null = null
         if (MULTI_PARENT_SOURCES.has(requestedSource) && rows.length > 0) {
           // Stays in 'loading' until this resolves too, so the panel
           // never flashes a transient "everything in Ungrouped" grouping
           // before the real multi-parent buckets are known.
           try {
-            const parents = await fetchRealParents(requestedSource, rows)
+            parents = await fetchRealParents(requestedSource, rows)
             if (requestId !== requestSeqRef.current) return
             setMultiParents(parents)
           } catch {
@@ -687,6 +725,9 @@ export function AnnotationsByParentPanel({
             setMultiParentsFetchFailed(true) // parentGroups below now actually falls back to single-parent grouping
           }
         }
+        const own = await fetchOwnTotals(requestedSource, categoryIdsOf(rows, parents), rows).catch(() => ({}))
+        if (requestId !== requestSeqRef.current) return
+        setOwnTotals(own)
         setStatus('ok')
       })
       .catch(() => {
@@ -698,7 +739,7 @@ export function AnnotationsByParentPanel({
   // eslint-disable-next-line react-hooks/set-state-in-effect -- Changing source starts a new load, which first shows its loading state.
   useEffect(loadTop, [source])
 
-  const parentGroups = useMemo(() => {
+  const memberGroups = useMemo(() => {
     const map = new Map<string, { label: string; items: TopAnnotation[] }>()
     const addTo = (key: string, label: string, row: TopAnnotation) => {
       if (!map.has(key)) map.set(key, { label, items: [] })
@@ -741,11 +782,20 @@ export function AnnotationsByParentPanel({
         sumEgc: items.reduce((s, i) => s + i.mean_egc, 0),
         count:  items.length,
       }))
+  }, [allRows, loadedSource, multiParents, multiParentsFetchFailed])
+
+  const parentGroups = useMemo(
+    () => memberGroups
+      .map(g => {
+        const ownEgc = g.parent === 'Ungrouped' ? null : ownTotals[g.parent] ?? null
+        return { ...g, ownEgc, size: ownEgc ?? g.sumEgc }
+      })
       // Top-level categories go last: their totals overlap every other
       // group's, so ranking them first by size would be misleading.
       .sort((a, b) =>
-        Number(a.parent === 'Ungrouped') - Number(b.parent === 'Ungrouped') || b.sumEgc - a.sumEgc)
-  }, [allRows, loadedSource, multiParents, multiParentsFetchFailed])
+        Number(a.parent === 'Ungrouped') - Number(b.parent === 'Ungrouped') || b.size - a.size),
+    [memberGroups, ownTotals],
+  )
 
   function toggleParent(p: string) {
     setExpandedParents(prev => {
@@ -838,7 +888,7 @@ export function AnnotationsByParentPanel({
     </div>
   ) : null
 
-  const maxSum = parentGroups[0]?.sumEgc ?? 1
+  const maxSum = parentGroups[0]?.size ?? 1
 
   return (
     <div>
@@ -848,7 +898,7 @@ export function AnnotationsByParentPanel({
         <span style={{ font: '400 11px var(--mono)', color: 'var(--text-dim)' }}>
           View:
         </span>
-        <HelpTooltip text="Group trend & detail shows each parent group's summed trend over time, with a table below it breaking that total down by individual annotation. Summed by parent instead shows a static ranked table of parent-group totals — no time series. For KEGG, a KO with more than one real pathway/category appears (with its full EGC) in every real group it belongs to, so group totals summed together can exceed a flat sum of every annotation." />
+        <HelpTooltip text="Group trend & detail shows each parent group's summed trend over time, with a table below it breaking that total down by individual annotation. Summed by parent instead shows a static table ranked by each category's own total, with the sum of its listed members alongside — no time series. For KEGG, a KO with more than one real pathway/category appears (with its full EGC) in every real group it belongs to, so group totals summed together can exceed a flat sum of every annotation." />
         <button
           className={`toggle-pill ${!showSummed ? 'on' : ''}`}
           onClick={() => setShowSummed(false)}
@@ -859,7 +909,7 @@ export function AnnotationsByParentPanel({
         <button
           className={`toggle-pill ${showSummed ? 'on' : ''}`}
           onClick={() => setShowSummed(true)}
-          title="Collapse each parent group into one row showing the sum of all member mean EGCs — useful for ranking which functional categories dominate the dataset. No time series is shown here because this is a static aggregate across all timepoints."
+          title="Collapse each parent group into one row showing the category's own mean EGC (each gene counted once) next to the sum of its listed members, which can overlap and covers only the top 200 — rank by the category total to see which categories dominate the dataset. No time series is shown here because this is a static aggregate across all timepoints."
         >
           ∑ Summed by parent
         </button>
@@ -873,7 +923,8 @@ export function AnnotationsByParentPanel({
               <th style={{ width: 32 }}>#</th>
               <th>Parent / Category</th>
               <th>Annotations</th>
-              <th>Σ Mean EGC</th>
+              <th>Category mean EGC</th>
+              <th>Σ listed members</th>
               <th>Relative</th>
             </tr>
           </thead>
@@ -888,13 +939,16 @@ export function AnnotationsByParentPanel({
                   {g.count}
                 </td>
                 <td style={{ font: '500 12px var(--mono)', color: 'var(--teal)' }}>
+                  {g.ownEgc != null ? g.ownEgc.toExponential(2) : '—'}
+                </td>
+                <td style={{ font: '400 12px var(--mono)', color: 'var(--text-dim)' }}>
                   {g.sumEgc.toExponential(2)}
                 </td>
                 <td style={{ minWidth: 100 }}>
                   <div style={{
                     height:       6,
                     borderRadius: 3,
-                    background:   `linear-gradient(90deg, var(--teal) ${(g.sumEgc / maxSum) * 100}%, var(--surface2) 0%)`,
+                    background:   `linear-gradient(90deg, var(--teal) ${(g.size / maxSum) * 100}%, var(--surface2) 0%)`,
                     minWidth:     4,
                   }} />
                 </td>
@@ -942,7 +996,9 @@ export function AnnotationsByParentPanel({
                     {group.label}
                   </span>
                   <span className="toggle-count">
-                    {group.count} annotations · Σ {group.sumEgc.toExponential(2)}
+                    {group.count} annotations
+                    {group.ownEgc != null && ` · total ${group.ownEgc.toExponential(2)}`}
+                    {` · Σ listed ${group.sumEgc.toExponential(2)}`}
                   </span>
                 </button>
                 {group.parent === 'Ungrouped' && <HelpTooltip text={TOP_LEVEL_TOOLTIP} />}

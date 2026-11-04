@@ -116,7 +116,7 @@ describe('AnnotationsByParentPanel — summed vs group-trend view toggle', () =>
     mockFetch.mockResolvedValue(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
     render(<AnnotationsByParentPanel source="cog" />)
     await waitFor(() => expect(screen.getByText('Custom Group')).toBeInTheDocument())
-    expect(screen.queryByText('Σ Mean EGC')).not.toBeInTheDocument()
+    expect(screen.queryByText('Category mean EGC')).not.toBeInTheDocument()
   })
 
   it('switching to "Summed by parent" shows the aggregate table instead', async () => {
@@ -129,7 +129,7 @@ describe('AnnotationsByParentPanel — summed vs group-trend view toggle', () =>
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /Summed by parent/i }))
 
-    expect(screen.getByText('Σ Mean EGC')).toBeInTheDocument()
+    expect(screen.getByText('Category mean EGC')).toBeInTheDocument()
     // Aggregate view has no per-group expand toggle.
     expect(screen.queryByRole('button', { name: /Custom Group\s*\d+ annotations/i })).not.toBeInTheDocument()
   })
@@ -568,5 +568,59 @@ describe('AnnotationsByParentPanel — a group trend from the previous source is
       const urls = mockFetch.mock.calls.map(c => String(c[0]))
       expect(urls.some(u => u.includes('/api/series/annotations') && u.includes('source=enzyme'))).toBe(true)
     })
+  })
+})
+
+// A group's size is its category's own total (each gene counted once), not
+// the sum of the listed members: members can overlap (a KO in several
+// pathways) and only the top 200 are listed, so the sum came out too high
+// for KEGG and too low for COG.
+describe('AnnotationsByParentPanel — group size is the category\'s own total', () => {
+  function mockWithOwnTotals(own: Record<string, number>) {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top') && url.includes('ids=')) {
+        const ids = new URL(url, 'http://x').searchParams.getAll('ids')
+        return Promise.resolve(jsonResponse({ data: ids.filter(id => id in own).map(id => makeRow(id, '', own[id])) }))
+      }
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve(jsonResponse({
+          data: [makeRow('2.7.1.1', '2.7.1', 10), makeRow('2.7.1.2', '2.7.1', 5), makeRow('3.1.1.1', '3.1.1', 40)],
+        }))
+      return Promise.resolve(jsonResponse({}))
+    })
+  }
+
+  it('ranks and labels groups by the category\'s own total, with the member sum alongside', async () => {
+    mockWithOwnTotals({ '2.7.1': 100, '3.1.1': 50 })
+    render(<AnnotationsByParentPanel source="enzyme" />)
+
+    await waitFor(() => expect(screen.getByText(/total 1\.00e\+2/)).toBeInTheDocument())
+    const counts = screen.getAllByText(/annotations · total/).map(el => el.textContent)
+    // 2.7.1 first (own 100) although its two listed members sum to only 15.
+    expect(counts[0]).toMatch(/2 annotations · total 1\.00e\+2 · Σ listed 1\.50e\+1/)
+    expect(counts[1]).toMatch(/1 annotations · total 5\.00e\+1 · Σ listed 4\.00e\+1/)
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /Summed by parent/i }))
+    expect(screen.getByText('Category mean EGC')).toBeInTheDocument()
+    expect(screen.getByText('Σ listed members')).toBeInTheDocument()
+    const firstRow = screen.getAllByRole('row')[1]
+    expect(within(firstRow).getByText('1.00e+2')).toBeInTheDocument()
+    expect(within(firstRow).getByText('1.50e+1')).toBeInTheDocument()
+  })
+
+  it('asks the server only for categories not already among the listed rows', async () => {
+    mockWithOwnTotals({ '2.7.1': 100, '3.1.1': 50 })
+    render(<AnnotationsByParentPanel source="enzyme" />)
+    await waitFor(() => expect(screen.getByText(/total 1\.00e\+2/)).toBeInTheDocument())
+    const idsCall = mockFetch.mock.calls.map(c => String(c[0])).find(u => u.includes('ids='))!
+    expect(new URL(idsCall, 'http://x').searchParams.getAll('ids').sort()).toEqual(['2.7.1', '3.1.1'])
+  })
+
+  it('falls back to the member sum, marked Σ, when a category\'s own total is unavailable', async () => {
+    mockWithOwnTotals({})
+    render(<AnnotationsByParentPanel source="enzyme" />)
+    await waitFor(() => expect(screen.getAllByText(/annotations · Σ listed/).length).toBe(2))
+    expect(screen.queryByText(/· total /)).not.toBeInTheDocument()
   })
 })

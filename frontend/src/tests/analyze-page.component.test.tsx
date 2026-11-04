@@ -2292,6 +2292,9 @@ describe('ExplorePage — AnnotationsByParentPanel retry', () => {
   it('top-level fetch failure shows a retry button', async () => {
     let topCalls = 0
     mockFetch.mockImplementation((url: string) => {
+      // The groups' own-totals lookup (ids=) is not a list load.
+      if (url.includes('/api/annotations/top') && url.includes('ids='))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [] }) })
       if (url.includes('/api/annotations/top')) {
         topCalls++
         return topCalls === 1

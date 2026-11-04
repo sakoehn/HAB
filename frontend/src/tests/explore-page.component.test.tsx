@@ -1025,8 +1025,12 @@ describe('ExplorePage — a section keeps what it loaded when you switch away an
         : Promise.resolve(jsonResponse({})),
     )
   }
+  // List loads only; the follow-up lookup of the groups' own totals
+  // (ids=) is counted separately.
   const topCalls = (source: string) =>
-    mockFetch.mock.calls.filter(c => String(c[0]).includes('/api/annotations/top') && String(c[0]).includes(`source=${source}`)).length
+    mockFetch.mock.calls.filter(c => String(c[0]).includes('/api/annotations/top') && String(c[0]).includes(`source=${source}`) && !String(c[0]).includes('ids=')).length
+  const ownTotalCalls = (source: string) =>
+    mockFetch.mock.calls.filter(c => String(c[0]).includes('/api/annotations/top') && String(c[0]).includes(`source=${source}`) && String(c[0]).includes('ids=')).length
 
   it('Dataset Overview', async () => {
     mockTop()
@@ -1039,6 +1043,7 @@ describe('ExplorePage — a section keeps what it loaded when you switch away an
     await user.click(screen.getByRole('button', { name: /Dataset Overview/ }))
     expect(screen.getByText(/functional groups/)).toBeVisible()
     expect(topCalls('taxonomy')).toBe(1)
+    expect(ownTotalCalls('taxonomy')).toBe(1)
   })
 
   it('Annotations by Parent', async () => {
@@ -1050,6 +1055,7 @@ describe('ExplorePage — a section keeps what it loaded when you switch away an
     await user.click(screen.getByRole('button', { name: /Annotations by Parent/ }))
     await screen.findByText('P1')
     expect(topCalls('cog')).toBe(1)
+    expect(ownTotalCalls('cog')).toBe(1)
   })
 
   it('Clear Page still starts Annotations by Parent over', async () => {

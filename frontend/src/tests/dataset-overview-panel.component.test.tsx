@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { DatasetOverviewPanel } from '../pages/ExplorePage'
@@ -361,5 +361,56 @@ describe('DatasetOverviewPanel — a chart started for earlier rows is dropped',
     await new Promise(r => setTimeout(r, 50))
 
     expect(screen.getByRole('button', { name: /Load time series/i })).toBeInTheDocument()
+  })
+})
+
+describe('DatasetOverviewPanel — group size is the own total of the category', () => {
+  function mockWithOwnTotals(own: Record<string, number>) {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top') && url.includes('ids=')) {
+        const ids = new URL(url, 'http://x').searchParams.getAll('ids')
+        return Promise.resolve(jsonResponse({ data: ids.filter(id => id in own).map(id => makeRow(id, '', own[id])), sample_count: 128 }))
+      }
+      if (url.includes('/api/annotations/top'))
+        return Promise.resolve(jsonResponse({
+          data: [makeRow('2.7.1.1', '2.7.1', 10), makeRow('2.7.1.2', '2.7.1', 5), makeRow('3.1.1.1', '3.1.1', 40)],
+          sample_count: 128,
+        }))
+      return Promise.resolve(jsonResponse({}))
+    })
+  }
+
+  async function loadEnzymeOverview() {
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByDisplayValue(/taxonomy/i), 'enzyme')
+    await user.click(screen.getByRole('button', { name: /Load Overview/i }))
+    return user
+  }
+
+  it('ranks groups by the own total of the category and shows it, with the member sum on hover', async () => {
+    mockWithOwnTotals({ '2.7.1': 100, '3.1.1': 50 })
+    await loadEnzymeOverview()
+
+    const first = await screen.findByTitle(/Category total 1\.00e\+2/)
+    expect(first).toHaveTextContent('1.00e+2')
+    expect(first.getAttribute('title')).toMatch(/Σ of the 2 listed members: 1\.50e\+1/)
+    const totals = screen.getAllByTitle(/Category total/).map(el => el.textContent)
+    expect(totals).toEqual(['1.00e+2', '5.00e+1'])
+    expect(screen.getByText(/Top Functional Groups by Mean EGC/i)).toBeInTheDocument()
+  })
+
+  it('a date range goes into the request for the own totals of the categories', async () => {
+    mockWithOwnTotals({ '2.7.1': 100, '3.1.1': 50 })
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByDisplayValue(/taxonomy/i), 'enzyme')
+    const [fromInput] = document.querySelectorAll('input[type="date"]')
+    fireEvent.change(fromInput, { target: { value: '2021-06-02' } })
+    await user.click(screen.getByRole('button', { name: /Load Overview/i }))
+
+    await screen.findByTitle(/Category total 1\.00e\+2/)
+    const idsCall = mockFetch.mock.calls.map(c => String(c[0])).find(u => u.includes('ids='))!
+    expect(idsCall).toContain('date_from=2021-06-02')
   })
 })

@@ -943,10 +943,15 @@ def top_annotations_by_egc(
     limit:     int = Query(25, ge=1, le=_TOP_ANN_MAX_LIMIT),
     date_from: str | None = Query(None),
     date_to:   str | None = Query(None),
+    ids:       list[str] | None = Query(None, max_length=_TOP_ANN_MAX_LIMIT),
 ):
     """
     Return the top N annotations by mean EGC, optionally filtered by date range.
     Each result includes mean_egc, max_egc, mean_norm_egc, max_norm_egc.
+
+    `ids` (repeatable) returns just those annotations instead, worked out
+    the same way and over the same dates as the top list, so a page can
+    show a category's own total next to the members it listed. Not cached.
 
     Cached per (source, date_from, date_to). date_from/date_to, if given,
     must parse as a real date (see _parse_any_datetime) -- a bound that
@@ -976,6 +981,18 @@ def top_annotations_by_egc(
             _parse_any_datetime(date_from).isoformat() if date_from else "",
             _parse_any_datetime(date_to).isoformat() if date_to else "",
         )
+
+        if ids:
+            if not date_from and not date_to:
+                rows, n = get_top_annotations_from_catalog_sql(db, source.value, ids), len(samples)
+            else:
+                active_samples = [
+                    s for s in samples
+                    if is_within_date_range((get_timepoint(s) or {}).get("datetime"), date_from, date_to)
+                ]
+                rows = get_top_annotations_sql(db, source.value, active_samples, ids) if active_samples else []
+                n = len(active_samples)
+            return {"source": source.value, "sample_count": n, "date_from": date_from, "date_to": date_to, "data": rows}
 
         cached_entry = _top_ann_cache_get(cache_key)
         if cached_entry is None:
