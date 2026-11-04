@@ -220,6 +220,14 @@ def _spearman_at_lags(ref:  list[float], cand: list[float], lags: list[int], met
 def _bonferroni_correct(p: float, n_tests: int):
     return min(p * n_tests, 1.0)
 
+# The two top-level sections of KEGG's hierarchy file that are not
+# pathways: 09180 "Brite Hierarchies" (protein-family catalogue tables such
+# as 02000 Transporters, 2,000+ KOs) and 09190 "Not Included in Pathway or
+# Brite" (leftover bins such as 99980 Enzymes with EC numbers). Every
+# third-level entry of the other six sections is a [PATH:] map.
+_KEGG_NON_PATHWAY_SECTIONS = ("09180", "09190")
+
+
 def _kegg_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
     """
     annotation_catalog's `parent` column can only hold ONE of a KEGG
@@ -247,7 +255,12 @@ def _kegg_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
         every real sibling (shares at least one of ref's real immediate
         parents -- or, for a depth=1 ref, every other real depth=1 id,
         matching the generic walk's NULL-shared-parent convention for
-        top-level nodes with nothing above them).
+        top-level nodes with nothing above them). A parent inside
+        _KEGG_NON_PATHWAY_SECTIONS makes no siblings: sharing a protein-
+        family table says nothing about the two KOs' totals overlapping,
+        and it would drop every other transporter from a transporter's
+        results. Those tables still count as ancestors (their totals
+        contain ref's genes).
     """
     excluded = {ref_annotation_id}
     depth = _kegg_node_depth(conn, ref_annotation_id)
@@ -271,7 +284,10 @@ def _kegg_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
         excluded.update(r[0] for r in top_level_ids)
     else:
         parent_col_index = depth - 2  # (a_id, b_id, c_id, d_id) index of the column one level shallower
-        real_parents = {row[parent_col_index] for row in rows if row[parent_col_index] is not None}
+        real_parents = {
+            row[parent_col_index] for row in rows
+            if row[parent_col_index] is not None and row[0] not in _KEGG_NON_PATHWAY_SECTIONS
+        }
         if real_parents:
             parent_col, _ = KEGG_LEVEL_COLUMNS[depth - 1]
             placeholders = ",".join("?" * len(real_parents))

@@ -363,6 +363,52 @@ class TestExclusionRules:
         assert 20 not in family_ids  # P1 excluded (a real ancestor)
         assert 21 not in family_ids  # P2 excluded too -- its OTHER real ancestor
 
+    # KEGG's hierarchy file also holds two sections that are not pathways:
+    # 09180 "Brite Hierarchies" (protein-family catalogue tables such as
+    # 02000 Transporters, 2,000+ KOs) and 09190 "Not Included in Pathway or
+    # Brite". Sharing one of those is not a reason to exclude a KO as a
+    # sibling; containment (ancestors/descendants) still is.
+
+    def test_kegg_ko_in_only_a_brite_table_keeps_its_table_mates(self, conn):
+        insert(conn, 40, "kegg", "K_TONB", depth=4)   # ref: only parent is a BRITE table
+        insert(conn, 41, "kegg", "K_ABC", depth=4)    # another transporter
+        insert(conn, 42, "kegg", "02000", depth=3)    # the table itself
+        insert(conn, 43, "kegg", "09183", depth=2)
+        insert(conn, 44, "kegg", "09180", depth=1)
+        insert_kegg_path(conn, a_id="09180", b_id="09183", c_id="02000", d_id="K_TONB")
+        insert_kegg_path(conn, a_id="09180", b_id="09183", c_id="02000", d_id="K_ABC")
+
+        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=40, target_source="kegg")}
+        assert 41 in family_ids          # fellow transporter is a real candidate
+        assert not {42, 43, 44} & family_ids  # the table and its ancestors still excluded
+
+    def test_kegg_ko_in_a_pathway_and_a_bin_excludes_only_pathway_siblings(self, conn):
+        insert(conn, 50, "kegg", "K_HK", depth=4)        # ref: in a pathway and in a 09190 bin
+        insert(conn, 51, "kegg", "K_PATHMATE", depth=4)  # shares the pathway
+        insert(conn, 52, "kegg", "K_BINMATE", depth=4)   # shares only the bin
+        insert(conn, 53, "kegg", "00010", depth=3)
+        insert(conn, 54, "kegg", "99980", depth=3)
+        insert_kegg_path(conn, a_id="09100", b_id="09101", c_id="00010", d_id="K_HK")
+        insert_kegg_path(conn, a_id="09100", b_id="09101", c_id="00010", d_id="K_PATHMATE")
+        insert_kegg_path(conn, a_id="09190", b_id="09191", c_id="99980", d_id="K_HK")
+        insert_kegg_path(conn, a_id="09190", b_id="09191", c_id="99980", d_id="K_BINMATE")
+
+        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=50, target_source="kegg")}
+        assert 51 not in family_ids  # pathway sibling excluded
+        assert 52 in family_ids      # bin-mate kept
+        assert not {53, 54} & family_ids  # both of ref's parents still excluded as ancestors
+
+    def test_kegg_brite_table_as_ref_excludes_its_members_not_other_tables(self, conn):
+        insert(conn, 60, "kegg", "02000", depth=3)   # ref: Transporters table
+        insert(conn, 61, "kegg", "01001", depth=3)   # Protein kinases table, same B parent
+        insert(conn, 62, "kegg", "K_TONB", depth=4)  # member of the ref table
+        insert_kegg_path(conn, a_id="09180", b_id="09183", c_id="02000", d_id="K_TONB")
+        insert_kegg_path(conn, a_id="09180", b_id="09183", c_id="01001")
+
+        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=60, target_source="kegg")}
+        assert 62 not in family_ids  # its own member: contained, so excluded
+        assert 61 in family_ids      # another catalogue table is not a sibling
+
     def test_kegg_unknown_ref_id_returns_self_exclusion_only_not_a_crash(self, conn):
         # ref exists in annotation_catalog but was never real enough to
         # make it into kegg_paths (e.g. filtered out at migration time) --
