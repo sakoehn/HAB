@@ -65,12 +65,14 @@ EXPECTED_ROW_KEYS = {
     "source", "annotation_id", "name", "parent", "depth",
     "mean_egc", "max_egc", "mean_norm_egc", "max_norm_egc", "sample_count",
     "category", "scaffold_count",
+    "match",  # added by the route: exact / starts / contains
 }
 
 
 def test_search_returns_correct_shape(client):
     """Response envelope has the expected top-level keys, and every row in
-    `data` has exactly get_search_annotations()'s 12 fields -- see the
+    `data` has exactly get_search_annotations()'s 12 fields plus the
+    route's `match` -- see the
     module docstring for why this deliberately does NOT include
     sample/timepoint/value the way the JSON branch's rows do."""
     resp = client.get(
@@ -164,17 +166,20 @@ def test_pagination_slices_correctly(client):
     assert body1["total"] > 5
 
 
-def test_results_sorted_by_mean_egc_descending(client):
-    """body["data"]'s mean_egc values are non-increasing -- same idea as
-    test_mappings_search_route.py's chronological-sort test, just a
-    numeric comparison instead of a timepoint one."""
+_MATCH_TIER = {"exact": 0, "starts": 1, "contains": 2}
+
+
+def test_results_closest_matches_first_then_by_mean_egc(client):
+    """Every row says how closely it matched; rows come exact, then starts
+    with, then contains, and by mean_egc (descending) within each group."""
     resp = client.get(
             "/search/annotations",
-            params={"q": "iron", "sources": ["cog", "kegg"]},
+            params={"q": "iron", "sources": ["cog", "kegg"], "page_size": 5000},
     )
     body = resp.json()['data']
-    is_descending = all(body[i]["mean_egc"] >= body[i + 1]["mean_egc"] for i in range(len(body) - 1))
-    assert is_descending
+    keys = [(_MATCH_TIER[r["match"]], -r["mean_egc"]) for r in body]
+    assert keys == sorted(keys)
+    assert {r["match"] for r in body} >= {"starts", "contains"}
 
 
 # page/page_size must be bounded -- page_size=0 divides by zero in
@@ -304,3 +309,36 @@ def test_prefixed_exact_annotation_id(client):
 def test_a_bare_prefix_is_searched_as_text_not_rejected(client):
     resp = client.get("/search/annotations", params={"q": "EC:", "sources": ["kegg"]})
     assert resp.status_code == 200
+
+
+# Closest matches first: an exact id or name, then ids/names starting with
+# the text, then the rest, by mean EGC within each group. Abundance alone
+# buried exact ids under longer ones that contain them (2.7.1.1 was 43rd of
+# 62, behind 2.7.1.10 ... 2.7.1.199) and off the 25-row Lookup page.
+
+@pytest.mark.parametrize("typed", ["2.7.1.1", "EC:2.7.1.1"])
+def test_exact_ec_number_comes_first_and_on_the_first_page(client, typed):
+    body = client.get("/search/annotations", params={"q": typed, "sources": ["enzyme"], "page_size": 25}).json()
+    assert body["total"] > 25
+    assert (body["data"][0]["annotation_id"], body["data"][0]["match"]) == ("2.7.1.1", "exact")
+    assert all(r["match"] != "exact" for r in body["data"][1:])
+
+
+def test_kegg_gene_symbol_counts_as_an_exact_name(client):
+    """KO names read "psbA; photosystem II ..." -- the gene symbol before
+    the ';' is what people type."""
+    body = client.get("/search/annotations", params={"q": "psba", "sources": ["kegg"]}).json()
+    assert (body["data"][0]["annotation_id"], body["data"][0]["match"]) == ("K02703", "exact")
+
+
+def test_name_starting_with_the_text_beats_a_more_abundant_mention(client):
+    body = client.get("/search/annotations", params={"q": "nitrogen", "sources": ["kegg", "cog", "enzyme"]}).json()
+    assert body["data"][0]["annotation_id"] == "00910"  # Nitrogen metabolism
+    assert body["data"][0]["match"] == "starts"
+
+
+def test_exact_taxon_name_comes_before_longer_names(client):
+    body = client.get("/search/annotations", params={"q": "Synechococcus", "sources": ["taxonomy"]}).json()
+    first = body["data"][0]
+    assert first["name"] == "Synechococcus" and first["match"] == "exact"
+    assert body["data"][1]["match"] != "exact" or body["data"][1]["name"] == "Synechococcus"

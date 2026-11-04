@@ -137,6 +137,9 @@ export type TopAnnotation = {
   // Also only on /api/search/annotations rows — a single-source
   // /annotations/top request has no need to repeat its own source per row.
   source?:        string
+  // Only on /api/search/annotations rows: how closely the row matched the
+  // search text. Results come exact first, then starts, then contains.
+  match?:         'exact' | 'starts' | 'contains'
   // Top-level fields from /api/search/annotations (see
   // resolveLookupCategory/resolveLookupScaffoldCount in utils/stats.ts,
   // which also accept the nested `value` shape). category is exact

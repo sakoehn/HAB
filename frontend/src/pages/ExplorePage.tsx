@@ -1350,10 +1350,13 @@ export function ExplorePage({
       const r   = await apiFetch<{ data: TopAnnotation[]; total: number }>(url)
       if (requestId !== lookupRequestSeqRef.current) return // superseded
       const results = r.data ?? []
+      // Open the result straight away when it's the only one, or the only
+      // exact match for an id or name (the server lists exact matches first).
+      const exact = results.filter(x => x.match === 'exact')
       setState(prev => ({
         ...prev,
         lookupResults:      results,
-        lookupSelected:     results.length === 1 ? results[0] : null,
+        lookupSelected:     results.length === 1 ? results[0] : exact.length === 1 ? exact[0] : null,
         lookupTotal:        r.total ?? results.length,
         lookupLoadedSource: requestedSource,
         lookupStatus:       'ok',
@@ -1897,8 +1900,8 @@ export function ExplorePage({
                 color:        'var(--text-dim)',
                 marginBottom: 16,
               }}>
-                Search by ID, name, or keyword — exact IDs return one result;
-                general terms return a ranked list.
+                Search by ID, name, or keyword — an exact ID or name opens straight away;
+                other terms return a list, closest matches first.
               </p>
 
               <div style={{
@@ -2038,7 +2041,7 @@ export function ExplorePage({
                       {state.lookupRankFilter.size === 0 && state.lookupTotal > state.lookupResults.length &&
                         ` · showing ${state.lookupResults.length}`}
                       {' · click to view details'}
-                      {' · sorted by mean EGC'}
+                      {' · closest matches first, then by mean EGC'}
                       <HelpTooltip text="EGC here is the mean across samples where the annotation was actually detected, not all 128 -- an annotation detected in only a few samples can rank above one detected everywhere. Check the (N/128) next to a row's number, when shown, before comparing two rows' rank." />
                     </div>
                     <div style={{

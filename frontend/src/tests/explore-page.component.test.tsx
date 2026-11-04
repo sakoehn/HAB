@@ -287,7 +287,7 @@ describe('ExplorePage — Annotation Lookup detection-count disclosure', () => {
     expect(screen.getByText('(9/128)')).toBeInTheDocument()
     expect(screen.queryByText('(128/128)')).not.toBeInTheDocument()
     expect(screen.getByTitle('Mean when detected, across 9 of 128 samples')).toBeInTheDocument()
-    expect(screen.getByText(/sorted by mean EGC/i)).toBeInTheDocument()
+    expect(screen.getByText(/closest matches first, then by mean EGC/i)).toBeInTheDocument()
   })
 })
 
@@ -948,6 +948,41 @@ describe('ExplorePage — rank filters reset when new rows load', () => {
 
     await waitFor(() => expect(screen.getByText('09130')).toBeInTheDocument())
     expect(screen.getByText('09140')).toBeInTheDocument()
+  })
+})
+
+describe('ExplorePage — Annotation Lookup opens an exact match', () => {
+  function lookupRows(firstMatch: string) {
+    return [
+      { annotation_id: '2.7.1.1', source: 'enzyme', name: 'hexokinase', parent: '2.7.1', depth: 4, mean_egc: 10, max_egc: 20, sample_count: 80, match: firstMatch },
+      { annotation_id: '2.7.1.170', source: 'enzyme', name: 'anhydro-N-acetylmuramic acid kinase', parent: '2.7.1', depth: 4, mean_egc: 900, max_egc: 1000, sample_count: 128, match: 'starts' },
+    ]
+  }
+
+  it('selects the one exact match even when the search also found longer ids', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) =>
+      Promise.resolve(jsonResponse(url.includes('/api/search/annotations') ? { data: lookupRows('exact'), total: 62 } : {})))
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'enzyme' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID/i), '2.7.1.1')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    expect(await screen.findByRole('button', { name: /View Timeseries in Analyze/i })).toBeInTheDocument()
+    expect(screen.getByText(/closest matches first, then by mean EGC/i)).toBeInTheDocument()
+  })
+
+  it('selects nothing when no result is an exact match', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) =>
+      Promise.resolve(jsonResponse(url.includes('/api/search/annotations') ? { data: lookupRows('starts'), total: 62 } : {})))
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'enzyme' }} />)
+
+    await user.type(screen.getByPlaceholderText(/ID/i), '2.7.1')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    await screen.findByText('2.7.1.170')
+    expect(screen.queryByRole('button', { name: /View Timeseries in Analyze/i })).not.toBeInTheDocument()
   })
 })
 

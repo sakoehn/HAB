@@ -609,6 +609,26 @@ def mappings_export(
     )
 
 
+_MATCH_TIERS = {"exact": 0, "starts": 1, "contains": 2}
+
+
+def _search_match(row: dict, text: str) -> str:
+    """How closely a search result matches the typed text: "exact" (the id
+    or name is the text, or for a KEGG ortholog one of the gene symbols
+    before the ';' in its name, e.g. "psbA"), "starts" (the id or name
+    starts with it) or "contains". Case-insensitive. A taxonomy id is the
+    whole lineage, so only the taxon's own name counts there."""
+    text = text.lower()
+    name = (row.get("name") or "").lower()
+    ids = [] if row["source"] == "taxonomy" else [row["annotation_id"].lower()]
+    symbols = [s.strip() for s in name.split(";", 1)[0].split(",")] if row["source"] == "kegg" and ";" in name else []
+    if text in ids or text == name or text in symbols:
+        return "exact"
+    if any(i.startswith(text) for i in ids) or name.startswith(text):
+        return "starts"
+    return "contains"
+
+
 @router.get("/search/annotations")
 def search_annotations(
     request:Request,
@@ -627,9 +647,11 @@ def search_annotations(
     """
     Search across all samples for one or more annotation sources.
 
-    Queries `annotation_series` directly with LIKE (native substring
-    matching) and sorts by mean_egc. A `q` shorter than 3 characters is an
-    exact, case-insensitive ID lookup instead (COG letters, EC classes).
+    Substring match (LIKE) on id or name; a leading KO:/EC: is ignored.
+    Each row's `match` says how close it is (exact, starts, contains);
+    rows are ordered closest first, by mean_egc within each group. A `q`
+    shorter than 3 characters is an exact, case-insensitive ID lookup
+    instead (COG letters, EC classes).
     """
     if not q and not annotation_id and not name_exact:
         raise HTTPException(
@@ -655,7 +677,11 @@ def search_annotations(
         results = get_search_annotations(db, source_values, search_q, search_id, name_exact)
     finally:
         close_sql_connection(db)
-    results.sort(key=lambda r: r.get("mean_egc") or 0, reverse=True)
+    for row in results:
+        row["match"] = _search_match(row, search_q) if search_q is not None else "exact"
+    # Closest matches first, most abundant first within each group, before
+    # paginating, so a short page (Lookup shows 25) always holds them.
+    results.sort(key=lambda r: (_MATCH_TIERS[r["match"]], -(r.get("mean_egc") or 0)))
     return {
         "query":         q,
         "annotation_id": annotation_id,
