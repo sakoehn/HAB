@@ -28,6 +28,10 @@ import { taxonomyDomainFromId } from '../../utils/taxonomy'
 import { apiFetch } from '../../utils/api'
 import { ExternalLink } from '../ui/ExternalLinks'
 import { HelpTooltip } from '../ui/HelpTooltip'
+import { METHODS_FACTS } from '../../pages/methodsFacts'
+
+// The widest lag the search tries (backend CORRELATION_LAGS).
+const MAX_LAG_SAMPLES = Math.max(...METHODS_FACTS.correlationLags)
 import { Skeleton } from '../ui/Skeleton'
 
 const METHOD_LABEL: Record<CorrMethod, string> = {
@@ -179,14 +183,25 @@ export function CorrelatesPanel({
     })
   }
 
-  const fmtLag = (hours: number) => {
+  const fmtLag = (hours: number, samples: number) => {
     if (hours === 0) return 'no lag'
     const abs = Math.abs(hours)
     const dir = hours > 0 ? 'leads by' : 'lags by'
     // Nominal: whole samples x 4 h, which the sampling gaps stretch for a
-    // few pairs (see the Methods page).
-    return `${dir} ≈${abs}h`
+    // few pairs (see the Methods page). At the edge of the search the real
+    // offset may be longer than the window, hence "+".
+    return `${dir} ≈${abs}h${Math.abs(samples) === MAX_LAG_SAMPLES ? '+' : ''}`
   }
+
+  const lagTitle = (samples: number, significant: boolean) => [
+    'Time offset, nominal at 4 h per sample. Positive = candidate peaks earlier.',
+    Math.abs(samples) === MAX_LAG_SAMPLES
+      ? 'At the limit of the search: the real offset may be longer.'
+      : '',
+    significant
+      ? ''
+      : 'Not significant, so this lag is mostly chance: the best of the 13 shifts tends to land near the edge of the window.',
+  ].filter(Boolean).join(' ')
 
   return (
     <div style={{ marginTop: 10 }}>
@@ -404,11 +419,11 @@ export function CorrelatesPanel({
                             {posR ? '+' : ''}{row.r.toFixed(3)}
                           </span>
                           <span
-                            className="corr-stat-meta"
-                            title="Time offset, nominal at 4 h per sample. Positive = candidate peaks earlier."
+                            className={`corr-stat-meta ${row.significant ? '' : 'corr-stat-meta-ns'}`}
+                            title={lagTitle(row.lag_samples, row.significant)}
                           >
-                            {fmtLag(row.lag_hours)}
-                            <HelpTooltip text="Positive lag = the other annotation tends to peak earlier than this one. Negative = it peaks later. The hours are nominal: the lag shifts by whole samples, counted as 4 h each, and three gaps in the sampling (10–13 June) put the few pairs that span them up to 8 h further apart. See the Methods page." />
+                            {fmtLag(row.lag_hours, row.lag_samples)}
+                            <HelpTooltip text="Positive lag = the other annotation tends to peak earlier than this one. Negative = it peaks later. The hours are nominal: the lag shifts by whole samples, counted as 4 h each, and three gaps in the sampling (10–13 June) put the few pairs that span them up to 8 h further apart. “24h+” means the search stopped at its limit, so the real offset may be longer. For a match that is not significant the lag is faded: it is mostly chance and tends to land near the edge of the window. See the Methods page." />
                           </span>
                           <span
                             className={`corr-stat-p ${row.significant ? 'corr-stat-sig' : 'corr-stat-ns'}`}

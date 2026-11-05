@@ -267,7 +267,13 @@ export function MethodsPage() {
             ({METHODS_FACTS.lagHoursPerSample} h per sample): three gaps in the sampling
             (8 h twice on 10–11 June, 12 h on 12–13 June) put the few pairs that span them
             further apart, by up to 8 h at any lag (e.g. 16–20 h for a 12 h lag, 28–32 h for
-            24 h). At the longest lag that is about 1 in 10 of the pairs. Because the best of several tries is kept, that lag’s p-value is
+            24 h). At the longest lag that is about 1 in 10 of the pairs. For a real
+            relationship the kept lag is its delay. When a match is not significant the
+            kept lag is mostly chance: the largest of several noisy r values tends to fall at
+            the edge of the window, so the panel fades it (in one cached set of 7,848 pairs,
+            40% of those with p ≥ 0.05 came out at ±20–24 h, against 10% of those with
+            p &lt; 0.05). A lag at the edge of the window is shown as 24h+, since the real delay may
+            be longer than the search reaches. Because the best of several tries is kept, that lag’s p-value is
             Bonferroni-corrected — but not always by {N_LAGS}. For smooth series r barely
             changes from one lag to the next, so the {N_LAGS} lags are really only a few
             separate tests. Each pair is charged for the number of separate tests its lags are

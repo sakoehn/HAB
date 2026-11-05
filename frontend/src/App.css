@@ -1588,6 +1588,8 @@ select.field { cursor: pointer; }
   color: var(--text-dim);
   white-space: nowrap;
 }
+/* A non-significant match's lag is mostly chance. */
+.corr-stat-meta-ns { opacity: .5; }
 
 .corr-stat-p {
   font: 600 10.5px var(--mono);

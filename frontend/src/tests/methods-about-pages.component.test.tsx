@@ -59,6 +59,16 @@ describe('MethodsPage', () => {
     expect(text).not.toContain('up to a full day')
   })
 
+  // For an unrelated pair the best-|r| lag is mostly chance and tends to
+  // the window edge; a lag at the edge may really be longer.
+  it('says the lag of a non-significant pair is mostly chance, and what an edge lag means', () => {
+    const { container } = render(<MethodsPage />)
+    const text = container.textContent ?? ''
+    expect(text).toMatch(/not significant[^.]*chance/i)
+    expect(text).toMatch(/edge of the window/i)
+    expect(text).toContain('24h+')
+  })
+
   it('states the real result limits', () => {
     const { container } = render(<MethodsPage />)
     const text = container.textContent ?? ''

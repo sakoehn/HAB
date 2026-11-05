@@ -272,6 +272,42 @@ describe('CorrelatesPanel — full ranked list with significance marked', () => 
     expect(screen.getByText('leads by ≈12h').closest('[title]')!.getAttribute('title')).toMatch(/nominal/i)
   })
 
+  // The search stops at ±6 samples, so a lag there may really be longer.
+  it('marks a lag at the edge of the search as 24h+', async () => {
+    await openWith({
+      results: [
+        { ...row(1, 'COG0001', 0.92, 0.001), lag_samples: 6, lag_hours: 24 },
+        { ...row(2, 'COG0002', 0.81, 0.002), lag_samples: -6, lag_hours: -24 },
+        { ...row(3, 'COG0003', 0.71, 0.003), lag_samples: 5, lag_hours: 20 },
+      ],
+      significant_count: 3, tested_count: 3,
+    })
+
+    expect(await screen.findByText('leads by ≈24h+')).toBeInTheDocument()
+    expect(screen.getByText('lags by ≈24h+')).toBeInTheDocument()
+    expect(screen.getByText('leads by ≈20h')).toBeInTheDocument()
+    expect(screen.getByText('leads by ≈24h+').closest('[title]')!.getAttribute('title')).toMatch(/limit of the search/i)
+  })
+
+  // For an unrelated pair the best of the 13 shifts is mostly chance (and
+  // tends to the window edge), so a non-significant row's lag is faded.
+  it('fades the lag of a non-significant row and says why', async () => {
+    await openWith({
+      results: [
+        { ...row(1, 'COG0001', 0.92, 0.001), lag_samples: 1, lag_hours: 4 },
+        { ...row(2, 'COG0002', 0.41, 0.6), lag_samples: 5, lag_hours: 20 },
+      ],
+      significant_count: 1, tested_count: 2,
+    })
+
+    const sig = (await screen.findByText('leads by ≈4h')).closest('[title]')!
+    const ns  = screen.getByText('leads by ≈20h').closest('[title]')!
+    expect(sig.className).not.toContain('corr-stat-meta-ns')
+    expect(ns.className).toContain('corr-stat-meta-ns')
+    expect(ns.getAttribute('title')).toMatch(/chance/i)
+    expect(sig.getAttribute('title')).not.toMatch(/chance/i)
+  })
+
   it('says how many of the tested candidates are significant', async () => {
     await openWith({
       results: [row(1, 'COG0001', 0.92, 0.001), row(2, 'COG0002', 0.61, 0.4)],
