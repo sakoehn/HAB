@@ -262,8 +262,12 @@ export function MethodsPage() {
             formula={`${N_LAGS} lags: 0 to ±${MAX_LAG} samples (0–${MAX_LAG * METHODS_FACTS.lagHoursPerSample} h at ${METHODS_FACTS.lagHoursPerSample} h per sample)`}
           >
             Each candidate is scored at {N_LAGS} lags — every offset from 0 to ±{MAX_LAG}{' '}
-            samples, i.e. up to a full day of lead or lag — and the lag with the largest |r|
-            is kept. Because the best of several tries is kept, that lag’s p-value is
+            samples, i.e. about a day of lead or lag — and the lag with the largest |r|
+            is kept. A lag shifts one series by whole samples, so its hours are nominal
+            ({METHODS_FACTS.lagHoursPerSample} h per sample): three gaps in the sampling
+            (8 h twice on 10–11 June, 12 h on 12–13 June) put the few pairs that span them
+            further apart, by up to 8 h at any lag (e.g. 16–20 h for a 12 h lag, 28–32 h for
+            24 h). At the longest lag that is about 1 in 10 of the pairs. Because the best of several tries is kept, that lag’s p-value is
             Bonferroni-corrected — but not always by {N_LAGS}. For smooth series r barely
             changes from one lag to the next, so the {N_LAGS} lags are really only a few
             separate tests. Each pair is charged for the number of separate tests its lags are

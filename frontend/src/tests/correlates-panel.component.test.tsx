@@ -254,6 +254,24 @@ describe('CorrelatesPanel — full ranked list with significance marked', () => 
     expect(screen.getByText('COG0002')).toBeInTheDocument()
   })
 
+  // Lag hours are samples x 4 h, which the sampling gaps stretch for a
+  // few pairs, so a non-zero lag is shown as approximate; zero is exact.
+  it('shows a non-zero lag as approximate hours and zero as no lag', async () => {
+    await openWith({
+      results: [
+        { ...row(1, 'COG0001', 0.92, 0.001), lag_samples: 3, lag_hours: 12 },
+        { ...row(2, 'COG0002', 0.81, 0.002), lag_samples: -2, lag_hours: -8 },
+        row(3, 'COG0003', 0.71, 0.003),
+      ],
+      significant_count: 3, tested_count: 3,
+    })
+
+    expect(await screen.findByText('leads by ≈12h')).toBeInTheDocument()
+    expect(screen.getByText('lags by ≈8h')).toBeInTheDocument()
+    expect(screen.getByText('no lag')).toBeInTheDocument()
+    expect(screen.getByText('leads by ≈12h').closest('[title]')!.getAttribute('title')).toMatch(/nominal/i)
+  })
+
   it('says how many of the tested candidates are significant', async () => {
     await openWith({
       results: [row(1, 'COG0001', 0.92, 0.001), row(2, 'COG0002', 0.61, 0.4)],

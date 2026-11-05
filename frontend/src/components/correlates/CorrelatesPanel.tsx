@@ -183,7 +183,9 @@ export function CorrelatesPanel({
     if (hours === 0) return 'no lag'
     const abs = Math.abs(hours)
     const dir = hours > 0 ? 'leads by' : 'lags by'
-    return `${dir} ${abs}h`
+    // Nominal: whole samples x 4 h, which the sampling gaps stretch for a
+    // few pairs (see the Methods page).
+    return `${dir} ≈${abs}h`
   }
 
   return (
@@ -403,10 +405,10 @@ export function CorrelatesPanel({
                           </span>
                           <span
                             className="corr-stat-meta"
-                            title="Time offset. Positive = candidate peaks earlier."
+                            title="Time offset, nominal at 4 h per sample. Positive = candidate peaks earlier."
                           >
                             {fmtLag(row.lag_hours)}
-                            <HelpTooltip text="Positive lag = the other annotation tends to peak earlier than this one. Negative = it peaks later." />
+                            <HelpTooltip text="Positive lag = the other annotation tends to peak earlier than this one. Negative = it peaks later. The hours are nominal: the lag shifts by whole samples, counted as 4 h each, and three gaps in the sampling (10–13 June) put the few pairs that span them up to 8 h further apart. See the Methods page." />
                           </span>
                           <span
                             className={`corr-stat-p ${row.significant ? 'corr-stat-sig' : 'corr-stat-ns'}`}

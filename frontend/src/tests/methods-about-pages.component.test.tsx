@@ -49,6 +49,16 @@ describe('MethodsPage', () => {
     expect(text).not.toMatch(/1000 random/i)
   })
 
+  // A lag shifts by whole samples, and the three sampling gaps (8 h, 8 h,
+  // 12 h) make some shifted pairs further apart than samples x 4 h.
+  it('says lag hours are nominal and how far the sampling gaps stretch them', () => {
+    const { container } = render(<MethodsPage />)
+    const text = container.textContent ?? ''
+    expect(text).toMatch(/nominal/i)
+    expect(text).toContain('up to 8 h')
+    expect(text).not.toContain('up to a full day')
+  })
+
   it('states the real result limits', () => {
     const { container } = render(<MethodsPage />)
     const text = container.textContent ?? ''

@@ -1974,11 +1974,12 @@ describe('CorrelatesPanel', () => {
   it('lag value has a help tooltip explaining the sign convention', async () => {
     await renderWithChartAndWait()
     await userEvent.click(screen.getByText(/Find Correlates/i))
-    const lagStat = await screen.findByTitle('Time offset. Positive = candidate peaks earlier.')
+    const lagStat = await screen.findByTitle('Time offset, nominal at 4 h per sample. Positive = candidate peaks earlier.')
     await userEvent.click(within(lagStat).getByTitle('Help'))
     await waitFor(() => {
       expect(screen.getByText(/tends to peak earlier than this one/i)).toBeInTheDocument()
     })
+    expect(screen.getAllByText(/hours are nominal/i).length).toBeGreaterThan(0)
   })
 
   it('low-n "⚠ n<30" badge has a help tooltip', async () => {
