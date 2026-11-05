@@ -175,7 +175,9 @@ export function MethodsPage() {
           <Item title="Z-score Normalisation" formula="Z = ( value − μ ) / σ   where σ = population standard deviation (÷ n)">
             Centres each series at zero and scales it by its own spread. A value of +2 means
             2 standard deviations above that annotation’s mean across the bloom. Best for
-            comparing trend shapes of annotations with very different magnitudes. A series
+            comparing trend shapes of annotations with very different magnitudes. The mean
+            and spread always come from the whole series, so narrowing the date range or
+            unticking timepoints hides points without changing any point’s Z. A series
             with fewer than 2 points is left unstandardised (and labelled as such).
           </Item>
           <Item

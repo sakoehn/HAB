@@ -135,6 +135,19 @@ export function MultiEgcChart({
     return Object.values(dtMap).sort((a, b) => a._ts - b._ts)
   }, [series, dateFrom, dateTo, allSamples])
 
+  // {series id: the values its Z-score takes its mean and spread from}:
+  // the whole series, not just the samples inside the date range, so a
+  // sample's Z is the same however the chart is zoomed.
+  const zScoreBasis = useMemo(() => {
+    const basis: Record<string, (number | null)[]> = {}
+    for (const s of series) {
+      basis[s.id] = s.data
+        .filter(d => d.timepoint?.datetime)
+        .map(d => metric === 'norm_egc' ? extractNormEgc(d.value) : extractEgc(d.value))
+    }
+    return basis
+  }, [series, metric])
+
   // unsmoothed is the metric/standardize
   // pipeline WITHOUT LOWESS -- stats (perSeriesVals below) read this, so
   // toggling Smooth never changes the reported numbers, only the drawn
@@ -157,11 +170,11 @@ export function MultiEgcChart({
           ts:       row._ts,
         }))
       }
-      if (standardize) processed = applyZScore(processed) as typeof processed
+      if (standardize) processed = applyZScore(processed, zScoreBasis[s.id]) as typeof processed
       rows = rows.map((row, i) => ({ ...row, [s.id]: processed[i].egc }))
     }
     return rows
-  }, [baseRows, metric, standardize, series])
+  }, [baseRows, metric, standardize, series, zScoreBasis])
 
   // applyZScore is a silent no-op for a series with fewer than 2 real
   // points -- per series here, since each series is standardized
@@ -173,8 +186,8 @@ export function MultiEgcChart({
   // when at least one series qualifies -- same shared-label limitation
   // the axis title already has for mixed per-series metrics elsewhere.
   const canStandardizeSeries = useCallback(
-    (id: string) => canApplyZScore(unsmoothedRows.map(r => (r[id] as number | null) ?? null)),
-    [unsmoothedRows],
+    (id: string) => canApplyZScore(zScoreBasis[id] ?? []),
+    [zScoreBasis],
   )
   const standardizeApplied = standardize && series.some(s => canStandardizeSeries(s.id))
 

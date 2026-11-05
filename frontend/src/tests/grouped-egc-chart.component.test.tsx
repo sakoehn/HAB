@@ -273,3 +273,44 @@ describe('GroupedEgcChart — Z-score is a no-op with fewer than 2 real summed p
     expect(screen.getAllByText(/Summed EGC \(Z-score\)/).length).toBeGreaterThan(0)
   })
 })
+
+// The summed series' Z-score is taken over the whole series, not over the
+// samples inside the date range: a sample keeps the same Z however the
+// chart is zoomed, as the Methods page states.
+describe('GroupedEgcChart — Z-score does not depend on the date range shown', () => {
+  it('a narrowed range keeps each sample at its whole-series Z', async () => {
+    const user = userEvent.setup()
+    // Summed 10, 10, 20, 20: mean 15, SD 5, so the two later samples are
+    // +1 each (0 if standardised over only them).
+    render(
+      <GroupedEgcChart
+        groupLabel="Test Group"
+        allSeries={[
+          {
+            annotationId: 'A', name: 'A', color: '#000',
+            data: [
+              makePoint('A', '5/27/21 8:00', 4), makePoint('A', '5/28/21 8:00', 4),
+              makePoint('A', '6/1/21 8:00', 8), makePoint('A', '6/2/21 8:00', 8),
+            ],
+          },
+          {
+            annotationId: 'B', name: 'B', color: '#111',
+            data: [
+              makePoint('B', '5/27/21 8:00', 6), makePoint('B', '5/28/21 8:00', 6),
+              makePoint('B', '6/1/21 8:00', 12), makePoint('B', '6/2/21 8:00', 12),
+            ],
+          },
+        ]}
+      />,
+    )
+    await selectRawEgc(user)
+    await user.click(screen.getByRole('button', { name: /Z-score/i }))
+    expect(statValue('Mean')).toBeCloseTo(0)
+
+    const [fromInput] = screen.getAllByDisplayValue('')
+    await user.type(fromInput, '2021-05-30')
+
+    expect(screen.getByText(/2 timepoints/)).toBeInTheDocument()
+    expect(statValue('Mean')).toBeCloseTo(1)
+  })
+})

@@ -18,13 +18,17 @@
 // EGC magnitudes.
 //
 // Returns 0 for all points when std dev = 0 (flat series — no variation).
+//
+// `over` is the series the mean and std dev come from, when `data` is only
+// part of it: the charts pass the whole series and standardise just the
+// points inside the date range, so a sample's Z does not change with the
+// range shown. Defaults to `data` itself.
 
 export function applyZScore(
   data: { egc: number | null }[],
+  over: (number | null)[] = data.map(d => d.egc),
 ): { egc: number | null }[] {
-  const vals = data
-    .map(d => d.egc)
-    .filter((v): v is number => v !== null)
+  const vals = over.filter((v): v is number => v !== null)
 
   if (vals.length < 2) return data
 
@@ -49,7 +53,8 @@ export function applyZScore(
 // title/tooltip as if standardization happened would mislabel a raw value
 // (e.g. nifH, K02588, 1 sample: its raw 1.13e-7 EGC value shown as
 // "0.000σ"). Callers should check this
-// (using the SAME array applyZScore was/would be given -- point count is
+// (using the SAME values applyZScore takes its mean from -- its `over`
+// when given, otherwise its input -- point count is
 // unaffected by whether standardization actually ran) and fall back to the
 // un-standardized label/tooltip format when it returns false, instead of
 // trusting the raw `standardize` toggle state alone.

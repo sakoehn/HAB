@@ -69,56 +69,62 @@ export function GroupedEgcChart({
   // same reasoning as EgcChart/MultiEgcChart), tracks how many members
   // actually contributed at each timepoint, and leaves egc explicitly null
   // when that count is 0.
-  const summedPoints = useMemo(() => {
+  //
+  // Summed over every sample; summedPoints below keeps the date range.
+  const summedAllPoints = useMemo(() => {
     // When metric is norm_egc, sum norm_egc (egc / total_sample_depth) per
     // datetime for true depth-normalised group abundance. Otherwise sum raw egc.
     const useNormEgc = metric === 'norm_egc'
     const dtMap: Record<string, { egc: number | null; datetime: string; iso: string; membersDetected: number }> = {}
     for (const entry of allSamples ?? []) {
-      const iso = isoDate(entry.datetime)
-      if (dateFrom && iso < dateFrom) continue
-      if (dateTo   && iso > dateTo)   continue
       const dt = entry.datetime
-      if (!dtMap[dt]) dtMap[dt] = { egc: null, datetime: dt, iso, membersDetected: 0 }
+      if (!dtMap[dt]) dtMap[dt] = { egc: null, datetime: dt, iso: isoDate(dt), membersDetected: 0 }
     }
     for (const s of allSeries) {
       for (const d of s.data) {
         if (!d.timepoint?.datetime) continue
-        const iso = isoDate(d.timepoint.datetime)
-        if (dateFrom && iso < dateFrom) continue
-        if (dateTo   && iso > dateTo)   continue
         const val = useNormEgc ? extractNormEgc(d.value) : extractEgc(d.value)
         if (val === null) continue
         const dt = d.timepoint.datetime
-        if (!dtMap[dt]) dtMap[dt] = { egc: null, datetime: dt, iso, membersDetected: 0 }
+        if (!dtMap[dt]) dtMap[dt] = { egc: null, datetime: dt, iso: isoDate(dt), membersDetected: 0 }
         dtMap[dt].egc = (dtMap[dt].egc ?? 0) + val
         dtMap[dt].membersDetected += 1
       }
     }
     return Object.values(dtMap)
       .sort((a, b) => parseDateTime(a.datetime) - parseDateTime(b.datetime))
+  }, [allSeries, metric, allSamples])
+
+  const summedPoints = useMemo(() =>
+    summedAllPoints
+      .filter(p => (!dateFrom || p.iso >= dateFrom) && (!dateTo || p.iso <= dateTo))
       .map(({ egc, datetime, membersDetected }) => ({
         date:     fmtDate(datetime),
         egc,
         datetime,
         ts:       parseDateTime(datetime),
         membersDetected,
-      }))
-  }, [allSeries, dateFrom, dateTo, metric, allSamples])
+      })),
+  [summedAllPoints, dateFrom, dateTo])
+
+  // The values the Z-score takes its mean and spread from: the whole summed
+  // series, not just the samples inside the date range, so a sample's Z is
+  // the same however the chart is zoomed.
+  const zScoreBasis = useMemo(() => summedAllPoints.map(p => p.egc), [summedAllPoints])
 
   // unsmoothed is the metric/standardize
   // pipeline WITHOUT LOWESS -- stats read this, so toggling Smooth never
   // changes the reported numbers, only the drawn curve.
   const unsmoothedPointsRaw = useMemo(() => {
-    // The metric swap is handled upstream in summedPoints so it is absent here.
+    // The metric swap is handled upstream in summedAllPoints so it is absent here.
     let pts = summedPoints as { egc: number | null; datetime: string; ts: number; date: string; membersDetected: number }[]
-    if (standardize) pts = applyZScore(pts) as typeof pts
+    if (standardize) pts = applyZScore(pts, zScoreBasis) as typeof pts
     return pts
-  }, [summedPoints, standardize])
+  }, [summedPoints, standardize, zScoreBasis])
 
   // applyZScore is a silent no-op with fewer than 2 real points -- this is whether it ACTUALLY standardized,
   // not just whether the toggle is on.
-  const standardizeApplied = standardize && canApplyZScore(unsmoothedPointsRaw.map(p => p.egc))
+  const standardizeApplied = standardize && canApplyZScore(zScoreBasis)
 
   // applyLowess is a silent no-op with
   // fewer than LOWESS_MIN_POINTS real points -- this is whether it ACTUALLY smoothed,

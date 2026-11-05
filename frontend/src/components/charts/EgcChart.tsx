@@ -222,6 +222,14 @@ export const EgcChart = forwardRef<EgcChartHandle, {
     onVisibleSamplesChange?.(filteredPoints.map(p => p.sample))
   }, [visibleSamplesKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The values a Z-score takes its mean and spread from: the whole series,
+  // not just the samples the date range and Timepoints pills leave, so a
+  // sample's Z is the same however the chart is zoomed.
+  const zScoreBasis = useMemo(
+    () => allPoints.map(d => metric === 'norm_egc' ? d.norm_egc : d.egc),
+    [allPoints, metric],
+  )
+
   // unsmoothed is the metric/standardize
   // pipeline WITHOUT LOWESS -- this is what statistics/detection-count
   // reads, so toggling Smooth never changes the reported numbers, only the
@@ -235,15 +243,15 @@ export const EgcChart = forwardRef<EgcChartHandle, {
         }))
       : filteredPoints
     ) as { egc: number | null; datetime: string; ts: number; date: string; iso: string; sample: string }[]
-    if (standardize) pts = applyZScore(pts) as typeof pts
+    if (standardize) pts = applyZScore(pts, zScoreBasis) as typeof pts
     return pts
-  }, [filteredPoints, metric, standardize])
+  }, [filteredPoints, metric, standardize, zScoreBasis])
 
   // applyZScore is a silent no-op with
   // fewer than 2 real points -- this is whether it ACTUALLY standardized,
   // not just whether the toggle is on, so the axis/tooltip can stop
   // claiming "σ from mean" units for a value that's still raw EGC.
-  const standardizeApplied = standardize && canApplyZScore(unsmoothedPoints.map(p => p.egc))
+  const standardizeApplied = standardize && canApplyZScore(zScoreBasis)
 
   // applyLowess is a silent no-op with
   // fewer than 3 real points -- this is whether it ACTUALLY smoothed,

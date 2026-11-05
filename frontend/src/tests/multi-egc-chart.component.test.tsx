@@ -507,3 +507,33 @@ describe('MultiEgcChart — Z-score is a no-op with fewer than 2 real points', (
     expect(screen.getAllByText(/Z-score \(σ from mean\)/).length).toBeGreaterThan(0)
   })
 })
+
+// Each series' Z-score is taken over its whole series, not over the
+// samples inside the date range: a sample keeps the same Z however the
+// chart is zoomed, as the Methods page states.
+describe('MultiEgcChart — Z-score does not depend on the date range shown', () => {
+  it('a narrowed range keeps each sample at its whole-series Z', async () => {
+    const user = userEvent.setup()
+    // Whole series 10, 10, 20, 20: mean 15, SD 5, so the two samples
+    // inside the range are +1 each (0 if standardised over only them).
+    const data = [
+      makePoint('5/27/21 8:00', 10), makePoint('5/28/21 8:00', 10),
+      makePoint('6/1/21 8:00', 20), makePoint('6/2/21 8:00', 20),
+    ]
+    render(
+      <MultiEgcChart
+        series={[
+          { id: 'A', annotationId: 'A', name: 'A', color: '#000', source: 'kegg', data },
+          { id: 'B', annotationId: 'B', name: 'B', color: '#111', source: 'kegg', data },
+        ]}
+        dateFrom="2021-05-30" dateTo=""
+        defaultStandardize
+      />,
+    )
+    await selectRawEgc(user)
+    await user.click(screen.getByRole('button', { name: /Σ Stats/i }))
+
+    expect(statValueForSeries('A', 'n')).toBe(2)
+    expect(statValueForSeries('A', 'Mean')).toBeCloseTo(1)
+  })
+})

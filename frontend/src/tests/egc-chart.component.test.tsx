@@ -412,3 +412,64 @@ describe('EgcChart — detection gaps (useAllSamples merge)', () => {
     await screen.findByText(/full sample timeline unavailable/i)
   })
 })
+
+// The Z-score is taken over the whole series, not over the samples left
+// after the date range or Timepoints pills: the same sample keeps the same
+// Z however the chart is zoomed, as the Methods page states.
+describe('EgcChart — Z-score does not depend on the date range shown', () => {
+  function statValue(label: string): number {
+    return Number(screen.getAllByText(label).find(el => el.className === 'stat-cell-label')!
+      .closest('.stat-cell')!.querySelector('.stat-cell-value')!.textContent!)
+  }
+
+  it('a narrowed range keeps each sample at its whole-series Z', async () => {
+    const user = userEvent.setup()
+    // Whole series 10, 10, 20, 20: mean 15, SD 5, so the two later
+    // samples are +1 each. Standardised over just those two, both would
+    // read 0 instead.
+    render(
+      <EgcChart
+        data={[
+          makePoint('5/27/21 8:00', 10, 's1'),
+          makePoint('5/28/21 8:00', 10, 's2'),
+          makePoint('6/1/21 8:00', 20, 's3'),
+          makePoint('6/2/21 8:00', 20, 's4'),
+        ]}
+        annotationId="COG0001"
+        annotationName="GroEL"
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /Z-score/i }))
+    await user.click(screen.getByRole('button', { name: /Σ Stats/i }))
+    expect(statValue('Mean')).toBeCloseTo(0)
+
+    const [fromInput] = screen.getAllByDisplayValue('')
+    await user.type(fromInput, '2021-05-30')
+
+    expect(screen.getByText(/2 of 4 samples/)).toBeInTheDocument()
+    expect(statValue('Mean')).toBeCloseTo(1)
+  })
+
+  it('unticking dates with the Timepoints pills does not change the Z either', async () => {
+    const user = userEvent.setup()
+    render(
+      <EgcChart
+        data={[
+          makePoint('5/27/21 8:00', 10, 's1'),
+          makePoint('5/28/21 8:00', 10, 's2'),
+          makePoint('6/1/21 8:00', 20, 's3'),
+          makePoint('6/2/21 8:00', 20, 's4'),
+        ]}
+        annotationId="COG0001"
+        annotationName="GroEL"
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /Z-score/i }))
+    await user.click(screen.getByRole('button', { name: /Σ Stats/i }))
+    await user.click(screen.getByRole('button', { name: /Timepoints/i }))
+    await user.click(screen.getByRole('button', { name: '5/27' }))
+    await user.click(screen.getByRole('button', { name: '5/28' }))
+
+    expect(statValue('Mean')).toBeCloseTo(1)
+  })
+})
