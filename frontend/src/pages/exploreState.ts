@@ -22,9 +22,9 @@ export type ExploreState = {
   sortDir:      SortDir
   parentSource: string
   topFilter:    string
-  // Rank/depth multi-select filter for the Top EGC Annotations table, for
-  // any source — reads the row's real `depth` directly (/annotations/top
-  // returns it for every source).
+  // The rank(s) (depths) Top EGC Annotations asks /annotations/top to rank,
+  // empty = every rank. Set on each load: a new source starts at its most
+  // specific level.
   topRankFilter: Set<number>
   // Lookup section
   lookupId:       string

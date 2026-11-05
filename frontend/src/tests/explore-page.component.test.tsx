@@ -205,25 +205,24 @@ describe('ExplorePage — Top EGC filter box matches the displayed Group label, 
   })
 })
 
-// The "Relative" bar's width must scale against the VISIBLE rows' max
-// mean_egc -- scaled against the unfiltered max, a rank filter that hides
-// whichever row set it would make every visible bar read as far shorter
-// than its real share of what's on screen (e.g. every leaf-level bar
-// scaled against a hidden category rollup's much larger sum).
-describe('ExplorePage — Top EGC "Relative" bars scale to the filtered rows, not the unfiltered max', () => {
-  it('rescales every visible bar to the filtered max once a rank filter hides the row that set the unfiltered max', async () => {
+// The "Relative" bar's width scales against the shown rows' own max
+// mean_egc, so leaf rows ranked on their own fill their bars, and the same
+// rows next to a category's much larger total read as small.
+describe('ExplorePage — Top EGC "Relative" bars scale to the rows shown', () => {
+  it('leaves fill their bars on their own, and shrink once All brings in the category', async () => {
     const user = userEvent.setup()
+    const rows = [
+      // Depth 1 (category) -- by far the largest mean_egc.
+      { annotation_id: 'E', name: 'Amino acid metabolism', parent: null, depth: 1, mean_egc: 1000, max_egc: 2000, sample_count: 128 },
+      // Depth 2 (COGs) -- what the default rank shows.
+      { annotation_id: 'COG_LEAF_HIGH', name: 'leaf high', parent: 'E', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 },
+      { annotation_id: 'COG_LEAF_LOW',  name: 'leaf low',  parent: 'E', depth: 2, mean_egc: 50,  max_egc: 100, sample_count: 128 },
+    ]
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/annotations/top')) {
+        const depths = [...url.matchAll(/[?&]depth=(\d+)/g)].map(m => Number(m[1]))
         return Promise.resolve(jsonResponse({
-          data: [
-            // Depth 1 (category rollup) -- by far the largest mean_egc,
-            // sets the unfiltered max. Hidden once rank-filtered to leaves.
-            { annotation_id: 'E', name: 'Amino acid metabolism', parent: null, depth: 1, mean_egc: 1000, max_egc: 2000, sample_count: 128 },
-            // Depth 2 (real leaves) -- what's left once filtered to 'leaf (COG)'.
-            { annotation_id: 'COG_LEAF_HIGH', name: 'leaf high', parent: 'E', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 },
-            { annotation_id: 'COG_LEAF_LOW',  name: 'leaf low',  parent: 'E', depth: 2, mean_egc: 50,  max_egc: 100, sample_count: 128 },
-          ],
+          data: depths.length ? rows.filter(r => depths.includes(r.depth)) : rows,
           sample_count: 128,
         }))
       }
@@ -240,21 +239,16 @@ describe('ExplorePage — Top EGC "Relative" bars scale to the filtered rows, no
       return bar.getAttribute('style') ?? ''
     }
 
-    // Before filtering: scaled against the depth-1 row's mean_egc=1000
-    // (the unfiltered max) -- the leaf rows read as nearly empty (10%/5%).
-    expect(barStyle('COG_LEAF_HIGH')).toContain('var(--teal) 10%,')
-    expect(barStyle('COG_LEAF_LOW')).toContain('var(--teal) 5%,')
-
-    // Filter to depth 2 ('leaf (COG)') only -- hides the depth-1 row entirely.
-    await user.click(screen.getByRole('button', { name: 'leaf (COG)' }))
-    await waitFor(() => {
-      expect(screen.queryByText('Amino acid metabolism')).not.toBeInTheDocument()
-    })
-
-    // Now scaled against the real (filtered) max, 100 -- the highest
-    // visible row reads as a genuine 100%, not still 10%.
+    // COGs only: scaled against the top COG's 100.
+    expect(screen.queryByText('Amino acid metabolism')).not.toBeInTheDocument()
     expect(barStyle('COG_LEAF_HIGH')).toContain('var(--teal) 100%,')
     expect(barStyle('COG_LEAF_LOW')).toContain('var(--teal) 50%,')
+
+    // All ranks: the category's 1000 sets the scale.
+    await user.click(screen.getByRole('button', { name: 'All' }))
+    await screen.findByText('Amino acid metabolism')
+    expect(barStyle('COG_LEAF_HIGH')).toContain('var(--teal) 10%,')
+    expect(barStyle('COG_LEAF_LOW')).toContain('var(--teal) 5%,')
   })
 })
 
@@ -723,16 +717,18 @@ describe('ExplorePage — Lookup External Databases link', () => {
 // EGC is the sum of its descendants, the unfiltered top list is dominated
 // by branch/rollup nodes. Confirms the rank-filter pills appear for a
 // non-taxonomy source and actually narrow the table by the row's real depth.
-describe('ExplorePage — Top EGC rank filter works for non-taxonomy sources', () => {
-  it('filters kegg rows by real depth once it is present on the response', async () => {
+describe('ExplorePage — Top EGC rank pills work for non-taxonomy sources', () => {
+  it('kegg pills use kegg rank names and add their rank to the request', async () => {
     const user = userEvent.setup()
+    const rows = [
+      { annotation_id: '09180', name: 'Brite Hierarchies', parent: null, depth: 1, mean_egc: 900, max_egc: 1000, sample_count: 128 },
+      { annotation_id: 'K00001', name: 'alcohol dehydrogenase', parent: '00010', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
+    ]
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/annotations/top') && url.includes('source=kegg')) {
+        const depths = [...url.matchAll(/[?&]depth=(\d+)/g)].map(m => Number(m[1]))
         return Promise.resolve(jsonResponse({
-          data: [
-            { annotation_id: '09180', name: 'Brite Hierarchies', parent: null, depth: 1, mean_egc: 900, max_egc: 1000, sample_count: 128 },
-            { annotation_id: 'K00001', name: 'alcohol dehydrogenase', parent: '00010', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
-          ],
+          data: depths.length ? rows.filter(r => depths.includes(r.depth)) : rows,
           sample_count: 128,
         }))
       }
@@ -741,24 +737,19 @@ describe('ExplorePage — Top EGC rank filter works for non-taxonomy sources', (
     render(<Harness initial={{ openSection: 'top-egc', source: 'kegg' }} />)
 
     await user.click(screen.getByRole('button', { name: /^Load$/i }))
+    await screen.findByText('K00001')
+    expect(screen.queryByText('09180')).not.toBeInTheDocument()
 
-    await waitFor(() => {
-      expect(screen.getByText('09180')).toBeInTheDocument()
-    })
-    expect(screen.getByText('K00001')).toBeInTheDocument()
-
-    // Rank pills exist (previously impossible for kegg -- no depth in the
-    // response at all) and use kegg's own rank names (same as the Lookup
-    // card's Depth row), never a taxonomy rung name like "Domain" for a
-    // non-taxonomy source.
+    // kegg's own rank names (same as the Lookup card's Depth row), never a
+    // taxonomy rung name like "Domain" for a non-taxonomy source.
     const pill = (label: string) => screen.getAllByRole('button').find(b => b.className.includes('al-source-pill') && b.textContent === label)
     expect(pill('pathway class')).toBeDefined()
     expect(pill('leaf (KO)')).toBeDefined()
     expect(screen.queryByText('Domain')).not.toBeInTheDocument()
 
-    await user.click(pill('leaf (KO)')!)
+    await user.click(pill('pathway class')!)
 
-    expect(screen.queryByText('09180')).not.toBeInTheDocument()
+    await screen.findByText('09180')
     expect(screen.getByText('K00001')).toBeInTheDocument()
   })
 })
@@ -889,38 +880,15 @@ describe('ExplorePage — Top EGC Group column shows every real KEGG parent', ()
   })
 })
 
-// A rank filter picked for one set of rows must not silently carry over to
-// the next load or search -- the new rows may have none of that rank, and
-// the pill bar (shown only when there's more than one rank to choose from)
-// would then vanish, leaving an empty table with no way to clear it.
+// A Lookup rank filter picked for one set of results must not silently
+// carry over to the next search -- the new results may have none of that
+// rank, and the pill bar (shown only when there's more than one rank to
+// choose from) would then vanish, leaving an empty list with no way to
+// clear it. Top EGC fetches its chosen rank from the server instead (see
+// "Top EGC ranks the chosen level on the server").
 describe('ExplorePage — rank filters reset when new rows load', () => {
   const pill = (label: string) =>
     screen.getAllByRole('button').find(b => b.className.includes('al-source-pill') && b.textContent === label)
-
-  it('Top EGC: reloading clears the rank filter instead of hiding every new row', async () => {
-    const user = userEvent.setup()
-    let rows: object[] = [
-      { annotation_id: '09180', name: 'Brite Hierarchies', parent: null, depth: 1, mean_egc: 900, max_egc: 1000, sample_count: 128 },
-      { annotation_id: 'K00001', name: 'alcohol dehydrogenase', parent: '00010', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
-    ]
-    mockFetch.mockImplementation((url: string) =>
-      Promise.resolve(jsonResponse(url.includes('/api/annotations/top') ? { data: rows, sample_count: 128 } : {})))
-    render(<Harness initial={{ openSection: 'top-egc', source: 'kegg' }} />)
-
-    await user.click(screen.getByRole('button', { name: /^Load$/i }))
-    await waitFor(() => expect(screen.getByText('K00001')).toBeInTheDocument())
-    await user.click(pill('leaf (KO)')!)
-    expect(screen.queryByText('09180')).not.toBeInTheDocument()
-
-    rows = [
-      { annotation_id: '09100', name: 'Metabolism', parent: null, depth: 1, mean_egc: 800, max_egc: 900, sample_count: 128 },
-      { annotation_id: '09120', name: 'Genetic Information Processing', parent: null, depth: 1, mean_egc: 700, max_egc: 800, sample_count: 128 },
-    ]
-    await user.click(screen.getByRole('button', { name: /^Load$/i }))
-
-    await waitFor(() => expect(screen.getByText('09100')).toBeInTheDocument())
-    expect(screen.getByText('09120')).toBeInTheDocument()
-  })
 
   it('Lookup: a new search clears the rank filter', async () => {
     const user = userEvent.setup()
@@ -1170,5 +1138,93 @@ describe('ExplorePage — Lookup card links to Bulk Download', () => {
     await user.click(screen.getByRole('button', { name: /Bulk download from here/ }))
     expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('kegg')
     expect((screen.getByLabelText('Download every') as HTMLSelectElement).value).toBe('ko')
+  })
+})
+
+// Every category's EGC contains its members', so an all-ranks top list is
+// all categories (KEGG's top 25 holds no KO). Top EGC Annotations asks the
+// server for the chosen rank(s): by default each source's most specific
+// level, and a rank pill fetches that rank's own top N.
+describe('ExplorePage — Top EGC ranks the chosen level on the server', () => {
+  const ROWS = [
+    { annotation_id: '09100', name: 'Metabolism', parent: null, depth: 1, mean_egc: 900, max_egc: 1000, sample_count: 128 },
+    { annotation_id: '00010', name: 'Glycolysis', parent: '09101', depth: 3, mean_egc: 300, max_egc: 400, sample_count: 128 },
+    { annotation_id: 'K00001', name: 'alcohol dehydrogenase', parent: '00010', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
+  ]
+  const topUrls = () => mockFetch.mock.calls.map(c => String(c[0]))
+    .filter(u => u.includes('/api/annotations/top') && !u.includes('ids='))
+  const depthsOf = (url: string) => [...url.matchAll(/[?&]depth=(\d+)/g)].map(m => Number(m[1]))
+  const pill = (label: string) =>
+    screen.getAllByRole('button').find(b => b.className.includes('al-source-pill') && b.textContent === label)!
+
+  beforeEach(() => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) {
+        const depths = depthsOf(url)
+        const data = depths.length ? ROWS.filter(r => depths.includes(r.depth)) : ROWS
+        return Promise.resolve(jsonResponse({ data, sample_count: 128 }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+  })
+
+  it.each([['kegg', 4], ['cog', 2], ['enzyme', 4], ['taxonomy', 7]])(
+    'first load of %s asks for its most specific level (depth %i)',
+    async (source, depth) => {
+      const user = userEvent.setup()
+      render(<Harness initial={{ openSection: 'top-egc', source }} />)
+      await user.click(screen.getByRole('button', { name: /^Load$/i }))
+      await waitFor(() => expect(topUrls()).toHaveLength(1))
+      expect(depthsOf(topUrls()[0])).toEqual([depth])
+    },
+  )
+
+  it('shows every level of the source as a pill, even ones absent from the rows', async () => {
+    const user = userEvent.setup()
+    render(<Harness initial={{ openSection: 'top-egc', source: 'kegg' }} />)
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+    await screen.findByText('K00001')
+    expect(screen.queryByText('09100')).not.toBeInTheDocument()
+    for (const label of ['All', 'pathway class', 'subcategory', 'pathway / BRITE table', 'leaf (KO)']) {
+      expect(pill(label)).toBeDefined()
+    }
+    expect(pill('leaf (KO)').className).toContain('al-source-pill-active')
+  })
+
+  it('a rank pill fetches that rank, and All fetches every rank', async () => {
+    const user = userEvent.setup()
+    render(<Harness initial={{ openSection: 'top-egc', source: 'kegg' }} />)
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+    await screen.findByText('K00001')
+
+    await user.click(pill('leaf (KO)'))            // off
+    await user.click(pill('pathway class'))        // on
+    await screen.findByText('09100')
+    expect(depthsOf(topUrls().at(-1)!)).toEqual([1])
+    expect(screen.queryByText('K00001')).not.toBeInTheDocument()
+
+    await user.click(pill('All'))
+    await screen.findByText('K00001')
+    expect(depthsOf(topUrls().at(-1)!)).toEqual([])
+    expect(screen.getByText('09100')).toBeInTheDocument()
+  })
+
+  it('reloading keeps the chosen rank; another source starts at its own default', async () => {
+    const user = userEvent.setup()
+    render(<Harness initial={{ openSection: 'top-egc', source: 'kegg' }} />)
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+    await screen.findByText('K00001')
+    await user.click(pill('All'))
+    await screen.findByText('09100')
+
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+    await waitFor(() => expect(topUrls()).toHaveLength(3))
+    expect(depthsOf(topUrls()[2])).toEqual([])
+
+    await user.selectOptions(screen.getByDisplayValue('kegg'), 'cog')
+    await user.click(screen.getByRole('button', { name: /^Load$/i }))
+    await waitFor(() => expect(topUrls()).toHaveLength(4))
+    expect(topUrls()[3]).toContain('source=cog')
+    expect(depthsOf(topUrls()[3])).toEqual([2])
   })
 })

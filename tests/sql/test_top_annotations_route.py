@@ -257,3 +257,48 @@ def test_ids_with_a_date_range_cover_only_those_dates(client):
 def test_too_many_ids_is_rejected(client):
     resp = client.get("/annotations/top", params={"source": "kegg", "ids": [f"K{i:05d}" for i in range(201)]})
     assert resp.status_code == 422
+
+
+# depth=: every category's EGC contains its members', so an unfiltered top
+# list is all categories (KEGG's top 25 has no KO). depth ranks only the
+# given level(s), so "top 25 KOs" is possible.
+
+@pytest.mark.parametrize("dates", [{}, {"date_from": "2021-06-02", "date_to": "2021-06-04"}])
+def test_depth_ranks_only_that_level(client, dates):
+    body = client.get("/annotations/top", params={"source": "kegg", "limit": 25, "depth": 4, **dates}).json()
+    assert len(body["data"]) == 25
+    assert {r["depth"] for r in body["data"]} == {4}
+    assert all(r["annotation_id"].startswith("K") for r in body["data"])
+    egc = [r["mean_egc"] for r in body["data"]]
+    assert egc == sorted(egc, reverse=True)
+
+
+def test_depth_rows_match_the_unfiltered_values(client):
+    top_ko = client.get("/annotations/top", params={"source": "cog", "limit": 5, "depth": 2}).json()["data"]
+    picked = _by_id(client.get("/annotations/top", params={"source": "cog", "ids": [r["annotation_id"] for r in top_ko]}).json())
+    for r in top_ko:
+        assert picked[r["annotation_id"]] == r
+
+
+def test_several_depths_rank_together(client):
+    body = client.get("/annotations/top", params={"source": "taxonomy", "limit": 50, "depth": [6, 7]}).json()
+    assert {r["depth"] for r in body["data"]} == {6, 7}
+
+
+def test_depth_is_part_of_the_cache_key(client, monkeypatch):
+    from collections import OrderedDict
+    import api.routes as routes_mod
+    monkeypatch.setattr(routes_mod, "_TOP_ANN_CACHE_SQL", OrderedDict())
+
+    every = client.get("/annotations/top", params={"source": "enzyme", "limit": 10}).json()["data"]
+    leaves = client.get("/annotations/top", params={"source": "enzyme", "limit": 10, "depth": 4}).json()["data"]
+    again = client.get("/annotations/top", params={"source": "enzyme", "limit": 10, "depth": [4]}).json()["data"]
+    assert {r["depth"] for r in every} != {4}
+    assert {r["depth"] for r in leaves} == {4}
+    assert again == leaves
+    assert len(routes_mod._TOP_ANN_CACHE_SQL) == 2
+
+
+@pytest.mark.parametrize("bad", [0, 9])
+def test_depth_out_of_range_is_rejected(client, bad):
+    assert client.get("/annotations/top", params={"source": "kegg", "depth": bad}).status_code == 422

@@ -41,6 +41,13 @@ const TOP_LEVEL_TOOLTIP =
 // categories. Everywhere Explore groups rows by parent, these sources use
 // the real parents from /api/{source}/parents instead.
 const MULTI_PARENT_SOURCES = new Set(['kegg', 'cog'])
+
+// Hierarchy levels per source (taxonomy: domain .. strain).
+const SOURCE_LEVELS: Record<string, number> = { kegg: 4, cog: 2, enzyme: 4, taxonomy: 8 }
+// What Top EGC Annotations ranks by default: the most specific level (KOs,
+// COGs, EC numbers, species). A category's EGC includes its members', so
+// an all-level list is all categories.
+const TOP_DEFAULT_DEPTH: Record<string, number> = { kegg: 4, cog: 2, enzyme: 4, taxonomy: 7 }
 type RealParents = Record<string, { annotation_id: string; name: string }[]>
 
 async function fetchRealParents(source: string, rows: TopAnnotation[]): Promise<RealParents> {
@@ -1297,18 +1304,24 @@ export function ExplorePage({
       })
   }, [state.lookupSelected, effectiveLookupSource])
 
-  async function load() {
+  async function load(ranksArg?: Set<number>) {
     const requestId = ++topRequestSeqRef.current
     const params = { source: state.source, dateFrom: state.dateFrom, dateTo: state.dateTo }
-    // A rank filter chosen for the previous rows may match none of the new
-    // ones (and their ranks can mean something else for another source).
-    setState(prev => ({ ...prev, status: 'loading', topRankFilter: new Set() }))
+    // The rank(s) the server ranks: a pill's choice, else the current one
+    // when reloading the same source, else the new source's most specific
+    // level (ranks mean something else for another source).
+    const ranks = ranksArg
+      ?? (state.loadedParams?.source === params.source
+        ? state.topRankFilter
+        : new Set(TOP_DEFAULT_DEPTH[params.source] ? [TOP_DEFAULT_DEPTH[params.source]] : []))
+    setState(prev => ({ ...prev, status: 'loading', topRankFilter: ranks }))
     setTopRealParents({})
     setTopRealParentsFailed(false)
     try {
       let url = `/api/annotations/top?source=${params.source}&limit=${state.limit}`
       if (params.dateFrom) url += `&date_from=${params.dateFrom}`
       if (params.dateTo)   url += `&date_to=${params.dateTo}`
+      for (const d of [...ranks].sort((a, b) => a - b)) url += `&depth=${d}`
       const r = await apiFetch<{ data: TopAnnotation[]; sample_count: number }>(url)
       if (requestId !== topRequestSeqRef.current) return // superseded
       const rows = r.data ?? []
@@ -1350,16 +1363,16 @@ export function ExplorePage({
     }))
   }
 
+  // Rank pills fetch the chosen rank's own top N: filtering the loaded rows
+  // could only ever show the few that happened to make the all-rank list.
   function toggleTopRank(depth: number) {
-    setState(prev => {
-      const next = new Set(prev.topRankFilter)
-      if (next.has(depth)) next.delete(depth); else next.add(depth)
-      return { ...prev, topRankFilter: next }
-    })
+    const next = new Set(state.topRankFilter)
+    if (next.has(depth)) next.delete(depth); else next.add(depth)
+    load(next)
   }
 
   function clearTopRankFilter() {
-    setState(prev => ({ ...prev, topRankFilter: new Set() }))
+    load(new Set())
   }
 
   function toggleLookupRank(depth: number) {
@@ -1464,17 +1477,11 @@ export function ExplorePage({
     return { label: expanded, title: expanded === '—' ? undefined : expanded, full: expanded === '—' ? '' : expanded }
   }, [effectiveTopSource, topRealParents])
 
-  // Ranks actually present among the loaded rows — mirrors LeftResultList's
-  // availableSources/availableRanks pattern on the Analyze page. depth is
-  // real for every source (see get_top_annotations_from_catalog_sql/
-  // get_top_annotations_sql), so this reads r.depth directly — a parent's
-  // EGC is the sum of its descendants, so without rank-filtering,
-  // kegg/cog/enzyme top lists are 100% branch/rollup nodes by default.
+  // Every level of the loaded source, whether or not the current rows
+  // include it: a pill fetches its rank's own top N from the server.
   const availableTopRanks = useMemo(
-    () => [...new Set(
-        state.rows.map(r => r.depth).filter((d): d is number => d != null),
-      )].sort((a, b) => a - b),
-    [state.rows],
+    () => Array.from({ length: SOURCE_LEVELS[effectiveTopSource] ?? 0 }, (_, i) => i + 1),
+    [effectiveTopSource],
   )
 
   const sorted = useMemo(() => {
@@ -1491,9 +1498,6 @@ export function ExplorePage({
         // what a user types.
         || topGroupDisplay(r).label.toLowerCase().includes(q),
       )
-      .filter(r => state.topRankFilter.size === 0
-        || (r.depth != null && state.topRankFilter.has(r.depth)),
-      )
       .sort((a, b) => {
         const av = a[state.sortCol] as number | string
         const bv = b[state.sortCol] as number | string
@@ -1504,7 +1508,7 @@ export function ExplorePage({
           ? String(av).localeCompare(String(bv))
           : String(bv).localeCompare(String(av))
       })
-  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, state.topRankFilter, topGroupDisplay])
+  }, [state.rows, state.sortCol, state.sortDir, state.topFilter, topGroupDisplay])
 
   // Must scale against `sorted` (what's
   // actually visible after the rank/text filters), not the unfiltered
@@ -1662,7 +1666,7 @@ export function ExplorePage({
                 />
                 <button
                   className="btn primary"
-                  onClick={load}
+                  onClick={() => load()}
                   disabled={state.status === 'loading'}
                 >
                   {state.status === 'loading' ? 'Loading…' : 'Load'}
@@ -1687,16 +1691,17 @@ export function ExplorePage({
                 )}
               </div>
 
-              {(availableTopRanks.length > 1 || state.topRankFilter.size > 0) && (
+              {state.loadedParams && availableTopRanks.length > 1 && (
                 <div className="al-source-filter al-rank-filter" style={{ marginBottom: 10, borderRadius: 6 }}>
                   <span className="al-rank-filter-label">Rank</span>
                   <button
                     className={`al-source-pill ${state.topRankFilter.size === 0 ? 'al-source-pill-active' : ''}`}
                     onClick={clearTopRankFilter}
+                    disabled={state.status === 'loading'}
                   >
                     All
                   </button>
-                  <HelpTooltip text="Narrows the table below to the selected taxonomic rank(s) — doesn't re-fetch, just filters what's already loaded." />
+                  <HelpTooltip text="Ranks the top N within the selected rank(s) only, fetched fresh for each choice. It starts at the most specific level (KOs, COGs, EC numbers, species). All ranks every level together, where the large categories always come first, since each one's EGC includes everything under it." />
                   {/* Intentionally no domain passed here -- this pill represents
                       every taxon at this depth across the whole result set, which can
                       span multiple domains (e.g. a Bacteria leaf and a Eukaryota leaf
@@ -1707,6 +1712,7 @@ export function ExplorePage({
                       key={depth}
                       className={`al-source-pill ${state.topRankFilter.has(depth) ? 'al-source-pill-active' : ''}`}
                       onClick={() => toggleTopRank(depth)}
+                      disabled={state.status === 'loading'}
                     >
                       {rankPillLabel(depth, effectiveTopSource)}
                     </button>
@@ -1795,7 +1801,7 @@ export function ExplorePage({
                   column below shows each one's single stored parent instead, which may
                   be only one of several real parents.
                 </span>
-                <button className="btn sm" data-testid="top-kegg-parents-retry-btn" onClick={load}>
+                <button className="btn sm" data-testid="top-kegg-parents-retry-btn" onClick={() => load()}>
                   Retry
                 </button>
               </div>
@@ -1826,12 +1832,12 @@ export function ExplorePage({
                     {sorted.length === 0 && state.rows.length > 0 && (
                       <tr>
                         <td colSpan={99} style={{ padding: '18px 16px', color: 'var(--text-dim)', textAlign: 'center' }}>
-                          No rows match the filters above ({state.rows.length} loaded).{' '}
+                          No rows match the filter above ({state.rows.length} loaded).{' '}
                           <button
                             className="btn sm ghost"
-                            onClick={() => setState(prev => ({ ...prev, topRankFilter: new Set(), topFilter: '' }))}
+                            onClick={() => setState(prev => ({ ...prev, topFilter: '' }))}
                           >
-                            Clear filters
+                            Clear filter
                           </button>
                         </td>
                       </tr>

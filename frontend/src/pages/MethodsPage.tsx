@@ -122,7 +122,9 @@ export function MethodsPage() {
             category’s value always includes everything beneath it. That is why top-level
             categories (COG letters, KEGG’s top classes, EC classes, taxonomic domains) are
             shown separately on the Explore page instead of being ranked next to the groups
-            they already contain.
+            they already contain, and why Top EGC Annotations ranks one level at a time,
+            starting at the most specific (KOs, COGs, EC numbers, species). Ranking all
+            levels together is still available, with the categories necessarily on top.
           </Item>
           <Item title="Annotations with more than one parent">
             A KO that belongs to several pathways, or a COG assigned to several categories,

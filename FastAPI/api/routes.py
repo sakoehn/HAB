@@ -944,6 +944,7 @@ def top_annotations_by_egc(
     date_from: str | None = Query(None),
     date_to:   str | None = Query(None),
     ids:       list[str] | None = Query(None, max_length=_TOP_ANN_MAX_LIMIT),
+    depth:     list[int] | None = Query(None, max_length=8),
 ):
     """
     Return the top N annotations by mean EGC, optionally filtered by date range.
@@ -953,7 +954,11 @@ def top_annotations_by_egc(
     the same way and over the same dates as the top list, so a page can
     show a category's own total next to the members it listed. Not cached.
 
-    Cached per (source, date_from, date_to). date_from/date_to, if given,
+    `depth` (repeatable) ranks only those hierarchy levels (e.g. 4 = KEGG
+    KOs). A category's EGC contains its members', so without it the top
+    of the list is all categories (KEGG's top 25 holds no KO).
+
+    Cached per (source, date_from, date_to, depth). date_from/date_to, if given,
     must parse as a real date (see _parse_any_datetime) -- a bound that
     doesn't parse is rejected with 400 rather than silently ignored --
     ignoring it would fall through to the FULL unfiltered dataset while
@@ -967,6 +972,9 @@ def top_annotations_by_egc(
         raise HTTPException(status_code=400, detail=f"date_from is not a recognized date: {date_from!r}")
     if date_to is not None and _parse_any_datetime(date_to) is None:
         raise HTTPException(status_code=400, detail=f"date_to is not a recognized date: {date_to!r}")
+    # Taxonomy, the deepest source, has 8 levels (domain .. strain).
+    if depth and not all(1 <= d <= 8 for d in depth):
+        raise HTTPException(status_code=422, detail=f"depth must be between 1 and 8: {depth!r}")
 
     db = connect_to_sql()
     try:
@@ -980,7 +988,9 @@ def top_annotations_by_egc(
             source.value,
             _parse_any_datetime(date_from).isoformat() if date_from else "",
             _parse_any_datetime(date_to).isoformat() if date_to else "",
+            tuple(sorted(set(depth or []))),
         )
+        depths = sorted(set(depth)) if depth else None
 
         if ids:
             if not date_from and not date_to:
@@ -1001,14 +1011,14 @@ def top_annotations_by_egc(
                 # precomputed annotation_catalog table instead of the per-sample
                 # timepoint scan below, which exists only to resolve date-range
                 # filters and would otherwise run needlessly on every request.
-                cached_entry = (get_top_annotations_from_catalog_sql(db, source.value)[:_TOP_ANN_MAX_LIMIT], len(samples))
+                cached_entry = (get_top_annotations_from_catalog_sql(db, source.value, depths=depths)[:_TOP_ANN_MAX_LIMIT], len(samples))
             else:
                 active_samples = [
                     s for s in samples
                     if is_within_date_range((get_timepoint(s) or {}).get("datetime"), date_from, date_to)
                 ]
                 cached_entry = (
-                    (get_top_annotations_sql(db, source.value, active_samples)[:_TOP_ANN_MAX_LIMIT], len(active_samples))
+                    (get_top_annotations_sql(db, source.value, active_samples, depths=depths)[:_TOP_ANN_MAX_LIMIT], len(active_samples))
                     if active_samples else ([], 0)
                 )
             _top_ann_cache_set(cache_key, cached_entry)

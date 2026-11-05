@@ -786,6 +786,7 @@ def count_taxa_under_sql(conn: sqlite3.Connection, lineage_prefix: str) -> int:
 
 def get_top_annotations_sql(
     conn: sqlite3.Connection, source: str, sample_names: list[str], annotation_ids: list[str] | None = None,
+    depths: list[int] | None = None,
 ) -> list[dict]:
     """Return mean/max EGC and norm_egc per annotation_id, aggregated
     across the given samples, sorted by mean_egc descending.
@@ -795,6 +796,7 @@ def get_top_annotations_sql(
         source: Annotation source ("cog", "kegg", "enzyme", "taxonomy").
         sample_names: Samples to include in the aggregation.
         annotation_ids: If given, only these annotations.
+        depths: If given, only annotations at these hierarchy levels.
 
     Returns:
         List of dicts keyed annotation_id, name, parent, depth, mean_egc,
@@ -818,11 +820,11 @@ def get_top_annotations_sql(
                MAX(norm_egc) AS max_norm_egc,
                COUNT(DISTINCT sample) AS sample_count
         FROM annotation_series
-        WHERE source = ? AND sample IN ({placeholders}){_ids_filter(annotation_ids)}
+        WHERE source = ? AND sample IN ({placeholders}){_ids_filter(annotation_ids)}{_depths_filter(depths)}
         GROUP BY annotation_id
         ORDER BY mean_egc DESC
     """
-    params = [source] + sample_names + (annotation_ids or [])
+    params = [source] + sample_names + (annotation_ids or []) + (depths or [])
     cursor = conn.execute(query, params)
     rows = cursor.fetchall()
     return [
@@ -847,8 +849,18 @@ def _ids_filter(annotation_ids: list[str] | None) -> str:
     return f" AND annotation_id IN ({','.join('?' for _ in annotation_ids)})"
 
 
+def _depths_filter(depths: list[int] | None) -> str:
+    """SQL restricting a top-annotations query to the given hierarchy
+    levels, if any. Every category's EGC contains its members', so without
+    this a top list is all categories."""
+    if not depths:
+        return ""
+    return f" AND depth IN ({','.join('?' for _ in depths)})"
+
+
 def get_top_annotations_from_catalog_sql(
     conn: sqlite3.Connection, source: str, annotation_ids: list[str] | None = None,
+    depths: list[int] | None = None,
 ) -> list[dict]:
     # depth must be included -- a parent's
     # EGC is the sum of its descendants, so parents always outrank leaves by
@@ -863,10 +875,10 @@ def get_top_annotations_from_catalog_sql(
                mean_norm_egc, max_norm_egc,
                sample_count
         FROM annotation_catalog
-        WHERE source = ?{_ids_filter(annotation_ids)}
+        WHERE source = ?{_ids_filter(annotation_ids)}{_depths_filter(depths)}
         ORDER BY mean_egc DESC
     """
-    cursor = conn.execute(query, (source, *(annotation_ids or [])))
+    cursor = conn.execute(query, (source, *(annotation_ids or []), *(depths or [])))
     rows = cursor.fetchall()
     return [
         {

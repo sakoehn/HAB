@@ -145,7 +145,7 @@ export function AboutPage() {
               ['/api/mappings/export/summary?annotation_id=…&source=…',
                'Size of that export before it starts: samples, rows and max_rows. Same date_from/date_to'],
               ['/api/annotations/top?source=…&limit=25',
-               'Top N annotations by mean EGC, optional date_from/date_to'],
+               'Top N annotations by mean EGC, optional date_from/date_to. Repeat depth to rank only those hierarchy levels (e.g. depth=4 for KEGG KOs); without it every level is ranked together, and since a category includes everything under it, the top is all categories. Repeat ids instead to get just those annotations'],
               ['/api/correlation?catalog_id_a=…&catalog_id_b=…&metric=egc&method=spearman',
                'Score (or read the cached score for) one specific pair. method: raw_pearson, log_pearson or spearman. Returns r, p (effective-sample-size p-value, Bonferroni-corrected for the number of separate tests the lag search is worth), lag_samples, n_pairs'],
               ['/api/correlations/family?ref_source=…&ref_annotation_id=…&target_source=…&metric=egc&method=spearman&limit=50',

@@ -125,16 +125,17 @@ describe('Top EGC — Rank column', () => {
 })
 
 describe('Top EGC — Rank filter pills use the same names', () => {
-  it('kegg pills read "pathway class" / "leaf (KO)", not "Level N", and still filter', async () => {
+  it('kegg pills read "pathway class" / "leaf (KO)", not "Level N", and fetch their rank', async () => {
     const user = await loadTop('kegg')
     await waitFor(() => expect(screen.getByText('K00134')).toBeInTheDocument())
     expect(screen.queryByText('Level 1')).not.toBeInTheDocument()
     const pills = screen.getAllByRole('button').filter(b => b.className.includes('al-source-pill'))
-    const leafPill = pills.find(b => b.textContent === 'leaf (KO)')!
-    expect(pills.map(b => b.textContent)).toContain('pathway class')
-    await user.click(leafPill)
-    expect(screen.queryByText('09100')).not.toBeInTheDocument()
-    expect(screen.getByText('K00134')).toBeInTheDocument()
+    expect(pills.map(b => b.textContent)).toEqual(
+      ['All', 'pathway class', 'subcategory', 'pathway / BRITE table', 'leaf (KO)'],
+    )
+    await user.click(pills.find(b => b.textContent === 'pathway class')!)
+    await waitFor(() => expect(mockFetch.mock.calls.map(c => String(c[0])))
+      .toContainEqual(expect.stringMatching(/annotations\/top\?source=kegg.*&depth=1&depth=4$/)))
   })
 })
 
