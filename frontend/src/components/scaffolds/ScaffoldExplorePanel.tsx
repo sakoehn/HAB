@@ -17,7 +17,7 @@
 // @ts-expect-error plotly.js-dist-min ships no .d.ts; types from @types/plotly.js
 import PlotlyBase from 'plotly.js-dist-min'
 import createPlotlyComponent from 'react-plotly.js/factory'
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = createPlotlyComponent(PlotlyBase as any)
@@ -101,6 +101,9 @@ export function ScaffoldExplorePanel({
   // returned only its first page.
   const [searchTotal, setSearchTotal]   = useState(0)
   const [searchStatus, setSearchStatus] = useState<ApiStatus>('idle')
+  // Guards against a search response landing after a newer search or a
+  // source change: only the latest request's answer is shown.
+  const searchRequestSeqRef = useRef(0)
   // Taxonomy rank multi-select filter for the search results below — only
   // shown when searchSrc === 'taxonomy'. Real `depth` comes straight off
   // each row (search results carry it, unlike /annotations/top).
@@ -308,22 +311,25 @@ export function ScaffoldExplorePanel({
 
   async function runSearch() {
     if (!searchQ.trim()) return
+    const requestId = ++searchRequestSeqRef.current
     setSearchStatus('loading')
     setSearchRes([])
     try {
       const r = await apiFetch<{ data: TopAnnotation[]; total?: number }>(
         `/api/search/annotations?q=${encodeURIComponent(searchQ)}&sources=${searchSrc}&page_size=500`,
       )
+      if (requestId !== searchRequestSeqRef.current) return
       const rows = r.data ?? []
       setSearchRes(rows)
       setSearchTotal(Math.max(r.total ?? rows.length, rows.length))
       setSearchStatus('ok')
     } catch {
-      setSearchStatus('error')
+      if (requestId === searchRequestSeqRef.current) setSearchStatus('error')
     }
   }
 
   function handleSourceChange(src: string) {
+    searchRequestSeqRef.current++ // a search still loading belongs to the old source
     setSearchSrc(src)
     setSearchRes([])
     setSearchStatus('idle')
@@ -616,11 +622,12 @@ export function ScaffoldExplorePanel({
             } — click to add
           </div>
           {visibleSearchRes.map(r => {
-            const already = terms.some(t => t.annotationId === r.annotation_id && t.source === searchSrc)
+            const resultSrc = r.source ?? searchSrc
+            const already = terms.some(t => t.annotationId === r.annotation_id && t.source === resultSrc)
             return (
               <div
                 key={r.annotation_id}
-                onClick={() => !already && addTerm(r.annotation_id, searchSrc)}
+                onClick={() => !already && addTerm(r.annotation_id, resultSrc)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,
                   padding: '8px 14px',

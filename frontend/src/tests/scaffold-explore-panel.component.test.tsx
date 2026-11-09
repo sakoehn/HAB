@@ -758,3 +758,65 @@ describe('ScaffoldExplorePanel — aggregated sums disclose per-term counting', 
     expect(screen.getByTestId('aggregated-overlap-note')).toHaveTextContent(/counted once for each/i)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A search answer that arrives after the search changed
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ScaffoldExplorePanel — late search answers', () => {
+  const taxon = (genus: string) => ({
+    annotation_id: `Bacteria;Firmicutes;Bacilli;Bacillales;Bacillaceae;${genus}`,
+    source: 'taxonomy', name: genus, parent: null, mean_egc: 1, max_egc: 1, sample_count: 1, depth: 6,
+  })
+
+  // Each search request waits until the test answers it, in any order.
+  function deferSearches() {
+    const pending: ((rows: object[]) => void)[] = []
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations')) {
+        return new Promise(resolve => pending.push(rows =>
+          resolve({ ok: true, status: 200, json: async () => ({ data: rows, total: rows.length }) })))
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [] }) })
+    })
+    return pending
+  }
+
+  it('drops a search answer that arrives after the source changed', async () => {
+    const pending = deferSearches()
+    render(<ScaffoldExplorePanel />)
+    await userEvent.type(screen.getByPlaceholderText(/search annotation id or name/i), 'Bacillus{Enter}')
+    await waitFor(() => expect(pending).toHaveLength(1))
+    await userEvent.selectOptions(screen.getByRole('combobox'), 'kegg')
+    pending[0]([taxon('Bacillus')])
+    await new Promise(r => setTimeout(r, 20))
+    expect(screen.queryByText(/Bacillus/)).toBeNull()
+  })
+
+  it('shows the latest search when an earlier one answers last', async () => {
+    const pending = deferSearches()
+    render(<ScaffoldExplorePanel />)
+    const input = screen.getByPlaceholderText(/search annotation id or name/i)
+    await userEvent.type(input, 'Bac{Enter}')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'Bacillus{Enter}')
+    await waitFor(() => expect(pending).toHaveLength(2))
+    pending[1]([taxon('Bacillus')])
+    expect(await screen.findByText('Bacillus')).toBeInTheDocument()
+    pending[0]([taxon('Bacteroides')])
+    await new Promise(r => setTimeout(r, 20))
+    expect(screen.queryByText('Bacteroides')).toBeNull()
+    expect(screen.getByText('Bacillus')).toBeInTheDocument()
+  })
+
+  it('adds a clicked result under the source it was found in', async () => {
+    setupMocks({ searchData: { data: [SEARCH_RESULTS.data[0]], total: 1 } })
+    render(<ScaffoldExplorePanel />)
+    await userEvent.type(screen.getByPlaceholderText(/search annotation id or name/i), 'ATP{Enter}')
+    await userEvent.click(await screen.findByText('COG0055'))
+    await waitFor(() => {
+      const summary = mockFetch.mock.calls.map(c => String(c[0])).find(u => u.includes('/api/annotations/scaffolds/summary'))
+      expect(new URL(summary!, 'http://x').searchParams.get('source')).toBe('cog')
+    })
+  })
+})

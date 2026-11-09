@@ -13,7 +13,7 @@
 // go with the size request and the download as a text/plain form post,
 // since they can be too many for a link.
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 import type { AnnotationItem, ApiStatus, BulkDownloadHandoff, HierarchySource, HierarchyTreeNode } from '../../types'
 import { apiFetch } from '../../utils/api'
@@ -140,6 +140,12 @@ export function BulkDownloadPanel({
   const [query, setQuery]                 = useState('')
   const [searchResults, setSearchResults] = useState<AnnotationItem[]>([])
   const [searchStatus, setSearchStatus]   = useState<ApiStatus>('idle')
+  // Guards against a search response landing after a newer search or a
+  // source change: only the latest request's answer is shown.
+  const searchRequestSeqRef = useRef(0)
+  // A search still loading belongs to the old source. An effect, since
+  // changeSource also runs during render for a handed-over term.
+  useEffect(() => { searchRequestSeqRef.current++ }, [source])
 
   // Unticked paths ("term|pathParent") and whether the review list is open.
   // Both belong to one source/start/level: changing any of those starts over.
@@ -252,16 +258,18 @@ export function BulkDownloadPanel({
   async function search() {
     const q = query.trim()
     if (!q) return
+    const requestId = ++searchRequestSeqRef.current
     setSearchStatus('loading')
     try {
       const json = await apiFetch<{ data: AnnotationItem[] }>(
         `/api/search/annotations?q=${encodeURIComponent(q)}&sources=${encodeURIComponent(source)}&page_size=50`,
       )
+      if (requestId !== searchRequestSeqRef.current) return
       const seen = new Set<string>()
       setSearchResults((json.data ?? []).filter(r => !seen.has(r.annotation_id) && !!seen.add(r.annotation_id)))
       setSearchStatus('ok')
     } catch {
-      setSearchStatus('error')
+      if (requestId === searchRequestSeqRef.current) setSearchStatus('error')
     }
   }
 

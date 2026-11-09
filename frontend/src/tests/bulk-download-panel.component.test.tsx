@@ -633,3 +633,52 @@ describe('BulkDownloadPanel — column help warns about Excel and IDs', () => {
     expect(await columnHelp(user)).not.toMatch(/Excel can turn IDs/)
   })
 })
+
+describe('BulkDownloadPanel — late search answers', () => {
+  const BACILLUS = 'Bacteria;Firmicutes;Bacilli;Bacillales;Bacillaceae;Bacillus'
+  const BACTEROIDES = 'Bacteria;Bacteroidetes;Bacteroidia;Bacteroidales;Bacteroidaceae;Bacteroides'
+
+  // Each search request waits until the test answers it, in any order.
+  function deferSearches() {
+    const pending: ((rows: object[]) => void)[] = []
+    mockFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/search/annotations')) {
+        return new Promise(resolve => pending.push(rows => resolve(jsonResponse({ data: rows, total: rows.length }))))
+      }
+      return Promise.resolve(jsonResponse(summary()))
+    })
+    return pending
+  }
+
+  it('drops a search answer that arrives after the source changed', async () => {
+    const user = userEvent.setup()
+    const pending = deferSearches()
+    render(<BulkDownloadPanel />)
+    await user.click(screen.getByRole('button', { name: 'Search' }))
+    await user.type(screen.getByPlaceholderText(/Search for a taxon/), 'Bacillus{Enter}')
+    await waitFor(() => expect(pending).toHaveLength(1))
+    await user.selectOptions(screen.getByLabelText('Source'), 'kegg')
+    pending[0]([{ annotation_id: BACILLUS, name: 'Bacillus', depth: 6 }])
+    await user.click(screen.getByRole('button', { name: 'Search' }))
+    await new Promise(r => setTimeout(r, 20))
+    expect(screen.queryByRole('button', { name: /Bacillus/ })).toBeNull()
+  })
+
+  it('shows the latest search when an earlier one answers last', async () => {
+    const user = userEvent.setup()
+    const pending = deferSearches()
+    render(<BulkDownloadPanel />)
+    await user.click(screen.getByRole('button', { name: 'Search' }))
+    const input = screen.getByPlaceholderText(/Search for a taxon/)
+    await user.type(input, 'Bac{Enter}')
+    await user.clear(input)
+    await user.type(input, 'Bacillus{Enter}')
+    await waitFor(() => expect(pending).toHaveLength(2))
+    pending[1]([{ annotation_id: BACILLUS, name: 'Bacillus', depth: 6 }])
+    expect(await screen.findByRole('button', { name: /Bacillus/ })).toBeInTheDocument()
+    pending[0]([{ annotation_id: BACTEROIDES, name: 'Bacteroides', depth: 6 }])
+    await new Promise(r => setTimeout(r, 20))
+    expect(screen.queryByRole('button', { name: /Bacteroides/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Bacillus/ })).toBeInTheDocument()
+  })
+})
