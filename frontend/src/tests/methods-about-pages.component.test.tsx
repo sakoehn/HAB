@@ -69,6 +69,16 @@ describe('MethodsPage', () => {
     expect(text).toContain('24h+')
   })
 
+  // Rates measured with the app's scoring code on 2,000 simulated pairs.
+  it('states the measured false-positive rates, not "about half"', () => {
+    const { container } = render(<MethodsPage />)
+    const text = container.textContent ?? ''
+    expect(text).not.toContain('about half of unrelated')
+    expect(text).toMatch(/about 40%[^.]*one lag[^.]*about 80%/)
+    expect(text).toMatch(/about 6% pass p < 0\.05 rather than 5%, up to\s+7% when a candidate is detected in only part/)
+    expect(text).toMatch(/kept as\s+published, and the false discovery rate correction/)
+  })
+
   it('says the checked-taxa download leaves out a taxon inside another checked one', () => {
     const { container } = render(<MethodsPage />)
     const text = container.textContent ?? ''

@@ -242,13 +242,19 @@ export function MethodsPage() {
           >
             Samples taken 4 hours apart are not independent: each one looks a lot like the
             one before it. A standard p-value counts every timepoint as separate evidence, so
-            for smooth time series it is far too optimistic (about half of unrelated but
-            smooth pairs pass). Instead, the number of timepoints N is discounted by how
+            for smooth time series it is far too optimistic: about 40% of unrelated but
+            smooth pairs pass at one lag, and about 80% once the best of the 13 lags is
+            kept. Instead, the number of timepoints N is discounted by how
             strongly each series resembles itself at increasing time offsets (its
             autocorrelation ρ), following Pyper &amp; Peterman (1998), and r is tested with
             N_eff − 2 degrees of freedom. The autocorrelation is measured on the same values
             that were correlated (raw, logged or ranked), after dropping timepoints where
             either annotation is missing. N_eff never exceeds the real number of timepoints.
+            The correction is close but not exact: in simulations of unrelated smooth pairs
+            (including the lag search below), about 6% pass p &lt; 0.05 rather than 5%, up to
+            7% when a candidate is detected in only part of the series. Correcting that would
+            also miss about half of the real shared trends, so the estimator is kept as
+            published, and the false discovery rate correction below is applied on top.
           </Item>
           <Item title="What this means: about 30 independent observations">
             In practice the 128 samples are worth about 30 independent observations (median
