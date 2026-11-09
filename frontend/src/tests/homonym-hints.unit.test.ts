@@ -44,6 +44,26 @@ describe('homonymHints', () => {
     const hints = homonymHints([BOSEA_1, BOSEA_2, third])
     expect(new Set([hints.get(BOSEA_1), hints.get(BOSEA_2), hints.get(third)]).size).toBe(3)
   })
+
+  // JGI's "unclassified X" placeholders repeat one name down the ranks, so
+  // one lineage sits inside the other and no ancestor differs: the rank does.
+  it('tells nested same-named taxa apart by rank', () => {
+    const E = 'Archaea;Euryarchaeota;unclassified Euryarchaeota'
+    const ids = [E, `${E};unclassified Euryarchaeota`, `${E};unclassified Euryarchaeota;unclassified Euryarchaeota`]
+    const hints = homonymHints(ids)
+    expect(ids.map(id => hints.get(id))).toEqual(['class', 'order', 'family'])
+  })
+
+  it('gives both the differing ancestor and the rank when a name is nested and also elsewhere', () => {
+    const A = 'Bacteria;Firmicutes;unclassified X'
+    const A2 = `${A};unclassified X`
+    const B = 'Bacteria;Proteobacteria;unclassified X'
+    const hints = homonymHints([A, A2, B])
+    expect(hints.get(A)).toBe('Firmicutes · class')
+    expect(hints.get(A2)).toBe('Firmicutes · order')
+    expect(hints.get(B)).toBe('Proteobacteria')
+    expect(new Set([hints.get(A), hints.get(A2), hints.get(B)]).size).toBe(3)
+  })
 })
 
 describe('withHomonymHint', () => {

@@ -9,6 +9,7 @@
 
 import type { AnnotationItem } from '../types'
 import { extractEgc, extractNormEgc } from './stats'
+import { taxonomyRankLabel } from '../constants'
 
 // isCoveredByAnotherExclusion / filterRedundantExclusions
 // Taxonomy egc values are hierarchical rollups -- a taxon's own egc is the
@@ -241,8 +242,10 @@ export function computeChartTitle(rootId: string, excludedList: string[], mode: 
 // homonyms) get a short hint that tells them apart: for each same-named
 // other, its closest ancestor that differs, joined root-to-leaf. For a pair
 // that's one name -- often not the immediate parent, which most same-named
-// pairs here share. Taxa whose name is unique in the list (and
-// non-taxonomy ids) get no entry.
+// pairs here share. When one lineage sits inside the other (JGI's
+// "unclassified X" placeholders repeat a name down the ranks) no ancestor
+// differs, so the rank is added instead. Taxa whose name is unique in the
+// list (and non-taxonomy ids) get no entry.
 
 export function homonymHints(ids: string[]): Map<string, string> {
   const byName = new Map<string, string[][]>()
@@ -258,15 +261,22 @@ export function homonymHints(ids: string[]): Map<string, string> {
     if (group.length < 2) continue
     for (const a of group) {
       const levels = new Set<number>()
+      let nested = false
       for (const b of group) {
         if (a === b) continue
+        const shorter = Math.min(a.length, b.length)
+        if (a.slice(0, shorter).every((seg, i) => seg === b[i])) {
+          nested = true
+          continue
+        }
         // Closest ancestor (deepest level above the name) where they differ.
-        let i = Math.min(a.length, b.length) - 2
+        let i = shorter - 2
         while (i > 0 && a[i] === b[i]) i--
         levels.add(i)
       }
-      const hint = [...levels].sort((x, y) => x - y).map(i => a[i]).join(' › ')
-      hints.set(a.join(';'), hint)
+      const parts = [[...levels].sort((x, y) => x - y).map(i => a[i]).join(' › ')]
+      if (nested) parts.push(taxonomyRankLabel(a.length).toLowerCase())
+      hints.set(a.join(';'), parts.filter(Boolean).join(' · '))
     }
   }
   return hints
