@@ -5,6 +5,9 @@ What every file from GET /series/export must look like and hold, checked
 against several real downloads (taxonomy, enzyme, kegg and cog, with and
 without the starting term, a date range, levels skipped, names containing
 commas, KOs in several pathways, COGs in several categories, and the detected-only "sparse" mode).
+POST /series/export/taxa (the Taxonomy page's checked taxa) is held to the
+same contract, with "which terms" meaning exactly the listed taxa, each
+labelled with its own rank, over every sample.
 
 The contract
 ------------
@@ -53,6 +56,7 @@ Run:
 
 import csv
 import io
+import json
 import os
 import sqlite3
 import sys
@@ -118,6 +122,23 @@ REQUESTS = {
     "cog: COGs in several categories":            {"source": "cog", "rank": "cog"},
     "cog: one category, with the starting term":  {"source": "cog", "parent": "E", "rank": "cog", "include_parent": "true"},
 }
+ALPHA = "Bacteria;Proteobacteria;Alphaproteobacteria"
+AEROPYRUM_COMMA_STRAIN = f"{AEROPYRUM_CAMINI};Aeropyrum camini SY1, JCM 12091"
+
+# Bodies for POST /series/export/taxa: "taxa" is the checked list, "parent"
+# the page's scope (a query parameter).
+CHECKED_REQUESTS = {
+    "checked: families and an order of a class": {"source": "taxonomy", "parent": ALPHA, "taxa": [
+        f"{ALPHA};Holosporales;Holosporaceae", f"{ALPHA};Emcibacterales", f"{ALPHA};Caulobacterales;Caulobacteraceae",
+    ]},
+    "checked: strain names containing commas":   {"source": "taxonomy", "parent": AEROPYRUM_CAMINI, "taxa": [
+        AEROPYRUM_COMMA_STRAIN,
+    ]},
+    "checked: no scope, across domains":         {"source": "taxonomy", "taxa": [
+        GAMMA, "Archaea", f"{AEROPYRUM_CAMINI}",
+    ]},
+}
+
 SPARSE_REQUESTS = {
     "taxonomy, sparse": {"source": "taxonomy", "parent": GAMMA, "rank": "family"},
     "enzyme, sparse":   {"source": "enzyme", "parent": "1.1.1", "rank": "ec", "include_parent": "true"},
@@ -189,6 +210,12 @@ def _expected_blocks(conn, req):
     """Block key -> expected labels, starting term excluded. Taxonomy keys
     are lineages (one block per taxon); other keys are (id, lineage_ids)."""
     parent = req.get("parent")
+    if "taxa" in req:
+        return dict(conn.execute(
+            "SELECT annotation_id, name FROM annotation_catalog WHERE source = 'taxonomy' "
+            f"AND annotation_id IN ({','.join('?' * len(req['taxa']))})",
+            req["taxa"],
+        ))
     if req["source"] == "taxonomy":
         prefix = parent + ";" if parent else ""
         return dict(conn.execute(
@@ -276,7 +303,15 @@ def _check_contract(resp, req, conn, sparse):
         r = b[0]
         if taxonomy:
             assert r["taxon"] == expected[r["lineage"]]
-            assert all(x["rank"] == req["rank"] for x in b)
+            if "taxa" in req:
+                (depth,) = conn.execute(
+                    "SELECT depth FROM annotation_catalog WHERE source = 'taxonomy' AND annotation_id = ?",
+                    (r["lineage"],),
+                ).fetchone()
+                rank = [k for k, v in TAXONOMY_RANKS.items() if v == depth][0]
+            else:
+                rank = req["rank"]
+            assert all(x["rank"] == rank for x in b)
             if parent:
                 assert r["lineage"].startswith(parent + ";")
         else:
@@ -331,6 +366,26 @@ def test_csv_contract_sparse(client, conn, monkeypatch, name):
     _check_contract(client.get("/series/export", params=req), req, conn, sparse=True)
 
 
+def _post_checked(client, req):
+    params = {"parent": req["parent"]} if req.get("parent") else {}
+    body = "selection=" + json.dumps({"taxa": req["taxa"]}) + "\r\n"
+    return client.post("/series/export/taxa", params=params, content=body, headers={"Content-Type": "text/plain"})
+
+
+@pytest.mark.parametrize("name", list(CHECKED_REQUESTS))
+def test_csv_contract_checked_taxa(client, conn, name):
+    req = CHECKED_REQUESTS[name]
+    _check_contract(_post_checked(client, req), req, conn, sparse=False)
+
+
+def test_csv_contract_checked_taxa_sparse(client, conn, monkeypatch):
+    from api import routes
+
+    monkeypatch.setattr(routes, "_EXPORT_DENSE_ROW_LIMIT", 10)
+    req = CHECKED_REQUESTS["checked: families and an order of a class"]
+    _check_contract(_post_checked(client, req), req, conn, sparse=True)
+
+
 def test_fixtures_really_exercise_commas_and_repeated_kos(client):
     """Guards the requests above: the comma requests must contain
     comma-bearing names and the KEGG one KOs in several pathways, or the
@@ -339,6 +394,8 @@ def test_fixtures_really_exercise_commas_and_repeated_kos(client):
     enz = client.get("/series/export", params=REQUESTS["enzyme: EC numbers, names with commas"]).text
     kegg = client.get("/series/export", params=REQUESTS["kegg: KOs in several pathways"]).text
     assert '"Aeropyrum camini SY1, JCM 12091"' in tax
+    checked = _post_checked(client, CHECKED_REQUESTS["checked: strain names containing commas"]).text
+    assert '"Aeropyrum camini SY1, JCM 12091"' in checked
     assert '"D-xylose 1-dehydrogenase (NADP+, D-xylono-1,5-lactone-forming)"' in enz
     assert ",true,false," in kegg  # also_in_other_paths=true on a non-starting row
 
