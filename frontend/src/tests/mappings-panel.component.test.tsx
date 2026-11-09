@@ -145,6 +145,37 @@ describe('MappingsPanel — table rendering', () => {
     await waitFor(() => expect(screen.getByText('K00001')).toBeInTheDocument())
     expect(screen.getByText('Bacteria')).toBeInTheDocument()
   })
+
+  it('shows each row gene and its scaffold', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({
+      data: [{ ...makeRow('5/27/21 8:00'), gene_id: 'Ga01_0000003_25253_27703', contig_id: 'Ga01_0000003' }],
+    }))
+    render(<MappingsPanel annotationId="COG0001" source="cog" />)
+    await open()
+    await waitFor(() => expect(screen.getByText('Ga01_0000003_25253_27703')).toBeInTheDocument())
+    expect(screen.getByText('Ga01_0000003')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Gene/ })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Scaffold/ })).toBeInTheDocument()
+  })
+})
+
+describe('MappingsPanel — the count says what a row is', () => {
+  const count = () => document.querySelector('.toggle-count')?.textContent
+
+  it('counts genes when unique pairs is off', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ data: [makeRow('5/27/21 8:00'), makeRow('5/28/21 8:00')] }))
+    render(<MappingsPanel annotationId="K00001" source="kegg" />)
+    await open()
+    await waitFor(() => expect(count()).toBe('2 genes'))
+  })
+
+  it('counts unique combinations when unique pairs is on, and says which gene is shown', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ data: [makeRow('5/27/21 8:00')] }))
+    render(<MappingsPanel annotationId="09101" source="kegg" />)
+    await open()
+    await waitFor(() => expect(count()).toBe('1 unique combination'))
+    expect(screen.getByText(/earliest gene with that combination/i)).toBeInTheDocument()
+  })
 })
 
 describe('MappingsPanel — sorting', () => {
@@ -503,10 +534,10 @@ describe('MappingsPanel — an older response never replaces a newer one', () =>
     // The newer request (2 rows) answers first, then the older one (1 row).
     resolvers[1](jsonResponse({ data: [makeRow('5/27/21 8:00', 'K1'), makeRow('5/28/21 8:00', 'K2')] }))
     const rowCount = () => document.querySelector('.toggle-count')?.textContent
-    await waitFor(() => expect(rowCount()).toBe('2 rows'))
+    await waitFor(() => expect(rowCount()).toBe('2 unique combinations'))
     resolvers[0](jsonResponse({ data: [makeRow('5/27/21 8:00', 'K9')] }))
 
     await new Promise(r => setTimeout(r, 50))
-    expect(rowCount()).toBe('2 rows')
+    expect(rowCount()).toBe('2 unique combinations')
   })
 })

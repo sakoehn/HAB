@@ -118,8 +118,12 @@ export function isLikelyLeafAnnotation(source: string, annotationId: string): bo
   }
 }
 
+// Same column names and order as the server's "Export all" file, minus its
+// sample column, so the two downloads line up.
 export function buildMappingCsvRow(
   row: {
+    gene_id:   string | null
+    contig_id: string | null
     taxonomy:  string | null
     kegg_id:   string | null
     enzyme:    string | null
@@ -134,6 +138,8 @@ export function buildMappingCsvRow(
     source,
     date:     fmtDate(row.timepoint?.datetime ?? ''),
     time:     fmtTime(row.timepoint?.datetime ?? ''),
+    gene_id:     row.gene_id   ?? '',
+    scaffold_id: row.contig_id ?? '',
     taxonomy: row.taxonomy ?? '',
     kegg_id:  row.kegg_id  ?? '',
     enzyme:   row.enzyme   ?? '',

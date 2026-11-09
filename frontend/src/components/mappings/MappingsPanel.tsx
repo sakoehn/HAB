@@ -13,8 +13,9 @@
 //     appears in is real signal, not noise to collapse) and ON for a
 //     pathway/class/category id (hundreds of genes, where duplicate
 //     combinations really are redundant)
-//   - Sortable columns (date, time, taxonomy, kegg_id, enzyme, cog_id)
-//   - Pagination (100 rows per page)
+//   - One row per gene: sortable columns (date, time, gene, scaffold,
+//     taxonomy, kegg_id, enzyme, cog_id)
+//   - Pagination (25 rows per page)
 //   - CSV export: "↓ CSV" downloads the loaded rows when they are complete;
 //     when the preview was limited (sample cap or the 50,000-row limit),
 //     "Export all" opens MappingsExportBox, which streams every gene record
@@ -75,6 +76,10 @@ export function MappingsPanel({
   const [sampleCount, setSampleCount] = useState(128)
   const [uniqueOnly, setUniqueOnly]   = useState(() => !isLikelyLeafAnnotation(source, annotationId))
   const [allRows, setAllRows]         = useState<MappingSearchRow[]>([])
+  // Whether the loaded rows are unique combinations (each shown by its
+  // earliest gene) or every gene -- the mode they were loaded in, not the
+  // checkbox, which changes before its reload arrives.
+  const [loadedUnique, setLoadedUnique] = useState(false)
   const [status, setStatus]           = useState<ApiStatus>('idle')
   const [sortCol, setSortCol]         = useState<MappingSortCol>('date')
   const [sortDir, setSortDir]         = useState<SortDir>('asc')
@@ -136,6 +141,7 @@ export function MappingsPanel({
       )
       if (requestId !== loadSeqRef.current) return
       setAllRows(r.data ?? [])
+      setLoadedUnique(unique)
       setSamplesCapped(r.samples_were_capped ?? false)
       setResultsWereTruncated(r.results_were_truncated ?? false)
       setLeafCount(r.leaf_count ?? null)
@@ -182,6 +188,11 @@ export function MappingsPanel({
     [allRows, sortCol, sortDir],
   )
 
+  const n = allRows.length
+  const countLabel = loadedUnique
+    ? `${n} unique combination${n === 1 ? '' : 's'}`
+    : `${n} gene${n === 1 ? '' : 's'}`
+
   const totalPageCount = totalPages(sortedRows.length)
   const pageRows        = paginateRows(sortedRows, page)
 
@@ -209,7 +220,7 @@ export function MappingsPanel({
         <span className="toggle-icon">▶</span>
         <span className="toggle-label">View Annotation Mappings</span>
         {status === 'ok' && (
-          <span className="toggle-count">{allRows.length} rows</span>
+          <span className="toggle-count">{countLabel}</span>
         )}
       </button>
 
@@ -283,7 +294,7 @@ export function MappingsPanel({
                   ? 'Still working — some common ids take up to a minute…'
                   : `Searching mappings across ${requestedSampleCount} samples…`}
               </div>
-              <SkeletonTable columns={6} rows={6} />
+              <SkeletonTable columns={8} rows={6} />
             </div>
           )}
           {status === 'error' && (
@@ -351,12 +362,20 @@ export function MappingsPanel({
                   </span>
                 </div>
               )}
+              {loadedUnique && (
+                <div style={{ font: '11px var(--mono)', color: 'var(--text-dim)', margin: '0 0 6px' }}>
+                  One row per distinct taxonomy / KEGG / enzyme / COG combination, shown by the
+                  earliest gene with that combination.
+                </div>
+              )}
               <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
                 <table className="mappings-table">
                   <thead>
                     <tr>
                       <SortTh col="date"     label="Date"       />
                       <SortTh col="time"     label="Time (24h)" />
+                      <SortTh col="gene_id"   label="Gene"      />
+                      <SortTh col="contig_id" label="Scaffold"  />
                       <SortTh col="taxonomy" label="Taxonomy"   />
                       <SortTh col="kegg_id"  label="KEGG"       />
                       <SortTh col="enzyme"   label="Enzyme"     />
@@ -375,6 +394,12 @@ export function MappingsPanel({
                           fontFamily: 'var(--mono)', fontSize: 12, whiteSpace: 'nowrap',
                         }}>
                           {fmtTime(row.timepoint?.datetime ?? '') || '—'}
+                        </td>
+                        <td style={{ fontFamily: 'var(--mono)', fontSize: 12, whiteSpace: 'nowrap' }}>
+                          {row.gene_id ?? '—'}
+                        </td>
+                        <td style={{ fontFamily: 'var(--mono)', fontSize: 12, whiteSpace: 'nowrap' }}>
+                          {row.contig_id ?? '—'}
                         </td>
                         <td>{row.taxonomy ?? '—'}</td>
                         <td>{row.kegg_id  ?? '—'}</td>
@@ -397,7 +422,7 @@ export function MappingsPanel({
                     ‹ Prev
                   </button>
                   <span className="pagination-info">
-                    Page {page} of {totalPageCount} · {allRows.length} rows
+                    Page {page} of {totalPageCount} · {countLabel}
                   </span>
                   <button
                     className="btn sm ghost"

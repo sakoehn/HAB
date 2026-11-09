@@ -35,7 +35,7 @@
  *   includes source, sample_count, unique_pairs params
  *
  * Pagination:
- *   page size = 100
+ *   page size = 25
  *   total pages calculation
  *   page slice boundaries
  *
@@ -121,7 +121,7 @@ describe('fmtTime — mapping table time column', () => {
 
 describe('mapping table column set', () => {
   const TABLE_COLS: MappingSortCol[] = [
-    'date', 'time', 'taxonomy', 'kegg_id', 'enzyme', 'cog_id',
+    'date', 'time', 'gene_id', 'contig_id', 'taxonomy', 'kegg_id', 'enzyme', 'cog_id',
   ]
 
   it('table has a "date" column', () => {
@@ -143,8 +143,13 @@ describe('mapping table column set', () => {
     expect(TABLE_COLS).toContain('cog_id')
   })
 
-  it('exactly 6 columns', () => {
-    expect(TABLE_COLS).toHaveLength(6)
+  it('table has the gene and its scaffold, since each row is one gene', () => {
+    expect(TABLE_COLS).toContain('gene_id')
+    expect(TABLE_COLS).toContain('contig_id')
+  })
+
+  it('exactly 8 columns', () => {
+    expect(TABLE_COLS).toHaveLength(8)
   })
 })
 
@@ -153,6 +158,8 @@ describe('mapping table column set', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SAMPLE_ROW = {
+  gene_id:   'Ga0590984_0000003_25253_27703',
+  contig_id: 'Ga0590984_0000003',
   taxonomy: 'Tenacibaculum',
   kegg_id:  'K02014',
   enzyme:   null,
@@ -201,8 +208,23 @@ describe('mapping CSV export shape', () => {
     expect(csv.source).toBe('kegg')
   })
 
-  it('produces exactly 8 fields', () => {
-    expect(Object.keys(buildMappingCsvRow(SAMPLE_ROW, 'K02014', 'kegg'))).toHaveLength(8)
+  it('CSV row has the gene and its scaffold, named as in the server export', () => {
+    const csv = buildMappingCsvRow(SAMPLE_ROW, 'K02014', 'kegg')
+    expect(csv.gene_id).toBe('Ga0590984_0000003_25253_27703')
+    expect(csv.scaffold_id).toBe('Ga0590984_0000003')
+  })
+
+  it('columns follow the server export order (minus its sample column)', () => {
+    expect(Object.keys(buildMappingCsvRow(SAMPLE_ROW, 'K02014', 'kegg'))).toEqual([
+      'annotation_id', 'source', 'date', 'time', 'gene_id', 'scaffold_id',
+      'taxonomy', 'kegg_id', 'enzyme', 'cog_id',
+    ])
+  })
+
+  it('null gene and scaffold become empty strings', () => {
+    const csv = buildMappingCsvRow({ ...SAMPLE_ROW, gene_id: null, contig_id: null }, 'K02014', 'kegg')
+    expect(csv.gene_id).toBe('')
+    expect(csv.scaffold_id).toBe('')
   })
 
   it('afternoon timepoint formats time correctly', () => {

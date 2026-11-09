@@ -330,7 +330,7 @@ export type DescStats = {
 
 // ── Sort column types (used in table headers) ──────────────────────────────
 
-export type MappingSortCol  = 'date' | 'time' | 'taxonomy' | 'kegg_id' | 'enzyme' | 'cog_id'
+export type MappingSortCol  = 'date' | 'time' | 'gene_id' | 'contig_id' | 'taxonomy' | 'kegg_id' | 'enzyme' | 'cog_id'
 export type ExploreSortCol  = 'mean_egc' | 'max_egc' | 'sample_count' | 'annotation_id'
 export type ScaffoldSortCol = 'date' | 'scaffold_count' | 'gene_count'
 
