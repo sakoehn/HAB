@@ -69,6 +69,13 @@ describe('MethodsPage', () => {
     expect(text).toContain('24h+')
   })
 
+  it('says the checked-taxa download leaves out a taxon inside another checked one', () => {
+    const { container } = render(<MethodsPage />)
+    const text = container.textContent ?? ''
+    expect(text).toMatch(/only the higher one is downloaded/)
+    expect(text).toMatch(/check only the families/)
+  })
+
   it('states the real result limits', () => {
     const { container } = render(<MethodsPage />)
     const text = container.textContent ?? ''

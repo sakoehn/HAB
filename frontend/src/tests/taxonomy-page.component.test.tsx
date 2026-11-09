@@ -17,7 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useState } from 'react'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
 import { TaxonomyPage } from '../pages/TaxonomyPage'
 import { makeDefaultTaxonomyState, type TaxonomyState } from '../pages/taxonomyState'
@@ -570,6 +570,14 @@ describe('TaxonomyPage — download the checked taxa', () => {
     expect(JSON.parse((form()!.querySelector('input[name="selection"]') as HTMLInputElement).value))
       .toEqual({ taxa: [`${ALPHA};Holosporales`] })
     expect(screen.getByRole('button', { name: /Download checked taxa \(1\)/ })).toBeInTheDocument()
+  })
+
+  it('its help says a taxon checked inside another checked one is left out, and why', async () => {
+    renderChecked('keep', [FAMILY_A])
+    fireEvent.click(within(form()!).getByTitle('Help'))
+    const help = await screen.findByText(/only the higher one is downloaded/)
+    expect(help.textContent).toMatch(/already includes everything under it/)
+    expect(help.textContent).toMatch(/check only the families/)
   })
 
   it('is not offered in Remove mode, where the checked taxa are the ones taken out', () => {

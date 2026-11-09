@@ -435,7 +435,7 @@ export function TaxonomyPage({
                 >
                   <input type="hidden" name="selection" value={JSON.stringify({ taxa: checkedTaxa })} />
                   <button type="submit" className="btn sm">↓ Download checked taxa ({checkedTaxa.length})</button>
-                  <HelpTooltip text="A CSV of just the checked taxa, each at its own rank: one row per taxon per sample, across all timepoints (the date range above doesn't apply), with raw and normalized EGC. Samples where a taxon wasn't found are written as 0." />
+                  <HelpTooltip text="A CSV of just the checked taxa, each at its own rank: one row per taxon per sample, across all timepoints (the date range above doesn't apply), with raw and normalized EGC. Samples where a taxon wasn't found are written as 0. If you check a taxon and also something above it (a family and its order), only the higher one is downloaded: its EGC already includes everything under it. To get each family separately, check only the families." />
                 </form>
               )}
             </div>

@@ -149,6 +149,13 @@ export function MethodsPage() {
             Each taxon is identified by its complete lineage, not its bare name, so two
             different organisms that happen to share a name at some rank are never merged.
           </Item>
+          <Item title="Downloading the kept taxa">
+            On the Taxonomy Explorer, Keep only checked can download the checked taxa, each
+            at its own rank. If you check a taxon and also something above it (a family and
+            its order), only the higher one is downloaded: its EGC already includes everything
+            under it, so listing both would count those genes twice. To get each family
+            separately, check only the families.
+          </Item>
         </Section>
 
         {/* ── How Values Are Calculated ── */}
