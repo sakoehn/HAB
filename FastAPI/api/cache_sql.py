@@ -1546,6 +1546,32 @@ def get_taxa_under_at_rank_sql(conn: sqlite3.Connection, parent: str | None, dep
     return [{"annotation_id": a, "name": n} for a, n in rows]
 
 
+def get_taxa_by_ids_sql(conn: sqlite3.Connection, annotation_ids: list[str]) -> list[dict]:
+    """Return the catalog entry of each listed taxon, at whatever rank it is.
+
+    Args:
+        conn: Open SQLite connection.
+        annotation_ids: Full lineages, e.g.
+            "Bacteria;Proteobacteria;Alphaproteobacteria;Holosporales".
+
+    Returns:
+        List of {"annotation_id", "name", "depth"} dicts sorted by
+        annotation_id, one per listed taxon that exists. Unknown ids are
+        left out.
+    """
+    ids = sorted(set(annotation_ids))
+    found = []
+    # Chunked to stay under SQLite's bound-parameter limit.
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        query = f"""
+            SELECT annotation_id, name, depth FROM annotation_catalog
+            WHERE source = 'taxonomy' AND annotation_id IN ({','.join('?' * len(chunk))})
+        """
+        found.extend({"annotation_id": a, "name": n, "depth": d} for a, n, d in conn.execute(query, chunk))
+    return sorted(found, key=lambda t: t["annotation_id"])
+
+
 # Ids per query in iter_taxa_series_sql, well under SQLite's
 # bound-parameter limit.
 _SERIES_EXPORT_CHUNK = 500

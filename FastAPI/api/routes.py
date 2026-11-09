@@ -23,6 +23,7 @@ GET /series/export
 GET /series/export/review
 POST /series/export/summary
 POST /series/export
+POST /series/export/taxa
 
 All business logic (pagination, search, EGC extraction) lives here or in
 cache.py / index.py — endpoints are intentionally thin.
@@ -89,6 +90,7 @@ from .cache_sql import (
     get_path_review_sql,
     get_paths_under_at_depth_sql,
     get_taxa_under_at_rank_sql,
+    get_taxa_by_ids_sql,
     iter_series_for_ids_sql,
     strip_any_source_prefix,
     strip_source_prefix,
@@ -1396,19 +1398,24 @@ def _series_export_csv(db, plan: dict):
         close_sql_connection(db)
 
 
-def _parse_selection(raw: bytes) -> set[tuple[str, str]]:
-    """The user's path choices from a POST body. The browser sends a
-    text/plain form, so the body is `selection=<json>` where the JSON is
-    {"exclude": [[term_id, path_parent_id], ...]}. Read by hand because
-    FastAPI's own form parsing would need the python-multipart package."""
+def _parse_selection_json(raw: bytes):
+    """The JSON in a POST body. The browser sends a text/plain form, so the
+    body is `selection=<json>`. Read by hand because FastAPI's own form
+    parsing would need the python-multipart package."""
     text = raw.decode("utf-8", errors="replace").strip()
     name, sep, value = text.partition("=")
     if name != "selection" or not sep:
         raise HTTPException(status_code=400, detail="Expected a 'selection' field")
     try:
-        data = json.loads(value)
+        return json.loads(value)
     except ValueError:
         raise HTTPException(status_code=400, detail="selection is not valid JSON") from None
+
+
+def _parse_selection(raw: bytes) -> set[tuple[str, str]]:
+    """The user's path choices from a POST body: `selection=<json>` where
+    the JSON is {"exclude": [[term_id, path_parent_id], ...]}."""
+    data = _parse_selection_json(raw)
     exclude = data.get("exclude", []) if isinstance(data, dict) else None
     if not isinstance(exclude, list) or not all(
         isinstance(pair, list) and len(pair) == 2 and all(isinstance(x, str) for x in pair) for pair in exclude
@@ -1534,6 +1541,78 @@ def series_export_with_choices(
     the browser stream the file straight to disk."""
     exclude = _parse_selection(selection)
     return _series_export_response(source, rank, parent, date_from, date_to, include_parent, exclude)
+
+
+def _parse_checked_taxa(raw: bytes) -> list[str]:
+    """The taxa checked on the Taxonomy page from a POST body:
+    `selection=<json>` where the JSON is {"taxa": [lineage, ...]}."""
+    data = _parse_selection_json(raw)
+    taxa = data.get("taxa") if isinstance(data, dict) else None
+    if not isinstance(taxa, list) or not all(isinstance(t, str) for t in taxa):
+        raise HTTPException(status_code=400, detail="selection.taxa must be a list of lineages")
+    if not taxa:
+        raise HTTPException(status_code=400, detail="No taxa were chosen")
+    return taxa
+
+
+def _checked_taxa_export_plan(db, parent: str | None, taxa: list[str]) -> dict:
+    """The /series/export plan for exactly the listed taxa, each at its own
+    rank, over every sample. Raises HTTPException for an unknown taxon or
+    scope, or a taxon that isn't below the scope."""
+    if parent is not None and not taxon_exists_sql(db, parent):
+        raise HTTPException(status_code=404, detail=f"Unknown taxon '{parent}'")
+    found = get_taxa_by_ids_sql(db, taxa)
+    missing = set(taxa) - {t["annotation_id"] for t in found}
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Unknown taxon '{sorted(missing)[0]}'")
+    if parent is not None:
+        outside = [t["annotation_id"] for t in found if not t["annotation_id"].startswith(parent + ";")]
+        if outside:
+            raise HTTPException(status_code=400, detail=f"'{outside[0]}' is not below '{parent}'")
+
+    entries = [
+        {"annotation_id": t["annotation_id"],
+         "labels": [t["name"], _taxonomy_rank_name(t["depth"]), t["annotation_id"]]}
+        for t in found
+    ]
+    samples = _export_samples(db, None, None)
+    max_rows = len(entries) * len(samples)
+    return {
+        "source":   AnnotationSource.taxonomy.value,
+        "header":   _EXPORT_HEADER,
+        "entries":  entries,
+        "start":    None,
+        "samples":  samples,
+        "max_rows": max_rows,
+        "sparse":   max_rows > _EXPORT_DENSE_ROW_LIMIT,
+    }
+
+
+@router.post("/series/export/taxa")
+def series_export_checked_taxa(
+    request:   Request,
+    parent:    str | None = Query(None),
+    selection: bytes = Body(..., media_type="text/plain"),
+):
+    """CSV of exactly the taxa checked on the Taxonomy page (any mix of
+    ranks), every sample, same columns as the taxonomy /series/export.
+    `parent` is the page's scope: every taxon must be below it, and it names
+    the file. Body: see _parse_checked_taxa."""
+    parent = parent or None
+    taxa = _parse_checked_taxa(selection)
+    db = connect_to_sql()
+    try:
+        plan = _checked_taxa_export_plan(db, parent, taxa)
+    except Exception:
+        close_sql_connection(db)
+        raise
+    parts = [parent.rsplit(";", 1)[-1]] if parent else []
+    filename = re.sub(r"[^A-Za-z0-9._-]+", "_", "_".join([*parts, "checked_taxa_timeseries"])) + ".csv"
+    return StreamingResponse(
+        _series_export_csv(db, plan),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/series/export/review")
