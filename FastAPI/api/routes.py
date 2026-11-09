@@ -1295,9 +1295,17 @@ def _paths_export_entries(
 
     start = None
     if include_parent and parent is not None:
+        # Only detected terms are listed, so a term in the hierarchy with no
+        # data of its own has no block to add.
         parent_path = next(
-            p for p in get_paths_under_at_depth_sql(db, source, None, 0, parent_depth) if p["annotation_id"] == parent
+            (p for p in get_paths_under_at_depth_sql(db, source, None, 0, parent_depth) if p["annotation_id"] == parent),
+            None,
         )
+        if parent_path is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"{source} term '{parent}' was never detected, so it has no starting-term rows to add",
+            )
         start = {"annotation_id": parent, "labels": labels(parent_path, level_names[parent_depth], False, True)}
     return _EXPORT_PATHS_HEADER, entries, start, multi_path_terms
 
