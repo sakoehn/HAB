@@ -174,16 +174,24 @@ describe('ExternalLinks — enzyme', () => {
     )
   })
 
-  // A partial EC (e.g. "2.7", an EC subclass with no complete 4-level
-  // number) 404s on genome.jp without dash-padding, and has no matching
-  // per-entry page on ExPASy at all -- confirmed only the (now dash-padded)
-  // KEGG link is shown for it.
-  it('a partial EC gets a dash-padded KEGG link and no ExPASy link', () => {
+  // An EC category (e.g. "2.7", a subclass) has no KEGG ENZYME entry:
+  // genome.jp/entry/ec:2.7.-.- answers "No such data". ExPASy has a real
+  // page for each class, subclass and sub-subclass, listing its enzymes
+  // (checked live, including renumbered ones such as 7.1.1 and 5.6.2).
+  it('an EC category links to its ExPASy class page, not the empty KEGG entry', () => {
     render(<ExternalLinks annotationId="EC:2.7" source="enzyme" />)
-    expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
-      'href', 'https://www.genome.jp/entry/ec:2.7.-.-',
+    expect(screen.getByRole('link', { name: 'ExPASy' })).toHaveAttribute(
+      'href', 'https://enzyme.expasy.org/EC/2.7.-.-',
     )
-    expect(screen.queryByRole('link', { name: 'ExPASy' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'KEGG' })).not.toBeInTheDocument()
+  })
+
+  it('a top-level EC class and a sub-subclass are padded to four levels', () => {
+    const { unmount } = render(<ExternalLinks annotationId="EC:7" source="enzyme" />)
+    expect(screen.getByRole('link', { name: 'ExPASy' })).toHaveAttribute('href', 'https://enzyme.expasy.org/EC/7.-.-.-')
+    unmount()
+    render(<ExternalLinks annotationId="1.1.1" source="enzyme" />)
+    expect(screen.getByRole('link', { name: 'ExPASy' })).toHaveAttribute('href', 'https://enzyme.expasy.org/EC/1.1.1.-')
   })
 })
 

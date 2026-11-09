@@ -149,20 +149,27 @@ export function ExternalLinks({
 
   if (source === 'enzyme') {
     const ec = id.replace(/^EC:/i, '')
-    // A partial EC (e.g. "2.7") isn't a valid genome.jp entry on its
-    // own -- KEGG's own convention for an EC class page pads the missing
-    // levels with dashes ("ec:2.7.-.-").
-    const parts   = ec.split('.')
-    const keggEc  = [...parts, '-', '-', '-'].slice(0, 4).join('.')
+    const parts    = ec.split('.')
     const isFullEc = parts.length === 4 && parts.every(p => /^\d+$/.test(p))
+    // An EC category (e.g. "2.7") has no KEGG ENZYME entry -- genome.jp
+    // answers "No such data" -- but ExPASy has a page for every class,
+    // subclass and sub-subclass, with the missing levels as dashes
+    // ("2.7.-.-"), listing the enzymes under it.
+    if (!isFullEc) {
+      return link(
+        `https://enzyme.expasy.org/EC/${[...parts, '-', '-', '-'].slice(0, 4).join('.')}`,
+        'ExPASy',
+        'ExPASy ENZYME class page',
+      )
+    }
     return (
       <>
         {link(
-          `https://www.genome.jp/entry/ec:${keggEc}`,
+          `https://www.genome.jp/entry/ec:${ec}`,
           'KEGG',
           'KEGG ENZYME entry',
         )}
-        {isFullEc && link(
+        {link(
           `https://enzyme.expasy.org/EC/${ec}`,
           'ExPASy',
           'ExPASy ENZYME entry',
