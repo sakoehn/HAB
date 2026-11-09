@@ -191,6 +191,10 @@ export function TaxonomyPage({
   const excludedPending = excludedList.filter((_, i) =>
     excludedStatuses[i] !== 'ok' && excludedStatuses[i] !== 'error')
 
+  // What "Download checked taxa" sends: the kept branches, without one
+  // nested inside another, so the file adds up to the kept line.
+  const checkedTaxa = state.selectionMode === 'keep' ? filterRedundantExclusions(excludedList) : []
+
   const chartSeries = useMemo(() => {
     if (!state.rootId || rootStatus !== 'ok') return []
 
@@ -418,6 +422,21 @@ export function TaxonomyPage({
                 <button className="btn sm" onClick={() => state.rootId && onGoBulkDownload(state.rootId)}>
                   ↓ Download time series under this scope →
                 </button>
+              )}
+              {checkedTaxa.length > 0 && (
+                // A form post, not a link: the list can be long, and the
+                // browser still streams the file straight to disk.
+                <form
+                  data-testid="checked-taxa-download-form"
+                  method="post"
+                  action={`/api/series/export/taxa?${new URLSearchParams({ parent: state.rootId })}`}
+                  encType="text/plain"
+                  style={{ display: 'contents' }}
+                >
+                  <input type="hidden" name="selection" value={JSON.stringify({ taxa: checkedTaxa })} />
+                  <button type="submit" className="btn sm">↓ Download checked taxa ({checkedTaxa.length})</button>
+                  <HelpTooltip text="A CSV of just the checked taxa, each at its own rank: one row per taxon per sample, across all timepoints (the date range above doesn't apply), with raw and normalized EGC. Samples where a taxon wasn't found are written as 0." />
+                </form>
               )}
             </div>
           )}

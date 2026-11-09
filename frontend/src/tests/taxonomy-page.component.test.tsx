@@ -537,3 +537,48 @@ describe('TaxonomyPage — bulk download shortcut', () => {
     expect(screen.queryByRole('button', { name: /Download time series under this scope/ })).toBeNull()
   })
 })
+
+describe('TaxonomyPage — download the checked taxa', () => {
+  const ALPHA = 'Bacteria;Proteobacteria;Alphaproteobacteria'
+  const FAMILY_A = `${ALPHA};Holosporales;Holosporaceae`
+  const FAMILY_B = `${ALPHA};Caulobacterales;Caulobacteraceae`
+
+  function renderChecked(selectionMode: 'keep' | 'remove', checked: string[]) {
+    mockFetch.mockResolvedValue(jsonResponse({ data: [] }))
+    const state = {
+      ...makeDefaultTaxonomyState(), rootId: ALPHA, selectionMode, excludedIds: new Set(checked),
+    }
+    render(<TaxonomyPage state={state} setState={() => {}} onGoScaffoldExplore={vi.fn()} onReset={() => {}} />)
+  }
+  const form = () => screen.queryByTestId('checked-taxa-download-form') as HTMLFormElement | null
+
+  it('posts exactly the kept taxa to the checked-taxa export, scoped to the page', () => {
+    renderChecked('keep', [FAMILY_A, FAMILY_B])
+    const f = form()!
+    expect(f.getAttribute('method')).toBe('post')
+    expect(f.getAttribute('enctype')).toBe('text/plain')
+    const action = new URL(f.getAttribute('action')!, 'http://x')
+    expect(action.pathname).toBe('/api/series/export/taxa')
+    expect(Object.fromEntries(action.searchParams)).toEqual({ parent: ALPHA })
+    expect(JSON.parse((f.querySelector('input[name="selection"]') as HTMLInputElement).value))
+      .toEqual({ taxa: [FAMILY_A, FAMILY_B] })
+    expect(screen.getByRole('button', { name: /Download checked taxa \(2\)/ })).toBeInTheDocument()
+  })
+
+  it('leaves out a checked taxon inside another checked one, like the kept line does', () => {
+    renderChecked('keep', [`${ALPHA};Holosporales`, FAMILY_A])
+    expect(JSON.parse((form()!.querySelector('input[name="selection"]') as HTMLInputElement).value))
+      .toEqual({ taxa: [`${ALPHA};Holosporales`] })
+    expect(screen.getByRole('button', { name: /Download checked taxa \(1\)/ })).toBeInTheDocument()
+  })
+
+  it('is not offered in Remove mode, where the checked taxa are the ones taken out', () => {
+    renderChecked('remove', [FAMILY_A])
+    expect(form()).toBeNull()
+  })
+
+  it('is not offered before anything is checked', () => {
+    renderChecked('keep', [])
+    expect(form()).toBeNull()
+  })
+})
