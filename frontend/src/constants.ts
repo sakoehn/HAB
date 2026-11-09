@@ -65,6 +65,13 @@ export function nextColorForSource(source: string): string {
   return shades[idx]
 }
 
+// The first shade of `source` that isn't in `used`, so a new series never
+// shares a colour with one already on screen. Cycles once every shade is taken.
+export function freeColorForSource(source: string, used: readonly string[]): string {
+  const shades = SOURCE_SHADES[source] ?? CHART_COLORS
+  return shades.find(c => !used.includes(c)) ?? shades[used.length % shades.length]
+}
+
 export function resetSourceCounters(): void {
   for (const key of Object.keys(_sourceCounters)) {
     _sourceCounters[key] = 0

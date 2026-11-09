@@ -80,7 +80,7 @@ import userEvent from '@testing-library/user-event'
 import { ComparePage } from '../pages/ComparePage'
 import { makeDefaultCompareState } from '../pages/compareState'
 import type { CompareState, SharedAnnotation } from '../types'
-import { groupSeriesColor } from '../constants'
+import { groupSeriesColor, SOURCE_SHADES } from '../constants'
 
 // jsdom reports a hex background as rgb(); compare in that form.
 function rgbOrHex(hex: string): string {
@@ -208,7 +208,7 @@ function ManagedComparePage({
       initialAnnotations={pending}
       onConsumed={handleConsumed}
       dataDateRange={dataDateRange}
-      onReset={vi.fn()}
+      onReset={() => setStateRaw(makeDefaultCompareState())}
     />
   )
 }
@@ -1290,5 +1290,97 @@ describe('ComparePage — COG category letters carry their full name', () => {
     await waitFor(() =>
       expect(screen.getAllByText('E · Amino acid transport and metabolism').length).toBeGreaterThanOrEqual(2),
     )
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ComparePage — no duplicates, no colour collisions, groups by members
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ComparePage — adding without duplicates or shared colours', () => {
+  const R3 = { ...SEARCH_RESULT_2, annotation_id: 'K00010', name: 'iolG' }
+  const open = (annotationId: string, color: string, id = annotationId) => ({
+    id, annotationId, source: 'kegg', name: annotationId, data: DEFAULT_SERIES.data, status: 'ok' as const, color,
+  })
+  const dot = (label: string) => (findChip(label)!.querySelector('.chip-color') as HTMLElement).style.background
+  const chipCount = (label: string) => document.querySelectorAll(`.compare-chip span[title="${label}"]`).length
+
+  it('"Select top N" skips a row already on the chart, so nothing is added twice', async () => {
+    setupMocks({ searchData: { data: [SEARCH_RESULT_1, SEARCH_RESULT_2, R3], total: 3 } })
+    render(<ManagedComparePage initialState={{ entries: [open('K00001', SOURCE_SHADES.kegg[0])] }} />)
+    await userEvent.type(await screen.findByPlaceholderText(/search annotation id or name/i), 'K000')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+    await waitFor(() => screen.getByText('TonB-dep receptor'))
+    await userEvent.click(screen.getByLabelText(/select top 3/i))
+    await userEvent.click(await screen.findByRole('button', { name: /add 2 selected/i }))
+    await waitFor(() => expect(chipCount('K00010')).toBe(1))
+    expect(chipCount('K00001')).toBe(1)
+    expect(chipCount('K02014')).toBe(1)
+  })
+
+  it('a series sent from Analyze does not take the colour of one already on the page', async () => {
+    render(<ManagedComparePage
+      initialState={{ entries: [open('K00001', SOURCE_SHADES.kegg[0])] }}
+      initialAnnotations={[{ kind: 'single', annotationId: 'K02014', source: 'kegg', name: 'TonB-dep receptor' }]}
+    />)
+    await waitFor(() => expect(chipCount('K02014')).toBe(1))
+    expect(dot('K02014')).not.toBe(dot('K00001'))
+  })
+
+  it('a new series takes a shade no open series of its source is using', async () => {
+    render(<ManagedComparePage initialState={{ entries: [
+      open('K00001', SOURCE_SHADES.kegg[1]), open('K00010', SOURCE_SHADES.kegg[2]),
+    ] }} />)
+    await userEvent.type(await screen.findByPlaceholderText(/search annotation id or name/i), 'K02014')
+    await userEvent.click(screen.getByRole('button', { name: /find/i }))
+    await userEvent.click(await screen.findByText('TonB-dep receptor'))
+    await waitFor(() => expect(chipCount('K02014')).toBe(1))
+    const used = new Set([dot('K00001'), dot('K00010')])
+    expect(used.has(dot('K02014'))).toBe(false)
+  })
+
+  it('a group with the same label as an open one but different members is added', async () => {
+    const group = (id: string, members: string[]) => ({
+      id, annotationId: 'iron (2)', source: 'kegg', name: 'iron (2)', data: DEFAULT_SERIES.data, status: 'ok' as const,
+      color: groupSeriesColor(0), isGrouped: true, membersExpanded: false,
+      members: members.map(m => ({ annotationId: m, source: 'kegg', data: DEFAULT_SERIES.data, status: 'ok' as const })),
+    })
+    render(<ManagedComparePage
+      initialState={{ entries: [group('g1', ['K02014', 'K00001'])] }}
+      initialAnnotations={[{ kind: 'group', label: 'iron (2)', members: [
+        { annotationId: 'K00010', source: 'kegg' }, { annotationId: 'K00020', source: 'kegg' },
+      ] }]}
+    />)
+    await waitFor(() => expect(chipCount('iron (2)')).toBe(2))
+  })
+
+  it('a group with the same members as an open one is not added again', async () => {
+    const onConsumed = vi.fn()
+    render(<ManagedComparePage
+      onConsumed={onConsumed}
+      initialState={{ entries: [{
+        id: 'g1', annotationId: 'iron (2)', source: 'kegg', name: 'iron (2)', data: DEFAULT_SERIES.data, status: 'ok' as const,
+        color: groupSeriesColor(0), isGrouped: true, membersExpanded: false,
+        members: ['K02014', 'K00001'].map(m => ({ annotationId: m, source: 'kegg', data: DEFAULT_SERIES.data, status: 'ok' as const })),
+      }] }}
+      initialAnnotations={[{ kind: 'group', label: 'iron (2)', members: [
+        { annotationId: 'K00001', source: 'kegg' }, { annotationId: 'K02014', source: 'kegg' },
+      ] }]}
+    />)
+    await waitFor(() => expect(onConsumed).toHaveBeenCalled())
+    await new Promise(r => setTimeout(r, 20))
+    expect(chipCount('iron (2)')).toBe(1)
+  })
+
+  it('Clear Page also clears the "not added" notice', async () => {
+    const four = ['K10000', 'K10001', 'K10002', 'K10003'].map((a, i) => open(a, SOURCE_SHADES.kegg[i]))
+    render(<ManagedComparePage
+      initialState={{ entries: four }}
+      initialAnnotations={[{ kind: 'single', annotationId: 'K02014', source: 'kegg', name: 'x' }]}
+    />)
+    await screen.findByTestId('compare-handoff-skipped')
+    await userEvent.click(screen.getByRole('button', { name: /clear page/i }))
+    await waitFor(() => expect(document.querySelectorAll('.compare-chip').length).toBe(0))
+    expect(screen.queryByTestId('compare-handoff-skipped')).not.toBeInTheDocument()
   })
 })

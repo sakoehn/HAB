@@ -25,7 +25,7 @@ import type {
 } from '../types'
 import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel, primaryLabelWithCogCategory } from '../constants'
 import { homonymHints, withHomonymHint } from '../utils/taxonomy'
-import { nextColorForSource, resetSourceCounters, groupSeriesColor } from '../constants'
+import { freeColorForSource, groupSeriesColor } from '../constants'
 import { apiFetch } from '../utils/api'
 import { sumMembersByTimestamp, seriesMeanInRange } from '../utils/stats'
 import { formatRelativeAbundancePercent, isoDate } from '../utils/format'
@@ -151,12 +151,15 @@ export function ComparePage({
   useEffect(() => {
     if (!initialAnnotations.length) return
     onConsumed()
-    resetSourceCounters()
 
+    // A group is the same group only if it has the same members: two
+    // different groups can share a label such as "iron (2)".
+    const membersKey = (members: { annotationId: string; source: string }[]) =>
+      members.map(m => `${m.source}:${m.annotationId}`).sort().join('|')
     const handoffKey = (ann: SharedAnnotation) =>
-      ann.kind === 'single' ? `single:${ann.source}:${ann.annotationId}` : `group:${ann.label}`
+      ann.kind === 'single' ? `single:${ann.source}:${ann.annotationId}` : `group:${membersKey(ann.members)}`
     const openKeys = new Set(state.entries.map(e =>
-      e.isGrouped ? `group:${e.annotationId}` : `single:${e.source}:${e.annotationId}`,
+      e.isGrouped ? `group:${membersKey(e.members ?? [])}` : `single:${e.source}:${e.annotationId}`,
     ))
     const incoming = initialAnnotations.filter(ann => !openKeys.has(handoffKey(ann)))
     const freeSlots = Math.max(0, 4 - state.entries.length)
@@ -165,11 +168,13 @@ export function ComparePage({
       ann.kind === 'single' ? ann.annotationId : ann.label,
     ))
     if (!toLoad.length) return
-    const colors = toLoad.map(ann =>
-      ann.kind === 'single'
-        ? nextColorForSource(ann.source)
-        : groupSeriesColor(0), // shown via entryColor() below, by position among groups
-    )
+    const used = state.entries.map(e => e.color)
+    const colors = toLoad.map(ann => {
+      if (ann.kind !== 'single') return groupSeriesColor(0) // shown via entryColor() below, by position among groups
+      const color = freeColorForSource(ann.source, used)
+      used.push(color)
+      return color
+    })
     // Must be genuinely unique against whatever's already in state.entries
     // (manually added before this load, or surviving a previous
     // load+removal), not just unique WITHIN this one batch -- a
@@ -343,11 +348,20 @@ export function ComparePage({
     })
   }
 
+  function isOpen(r: AnnotationItem): boolean {
+    return state.entries.some(e => e.annotationId === r.annotation_id && e.source === r.source)
+  }
+
   async function addSelectedAnnotations() {
-    const toAdd  = state.searchResults.filter(r => bulkSelected.has(`${r.annotation_id}::${r.source}`))
+    const toAdd  = state.searchResults.filter(r => bulkSelected.has(`${r.annotation_id}::${r.source}`) && !isOpen(r))
     if (!toAdd.length) return
 
-    const colors = toAdd.map(ann => nextColorForSource(ann.source))
+    const used   = state.entries.map(e => e.color)
+    const colors = toAdd.map(ann => {
+      const color = freeColorForSource(ann.source, used)
+      used.push(color)
+      return color
+    })
     // A length-derived id (state.entries.length) isn't collision-safe --
     // after removing an entry, the next add's id can match a surviving
     // entry's id exactly, and since `.id` is the only field used for
@@ -404,7 +418,7 @@ export function ComparePage({
       e => e.annotationId === ann.annotation_id && e.source === ann.source,
     )) return
 
-    const color = nextColorForSource(ann.source)
+    const color = freeColorForSource(ann.source, state.entries.map(e => e.color))
     // randomUUID for the same reason as addSelectedAnnotations above.
     const id    = crypto.randomUUID()
     setState(prev => ({
@@ -518,6 +532,11 @@ export function ComparePage({
     return i >= 0 ? groupSeriesColor(i) : 'var(--text-dim)'
   }
   const slotsRemaining = 4 - state.entries.length
+  // "Select top N" picks the first N results not already on the chart.
+  const topEligibleKeys = state.searchResults
+    .filter(r => !isOpen(r))
+    .slice(0, slotsRemaining)
+    .map(r => `${r.annotation_id}::${r.source}`)
 
   return (
     <div className="page-fade">
@@ -530,7 +549,7 @@ export function ComparePage({
           </p>
         </div>
         <div className="page-header-actions">
-          <ResetBtn onClick={onReset} title="Clear Comparisons" label="Clear Page" small/>
+          <ResetBtn onClick={() => { setHandoffSkipped([]); onReset() }} title="Clear Comparisons" label="Clear Page" small/>
         </div>
       </div>
 
@@ -608,16 +627,11 @@ export function ComparePage({
                       type="checkbox"
                       checked={
                         bulkSelected.size > 0 &&
-                        state.searchResults
-                          .slice(0, slotsRemaining)
-                          .every(r => bulkSelected.has(`${r.annotation_id}::${r.source}`))
+                        topEligibleKeys.every(key => bulkSelected.has(key))
                       }
                       onChange={() => {
-                        const allSlice = state.searchResults
-                          .slice(0, slotsRemaining)
-                          .map(r => `${r.annotation_id}::${r.source}`)
-                        const allSelected = allSlice.every(key => bulkSelected.has(key))
-                        setBulkSelected(new Set(allSelected ? [] : allSlice))
+                        const allSelected = topEligibleKeys.every(key => bulkSelected.has(key))
+                        setBulkSelected(new Set(allSelected ? [] : topEligibleKeys))
                       }}
                     />
                     Select top {slotsRemaining}
@@ -656,9 +670,7 @@ export function ComparePage({
                     see the rest). */}
                 <div data-testid="compare-results-scroll" style={{ maxHeight: 500, overflowY: 'auto' }}>
                 {state.searchResults.map((r, i) => {
-                  const alreadyAdded = state.entries.some(
-                    e => e.annotationId === r.annotation_id && e.source === r.source,
-                  )
+                  const alreadyAdded = isOpen(r)
                   const isChecked = bulkSelected.has(`${r.annotation_id}::${r.source}`)
                   const canAdd    = !alreadyAdded && slotsRemaining > 0
 
@@ -877,9 +889,7 @@ export function ComparePage({
                         // different groups can share the same label, and
                         // matching by label would remove BOTH when the user
                         // meant to remove just one.
-                        const next = prev.entries.filter(x => x.id !== e.id)
-                        if (next.length === 0) resetSourceCounters()
-                        return { ...prev, entries: next }
+                        return { ...prev, entries: prev.entries.filter(x => x.id !== e.id) }
                       })}
                     >
                       ×
