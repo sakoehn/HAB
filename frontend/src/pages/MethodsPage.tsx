@@ -309,15 +309,21 @@ export function MethodsPage() {
             so a transporter is still compared with every other transporter.
           </Item>
           <Item title="False discovery rate and the results list">
-            Every candidate in the family is tested. A Benjamini–Hochberg correction is
-            applied across all of them, and candidates with q &lt; 0.05 are marked
+            Every candidate in the family is scored unless it shares fewer than 10 detected
+            timepoints with the reference at every lag (or does not vary over the ones it
+            shares): no correlation can be measured for those, so they are left out of the
+            correction, and the panel says how many there were. That can be many: a fifth of
+            the KEGG candidates for one KO detected in every sample, a third for one detected
+            in only 20 samples. A Benjamini–Hochberg correction is applied across all scored candidates,
+            and candidates with q &lt; 0.05 are marked
             significant. The list shows every candidate, significant or not, so weaker
             matches can still be explored: significant candidates first, then the rest, each
             group ranked by |r|. Without that, r values from only a handful of shared
             timepoints could fill the list and push a well-supported significant match out of
             view. It is capped at the top {METHODS_FACTS.familyLimitDefault} (up to{' '}
             {METHODS_FACTS.familyLimitMax} through the API’s limit parameter), and the panel
-            shows how many candidates were tested and how many are significant.
+            shows how many candidates were scored, how many could not be, and how many are
+            significant.
           </Item>
         </Section>
 

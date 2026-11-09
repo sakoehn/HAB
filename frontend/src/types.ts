@@ -220,10 +220,12 @@ export type CorrelationFamilyResult = {
 // request's limit), significant or not.
 export type CorrelationFamilyResponse = {
   results:           CorrelationFamilyResult[]
-  // Both are true totals BEFORE `limit` truncates `results`, so the panel
-  // can show "top 50 of 4,637 tested, 3 significant" instead of a bare 50.
+  // True totals BEFORE `limit` truncates `results`, so the panel can show
+  // "top 50 of 4,637 tested, 3 significant" instead of a bare 50.
   significant_count: number
   tested_count:      number
+  // Candidates that couldn't be scored (too few shared timepoints).
+  untested_count:    number
 }
 
 // ── Chart / UI state ───────────────────────────────────────────────────────

@@ -361,6 +361,42 @@ describe('CorrelatesPanel — full ranked list with significance marked', () => 
     expect(screen.queryByText(/showing top/)).not.toBeInTheDocument()
   })
 
+  it('says how many candidates could not be scored, and why', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001)],
+      significant_count: 1, tested_count: 1, untested_count: 2531,
+    })
+
+    const note = await screen.findByText(/2,531 not scored/)
+    const legend = note.closest('.corr-legend') as HTMLElement
+    const helps = within(legend).getAllByTitle('Help')
+    await userEvent.click(helps[helps.length - 1])
+    const tip = await screen.findByText(/fewer than 10 detected timepoints/i)
+    expect(tip.textContent).toMatch(/not in the tested count/i)
+  })
+
+  it('says nothing about unscored candidates when there are none', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001)],
+      significant_count: 1, tested_count: 1, untested_count: 0,
+    })
+
+    await screen.findByText(/COG0001/)
+    expect(screen.queryByText(/not scored/)).not.toBeInTheDocument()
+  })
+
+  it('the cap tooltip no longer claims every candidate was tested', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001)],
+      significant_count: 3, tested_count: 4637, untested_count: 0,
+    })
+
+    const cap = await screen.findByText(/showing top 1 of 4,637 tested/)
+    await userEvent.click(within(cap.parentElement as HTMLElement).getAllByTitle('Help').at(-1)!)
+    const tip = await screen.findByText(/Results are capped/)
+    expect(tip.textContent).not.toMatch(/every candidate was tested/)
+  })
+
   it('says no candidates could be scored when the list is empty', async () => {
     await openWith({ results: [], significant_count: 0, tested_count: 0 })
 

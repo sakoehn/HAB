@@ -465,6 +465,7 @@ class TestCorrelationFamilyEndpoint:
         assert len(body["results"]) == 1
         assert body["significant_count"] == 2  # pairs (1,2) and (1,5) -- (1,3) isn't significant
         assert body["tested_count"] == 3       # (1,2), (1,3), (1,5); constant (1,4) can't be scored
+        assert body["untested_count"] == 1     # (1,4), counted rather than silently dropped
 
     def test_constant_candidate_is_omitted_not_a_crash(self, client):
         # Candidate 4 (K00004) is constant across every sample -- must come
@@ -709,10 +710,11 @@ class TestCorrelationFamilyEveryCandidateTested:
         assert flags == [(2, True), (3, False)]
         assert body["significant_count"] == 1
         assert body["tested_count"] == 2
+        assert body["untested_count"] == 0
 
     def test_response_no_longer_carries_prescreen_fields(self, two_candidate_client):
         body = self._family(two_candidate_client).json()
-        assert set(body) == {"results", "significant_count", "tested_count"}
+        assert set(body) == {"results", "significant_count", "tested_count", "untested_count"}
 
     def test_circular_shift_is_rejected(self, two_candidate_client):
         assert self._family(two_candidate_client, method="circular_shift").status_code == 400

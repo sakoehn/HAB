@@ -135,10 +135,12 @@ describe('MethodsPage — every correlation method is described', () => {
     expect(text).toMatch(/only strong correlations/i)
   })
 
-  it('says every candidate is tested and weaker ones are still listed', () => {
+  it('says which candidates are scored and that weaker ones are still listed', () => {
     const { container } = render(<MethodsPage />)
     const text = container.textContent ?? ''
-    expect(text).toMatch(/every candidate/i)
+    expect(text).not.toMatch(/Every candidate in the family is tested/)
+    expect(text).toMatch(/fewer than 10 detected timepoints/i)
+    expect(text).toMatch(/how many could not be/i)
     expect(text).toMatch(/not significant/i)
     expect(text).toMatch(/significant candidates first/i)
   })

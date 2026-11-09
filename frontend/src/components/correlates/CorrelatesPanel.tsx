@@ -76,6 +76,7 @@ export function CorrelatesPanel({
   // idle/loading/error states before a real response has landed.
   const [significantCount, setSignificantCount] = useState<number | null>(null)
   const [testedCount, setTestedCount] = useState<number | null>(null)
+  const [untestedCount, setUntestedCount] = useState<number | null>(null)
 
   // Default to enzyme (the smallest real family, ~3.5k candidates) rather
   // than taxonomy (~60k, by far the largest) -- on a cold cache this is
@@ -154,6 +155,7 @@ export function CorrelatesPanel({
       setData(result?.results ?? [])
       setSignificantCount(result?.significant_count ?? null)
       setTestedCount(result?.tested_count ?? null)
+      setUntestedCount(result?.untested_count ?? null)
       setStatus('ok')
     } catch (err) {
       if (requestId !== requestSeqRef.current) return
@@ -366,7 +368,14 @@ export function CorrelatesPanel({
                       <span className="corr-legend-warn">
                         showing top {data.length} of {testedCount.toLocaleString()} tested
                       </span>
-                      <HelpTooltip text="Results are capped for performance. Significant matches are always shown first, then the strongest of the rest by |r|; every candidate was tested, and the significant count covers all of them." />
+                      <HelpTooltip text="Results are capped for performance. Significant matches are always shown first, then the strongest of the rest by |r|; every scored candidate is counted, and the significant count covers all of them." />
+                    </>
+                  )}
+                  {untestedCount != null && untestedCount > 0 && (
+                    <>
+                      {' · '}
+                      {untestedCount.toLocaleString()} not scored
+                      <HelpTooltip text="These candidates share fewer than 10 detected timepoints with this annotation (or don't vary over the ones they share), so no correlation can be measured. They are not in the tested count or the significance correction." />
                     </>
                   )}
                   {data.some(d => d.n_pairs < 30) && (

@@ -759,13 +759,17 @@ def correlation_family_endpoint(
         # significant match past `limit` (seen live: psbA vs enzyme,
         # ferredoxin:thioredoxin reductase hidden behind 50 such rows).
         scored.sort(key=lambda entry: (not entry["significant"], -abs(entry["r"])))
-        # Both counts are real totals BEFORE `limit` (default 50) is
+        # All counts are real totals BEFORE `limit` (default 50) is
         # applied, so the panel can show "top 50 of 4,637 tested, 3
-        # significant" instead of a bare 50.
+        # significant" instead of a bare 50. untested_count is the
+        # candidates that couldn't be scored (fewer than 10 shared
+        # timepoints at every lag, or no variation where they overlap):
+        # they are outside the BH family, but are counted, not hidden.
         return {
             "results":           scored[:limit],
             "significant_count": sum(entry["significant"] for entry in scored),
             "tested_count":      len(scored),
+            "untested_count":    len(candidates) - len(scored),
         }
     finally:
         conn.close()
