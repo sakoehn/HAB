@@ -12,6 +12,7 @@
 
 import type { ReactNode } from 'react'
 import { LOWESS_BANDWIDTH_MIN, LOWESS_BANDWIDTH_MAX } from '../components/charts/ChartControls'
+import { LOWESS_MIN_POINTS } from '../utils/signal'
 import { METHODS_FACTS } from './methodsFacts'
 import { TIDE_MATCH_MAX_MINUTES } from '../utils/solar'
 
@@ -198,7 +199,9 @@ export function MethodsPage() {
             time; closer points get more weight. Lower bandwidth follows local fluctuations,
             higher bandwidth shows the overall trend (adjustable from{' '}
             {LOWESS_BANDWIDTH_MIN} to {LOWESS_BANDWIDTH_MAX}). Smoothing changes only the
-            drawn line; statistics are always computed on the real values.
+            drawn line; statistics are always computed on the real values. A series with
+            fewer than {LOWESS_MIN_POINTS} detected points is drawn unsmoothed, since smoothing
+            would leave every point where it is; its hover label and CSV say so.
           </Item>
           <Item
             title="Descriptive Statistics"

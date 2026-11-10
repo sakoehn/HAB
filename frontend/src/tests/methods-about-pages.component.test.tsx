@@ -86,6 +86,11 @@ describe('MethodsPage', () => {
     expect(text).toMatch(/check only the families/)
   })
 
+  it('says a series too short to smooth is drawn unsmoothed', () => {
+    const { container } = render(<MethodsPage />)
+    expect(container.textContent).toMatch(/fewer than 4 detected points is drawn unsmoothed/)
+  })
+
   it('says sample times are local Pacific time', () => {
     const { container } = render(<MethodsPage />)
     expect(container.textContent).toMatch(/local Pacific Daylight Time \(UTC−7\)/)
