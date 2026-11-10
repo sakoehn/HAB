@@ -158,6 +158,14 @@ class TestCorrelationEndpoint:
         )
         assert response.status_code == 400
 
+    def test_unknown_catalog_id_returns_404(self, client):
+        response = client.get(
+            "/correlation",
+            params={"catalog_id_a": 1, "catalog_id_b": 999, "metric": "egc", "method": "raw_pearson"},
+        )
+        assert response.status_code == 404
+        assert "999" in response.json()["detail"]
+
 
 @pytest.fixture
 def computed_client(tmp_path, monkeypatch):

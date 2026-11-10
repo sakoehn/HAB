@@ -659,6 +659,9 @@ def correlate_endpoint(catalog_id_a: int, catalog_id_b: int, metric: str, method
         raise HTTPException(status_code=400, detail=f"method must be one of {VALID_METHODS}")
     conn = _connect()
     try:
+        for catalog_id in (catalog_id_a, catalog_id_b):
+            if conn.execute("SELECT 1 FROM annotation_catalog WHERE id = ?", (catalog_id,)).fetchone() is None:
+                raise HTTPException(status_code=404, detail=f"Unknown catalog id {catalog_id}")
         result = _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method)
     finally:
         conn.close()
