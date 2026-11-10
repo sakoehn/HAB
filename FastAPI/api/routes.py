@@ -1056,11 +1056,13 @@ def annotation_scaffolds(
     Returns { annotation_id, source, sample, total, page, page_size, data }
     where data is [{ sample, date, scaffold, count }].
     """
+    # Accepts kegg's "KO:" / enzyme's "EC:" prefix, as mappings does.
+    bare_id = strip_source_prefix(source.value, annotation_id)
     conn = connect_to_sql()
     try:
-        total = count_annotation_scaffolds_sql(conn, source.value, annotation_id, sample)
+        total = count_annotation_scaffolds_sql(conn, source.value, bare_id, sample)
         scaffolds = get_annotation_scaffolds_sql(
-            conn, source.value, annotation_id, sample,
+            conn, source.value, bare_id, sample,
             limit=page_size, offset=(page - 1) * page_size,
         )
     finally:
@@ -1103,7 +1105,7 @@ def annotation_scaffolds_summary(
     """
     conn = connect_to_sql()
     try:
-        docs = get_annotation_series_sql(conn, source.value, annotation_id)
+        docs = get_annotation_series_sql(conn, source.value, strip_source_prefix(source.value, annotation_id))
     finally:
         close_sql_connection(conn)
     rows: list[dict] = []

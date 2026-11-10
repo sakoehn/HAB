@@ -246,3 +246,15 @@ def test_summary_scaffold_count_equals_detail_row_count(client):
             f"scaffold_count mismatch for {sample}: "
             f"summary={s_row['scaffold_count']}, detail_rows={len(detail['data'])}"
         )
+
+
+# Other routes accept the KO:/EC: prefix KEGG and papers write; these do too.
+@pytest.mark.parametrize("source, bare", [("kegg", "K02014"), ("enzyme", "2.7.7.7")])
+def test_prefixed_id_finds_the_same_scaffolds(client, source, bare):
+    prefixed = ("KO:" if source == "kegg" else "EC:") + bare
+    for route, extra in (("/annotations/scaffolds", {"sample": 3300060358}), ("/annotations/scaffolds/summary", {})):
+        plain = client.get(route, params={"source": source, "annotation_id": bare, **extra})
+        with_prefix = client.get(route, params={"source": source, "annotation_id": prefixed, **extra})
+        assert plain.status_code == 200, (route, plain.text)
+        assert with_prefix.status_code == 200, (route, with_prefix.text)
+        assert with_prefix.json()["data"] == plain.json()["data"]
