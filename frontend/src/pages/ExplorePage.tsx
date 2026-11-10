@@ -1060,7 +1060,8 @@ export function AnnotationsByParentPanel({
                               {group.items.length} members -- disclosed here
                               instead of silently undercounting the total. */}
                           This group has {group.items.length} member annotations, but the summed
-                          trend below only includes the first 20 — it may be undercounted.
+                          trend below and the Trend Δ EGC column only include the first 20 — the
+                          trend may be undercounted.
                         </span>
                       </div>
                     )}
@@ -1081,7 +1082,7 @@ export function AnnotationsByParentPanel({
                           <th>Name</th>
                           <th>Mean EGC</th>
                           <th>Samples</th>
-                          <th title="Δ EGC (raw): last-quarter mean minus first-quarter mean">
+                          <th title="Δ EGC (raw): mean of the last quarter of the detected points minus the mean of the first quarter — quarters of the points where it was detected, not of the time span">
                             Trend Δ EGC
                           </th>
                           <th>Scaffolds</th>
@@ -1094,6 +1095,9 @@ export function AnnotationsByParentPanel({
                             .map(d => extractEgc(d.value))
                             .filter((v): v is number => v !== null)
                           const trend = computeTrend(seriesVals)
+                          // Only the first 20 members' series are fetched
+                          // (loadGroupSeries); the rest have no trend to show.
+                          const notLoaded = gs?.status === 'ok' && !(row.annotation_id in gs.data)
                           return (
                             <tr key={row.annotation_id}>
                               <td className="id-cell">
@@ -1114,7 +1118,14 @@ export function AnnotationsByParentPanel({
                                 {row.sample_count}
                               </td>
                               <td style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>
-                                {trend === null ? (
+                                {notLoaded ? (
+                                  <span
+                                    style={{ color: 'var(--text-dim)' }}
+                                    title="Not loaded: only the first 20 members' time series are loaded, for the chart above"
+                                  >
+                                    not loaded
+                                  </span>
+                                ) : trend === null ? (
                                   <span style={{ color: 'var(--text-dim)' }}>—</span>
                                 ) : trend > 0 ? (
                                   <span

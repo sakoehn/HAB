@@ -218,6 +218,37 @@ describe('AnnotationsByParentPanel — expanding a group to load its series', ()
     expect(screen.getByTestId('parent-group-trend-truncated-warning').textContent).toContain('25')
   })
 
+  it('members after the first 20 say their trend was not loaded, instead of a blank', async () => {
+    const rows = Array.from({ length: 25 }, (_, i) => makeRow(`C${i}`, 'BigGroup', 25 - i))
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) return Promise.resolve(jsonResponse({ data: rows }))
+      if (url.includes('/api/series/annotations')) return Promise.resolve(jsonResponse({ data: [] }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<AnnotationsByParentPanel source="cog" />)
+    await waitFor(() => expect(screen.getByText('BigGroup')).toBeInTheDocument())
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /BigGroup/ }))
+
+    await waitFor(() => expect(screen.getAllByText('not loaded')).toHaveLength(5))
+    expect(screen.getAllByText('not loaded')[0].title).toMatch(/first 20/)
+    expect(screen.getByTestId('parent-group-trend-truncated-warning').textContent).toMatch(/Trend/)
+  })
+
+  it('the Trend column says it compares quarters of the detected points', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) return Promise.resolve(jsonResponse({ data: [makeRow('C0', 'TrendGroup', 2), makeRow('C1', 'TrendGroup', 1)] }))
+      return Promise.resolve(jsonResponse({ data: [] }))
+    })
+    render(<AnnotationsByParentPanel source="cog" />)
+    await waitFor(() => expect(screen.getByText('TrendGroup')).toBeInTheDocument())
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /TrendGroup/ }))
+    const th = await screen.findByText('Trend Δ EGC')
+    expect(th.title).toMatch(/detected/)
+    expect(th.title).toMatch(/not of the time span/)
+  })
+
   it('does not show the trend-truncation warning when a group has 20 or fewer members', async () => {
     const rows = Array.from({ length: 20 }, (_, i) => makeRow(`C${i}`, 'SmallGroup', 20 - i))
     mockFetch.mockImplementation((url: string) => {
