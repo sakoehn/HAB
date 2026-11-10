@@ -60,10 +60,11 @@ export function AboutPage() {
               EGC magnitudes.
             </p>
             <p style={{ marginTop: 12 }}>
-              <strong style={{ color: 'var(--amber)' }}>Explore:</strong> Five
+              <strong style={{ color: 'var(--amber)' }}>Explore:</strong> Six
               views — <em>Dataset Overview</em>, <em>Top EGC Annotations</em>,{' '}
-              <em>Annotations by Parent</em>, <em>Annotation Lookup</em>, and{' '}
-              <em>Scaffold Information</em>. Click any card to open that view.
+              <em>Annotations by Parent</em>, <em>Annotation Lookup</em>,{' '}
+              <em>Scaffold Information</em>, and <em>Bulk Download</em>. Click any card to
+              open that view.
             </p>
             <p style={{ marginTop: 12 }}>
               <strong style={{ color: 'var(--chart-4)' }}>Taxonomy Explorer:</strong>{' '}

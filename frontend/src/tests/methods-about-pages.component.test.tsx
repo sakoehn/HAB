@@ -172,6 +172,13 @@ describe('AboutPage', () => {
     }
   })
 
+  it('lists all six Explore views, Bulk Download included', () => {
+    const { container } = render(<AboutPage />)
+    const text = container.textContent ?? ''
+    expect(text).toMatch(/Explore: Six views/)
+    expect(text).toMatch(/Scaffold Information, and Bulk Download/)
+  })
+
   it('API reference no longer claims an inverted index or 26 COG categories', () => {
     const { container } = render(<AboutPage />)
     expect(container.textContent).not.toMatch(/inverted index/i)
