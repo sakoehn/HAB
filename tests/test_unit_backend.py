@@ -662,6 +662,37 @@ class TestTopAnnotationsCache:
 
         assert self.routes_mod._top_ann_cache_get(key) == ["row1"]
 
+    def test_concurrent_gets_and_sets_do_not_raise(self, monkeypatch):
+        """Requests run on several threads. With every entry already expired
+        and room for only two, threads race to delete and evict the same
+        keys; that must never raise KeyError."""
+        import sys
+        import threading
+        monkeypatch.setattr(self.routes_mod, "_TOP_ANN_CACHE_TTL_SECONDS", -1)
+        monkeypatch.setattr(self.routes_mod, "_TOP_ANN_CACHE_MAX_ENTRIES", 2)
+        old_interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        errors = []
+
+        def work(seed):
+            try:
+                for i in range(3000):
+                    key = ("cog", (seed + i) % 3)
+                    self.routes_mod._top_ann_cache_set(key, i)
+                    self.routes_mod._top_ann_cache_get(key)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                errors.append(exc)
+
+        try:
+            threads = [threading.Thread(target=work, args=(n,)) for n in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        finally:
+            sys.setswitchinterval(old_interval)
+        assert errors == []
+
     def test_lru_evicts_the_oldest_entry_once_over_capacity(self, monkeypatch):
         monkeypatch.setattr(self.routes_mod, "_TOP_ANN_CACHE_MAX_ENTRIES", 2)
         self.routes_mod._top_ann_cache_set(("cog", "", ""), ["a"])

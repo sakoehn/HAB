@@ -46,6 +46,7 @@ import csv
 import io
 import json
 import re
+import threading
 import time
 from collections import OrderedDict
 from itertools import groupby
@@ -170,29 +171,34 @@ _TOP_ANN_CACHE_TTL_SECONDS = 30 * 60
 _TOP_ANN_MAX_LIMIT = 200
 
 _TOP_ANN_CACHE_SQL: "OrderedDict[tuple, tuple[float, list]]" = OrderedDict()
+# Routes run on FastAPI's threadpool, so two requests can touch the cache at
+# once; without this, one can delete or evict a key the other is using.
+_TOP_ANN_CACHE_LOCK = threading.Lock()
 
 
 def _top_ann_cache_get(key: tuple):
     """Return the cached (data, sample_count) for `key`, or None on a
     miss/expired entry. Touches the entry's LRU position on a hit."""
-    entry = _TOP_ANN_CACHE_SQL.get(key)
-    if entry is None:
-        return None
-    inserted_at, value = entry
-    if time.time() - inserted_at > _TOP_ANN_CACHE_TTL_SECONDS:
-        del _TOP_ANN_CACHE_SQL[key]
-        return None
-    _TOP_ANN_CACHE_SQL.move_to_end(key)
-    return value
+    with _TOP_ANN_CACHE_LOCK:
+        entry = _TOP_ANN_CACHE_SQL.get(key)
+        if entry is None:
+            return None
+        inserted_at, value = entry
+        if time.time() - inserted_at > _TOP_ANN_CACHE_TTL_SECONDS:
+            del _TOP_ANN_CACHE_SQL[key]
+            return None
+        _TOP_ANN_CACHE_SQL.move_to_end(key)
+        return value
 
 
 def _top_ann_cache_set(key: tuple, value) -> None:
     """Insert/update `key`, evicting the least-recently-used entry first
     if this would push the cache past its size cap."""
-    _TOP_ANN_CACHE_SQL[key] = (time.time(), value)
-    _TOP_ANN_CACHE_SQL.move_to_end(key)
-    while len(_TOP_ANN_CACHE_SQL) > _TOP_ANN_CACHE_MAX_ENTRIES:
-        _TOP_ANN_CACHE_SQL.popitem(last=False)
+    with _TOP_ANN_CACHE_LOCK:
+        _TOP_ANN_CACHE_SQL[key] = (time.time(), value)
+        _TOP_ANN_CACHE_SQL.move_to_end(key)
+        while len(_TOP_ANN_CACHE_SQL) > _TOP_ANN_CACHE_MAX_ENTRIES:
+            _TOP_ANN_CACHE_SQL.popitem(last=False)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
