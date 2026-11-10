@@ -960,7 +960,7 @@ def top_annotations_by_egc(
     KOs). A category's EGC contains its members', so without it the top
     of the list is all categories (KEGG's top 25 holds no KO).
 
-    Cached per (source, date_from, date_to, depth). date_from/date_to, if given,
+    Cached per (source, samples the dates select, depth). date_from/date_to, if given,
     must parse as a real date (see _parse_any_datetime) -- a bound that
     doesn't parse is rejected with 400 rather than silently ignored --
     ignoring it would fall through to the FULL unfiltered dataset while
@@ -984,41 +984,38 @@ def top_annotations_by_egc(
         if not samples:
             raise HTTPException(status_code=404, detail="No samples found")
 
-        # Keyed by the parsed dates, so one date written two ways (e.g.
-        # "2021-05-20" and "2021-05-20T00:00:00") shares an entry.
+        filtered = bool(date_from or date_to)
+        active_samples = [
+            s for s in samples
+            if is_within_date_range((get_timepoint(s) or {}).get("datetime"), date_from, date_to)
+        ] if filtered else samples
+        # Keyed by the samples the dates select, not by the date strings: a
+        # bare date_to covers the whole day and one with a time stops at that
+        # moment, while one date written two ways selects the same samples.
         cache_key = (
             source.value,
-            _parse_any_datetime(date_from).isoformat() if date_from else "",
-            _parse_any_datetime(date_to).isoformat() if date_to else "",
+            tuple(active_samples) if filtered else None,
             tuple(sorted(set(depth or []))),
         )
         depths = sorted(set(depth)) if depth else None
 
         if ids:
-            if not date_from and not date_to:
+            if not filtered:
                 rows, n = get_top_annotations_from_catalog_sql(db, source.value, ids), len(samples)
             else:
-                active_samples = [
-                    s for s in samples
-                    if is_within_date_range((get_timepoint(s) or {}).get("datetime"), date_from, date_to)
-                ]
                 rows = get_top_annotations_sql(db, source.value, active_samples, ids) if active_samples else []
                 n = len(active_samples)
             return {"source": source.value, "sample_count": n, "date_from": date_from, "date_to": date_to, "data": rows}
 
         cached_entry = _top_ann_cache_get(cache_key)
         if cached_entry is None:
-            if not date_from and not date_to:
+            if not filtered:
                 # Unfiltered requests are the common case -- go straight to the
                 # precomputed annotation_catalog table instead of the per-sample
                 # timepoint scan below, which exists only to resolve date-range
                 # filters and would otherwise run needlessly on every request.
                 cached_entry = (get_top_annotations_from_catalog_sql(db, source.value, depths=depths)[:_TOP_ANN_MAX_LIMIT], len(samples))
             else:
-                active_samples = [
-                    s for s in samples
-                    if is_within_date_range((get_timepoint(s) or {}).get("datetime"), date_from, date_to)
-                ]
                 cached_entry = (
                     (get_top_annotations_sql(db, source.value, active_samples, depths=depths)[:_TOP_ANN_MAX_LIMIT], len(active_samples))
                     if active_samples else ([], 0)

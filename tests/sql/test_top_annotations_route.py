@@ -216,6 +216,24 @@ def test_same_date_written_two_ways_shares_one_cache_entry(client, monkeypatch):
     assert len(routes_mod._TOP_ANN_CACHE_SQL) == 1
 
 
+@pytest.mark.parametrize("first", ["2021-06-05", "2021-06-05T00:00:00"])
+def test_whole_day_and_midnight_date_to_do_not_share_an_entry(client, monkeypatch, first):
+    """A bare date_to means the whole day; with a time it means up to that
+    moment. They select different samples, so whichever is asked first
+    must not be served for the other."""
+    from collections import OrderedDict
+    import api.routes as routes_mod
+    monkeypatch.setattr(routes_mod, "_TOP_ANN_CACHE_SQL", OrderedDict())
+
+    second = "2021-06-05T00:00:00" if first == "2021-06-05" else "2021-06-05"
+    counts = {}
+    for date_to in (first, second):
+        counts[date_to] = client.get(
+            "/annotations/top", params={"source": "cog", "limit": 5, "date_to": date_to},
+        ).json()["sample_count"]
+    assert counts["2021-06-05"] > counts["2021-06-05T00:00:00"]
+
+
 # ids=: a page that grouped the top list by parent asks for the parents'
 # own totals, which may not be in the top 200, worked out the same way and
 # over the same dates as the list itself.
