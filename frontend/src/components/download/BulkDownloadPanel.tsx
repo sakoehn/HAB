@@ -283,6 +283,14 @@ export function BulkDownloadPanel({
   }
 
   const rankPlural = LEVEL_PLURALS[rank] ?? rank
+  // A term in several paths gets one block of rows per path, so the row
+  // count is blocks x samples, not terms x samples; say so when they differ.
+  // The starting term's own block (include_parent) is one more.
+  const pathBlocksNote = (s: ExportSummary): string => {
+    if (!s.multi_path_terms || s.samples === 0) return ''
+    const blocks = s.max_rows / s.samples - (includeParent && start ? 1 : 0)
+    return blocks > s.taxa ? ` (${blocks.toLocaleString()} with each ${PATH_NOUNS[source] ?? 'path'} counted)` : ''
+  }
   const canDownload = summaryStatus === 'ok' && !!summary && summary.taxa > 0 && summary.samples > 0
   const startLevel = start ? levelLabel(source, start.depth) : undefined
   const sourceNote = SOURCE_NOTES[source]
@@ -456,7 +464,7 @@ export function BulkDownloadPanel({
               ? `No ${rankPlural} under this starting point${dateFrom || dateTo ? ' in this date range' : ''}.`
               : summary.samples === 0
                 ? 'No samples in this date range.'
-                : `${summary.taxa.toLocaleString()} ${rankPlural} × ${summary.samples.toLocaleString()} samples ≈ ${summary.max_rows.toLocaleString()} rows`}
+                : `${summary.taxa.toLocaleString()} ${rankPlural}${pathBlocksNote(summary)} × ${summary.samples.toLocaleString()} samples ≈ ${summary.max_rows.toLocaleString()} rows`}
           </div>
         )}
         {summaryStatus === 'ok' && summary?.sparse && summary.taxa > 0 && (

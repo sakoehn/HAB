@@ -434,6 +434,15 @@ describe('BulkDownloadPanel — KEGG review list', () => {
     expect(await screen.findByTestId('bulk-review-line')).toHaveTextContent('194 of these KOs are in more than one pathway here')
   })
 
+  it('the size line multiplies out when KOs are in several pathways', async () => {
+    keggFetch(194)
+    const user = userEvent.setup()
+    renderKeggKos()
+    await chooseKo(user)
+    await waitFor(() => expect(screen.getByTestId('bulk-size'))
+      .toHaveTextContent('716 KOs (1,000 with each pathway counted) × 128 samples ≈ 128,000 rows'))
+  })
+
   it('has no review line when nothing needs review', async () => {
     keggFetch(0)
     renderKeggKos()
