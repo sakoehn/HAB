@@ -33,6 +33,7 @@ import { useCopyId } from '../hooks/useCopyId'
 import { ChartErrorBoundary }  from '../components/ui/ChartErrorBoundary'
 import { DateRangePicker }     from '../components/ui/DateRangePicker'
 import { EgcChart, type EgcChartHandle } from '../components/charts/EgcChart'
+import { CHART_CSV_TITLE } from '../components/charts/chartCsv'
 import { MultiEgcChart } from '../components/charts/MultiEgcChart'
 import { GroupedEgcChart }     from '../components/charts/GroupedEgcChart'
 import { MappingsPanel }       from '../components/mappings/MappingsPanel'
@@ -152,7 +153,7 @@ function RightSingleCard({
             <>
               <button className="btn xs" onClick={() => chartRef.current?.exportPng()}>↓ PNG</button>
               <button className="btn xs" onClick={() => chartRef.current?.exportSvg()}>↓ SVG</button>
-              <button className="btn xs" onClick={() => chartRef.current?.exportCsv()}>↓ CSV</button>
+              <button className="btn xs" onClick={() => chartRef.current?.exportCsv()} title={CHART_CSV_TITLE}>↓ CSV</button>
             </>
           )}
           <AnnotationInfoDrawer

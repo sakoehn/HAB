@@ -3,6 +3,12 @@
 // files export only components.
 
 import type { ChartMetric } from '../../types'
+import { TIDE_MATCH_MAX_MINUTES } from '../../utils/solar'
+
+// Tooltip for every chart's ↓ CSV button.
+export const CHART_CSV_TITLE =
+  'With the tide overlay on, tide_predicted_wl_m is the 6-minute ' +
+  `NOAA reading nearest the sample’s time, left blank if none is within ${TIDE_MATCH_MAX_MINUTES} minutes.`
 
 export function buildEgcTimeseriesCsvRows(
   points:       { sample: string; datetime: string; egc: number | null; tide_wl?: number | null }[],

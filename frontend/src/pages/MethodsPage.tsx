@@ -13,6 +13,7 @@
 import type { ReactNode } from 'react'
 import { LOWESS_BANDWIDTH_MIN, LOWESS_BANDWIDTH_MAX } from '../components/charts/ChartControls'
 import { METHODS_FACTS } from './methodsFacts'
+import { TIDE_MATCH_MAX_MINUTES } from '../utils/solar'
 
 const N_LAGS  = METHODS_FACTS.correlationLags.length
 const MAX_LAG = Math.max(...METHODS_FACTS.correlationLags)
@@ -334,7 +335,9 @@ export function MethodsPage() {
             from 27 May to 18 June 2021 at Rosario, Orcas Island, Washington, and sequenced
             and annotated by the DOE Joint Genome Institute (IMG annotation pipeline v5).
             Per sample, the app uses JGI’s per-gene COG, KEGG (KO), EC and taxonomy
-            (phylodist) hit files and the scaffold depth file.
+            (phylodist) hit files and the scaffold depth file. Sample times, on the charts
+            and in every download, are local Pacific Daylight Time (UTC−7) at the sampling
+            site; the whole sampling period falls within daylight time.
           </Item>
           <Item title="Annotation hierarchies">
             KEGG Orthology hierarchy: KEGG BRITE ko00001 (KEGG release dated 22 May 2026).
@@ -344,7 +347,9 @@ export function MethodsPage() {
             assignments.
           </Item>
           <Item title="Environmental overlays">
-            Tide heights: NOAA CO-OPS station 9449771. Day/night shading: sunrise and sunset
+            Tide heights: NOAA CO-OPS station 9449771, predicted every 6 minutes. A chart’s CSV
+            gives each sample the tide reading nearest the sample’s time, left blank if none is
+            within {TIDE_MATCH_MAX_MINUTES} minutes. Day/night shading: sunrise and sunset
             computed astronomically for the sampling site (48.65° N, 122.85° W).
           </Item>
         </Section>

@@ -22,7 +22,7 @@ import { HelpTooltip } from '../ui/HelpTooltip'
 import { ChartControls } from './ChartControls'
 import { ScaffoldBtn }   from '../scaffolds/ScaffoldBtn'
 import { HierarchyBtn }  from '../hierarchy/HierarchyBtn'
-import { buildMultiEgcCsvRows } from './chartCsv'
+import { buildMultiEgcCsvRows, CHART_CSV_TITLE } from './chartCsv'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = createPlotlyComponent(PlotlyBase as any)
@@ -538,7 +538,7 @@ export function MultiEgcChart({
           </button>
           <button className="btn sm" onClick={handleExportPng}>↓ PNG</button>
           <button className="btn sm" onClick={handleExportSvg}>↓ SVG</button>
-          <button className="btn sm" onClick={handleExportCsv}>↓ CSV</button>
+          <button className="btn sm" onClick={handleExportCsv} title={CHART_CSV_TITLE}>↓ CSV</button>
           <div className="chart-legend">
             {series.map(s => (
               <div className="legend-item" key={s.id}>

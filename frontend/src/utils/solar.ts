@@ -157,10 +157,12 @@ export function computeNightBands(
 // 30 — half the 6-min-resolution data's typical worst-case gap many
 // times over, conservative for the 4h EGC sampling cadence).
 
+export const TIDE_MATCH_MAX_MINUTES = 30
+
 export function alignTideToChartPoints(
   chartDatetimes: string[],
   tides:          TidePoint[],
-  maxGapMinutes:  number = 30,
+  maxGapMinutes:  number = TIDE_MATCH_MAX_MINUTES,
 ): Map<string, number | null> {
   const result = new Map<string, number | null>()
   if (tides.length === 0) {

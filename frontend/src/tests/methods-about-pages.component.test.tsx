@@ -86,6 +86,16 @@ describe('MethodsPage', () => {
     expect(text).toMatch(/check only the families/)
   })
 
+  it('says sample times are local Pacific time', () => {
+    const { container } = render(<MethodsPage />)
+    expect(container.textContent).toMatch(/local Pacific Daylight Time \(UTC−7\)/)
+  })
+
+  it('says how a chart CSV picks the tide value for each sample', () => {
+    const { container } = render(<MethodsPage />)
+    expect(container.textContent).toMatch(/reading nearest the sample’s time, left blank if none is within 30 minutes/)
+  })
+
   it('states the real result limits', () => {
     const { container } = render(<MethodsPage />)
     const text = container.textContent ?? ''

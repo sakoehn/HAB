@@ -314,3 +314,17 @@ describe('GroupedEgcChart — Z-score does not depend on the date range shown', 
     expect(statValue('Mean')).toBeCloseTo(1)
   })
 })
+
+describe('GroupedEgcChart — CSV button', () => {
+  it('says how the tide column is filled', () => {
+    render(
+      <GroupedEgcChart
+        groupLabel="Test Group"
+        allSeries={[{ annotationId: 'A', name: 'A', color: '#000', data: [makePoint('A', '5/27/21 8:00', 30)] }]}
+      />,
+    )
+    expect(screen.getByRole('button', { name: '↓ CSV' })).toHaveAttribute(
+      'title', expect.stringMatching(/nearest the sample’s time.*30 minutes/),
+    )
+  })
+})

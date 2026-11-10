@@ -18,7 +18,7 @@ import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { StatsPanel }    from '../ui/StatsPanel'
 import { DateRangePicker } from '../ui/DateRangePicker'
 import { ChartControls }  from './ChartControls'
-import { buildGroupedEgcCsvRows } from './chartCsv'
+import { buildGroupedEgcCsvRows, CHART_CSV_TITLE } from './chartCsv'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = createPlotlyComponent(PlotlyBase as any)
@@ -360,7 +360,7 @@ export function GroupedEgcChart({
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="btn sm" onClick={handleExportPng}>↓ PNG</button>
           <button className="btn sm" onClick={handleExportSvg}>↓ SVG</button>
-          <button className="btn sm" onClick={handleExportCsv}>↓ CSV</button>
+          <button className="btn sm" onClick={handleExportCsv} title={CHART_CSV_TITLE}>↓ CSV</button>
         </div>
       </div>
 
