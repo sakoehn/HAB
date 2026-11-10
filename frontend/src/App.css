@@ -1517,7 +1517,6 @@ select.field { cursor: pointer; }
 }
 .corr-row:last-child { border-bottom: none; }
 .corr-row:hover { background: rgba(61,217,184,.03); }
-.corr-row-dim { opacity: .7; }
 
 /* r-strength bar â€” sits behind row content */
 .corr-r-bar {
@@ -1605,7 +1604,6 @@ select.field { cursor: pointer; }
   color: var(--text-dim);
   white-space: nowrap;
 }
-.corr-stat-n-warn { color: var(--amber); font-weight: 600; }
 
 .corr-add-btn {
   width: 22px;

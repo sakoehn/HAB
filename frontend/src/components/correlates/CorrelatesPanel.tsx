@@ -378,9 +378,6 @@ export function CorrelatesPanel({
                       <HelpTooltip text="These candidates share fewer than 10 detected timepoints with this annotation (or don't vary over the ones they share), so no correlation can be measured. They are not in the tested count or the significance correction." />
                     </>
                   )}
-                  {data.some(d => d.n_pairs < 30) && (
-                    <span className="corr-legend-warn"> · ⚠ some n&lt;30</span>
-                  )}
                 </div>
 
                 {data.map(row => {
@@ -389,7 +386,7 @@ export function CorrelatesPanel({
                   return (
                     <div
                       key={row.catalog_id}
-                      className={`corr-row ${lowN ? 'corr-row-dim' : ''}`}
+                      className="corr-row"
                     >
                       {/* Strength bar — visual anchor behind row content */}
                       <div
@@ -445,16 +442,15 @@ export function CorrelatesPanel({
                             q={row.q < 0.001 ? '<.001' : row.q.toFixed(3)}
                           </span>
                           <span
-                            className={`corr-stat-n ${lowN ? 'corr-stat-n-warn' : ''}`}
-                            title={
-                              lowN
-                                ? `Only ${row.n_pairs} co-occurring timepoints — treat as exploratory`
-                                : `${row.n_pairs} co-occurring timepoints`
-                            }
+                            className="corr-stat-n"
+                            title={`${row.n_pairs} co-occurring timepoints`}
                           >
-                            {lowN ? '⚠ ' : ''}n={row.n_pairs}
+                            n={row.n_pairs}
                             {lowN && (
-                              <HelpTooltip text="Fewer than 30 overlapping timepoints — treat this correlation as exploratory, not statistically reliable." />
+                              // The effective-N p-value already discounts a pair
+                              // with few points, so this explains the n rather
+                              // than overriding the significance call.
+                              <HelpTooltip text={`Only ${row.n_pairs} shared timepoints. The p-value already allows for this: with few timepoints only a very strong correlation can be significant.`} />
                             )}
                           </span>
                           <button

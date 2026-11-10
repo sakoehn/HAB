@@ -1982,7 +1982,7 @@ describe('CorrelatesPanel', () => {
     expect(screen.getAllByText(/hours are nominal/i).length).toBeGreaterThan(0)
   })
 
-  it('low-n "⚠ n<30" badge has a help tooltip', async () => {
+  it('a significant pair with few shared timepoints is not dimmed or called unreliable', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/correlations/family'))
         return Promise.resolve({
@@ -2007,15 +2007,14 @@ describe('CorrelatesPanel', () => {
     })
     await renderWithChartAndWait()
     await userEvent.click(screen.getByText(/Find Correlates/i))
-    const nBadge = await waitFor(() => {
-      const el = document.querySelector('.corr-stat-n-warn')
-      expect(el).toBeTruthy()
-      return el as HTMLElement
-    })
+    const nBadge = await screen.findByText(/n=12/)
+    expect(document.querySelector('.corr-row-dim')).toBeNull()
+    expect(nBadge.textContent).not.toMatch(/⚠/)
+    expect(screen.queryByText(/some n<30/)).not.toBeInTheDocument()
     await userEvent.click(within(nBadge).getByTitle('Help'))
-    await waitFor(() => {
-      expect(screen.getByText(/not statistically reliable/i)).toBeInTheDocument()
-    })
+    const tip = await screen.findByText(/p-value already allows for/i)
+    expect(tip.textContent).toMatch(/Only 12 shared timepoints/)
+    expect(screen.queryByText(/not statistically reliable/i)).not.toBeInTheDocument()
   })
 
   it('Retry button refetches after the first request fails', async () => {
