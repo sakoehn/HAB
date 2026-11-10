@@ -343,7 +343,8 @@ export function MethodsPage() {
             site; the whole sampling period falls within daylight time.
           </Item>
           <Item title="Annotation hierarchies">
-            KEGG Orthology hierarchy: KEGG BRITE ko00001 (KEGG release dated 22 May 2026).
+            KEGG Orthology hierarchy: KEGG BRITE ko00001 (KEGG release dated 22 May 2026,
+            downloaded the same day).
             EC hierarchy: KEGG BRITE ko01000 (KEGG release dated 12 September 2026,
             downloaded 14 September 2026; a local copy is kept so results are reproducible).
             COG category names: NCBI COG. Taxonomic lineages come from JGI’s phylodist
