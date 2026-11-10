@@ -2340,7 +2340,7 @@ export function ExplorePage({
                               <div className="lookup-meta-row">
                                 <span
                                   className="lookup-meta-label"
-                                  title="Mean EGC / total sample depth — comparable across samples"
+                                  title="Average, over the samples where it was detected, of each sample's relative abundance (EGC ÷ that sample's depth-weighted count of all annotated genes) — comparable across samples"
                                 >
                                   Mean norm EGC
                                 </span>

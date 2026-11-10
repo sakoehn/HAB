@@ -27,7 +27,7 @@ export function extractEgc(value: unknown): number | null {
 
 // extractNormEgc
 // Extract pre-computed norm_egc from an annotation value.
-// norm_egc = egc / total_sample_depth — depth-normalised by the pipeline.
+// norm_egc = egc / the sample's depth-weighted annotated-gene total, from the pipeline.
 // Used by L1 mode so the chart shows true relative abundance without
 // re-dividing by an arbitrary series total.
 

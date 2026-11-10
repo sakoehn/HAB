@@ -4,7 +4,7 @@
 //
 // Metric and Standardize are independent controls — any metric can be
 // combined with standardize on or off:
-//   metric      — 'egc' (raw) or 'norm_egc' (Relative Abundance = egc / total sample depth)
+//   metric      — 'egc' (raw) or 'norm_egc' (Relative Abundance = egc / the sample's depth-weighted annotated-gene total)
 //   standardize — off, or Z-score (subtract mean, divide by std dev; best for
 //                 cross-scale trend comparison), applied to whichever metric is active
 //
@@ -100,7 +100,7 @@ export function ChartControls({
       <div className="chart-ctrl-group">
         <label className="ctrl-label">
           Metric
-          <HelpTooltip text="Off = raw EGC. Relative Abundance = norm_egc, EGC ÷ total sample sequencing depth, comparable across samples. Z-score = standardized (mean-subtracted, divided by std dev) — apply to either metric to compare series on different scales." />
+          <HelpTooltip text="Off = raw EGC. Relative Abundance = norm_egc, EGC ÷ the sample's depth-weighted count of all annotated genes, comparable across samples. Z-score = standardized (mean-subtracted, divided by std dev) — apply to either metric to compare series on different scales." />
         </label>
         <div style={{ display: 'flex', gap: 4 }}>
           <button
@@ -113,7 +113,7 @@ export function ChartControls({
           <button
             className={`toggle-pill ${metric === 'norm_egc' ? 'on' : ''}`}
             onClick={() => onMetric('norm_egc')}
-            title="Relative Abundance: uses pre-computed norm_egc (egc ÷ total sample sequencing depth) — comparable across samples"
+            title="Relative Abundance: uses pre-computed norm_egc (EGC ÷ the sample's depth-weighted count of all annotated genes) — comparable across samples"
           >
             Relative Abundance
           </button>

@@ -327,6 +327,28 @@ describe('ExplorePage — Annotation Lookup source race', () => {
   })
 })
 
+describe('ExplorePage — Annotation Lookup says what Mean norm EGC is', () => {
+  it('describes it as the average of per-sample relative abundance over detected samples', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) =>
+      Promise.resolve(jsonResponse(url.includes('/api/search/annotations')
+        ? {
+            data: [{ annotation_id: 'K02014', name: 'K02014 protein', parent: null, depth: 4, mean_egc: 100, max_egc: 200,
+              mean_norm_egc: 0.001, max_norm_egc: 0.002, sample_count: 128 }],
+            total: 1,
+          }
+        : {})))
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'kegg' }} />)
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'K02014')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    const label = await screen.findByText('Mean norm EGC')
+    expect(label.title).toMatch(/average/i)
+    expect(label.title).toMatch(/where it was detected/)
+    expect(label.title).not.toMatch(/total sample depth/)
+  })
+})
+
 // A KEGG KO's stored `parent` is last-occurrence-wins -- only ONE of its
 // possibly-many real immediate parents. The lookup card fetches
 // /api/kegg/path directly (the same

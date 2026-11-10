@@ -49,6 +49,18 @@ function baseProps() {
 }
 
 describe('ChartControls — metric and standardize', () => {
+  it('defines Relative Abundance by the annotated-gene total, not sequencing depth', async () => {
+    const user = userEvent.setup()
+    render(<ChartControls {...baseProps()} />)
+    const pill = screen.getByRole('button', { name: 'Relative Abundance' })
+    expect(pill.title).toMatch(/annotated genes/)
+    expect(pill.title).not.toMatch(/sequencing depth/)
+    await user.click(screen.getAllByTitle('Help')[0])
+    const tip = await screen.findByText(/Off = raw EGC/)
+    expect(tip.textContent).toMatch(/annotated genes/)
+    expect(tip.textContent).not.toMatch(/sequencing depth/)
+  })
+
   it('clicking Relative Abundance calls onMetric with norm_egc', async () => {
     const user = userEvent.setup()
     const props = baseProps()

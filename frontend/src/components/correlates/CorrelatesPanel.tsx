@@ -42,7 +42,7 @@ const METHOD_LABEL: Record<CorrMethod, string> = {
 
 const METRIC_LABEL: Record<ChartMetric, string> = {
   egc:      'EGC',
-  norm_egc: 'norm EGC',
+  norm_egc: 'Relative Abundance',
 }
 
 // apiFetch throws a plain Error with the

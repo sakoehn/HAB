@@ -1879,7 +1879,8 @@ describe('CorrelatesPanel', () => {
     expect(within(panel).getByText('log_pearson')).toBeInTheDocument()
     expect(within(panel).getByText('raw_pearson')).toBeInTheDocument()
     expect(within(panel).getByText('EGC')).toBeInTheDocument()
-    expect(within(panel).getByText('norm EGC')).toBeInTheDocument()
+    expect(within(panel).getByText('Relative Abundance')).toBeInTheDocument()
+    expect(within(panel).queryByText('norm EGC')).not.toBeInTheDocument()
   })
 
   it('changing the method selector refetches with the new method param', async () => {
