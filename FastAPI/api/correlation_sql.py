@@ -159,7 +159,9 @@ def _lag_tests_m_eff(ref: list[float], cand: list[float], method: str, lags: lis
 
     Measured on the co-observed, transformed lag-0 values -- the same
     values effective-N uses. Falls back to every lag when there is too
-    little to measure.
+    little to measure. That includes a pair with under 10 shared points at
+    lag 0 whose best lag has 10 or more: it is charged all the lags, the
+    strict side, and such pairs are rare.
     """
     n_lags = len(lags)
     pair = _transformed_pair(ref, cand, method)
