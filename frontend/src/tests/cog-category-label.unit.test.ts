@@ -42,3 +42,15 @@ describe('primaryLabelWithCogCategory', () => {
       .toBe(taxonomyAwarePrimaryLabel('taxonomy', 'Bacteria;Bacteroidetes', 'Bacteroidetes'))
   })
 })
+
+describe('COG_CATEGORY_LABELS', () => {
+  // The names /api/cog/children serves for these letters, so a category
+  // reads the same wherever it appears.
+  it.each([
+    ['D', 'Cell cycle control, cell division, chromosome partitioning'],
+    ['Q', 'Secondary metabolites biosynthesis, transport and catabolism'],
+    ['U', 'Intracellular trafficking, secretion, and vesicular transport'],
+  ])('%s matches the server name', (letter, name) => {
+    expect(COG_CATEGORY_LABELS[letter]).toBe(name)
+  })
+})
