@@ -32,7 +32,7 @@ import type {
 } from '../../types'
 import type { Data as PlotlyData, Layout as PlotlyLayout } from 'plotly.js'
 import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel } from '../../constants'
-import { apiFetch, downloadCsv } from '../../utils/api'
+import { apiFetch, downloadCsv, httpStatusFromError } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime, toPlotlyDate } from '../../utils/format'
 import { minMeanMax } from '../../utils/stats'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
@@ -71,7 +71,12 @@ export function ScaffoldModal({
       `/api/annotations/scaffolds/summary?source=${source}&annotation_id=${encodeURIComponent(annotationId)}`,
     )
       .then(r => { setSummary(r.data ?? []); setStatus('ok') })
-      .catch(() => setStatus('error'))
+      .catch(err => {
+        // The route answers 404 when the annotation has no scaffold rows:
+        // that is "no scaffolds", not a failed request.
+        if (httpStatusFromError(err) === 404) { setSummary([]); setStatus('ok') }
+        else setStatus('error')
+      })
   }, [annotationId, source, retryTick])
 
   // Fetches only this one sample's scaffolds (bounded to that sample's

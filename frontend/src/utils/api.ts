@@ -28,6 +28,17 @@ export async function apiFetch<T>(path: string, timeoutMs: number = FETCH_TIMEOU
   }
 }
 
+// ── httpStatusFromError ─────────────────────────────────────────────────────
+// The HTTP status of a failed apiFetch (its message starts with it, e.g.
+// "404 Not Found"), or null for a timeout or network error -- so callers
+// can tell a real 4xx apart from a request that never got an answer.
+
+export function httpStatusFromError(err: unknown): number | null {
+  if (!(err instanceof Error)) return null
+  const match = /^(\d{3})\s/.exec(err.message)
+  return match ? Number(match[1]) : null
+}
+
 // ── downloadCsv ────────────────────────────────────────────────────────────
 // Serialise an array of plain objects to CSV and trigger a browser download.
 // Values containing commas, quotes, or newlines are quoted and escaped.

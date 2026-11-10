@@ -438,7 +438,7 @@ export function DatasetOverviewPanel({
             <span style={{ color: 'var(--teal)', fontWeight: 600 }}>
               {parentGroups.length}
             </span>{' '}
-            functional groups
+            parent groups
             {loadedParams && (loadedParams.dateFrom || loadedParams.dateTo)
               ? ` · ${loadedParams.dateFrom || '…'} → ${loadedParams.dateTo || '…'}`
               : ' · all dates'}
@@ -452,7 +452,7 @@ export function DatasetOverviewPanel({
           {overviewStats && (
             <StatsPanel
               vals={overviewStats}
-              yLabel={`Mean EGC distribution · ${loadedParams?.source ?? source}`}
+              yLabel={`Mean EGC distribution · top ${rows.length} ${loadedParams?.source ?? source} annotations`}
             />
           )}
 
@@ -468,7 +468,7 @@ export function DatasetOverviewPanel({
               justifyContent:  'space-between',
             }}>
               <span>
-                Top Functional Groups by Mean EGC
+                Top Parent Groups by Mean EGC
                 <HelpTooltip text="A group's size is its category's own mean EGC, in which each gene counts once -- not the sum of the members listed under it, which can overlap (a KEGG KO in several pathways counts in each) and covers only the top 200 annotations. Hover a number for the member sum. Each group here is formed by an annotation's own immediate parent, with no regard for hierarchy depth -- a broad category and one of its own sub-categories can both appear as separate groups in this same list. When that happens their totals are not independent peers: the sub-category's whole total is already included inside its parent category's total, so summing group totals together (or comparing them side by side in the chart below) can overstate how much of the dataset each one really represents." />
               </span>
               {seriesStatus === 'idle' && (
@@ -624,7 +624,7 @@ export function DatasetOverviewPanel({
                   letterSpacing: '.14em',
                   marginBottom:  10,
                 }}>
-                  Summed EGC over time — top 5 functional groups
+                  Summed EGC over time — top 5 parent groups
                 </div>
                 <ChartErrorBoundary label="Explore temporal chart">
                   {/* Must read loadedParams, not the live dateFrom/dateTo
@@ -1561,7 +1561,7 @@ export function ExplorePage({
               id:   'overview' as ExploreSection,
               icon: '📈',
               label: 'Dataset Overview',
-              desc:  'Functional group breakdown with bar chart, stats, and temporal trends for top parent categories',
+              desc:  'Parent group breakdown with bar chart, stats, and temporal trends for top parent categories',
             },
             {
               id:   'top-egc' as ExploreSection,
@@ -2077,7 +2077,7 @@ export function ExplorePage({
                       >
                         All
                       </button>
-                      <HelpTooltip text="Narrows the result list below to the selected taxonomic rank(s) — doesn't re-search, just filters what's already loaded." />
+                      <HelpTooltip text={`Narrows the result list below to the selected ${effectiveLookupSource === 'taxonomy' ? 'taxonomic rank(s)' : 'level(s)'} — doesn't re-search, just filters what's already loaded.`} />
                       {/* See the matching comment on availableTopRanks above --
                           a depth-only aggregate can span multiple domains at once. */}
                       {availableLookupRanks.map(depth => (

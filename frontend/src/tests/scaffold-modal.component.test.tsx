@@ -214,6 +214,17 @@ describe('ScaffoldModal — loading / error / empty states', () => {
     })
   })
 
+  it('a 404 (no scaffold rows) shows the empty state, not a timeout', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false, status: 404, statusText: 'Not Found',
+      json: async () => ({ detail: "No scaffolds found for 'K99999' in source 'kegg'" }),
+    })
+    render(<ScaffoldModal annotationId="K99999" source="kegg" onClose={vi.fn()} />)
+    await waitFor(() => expect(screen.getByTestId('empty-state')).toBeTruthy())
+    expect(screen.queryByTestId('error-state')).toBeNull()
+    expect(screen.queryByText(/timed out/)).toBeNull()
+  })
+
   it('error state shows a retry button', async () => {
     mockNetworkError()
     render(<ScaffoldModal annotationId="COG0055" source="cog" onClose={vi.fn()} />)

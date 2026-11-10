@@ -237,9 +237,9 @@ describe('DatasetOverviewPanel — discloses that groups can be nested, not inde
     render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
     await loadOverview()
 
-    await waitFor(() => expect(screen.getByText(/Top Functional Groups/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/Top Parent Groups/i)).toBeInTheDocument())
 
-    const heading = screen.getByText(/Top Functional Groups/i).closest('span')!
+    const heading = screen.getByText(/Top Parent Groups/i).closest('span')!
     await user.click(within(heading).getByTitle('Help'))
 
     expect(screen.getByText(/not independent peers/i)).toBeInTheDocument()
@@ -269,7 +269,7 @@ describe('DatasetOverviewPanel — top-level categories are listed separately, n
     render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
     await user.selectOptions(screen.getByRole('combobox'), 'cog')
     await loadOverview()
-    await waitFor(() => expect(screen.getByText(/Top Functional Groups/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/Top Parent Groups/i)).toBeInTheDocument())
     return user
   }
 
@@ -277,7 +277,12 @@ describe('DatasetOverviewPanel — top-level categories are listed separately, n
     await loadCog()
     expect(screen.queryByText('Ungrouped')).not.toBeInTheDocument()
     // header count reflects ranked groups only (E and J as parents)
-    expect(screen.getByText(/functional groups/).parentElement!.textContent).toMatch(/\b2\s*functional groups/)
+    expect(screen.getByText(/parent groups/).parentElement!.textContent).toMatch(/\b2\s*parent groups/)
+  })
+
+  it('the distribution says it covers the loaded top annotations only', async () => {
+    await loadCog()
+    expect(screen.getAllByText(new RegExp(`Mean EGC distribution · top ${ROWS.length} cog annotations`)).length).toBeGreaterThan(0)
   })
 
   it('a separate "Top-level categories" row explains the overlap in a tooltip', async () => {
@@ -397,7 +402,7 @@ describe('DatasetOverviewPanel — group size is the own total of the category',
     expect(first.getAttribute('title')).toMatch(/Σ of the 2 listed members: 1\.50e\+1/)
     const totals = screen.getAllByTitle(/Category total/).map(el => el.textContent)
     expect(totals).toEqual(['1.00e+2', '5.00e+1'])
-    expect(screen.getByText(/Top Functional Groups by Mean EGC/i)).toBeInTheDocument()
+    expect(screen.getByText(/Top Parent Groups by Mean EGC/i)).toBeInTheDocument()
   })
 
   it('a date range goes into the request for the own totals of the categories', async () => {

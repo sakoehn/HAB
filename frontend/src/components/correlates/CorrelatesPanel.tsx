@@ -25,7 +25,7 @@ import type {
 } from '../../types'
 import { SOURCE_TAG_CLS, taxonomyRankLabel } from '../../constants'
 import { taxonomyDomainFromId } from '../../utils/taxonomy'
-import { apiFetch } from '../../utils/api'
+import { apiFetch, httpStatusFromError } from '../../utils/api'
 import { ExternalLink } from '../ui/ExternalLinks'
 import { HelpTooltip } from '../ui/HelpTooltip'
 import { METHODS_FACTS } from '../../pages/methodsFacts'
@@ -43,17 +43,6 @@ const METHOD_LABEL: Record<CorrMethod, string> = {
 const METRIC_LABEL: Record<ChartMetric, string> = {
   egc:      'EGC',
   norm_egc: 'Relative Abundance',
-}
-
-// apiFetch throws a plain Error with the
-// real HTTP status as the message's leading token (e.g. "404 Not Found")
-// on a non-2xx response -- extracts it so the retry logic and the error
-// message can tell a real 4xx apart from a timeout/5xx instead of
-// treating every failure identically.
-function httpStatusFromError(err: unknown): number | null {
-  if (!(err instanceof Error)) return null
-  const match = /^(\d{3})\s/.exec(err.message)
-  return match ? Number(match[1]) : null
 }
 
 function isAbortError(err: unknown): boolean {

@@ -1004,6 +1004,34 @@ describe('ExplorePage — Top EGC Group column shows every real COG category', (
   })
 })
 
+describe('ExplorePage — the Lookup rank filter names the right kind of level', () => {
+  it('a KEGG result list calls them levels, not taxonomic ranks', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) =>
+      Promise.resolve(jsonResponse(url.includes('/api/search/annotations')
+        ? {
+            data: [
+              { annotation_id: 'K02014', name: 'iron complex outermembrane recepter protein', parent: '02000', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
+              { annotation_id: '02000', name: 'Transporters', parent: '09183', depth: 3, mean_egc: 900, max_egc: 990, sample_count: 128 },
+            ],
+            total: 2,
+          }
+        : {})))
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'kegg' }} />)
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'K')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+    const filter = await waitFor(() => {
+      const el = document.querySelector('.al-rank-filter')
+      expect(el).toBeTruthy()
+      return el as HTMLElement
+    })
+    await user.click(within(filter).getByTitle('Help'))
+    const tip = await screen.findByText(/Narrows the result list/)
+    expect(tip.textContent).toMatch(/selected level\(s\)/)
+    expect(tip.textContent).not.toMatch(/taxonomic/)
+  })
+})
+
 describe('ExplorePage — enzyme groups are headed by their own name', () => {
   function mockEnzyme() {
     mockFetch.mockImplementation((url: string) => {
@@ -1065,10 +1093,10 @@ describe('ExplorePage — a section keeps what it loaded when you switch away an
     // by-Parent on a different source, so its own request isn't counted here.
     render(<Harness initial={{ openSection: 'overview', parentSource: 'cog' }} />)
     await user.click(screen.getByRole('button', { name: /Load Overview/i }))
-    await screen.findByText(/functional groups/)
+    await screen.findByText(/parent groups/)
     await user.click(screen.getByRole('button', { name: /Annotations by Parent/ }))
     await user.click(screen.getByRole('button', { name: /Dataset Overview/ }))
-    expect(screen.getByText(/functional groups/)).toBeVisible()
+    expect(screen.getByText(/parent groups/)).toBeVisible()
     expect(topCalls('taxonomy')).toBe(1)
     expect(ownTotalCalls('taxonomy')).toBe(1)
   })
