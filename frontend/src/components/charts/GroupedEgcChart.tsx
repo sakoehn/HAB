@@ -75,10 +75,10 @@ export function GroupedEgcChart({
     // When metric is norm_egc, sum norm_egc (egc / total_sample_depth) per
     // datetime for true depth-normalised group abundance. Otherwise sum raw egc.
     const useNormEgc = metric === 'norm_egc'
-    const dtMap: Record<string, { egc: number | null; datetime: string; iso: string; membersDetected: number }> = {}
+    const dtMap: Record<string, { egc: number | null; sample: string; datetime: string; iso: string; membersDetected: number }> = {}
     for (const entry of allSamples ?? []) {
       const dt = entry.datetime
-      if (!dtMap[dt]) dtMap[dt] = { egc: null, datetime: dt, iso: isoDate(dt), membersDetected: 0 }
+      if (!dtMap[dt]) dtMap[dt] = { egc: null, sample: entry.sample, datetime: dt, iso: isoDate(dt), membersDetected: 0 }
     }
     for (const s of allSeries) {
       for (const d of s.data) {
@@ -86,7 +86,7 @@ export function GroupedEgcChart({
         const val = useNormEgc ? extractNormEgc(d.value) : extractEgc(d.value)
         if (val === null) continue
         const dt = d.timepoint.datetime
-        if (!dtMap[dt]) dtMap[dt] = { egc: null, datetime: dt, iso: isoDate(dt), membersDetected: 0 }
+        if (!dtMap[dt]) dtMap[dt] = { egc: null, sample: d.sample, datetime: dt, iso: isoDate(dt), membersDetected: 0 }
         dtMap[dt].egc = (dtMap[dt].egc ?? 0) + val
         dtMap[dt].membersDetected += 1
       }
@@ -98,9 +98,10 @@ export function GroupedEgcChart({
   const summedPoints = useMemo(() =>
     summedAllPoints
       .filter(p => (!dateFrom || p.iso >= dateFrom) && (!dateTo || p.iso <= dateTo))
-      .map(({ egc, datetime, membersDetected }) => ({
+      .map(({ egc, sample, datetime, membersDetected }) => ({
         date:     fmtDate(datetime),
         egc,
+        sample,
         datetime,
         ts:       parseDateTime(datetime),
         membersDetected,
@@ -117,7 +118,7 @@ export function GroupedEgcChart({
   // changes the reported numbers, only the drawn curve.
   const unsmoothedPointsRaw = useMemo(() => {
     // The metric swap is handled upstream in summedAllPoints so it is absent here.
-    let pts = summedPoints as { egc: number | null; datetime: string; ts: number; date: string; membersDetected: number }[]
+    let pts = summedPoints as { egc: number | null; sample: string; datetime: string; ts: number; date: string; membersDetected: number }[]
     if (standardize) pts = applyZScore(pts, zScoreBasis) as typeof pts
     return pts
   }, [summedPoints, standardize, zScoreBasis])
@@ -326,7 +327,7 @@ export function GroupedEgcChart({
   }
 
   const handleExportCsv = () => downloadCsv(
-    buildGroupedEgcCsvRows(processedPoints, groupLabel, metric, standardizeApplied, smoothedApplied, showTide),
+    buildGroupedEgcCsvRows(processedPoints, groupLabel, allSeries.length, metric, standardizeApplied, smoothedApplied, showTide),
     `${groupLabel}_grouped_egc.csv`,
   )
 

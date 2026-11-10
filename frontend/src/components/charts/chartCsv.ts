@@ -29,18 +29,24 @@ export function buildEgcTimeseriesCsvRows(
 // The value column is named from the active metric, with metric/
 // standardized/smoothed recorded on every row, so the CSV records which
 // transform (metric swap, z-score, LOWESS smoothing) was applied.
+// members_detected / members_total say how many of the group's members the
+// sum at that sample actually covers.
 export function buildGroupedEgcCsvRows(
-  points:      { datetime: string; egc: number | null; tide_wl?: number | null }[],
-  groupLabel:  string,
-  metric:      ChartMetric,
+  points:       { sample: string; datetime: string; egc: number | null; membersDetected: number; tide_wl?: number | null }[],
+  groupLabel:   string,
+  membersTotal: number,
+  metric:       ChartMetric,
   standardize: boolean,
   smoothed:    boolean,
   showTide:    boolean,
 ): Record<string, unknown>[] {
   return points.map(d => ({
-    group:        groupLabel,
-    date:         d.datetime,
-    [metric]:     d.egc,
+    group:            groupLabel,
+    sample:           d.sample,
+    date:             d.datetime,
+    [metric]:         d.egc,
+    members_detected: d.membersDetected,
+    members_total:    membersTotal,
     metric,
     standardized: standardize,
     smoothed,

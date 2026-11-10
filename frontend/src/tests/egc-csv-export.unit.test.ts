@@ -30,6 +30,7 @@
  * buildGroupedEgcCsvRows (GroupedEgcChart.tsx):
  *   value column named from metric, not hardcoded "egc"
  *   metric/standardized/smoothed columns always present
+ *   sample, members_detected and members_total on every row
  *
  * Run: npx vitest run src/tests/egc-csv-export.unit.test.ts
  */
@@ -194,44 +195,50 @@ describe('buildMultiEgcCsvRows — same-label groups', () => {
 
 describe('buildGroupedEgcCsvRows', () => {
   const points = [
-    { datetime: '5/27/21 8:00', egc: 300 },
-    { datetime: '5/27/21 12:00', egc: 400 },
+    { sample: 's1', datetime: '5/27/21 8:00', egc: 300, membersDetected: 2 },
+    { sample: 's2', datetime: '5/27/21 12:00', egc: 400, membersDetected: 3 },
   ]
 
   it('raw egc mode: value column is named "egc" because the mode is egc, not as a fixed literal', () => {
     // The bug was a column ALWAYS named "egc" even in norm_egc mode --
     // this pins that raw mode is still correctly "egc" (the un-buggy case).
-    const rows = buildGroupedEgcCsvRows(points, 'Brite Hierarchies', 'egc', false, false, false)
+    const rows = buildGroupedEgcCsvRows(points, 'Brite Hierarchies', 3, 'egc', false, false, false)
     expect(rows[0]).toHaveProperty('egc', 300)
   })
 
   it('norm_egc mode: value column is named "norm_egc", not left as "egc"', () => {
-    const rows = buildGroupedEgcCsvRows(points, 'Brite Hierarchies', 'norm_egc', false, false, false)
+    const rows = buildGroupedEgcCsvRows(points, 'Brite Hierarchies', 3, 'norm_egc', false, false, false)
     expect(rows[0]).toHaveProperty('norm_egc', 300)
     expect(rows[0]).not.toHaveProperty('egc')
   })
 
   it('metric/standardized/smoothed are recorded (all three were entirely absent pre-fix)', () => {
-    const rows = buildGroupedEgcCsvRows(points, 'Brite Hierarchies', 'egc', true, true, false)
+    const rows = buildGroupedEgcCsvRows(points, 'Brite Hierarchies', 3, 'egc', true, true, false)
     expect(rows[0].metric).toBe('egc')
     expect(rows[0].standardized).toBe(true)
     expect(rows[0].smoothed).toBe(true)
   })
 
   it('group label carries through on every row', () => {
-    const rows = buildGroupedEgcCsvRows(points, 'Brite Hierarchies', 'egc', false, false, false)
+    const rows = buildGroupedEgcCsvRows(points, 'Brite Hierarchies', 3, 'egc', false, false, false)
     expect(rows.every(r => r.group === 'Brite Hierarchies')).toBe(true)
   })
 
   it('tide column present only when showTide is true', () => {
     const withTide = [{ ...points[0], tide_wl: 2.1 }]
-    const shown  = buildGroupedEgcCsvRows(withTide, 'g', 'egc', false, false, true)
-    const hidden = buildGroupedEgcCsvRows(withTide, 'g', 'egc', false, false, false)
+    const shown  = buildGroupedEgcCsvRows(withTide, 'g', 3, 'egc', false, false, true)
+    const hidden = buildGroupedEgcCsvRows(withTide, 'g', 3, 'egc', false, false, false)
     expect(shown[0]).toHaveProperty('tide_predicted_wl_m', 2.1)
     expect(hidden[0]).not.toHaveProperty('tide_predicted_wl_m')
   })
 
+  it('each row says which sample it is and how many of the members were detected there', () => {
+    const rows = buildGroupedEgcCsvRows(points, 'g', 3, 'egc', false, false, false)
+    expect(rows.map(r => [r.sample, r.members_detected, r.members_total])).toEqual([['s1', 2, 3], ['s2', 3, 3]])
+    expect(Object.keys(rows[0]).slice(0, 6)).toEqual(['group', 'sample', 'date', 'egc', 'members_detected', 'members_total'])
+  })
+
   it('empty points: returns []', () => {
-    expect(buildGroupedEgcCsvRows([], 'g', 'egc', false, false, false)).toEqual([])
+    expect(buildGroupedEgcCsvRows([], 'g', 3, 'egc', false, false, false)).toEqual([])
   })
 })
