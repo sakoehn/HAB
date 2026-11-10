@@ -90,6 +90,7 @@ import { BulkDownloadPanel } from '../components/download/BulkDownloadPanel'
 import { canBulkDownloadFrom } from '../utils/bulkDownload'
 import { ScaffoldExplorePanel } from '../components/scaffolds/ScaffoldExplorePanel'
 import type { ExploreState } from './exploreState'
+import { useSampleTotal } from '../utils/useSampleTotal'
 import type { AnalyzeHandoff } from './analyzeState'
 
 // ── ExploreState + default ─────────────────────────────────────────────────
@@ -1202,6 +1203,7 @@ export function ExplorePage({
   onReset:             () => void
 }) {
   const { copiedId, copy } = useCopyId()
+  const totalSamples = useSampleTotal()
   // Request-sequence guards so a slower,
   // superseded response (e.g. from a source the user has since switched
   // away from) can't land after a newer one and overwrite it.
@@ -2150,7 +2152,7 @@ export function ExplorePage({
                         ` · showing ${state.lookupResults.length}`}
                       {' · click to view details'}
                       {' · closest matches first, then by mean EGC'}
-                      <HelpTooltip text="EGC here is the mean across samples where the annotation was actually detected, not all 128 -- an annotation detected in only a few samples can rank above one detected everywhere. Check the (N/128) next to a row's number, when shown, before comparing two rows' rank." />
+                      <HelpTooltip text="EGC here is the mean across samples where the annotation was actually detected, not every sample -- an annotation detected in only a few samples can rank above one detected everywhere. Check the (N/total) next to a row's number, when shown, before comparing two rows' rank." />
                     </div>
                     <div style={{
                       border:       '1px solid var(--border)',
@@ -2214,14 +2216,14 @@ export function ExplorePage({
                                   // actually detected (see
                                   // LeftResultList's own note), so say so.
                                   row.sample_count != null
-                                    ? `Mean when detected, across ${row.sample_count} of 128 samples`
+                                    ? `Mean when detected, across ${row.sample_count} of ${totalSamples} samples`
                                     : undefined
                                 }
                               >
                                 {row.mean_egc.toExponential(2)}
-                                {row.sample_count != null && row.sample_count < 128 && (
+                                {row.sample_count != null && row.sample_count < totalSamples && (
                                   <span style={{ opacity: 0.7 }}>
-                                    {' '}({row.sample_count}/128)
+                                    {' '}({row.sample_count}/{totalSamples})
                                   </span>
                                 )}
                               </span>
@@ -2404,7 +2406,7 @@ export function ExplorePage({
                             <div className="lookup-meta-row">
                               <span className="lookup-meta-label">Samples</span>
                               <span className="lookup-meta-value mono">
-                                {r.sample_count} / 128
+                                {r.sample_count} / {totalSamples}
                               </span>
                             </div>
                             {lookupScaffoldRange && (

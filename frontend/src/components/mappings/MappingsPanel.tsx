@@ -5,7 +5,7 @@
 // Data source: /api/mappings/search?annotation_id=…&source=…&sample_count=…&unique_pairs=…
 //
 // Features:
-//   - Adjustable sample count (1–128), clamped server-side for a broad
+//   - Adjustable sample count (1 to every sample), clamped server-side for a broad
 //     category -- reflected back into the
 //     field itself once a load reports it was capped, not just a banner
 //   - Unique pairs toggle (deduplicates taxonomy|kegg|enzyme|cog combinations)
@@ -28,6 +28,7 @@ import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime } from '../../utils/format'
 import { SkeletonTable } from '../ui/Skeleton'
 import { NumberField } from '../ui/controls'
+import { useSampleTotal } from '../../utils/useSampleTotal'
 import { MappingsExportBox } from './MappingsExportBox'
 import {
   sortMappingRows, paginateRows, totalPages, buildMappingsUrl,
@@ -72,8 +73,10 @@ export function MappingsPanel({
   annotationId: string
   source:       string
 }) {
+  const totalSamples = useSampleTotal()
   const [open, setOpen]               = useState(false)
-  const [sampleCount, setSampleCount] = useState(128)
+  // Starts at every sample (the real count, once the sample list has loaded).
+  const [sampleCount, setSampleCount] = useState(totalSamples)
   const [uniqueOnly, setUniqueOnly]   = useState(() => !isLikelyLeafAnnotation(source, annotationId))
   const [allRows, setAllRows]         = useState<MappingSearchRow[]>([])
   // Whether the loaded rows are unique combinations (each shown by its
@@ -90,7 +93,7 @@ export function MappingsPanel({
   // itself gets overwritten below to reflect the effective count -- the
   // capped-notice banner needs both numbers ("5 instead of the requested
   // 128"), and sampleCount alone can't hold both once it's corrected.
-  const [requestedSampleCount, setRequestedSampleCount] = useState(128)
+  const [requestedSampleCount, setRequestedSampleCount] = useState(totalSamples)
   const [exportOpen, setExportOpen]   = useState(false)
   // Distinguishes WHY a request got capped: either annotationId resolved
   // to many real leaf ids (a genuine category/pathway/class -- leafCount
@@ -232,7 +235,7 @@ export function MappingsPanel({
             <NumberField
               className="field"
               min={1}
-              max={128}
+              max={totalSamples}
               value={sampleCount}
               onChange={setSampleCount}
               style={{ width: 80 }}

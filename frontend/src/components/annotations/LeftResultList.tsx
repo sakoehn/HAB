@@ -21,19 +21,20 @@ import { SOURCE_COLORS, SOURCE_TAG_CLS, TAXONOMY_RANK_NAMES, taxonomyRankLabel }
 import { taxonomyDomainFromId, immediateParentSegment, homonymHints } from '../../utils/taxonomy'
 import { CopyBtn } from '../ui/controls'
 import { HelpTooltip } from '../ui/HelpTooltip'
+import { useSampleTotal } from '../../utils/useSampleTotal'
 
 // Stable empty set — avoids creating a new reference every render
 const EMPTY_FILTER = new Set<string>()
 const EMPTY_RANK_FILTER = new Set<number>()
 
 // mean_egc here is a mean OVER THE
-// SAMPLES WHERE THE ANNOTATION WAS DETECTED, not an aggregate across all
-// 128 -- annotation_catalog's own AVG(egc) only ever sees detected rows,
+// SAMPLES WHERE THE ANNOTATION WAS DETECTED, not an aggregate across every
+// sample -- annotation_catalog's own AVG(egc) only ever sees detected rows,
 // since a sample without a detection has no annotation_series row to
 // average in the first place. Without the detection count, a 9-sample
 // mean and a 128-sample mean would look identical (and a 9-sample mean can
-// outrank dozens of 128-sample means).
-const TOTAL_SAMPLE_COUNT = 128
+// outrank dozens of 128-sample means). The total is the real sample count
+// (useSampleTotal).
 
 export function LeftResultList({
   rows,
@@ -62,6 +63,7 @@ export function LeftResultList({
   onGroupSelected: () => void
   total:           number
 }) {
+  const totalSamples = useSampleTotal()
   // Multi-select filter stored per term (empty Set = All)
   const [filtersByTerm, setFiltersByTerm] = useState<Record<string, Set<string>>>({})
   // Taxonomy rank multi-select filter, same per-term pattern — only ever
@@ -275,7 +277,7 @@ export function LeftResultList({
           </span>
           <span className="al-result-hint">
             closest matches first, then by mean EGC
-            <HelpTooltip text="EGC here is the mean across samples where the annotation was actually detected, not all 128 -- an annotation detected in only a few samples can rank above one detected everywhere. Check the (N/128) next to a row's number, when shown, before comparing two rows' rank." />
+            <HelpTooltip text="EGC here is the mean across samples where the annotation was actually detected, not every sample -- an annotation detected in only a few samples can rank above one detected everywhere. Check the (N/total) next to a row's number, when shown, before comparing two rows' rank." />
             {total > rows.length && ' · refine to narrow'}
           </span>
         </div>
@@ -346,14 +348,14 @@ export function LeftResultList({
                     <span
                       title={
                         ann.sample_count != null
-                          ? `Mean when detected, across ${ann.sample_count} of ${TOTAL_SAMPLE_COUNT} samples`
+                          ? `Mean when detected, across ${ann.sample_count} of ${totalSamples} samples`
                           : undefined
                       }
                     >
                       {(ann.mean_egc as number).toExponential(2)}
-                      {ann.sample_count != null && ann.sample_count < TOTAL_SAMPLE_COUNT && (
+                      {ann.sample_count != null && ann.sample_count < totalSamples && (
                         <span className="al-row-detection-count">
-                          {' '}({ann.sample_count}/{TOTAL_SAMPLE_COUNT})
+                          {' '}({ann.sample_count}/{totalSamples})
                         </span>
                       )}
                     </span>

@@ -1732,13 +1732,14 @@ describe('MappingsPanel', () => {
     })
   })
 
-  it('sample count input present with default value 128', async () => {
+  // Starts at every sample: its value is its own max, the real sample count.
+  it('sample count input starts at every sample', async () => {
     await renderWithChartAndWait()
     await userEvent.click(screen.getByText(/View Annotation Mappings/i))
     await waitFor(() => {
       const inputs = screen
         .getAllByRole('spinbutton')
-        .filter(el => (el as HTMLInputElement).value === '128')
+        .filter(el => (el as HTMLInputElement).value === (el as HTMLInputElement).max)
       expect(inputs.length).toBeGreaterThan(0)
     })
   })

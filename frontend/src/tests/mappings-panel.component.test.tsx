@@ -50,10 +50,11 @@ vi.mock('../utils/api', async importOriginal => {
 // responses below.
 vi.mock('../utils/useAllSamples', () => ({
   useAllSamples: () => ({
-    allSamples: [
-      { sample: 's1', datetime: '5/27/21 8:00' },
-      { sample: 's2', datetime: '6/10/21 20:00' },
-    ],
+    // 128 samples, the real dataset's size, from 5/27 to 6/10.
+    allSamples: Array.from({ length: 128 }, (_, i) => ({
+      sample:   `s${i + 1}`,
+      datetime: i === 0 ? '5/27/21 8:00' : i === 127 ? '6/10/21 20:00' : '6/1/21 12:00',
+    })),
     allSamplesLoading: false,
     allSamplesError: false,
   }),
