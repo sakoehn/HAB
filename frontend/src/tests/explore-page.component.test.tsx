@@ -1004,6 +1004,39 @@ describe('ExplorePage — Top EGC Group column shows every real COG category', (
   })
 })
 
+describe('ExplorePage — Lookup shows the scaffold range across samples', () => {
+  it('shows fewest to most scaffolds per sample, not one arbitrary sample', async () => {
+    const user = userEvent.setup()
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/search/annotations')) {
+        return Promise.resolve(jsonResponse({
+          data: [{ annotation_id: 'K02703', name: 'psbA', parent: null, depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128, scaffold_count: 16 }],
+          total: 1,
+        }))
+      }
+      if (url.includes('/api/annotations/scaffolds/summary') && url.includes('annotation_id=K02703')) {
+        return Promise.resolve(jsonResponse({
+          data: [
+            { sample: 's1', date: '5/27/21 13:00', scaffold_count: 14, gene_count: 20 },
+            { sample: 's2', date: '5/27/21 17:00', scaffold_count: 11, gene_count: 15 },
+            { sample: 's3', date: '5/27/21 21:00', scaffold_count: 17, gene_count: 22 },
+          ],
+          total: 3,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<Harness initial={{ openSection: 'lookup', lookupSource: 'kegg' }} />)
+    await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'K02703')
+    await user.click(screen.getByRole('button', { name: /^Search$/i }))
+
+    const label = await screen.findByText('Scaffolds per sample')
+    expect(label.title).toMatch(/3 samples/)
+    expect(label.parentElement!.textContent).toContain('11–17')
+    expect(screen.queryByText('Scaffolds (sample)')).not.toBeInTheDocument()
+  })
+})
+
 describe('ExplorePage — the Lookup rank filter names the right kind of level', () => {
   it('a KEGG result list calls them levels, not taxonomic ranks', async () => {
     const user = userEvent.setup()

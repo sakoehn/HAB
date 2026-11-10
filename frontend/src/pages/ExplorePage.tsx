@@ -20,7 +20,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import type {
   ApiStatus, TopAnnotation, AnnotationItem,
   ExploreSection, ExploreSortCol, SortDir,
-  HierarchyPathResponse,
+  HierarchyPathResponse, ScaffoldSummaryRow,
 } from '../types'
 import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel, taxonomyRankLabel, taxonomyAwarePrimaryLabel, primaryLabelWithCogCategory } from '../constants'
 
@@ -66,7 +66,7 @@ import { apiFetch, downloadCsv } from '../utils/api'
 import { categoryIdsOf, enzymeGroupLabel, fetchOwnTotals, type OwnTotal } from '../utils/groupTotals'
 import {
   extractEgc, computeTrend, sumMembersByTimestamp,
-  resolveLookupCategory, resolveLookupScaffoldCount, resolveLookupDepth, depthLabel,
+  resolveLookupCategory, resolveLookupDepth, depthLabel,
 } from '../utils/stats'
 import { useCopyId } from '../hooks/useCopyId'
 import { CopyBtn, ResetBtn, NumberField } from '../components/ui/controls'
@@ -1251,6 +1251,30 @@ export function ExplorePage({
     { annotation_id: string; name: string }[] | null
   >(null)
   const lookupParentsSeqRef = useRef(0)
+  // Fewest and most scaffolds in one sample for the selected result, from
+  // its per-sample scaffold summary -- the search's own scaffold_count is
+  // from an arbitrary sample. null while loading or when there is none.
+  const [lookupScaffoldRange, setLookupScaffoldRange] = useState<
+    { min: number; max: number; samples: number } | null
+  >(null)
+  const lookupScaffoldSeqRef = useRef(0)
+
+  useEffect(() => {
+    const sel = state.lookupSelected
+    const requestId = ++lookupScaffoldSeqRef.current
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- A new selection clears the previous one's range before fetching its own.
+    setLookupScaffoldRange(null)
+    if (!sel) return
+    apiFetch<{ data: ScaffoldSummaryRow[] }>(
+      `/api/annotations/scaffolds/summary?source=${effectiveLookupSource}&annotation_id=${encodeURIComponent(sel.annotation_id)}`,
+    )
+      .then(r => {
+        if (requestId !== lookupScaffoldSeqRef.current) return
+        const counts = (r.data ?? []).map(row => row.scaffold_count)
+        if (counts.length) setLookupScaffoldRange({ min: Math.min(...counts), max: Math.max(...counts), samples: counts.length })
+      })
+      .catch(() => {}) // no scaffold rows (404) or a failed fetch: the row stays hidden
+  }, [state.lookupSelected, effectiveLookupSource])
 
   useEffect(() => {
     const sel = state.lookupSelected
@@ -2253,7 +2277,6 @@ export function ExplorePage({
                       const category    = (effectiveLookupSource === 'kegg' || effectiveLookupSource === 'cog')
                         ? null
                         : (rawCategory ? expandParentLabel(rawCategory, effectiveLookupSource) : null)
-                      const scaffoldCount = resolveLookupScaffoldCount(r)
                       const depth         = resolveLookupDepth(r)
 
                       return (
@@ -2378,16 +2401,18 @@ export function ExplorePage({
                                 {r.sample_count} / 128
                               </span>
                             </div>
-                            {scaffoldCount != null && (
+                            {lookupScaffoldRange && (
                               <div className="lookup-meta-row">
                                 <span
                                   className="lookup-meta-label"
-                                  title="Unique scaffold IDs in one sample this annotation appears in (not an aggregate across samples)"
+                                  title={`Fewest to most unique scaffold IDs in one sample, across the ${lookupScaffoldRange.samples} samples with scaffolds`}
                                 >
-                                  Scaffolds (sample)
+                                  Scaffolds per sample
                                 </span>
                                 <span className="lookup-meta-value mono">
-                                  {scaffoldCount}
+                                  {lookupScaffoldRange.min === lookupScaffoldRange.max
+                                    ? lookupScaffoldRange.min
+                                    : `${lookupScaffoldRange.min}–${lookupScaffoldRange.max}`}
                                 </span>
                               </div>
                             )}
