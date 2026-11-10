@@ -26,6 +26,16 @@ function item(sample: string, egc: number | null, normEgc: number | null = null)
 }
 
 describe('computeExclusionSeries', () => {
+  it('removing everything leaves exactly 0, not a rounding error below it', () => {
+    // 0.3 - 0.1 - 0.2 is -2.8e-17 in floating point, which the hover
+    // would show as a negative percentage.
+    const root = [item('s1', 0.3, 0.3)]
+    const out = computeExclusionSeries(
+      root, ['Bacteria;A', 'Bacteria;B'], [[item('s1', 0.1, 0.1)], [item('s1', 0.2, 0.2)]], 'X__excl', null,
+    )
+    expect(out[0].value).toEqual({ egc: 0, norm_egc: 0 })
+  })
+
   it('subtracts a single exclusion per matching sample', () => {
     const root      = [item('s1', 1000, 10), item('s2', 1200, 12)]
     const excluded  = [item('s1', 300, 3), item('s2', 250, 2.5)]

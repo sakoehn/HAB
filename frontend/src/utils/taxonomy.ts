@@ -104,6 +104,12 @@ export function computeExclusionSeries(
       norm -= excludedNormBySample[i].get(rootItem.sample) ?? 0
     }
 
+    // The removed branches are inside the root, so the remainder can't
+    // really be negative; floor floating-point leftovers (removing every
+    // child gave -1e-17) at 0.
+    egc  = Math.max(0, egc)
+    norm = Math.max(0, norm)
+
     out.push({
       source:        rootItem.source,
       sample:        rootItem.sample,
