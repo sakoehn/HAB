@@ -4,6 +4,7 @@ Uses an in-memory sqlite db with the real annotation_catalog/
 annotation_series/correlations_cache schema so load_vector/load_sample_order
 (imported from correlation_loaders.py) run unmodified against it.
 """
+import math
 import os
 import sqlite3
 import sys
@@ -239,6 +240,28 @@ class TestLagSignDependsOnCallersReference:
             conn, 2, 1, metric="egc", method="raw_pearson", get_sample_order=lambda: self.SAMPLES20,
         )
         assert result_high_as_ref["lag_samples"] == -2
+
+
+class TestLagSignMeansWhichPeaksFirst:
+    # The panel shows a positive lag as "leads by": the candidate peaks
+    # earlier than the reference. Two bumps 3 samples apart pin that
+    # meaning end to end, whichever of the two has the lower catalog id.
+    SAMPLES30 = [f"s{i:02d}" for i in range(30)]
+
+    @staticmethod
+    def _bump(peak):
+        return {f"s{j:02d}": 1.0 + math.exp(-((j - peak) / 2.5) ** 2) for j in range(30)}
+
+    @pytest.mark.parametrize("ref_id, cand_id", [(1, 2), (2, 1)])
+    def test_candidate_that_peaks_earlier_gets_a_positive_lag(self, conn, ref_id, cand_id):
+        insert_catalog(conn, ref_id, "kegg", "K00001")
+        insert_catalog(conn, cand_id, "kegg", "K00002")
+        insert_series(conn, "kegg", "K00001", self._bump(15))  # reference peaks at sample 15
+        insert_series(conn, "kegg", "K00002", self._bump(12))  # candidate peaks 3 samples earlier
+        result = _get_or_compute_correlation(
+            conn, ref_id, cand_id, metric="egc", method="raw_pearson", get_sample_order=lambda: self.SAMPLES30,
+        )
+        assert result["lag_samples"] == 3
 
 
 class TestGetSampleOrderMemoization:
