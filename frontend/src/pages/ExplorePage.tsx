@@ -42,6 +42,12 @@ const TOP_LEVEL_TOOLTIP =
 // the real parents from /api/{source}/parents instead.
 const MULTI_PARENT_SOURCES = new Set(['kegg', 'cog'])
 
+// Top EGC's Top N box. Its value is sent as /annotations/top's limit, so
+// the max must stay within that route's le= (pinned by
+// tests/test_frontend_page_size_contract.py).
+const TOP_EGC_LIMIT_MIN = 5
+const TOP_EGC_LIMIT_MAX = 200
+
 // Hierarchy levels per source (taxonomy: domain .. strain).
 const SOURCE_LEVELS: Record<string, number> = { kegg: 4, cog: 2, enzyme: 4, taxonomy: 8 }
 // What Top EGC Annotations ranks by default: the most specific level (KOs,
@@ -1687,8 +1693,8 @@ export function ExplorePage({
                   </label>
                   <NumberField
                     className="field"
-                    min={5}
-                    max={200}
+                    min={TOP_EGC_LIMIT_MIN}
+                    max={TOP_EGC_LIMIT_MAX}
                     value={state.limit}
                     onChange={limit => setState(prev => ({ ...prev, limit }))}
                     style={{ width: 80 }}

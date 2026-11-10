@@ -101,3 +101,41 @@ def test_frontend_page_size_within_backend_bounds(file, line, route, page_size):
         f"{file}:{line}: {route} page_size={page_size} exceeds the backend's le={high} -- "
         "the request would be rejected with a 422"
     )
+
+
+# The same contract for /annotations/top's `limit`: fixed values the
+# frontend sends, and the Top N box, whose value is sent as limit.
+
+def _route_param_bounds(route: str, name: str) -> tuple[int | None, int | None]:
+    for param in app.openapi()["paths"][route]["get"]["parameters"]:
+        if param["name"] == name:
+            return param["schema"].get("minimum"), param["schema"].get("maximum")
+    raise AssertionError(f"{route} has no {name} param")
+
+
+def _top_limit_literals() -> list[tuple[str, int, int]]:
+    found = []
+    for path in sorted(FRONTEND_SRC.rglob("*.ts*")):
+        if "tests" in path.relative_to(FRONTEND_SRC).parts or path.name in EXCLUDED:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for m in re.finditer(r"/api/annotations/top\?[^`'\"]*?limit=([0-9]+)", text):
+            found.append((path.name, text.count("\n", 0, m.start()) + 1, int(m.group(1))))
+    return found
+
+
+def test_top_annotations_fixed_limits_within_backend_bounds():
+    low, high = _route_param_bounds("/annotations/top", "limit")
+    found = _top_limit_literals()
+    assert found, "scan found no /annotations/top?...limit= requests"
+    for file, line, value in found:
+        assert low <= value <= high, f"{file}:{line}: limit={value} outside {low}..{high}"
+
+
+def test_top_n_box_stays_within_the_backend_limit():
+    text = (FRONTEND_SRC / "pages" / "ExplorePage.tsx").read_text(encoding="utf-8")
+    box_max = int(re.search(r"const TOP_EGC_LIMIT_MAX\s*=\s*([0-9]+)", text).group(1))
+    box_min = int(re.search(r"const TOP_EGC_LIMIT_MIN\s*=\s*([0-9]+)", text).group(1))
+    assert "max={TOP_EGC_LIMIT_MAX}" in text and "min={TOP_EGC_LIMIT_MIN}" in text
+    low, high = _route_param_bounds("/annotations/top", "limit")
+    assert low <= box_min and box_max <= high
