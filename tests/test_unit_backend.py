@@ -859,6 +859,11 @@ class TestRoutesViaTestClient:
         assert "location" in body
         assert "data"     in body
 
+    def test_sun_times_reports_the_configured_utc_offset(self, patched_client, monkeypatch):
+        import api.routes as routes_mod
+        monkeypatch.setattr(routes_mod, "LOCATION_TZ_OFFSET", -8)
+        assert patched_client.get("/sun-times").json()["tz_offset"] == -8
+
     @pytest.mark.parametrize("path", ["/debug", "/api/debug", "/sql-test", "/api/sql-test"])
     def test_debug_routes_are_not_served(self, patched_client, path):
         """These development-only routes exposed server paths and raw db

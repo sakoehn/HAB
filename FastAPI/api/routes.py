@@ -110,6 +110,7 @@ from .config import (
     LOCATION_LAT,
     LOCATION_LON,
     LOCATION_NAME,
+    LOCATION_TZ_OFFSET,
     TIDE_SHIFT_HOURS,
 )
 from . import index as index_module
@@ -292,7 +293,7 @@ def get_sun_times():
         "location":  LOCATION_NAME,
         "lat":       LOCATION_LAT,
         "lon":       LOCATION_LON,
-        "tz_offset": -7,
+        "tz_offset": LOCATION_TZ_OFFSET,
         "date_min":  DATA_DATE_MIN,
         "date_max":  DATA_DATE_MAX,
         "data":      SUN_TIMES,
@@ -304,7 +305,9 @@ def search_mappings(
     request:Request,
     annotation_id: str = Query(..., description="Annotation ID to search for"),
     source: AnnotationSource = Query(..., description="Source type: kegg, cog, enzyme, taxonomy"),
-    sample_count: int = Query(128, ge=1, le=128),
+    sample_count: int | None = Query(
+        None, ge=1, description="The earliest this many samples; every sample when omitted or larger",
+    ),
     unique_pairs: bool = Query(False),
     bypass_cap: bool = Query(
         False,

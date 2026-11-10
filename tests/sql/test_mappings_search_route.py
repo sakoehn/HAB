@@ -513,6 +513,26 @@ def test_enzyme_broad_category_truncation_is_correctly_flagged(client):
     assert body["results_were_truncated"] is True
 
 
+def test_sample_count_above_the_dataset_uses_every_sample(client):
+    """The cap is the real number of samples, not a fixed 128; asking for
+    more just uses them all."""
+    from api.cache_sql import get_all_sample_names_sql
+    from api.db import connect_to_sql, close_sql_connection
+    conn = connect_to_sql()
+    try:
+        n_samples = len(get_all_sample_names_sql(conn))
+    finally:
+        close_sql_connection(conn)
+    rare_leaf = (
+        "Bacteria;Proteobacteria;Acidithiobacillia;Acidithiobacillales;"
+        "Acidithiobacillaceae;Acidithiobacillus;Acidithiobacillus albertensis;"
+        "Acidithiobacillus albertensis DSM 14366"
+    )
+    resp = client.get("/mappings/search", params={"annotation_id": rare_leaf, "source": "taxonomy", "sample_count": n_samples + 72, "page_size": 1})
+    assert resp.status_code == 200
+    assert resp.json()["sample_count"] == n_samples
+
+
 def test_exactly_the_row_limit_is_not_reported_as_truncated(client, monkeypatch):
     """A result that is exactly the row limit is complete; one row over is
     not. Shrinks the limit to one real result's size to check both."""
