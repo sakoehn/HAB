@@ -95,14 +95,21 @@ def is_within_date_range(dt_str: str | None, date_from: str | None, date_to: str
     return True
 
 
-def compute_date_range() -> tuple[str, str] | tuple[None, None]:
+def compute_date_range(samples=None) -> tuple[str, str] | tuple[None, None]:
     """
     Derive the ISO date range from TIMEPOINTS, sorting by parsed datetime
     rather than raw string to avoid the unpadded-date ordering bug.
+
+    samples, if given, limits it to those samples: the CSV also has rows
+    for samples that were never processed.
     """
     from .cache import TIMEPOINTS
 
-    datetimes = [tp["datetime"] for tp in TIMEPOINTS.values() if tp.get("datetime")]
+    wanted = set(samples) if samples is not None else None
+    datetimes = [
+        tp["datetime"] for oid, tp in TIMEPOINTS.items()
+        if tp.get("datetime") and (wanted is None or oid in wanted)
+    ]
     if not datetimes:
         return None, None
 
@@ -123,4 +130,23 @@ def compute_date_range() -> tuple[str, str] | tuple[None, None]:
 
 
 # Computed once at import time so /status and astronomy.py can read it cheaply.
+# The database is not open yet, so this uses every CSV row;
+# assert_date_range_matches_samples checks it against the real samples at
+# startup.
 DATA_DATE_MIN, DATA_DATE_MAX = compute_date_range()
+
+
+def assert_date_range_matches_samples(real_samples) -> None:
+    """
+    One-time startup check (see main.py's lifespan) that the date range
+    worked out from the whole timepoints CSV is also the range of the
+    samples actually in the database. A CSV row for a sample that was never
+    processed, outside the sampling window, would otherwise stretch
+    /status's range and the sunrise/sunset table with no visible symptom.
+    """
+    real = compute_date_range(real_samples)
+    if real != (DATA_DATE_MIN, DATA_DATE_MAX):
+        raise ValueError(
+            f"Timepoints CSV spans {DATA_DATE_MIN}..{DATA_DATE_MAX}, but the samples "
+            f"in the database span {real[0]}..{real[1]}"
+        )

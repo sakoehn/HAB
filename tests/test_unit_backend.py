@@ -309,6 +309,32 @@ class TestTimepointDtSortKey:
 class TestComputeDateRangeEdgeCases:
     """index.compute_date_range — edge cases beyond the happy path in test_batch2."""
 
+    def test_only_real_samples_set_the_range(self, monkeypatch):
+        """The timepoints CSV has rows for samples that were never
+        processed; when the real sample list is given, only those count."""
+        import api.cache as c
+        from api.index import compute_date_range
+        monkeypatch.setattr(c, "TIMEPOINTS", {
+            "a": {"datetime": "5/27/21 13:00"},
+            "b": {"datetime": "6/18/21 9:00"},
+            "never_processed": {"datetime": "6/20/21 9:00"},
+        })
+        assert compute_date_range() == ("2021-05-27", "2021-06-20")
+        assert compute_date_range(["a", "b"]) == ("2021-05-27", "2021-06-18")
+
+    def test_startup_check_refuses_a_range_the_real_samples_do_not_have(self, monkeypatch):
+        import api.cache as c
+        import api.index as index_mod
+        monkeypatch.setattr(c, "TIMEPOINTS", {
+            "a": {"datetime": "5/27/21 13:00"},
+            "never_processed": {"datetime": "6/20/21 9:00"},
+        })
+        monkeypatch.setattr(index_mod, "DATA_DATE_MIN", "2021-05-27")
+        monkeypatch.setattr(index_mod, "DATA_DATE_MAX", "2021-06-20")
+        with pytest.raises(ValueError, match="2021-06-20"):
+            index_mod.assert_date_range_matches_samples(["a"])
+        index_mod.assert_date_range_matches_samples(["a", "never_processed"])
+
     def test_empty_timepoints_returns_none_none(self):
         import api.cache as c
         from api.index import compute_date_range

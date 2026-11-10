@@ -32,6 +32,7 @@ from api.config import FRONTEND_DIST
 from api import index as index_module
 from api import routes, correlation_sql
 from api.correlation_loaders import assert_sample_order_is_trustworthy, load_sample_order
+from api.cache_sql import get_all_sample_names_sql
 from api.db import connect_to_sql, close_sql_connection
 
 import os
@@ -51,6 +52,7 @@ async def lifespan(app: FastAPI):
     # on the same one) rather than silently scrambling every
     # correlation's lag_samples with no visible symptom.
     assert_sample_order_is_trustworthy(load_sample_order(app.state.sql_conn))
+    index_module.assert_date_range_matches_samples(get_all_sample_names_sql(app.state.sql_conn))
 
     yield
 
