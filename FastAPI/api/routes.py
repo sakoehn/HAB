@@ -415,8 +415,11 @@ def search_mappings(
 
         seen_keys: set[str] = set()
 
+        # One row over the limit, so a result of exactly the limit is not
+        # mistaken for a cut-off one.
         mappings = get_mappings_sql(
             conn, source.value, annotation_id, samples=allowed_samples, bypass_cap=bypass_cap,
+            row_limit=_MAPPINGS_ROW_LIMIT + 1,
         )
         # A DIFFERENT failure mode from samples_were_capped, disclosed
         # separately: get_mappings_sql's hard _MAPPINGS_ROW_LIMIT can
@@ -434,7 +437,8 @@ def search_mappings(
         # LIMIT, so the post-GROUP-BY count could land under
         # _MAPPINGS_ROW_LIMIT even though real data was dropped (e.g.
         # cog/H over 5 samples: 100,275 real genes, only 49,969 returned).
-        results_were_truncated = len(mappings) >= _MAPPINGS_ROW_LIMIT
+        results_were_truncated = len(mappings) > _MAPPINGS_ROW_LIMIT
+        mappings = mappings[:_MAPPINGS_ROW_LIMIT]
     finally:
         close_sql_connection(conn)
 

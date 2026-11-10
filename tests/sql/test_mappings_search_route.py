@@ -513,6 +513,26 @@ def test_enzyme_broad_category_truncation_is_correctly_flagged(client):
     assert body["results_were_truncated"] is True
 
 
+def test_exactly_the_row_limit_is_not_reported_as_truncated(client, monkeypatch):
+    """A result that is exactly the row limit is complete; one row over is
+    not. Shrinks the limit to one real result's size to check both."""
+    import api.routes as routes_mod
+    params = {"annotation_id": "COG0055", "source": "cog", "sample_count": 1, "page_size": 5000, "bypass_cap": True}
+    full = client.get("/mappings/search", params=params).json()
+    n = full["total"]
+    assert full["results_were_truncated"] is False and n > 1
+
+    monkeypatch.setattr(routes_mod, "_MAPPINGS_ROW_LIMIT", n)
+    exact = client.get("/mappings/search", params=params).json()
+    assert exact["results_were_truncated"] is False
+    assert exact["total"] == n
+
+    monkeypatch.setattr(routes_mod, "_MAPPINGS_ROW_LIMIT", n - 1)
+    over = client.get("/mappings/search", params=params).json()
+    assert over["results_were_truncated"] is True
+    assert over["total"] == n - 1
+
+
 def test_concurrent_requests_do_not_hang_or_corrupt_the_shared_connection(client):
     """Regression test for a real production incident (2026-09-25): every
     route in routes.py used to read one sqlite3.Connection shared off
