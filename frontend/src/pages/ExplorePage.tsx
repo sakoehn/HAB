@@ -63,7 +63,7 @@ function topLevelEntryLabel(r: TopAnnotation, source: string): string {
   return r.name ? `${r.annotation_id} · ${r.name}` : r.annotation_id
 }
 import { apiFetch, downloadCsv } from '../utils/api'
-import { categoryIdsOf, fetchOwnTotals } from '../utils/groupTotals'
+import { categoryIdsOf, enzymeGroupLabel, fetchOwnTotals, type OwnTotal } from '../utils/groupTotals'
 import {
   extractEgc, computeTrend, sumMembersByTimestamp,
   resolveLookupCategory, resolveLookupScaffoldCount, resolveLookupDepth, depthLabel,
@@ -159,7 +159,7 @@ export function DatasetOverviewPanel({
   // Each group's size: its category's own total over the loaded dates (see
   // utils/groupTotals.ts), fetched with the rows. Empty when it couldn't
   // be loaded, which falls back to the member sum.
-  const [ownTotals, setOwnTotals]       = useState<Record<string, number>>({})
+  const [ownTotals, setOwnTotals]       = useState<Record<string, OwnTotal>>({})
 
   // `rows` is only ever correct for whatever (source, dateFrom, dateTo) was
   // actually sent with the request that produced it -- not necessarily what
@@ -263,11 +263,13 @@ export function DatasetOverviewPanel({
   const parentGroups = useMemo(
     () => memberGroups
       .map(g => {
-        const ownEgc = ownTotals[g.parent] ?? null
-        return { ...g, ownEgc, size: ownEgc ?? g.sumEgc }
+        const own = ownTotals[g.parent]
+        const ownEgc = own?.egc ?? null
+        const label = (loadedParams?.source ?? source) === 'enzyme' ? enzymeGroupLabel(g.parent, g.label, own) : g.label
+        return { ...g, label, ownEgc, size: ownEgc ?? g.sumEgc }
       })
       .sort((a, b) => b.size - a.size),
-    [memberGroups, ownTotals],
+    [memberGroups, ownTotals, loadedParams, source],
   )
 
   const top5Groups = parentGroups.slice(0, 5)
@@ -696,7 +698,7 @@ export function AnnotationsByParentPanel({
   // Each group's size: its category's own total (see utils/groupTotals.ts),
   // fetched with the rows. Empty when it couldn't be loaded, which falls
   // back to the member sum.
-  const [ownTotals, setOwnTotals] = useState<Record<string, number>>({})
+  const [ownTotals, setOwnTotals] = useState<Record<string, OwnTotal>>({})
 
   function loadTop() {
     const requestId = ++requestSeqRef.current
@@ -794,14 +796,16 @@ export function AnnotationsByParentPanel({
   const parentGroups = useMemo(
     () => memberGroups
       .map(g => {
-        const ownEgc = g.parent === 'Ungrouped' ? null : ownTotals[g.parent] ?? null
-        return { ...g, ownEgc, size: ownEgc ?? g.sumEgc }
+        const own = g.parent === 'Ungrouped' ? undefined : ownTotals[g.parent]
+        const ownEgc = own?.egc ?? null
+        const label = loadedSource === 'enzyme' ? enzymeGroupLabel(g.parent, g.label, own) : g.label
+        return { ...g, label, ownEgc, size: ownEgc ?? g.sumEgc }
       })
       // Top-level categories go last: their totals overlap every other
       // group's, so ranking them first by size would be misleading.
       .sort((a, b) =>
         Number(a.parent === 'Ungrouped') - Number(b.parent === 'Ungrouped') || b.size - a.size),
-    [memberGroups, ownTotals],
+    [memberGroups, ownTotals, loadedSource],
   )
 
   function toggleParent(p: string) {

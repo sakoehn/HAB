@@ -609,10 +609,15 @@ export function expandParentLabel(parent: string, source: string): string {
   }
 
   if (source === 'enzyme') {
-    const cls = parent.trim().split('.')[0]
-    return ENZYME_CLASS_LABELS[cls]
+    // Only a class's own name is known here; a deeper term names its
+    // class as such, so "1.1.1" doesn't read as if it were called
+    // "Oxidoreductases".
+    const id  = parent.trim()
+    const cls = id.split('.')[0]
+    if (!ENZYME_CLASS_LABELS[cls]) return parent
+    return id === cls
       ? `${parent} · ${ENZYME_CLASS_LABELS[cls]}`
-      : parent
+      : `${parent} (class: ${ENZYME_CLASS_LABELS[cls]})`
   }
 
   if (source === 'kegg') {

@@ -31,8 +31,18 @@ export function categoryIdsOf(
   return [...ids]
 }
 
+export type OwnTotal = { egc: number; name: string | null }
+
 /**
- * {category id: own mean EGC} for each of `categoryIds` the server has,
+ * Heading for an enzyme group: the term's own name when the server gave
+ * one ("1.1.1 · With NAD+ or NADP+ as acceptor"), otherwise `fallback`.
+ */
+export function enzymeGroupLabel(id: string, fallback: string, own: OwnTotal | undefined): string {
+  return own?.name ? `${id} · ${own.name}` : fallback
+}
+
+/**
+ * {category id: own mean EGC and name} for each of `categoryIds` the server has,
  * over the same dates as `rows` (the list they were grouped from). Values
  * already in `rows` are used as they are; the rest are asked for with
  * /api/annotations/top?ids=, which works them out the same way.
@@ -43,9 +53,9 @@ export async function fetchOwnTotals(
   rows:        TopAnnotation[],
   dateFrom = '',
   dateTo   = '',
-): Promise<Record<string, number>> {
-  const known: Record<string, number> = {}
-  for (const r of rows) known[r.annotation_id] = r.mean_egc
+): Promise<Record<string, OwnTotal>> {
+  const known: Record<string, OwnTotal> = {}
+  for (const r of rows) known[r.annotation_id] = { egc: r.mean_egc, name: r.name ?? null }
   const missing = categoryIds.filter(id => !(id in known))
 
   const base = `/api/annotations/top?source=${source}`
@@ -64,9 +74,11 @@ export async function fetchOwnTotals(
   if (url !== base) urls.push(url)
 
   const responses = await Promise.all(urls.map(u => apiFetch<{ data: TopAnnotation[] }>(u)))
-  for (const r of responses) for (const row of r.data ?? []) known[row.annotation_id] = row.mean_egc
+  for (const r of responses) {
+    for (const row of r.data ?? []) known[row.annotation_id] = { egc: row.mean_egc, name: row.name ?? null }
+  }
 
-  const totals: Record<string, number> = {}
+  const totals: Record<string, OwnTotal> = {}
   for (const id of categoryIds) if (id in known) totals[id] = known[id]
   return totals
 }

@@ -1540,17 +1540,18 @@ describe('expandParentLabel', () => {
     expect(typeof result).toBe('string')
   })
 
-  it('enzyme appends class name to EC number', () => {
-    expect(expandParentLabel('1.1.1', 'enzyme')).toBe('1.1.1 · Oxidoreductases')
+  it('an enzyme class is labelled with its own name', () => {
+    expect(expandParentLabel('1', 'enzyme')).toBe('1 · Oxidoreductases')
   })
 
-  it('enzyme uses only first component for class lookup', () => {
-    expect(expandParentLabel('3.6.1', 'enzyme')).toBe('3.6.1 · Hydrolases')
+  it('a deeper enzyme term names its class as the class, not as its own name', () => {
+    expect(expandParentLabel('1.1.1', 'enzyme')).toBe('1.1.1 (class: Oxidoreductases)')
+    expect(expandParentLabel('3.6.1', 'enzyme')).toBe('3.6.1 (class: Hydrolases)')
   })
 
   it('enzyme class 1-7 all expand', () => {
     for (let cls = 1; cls <= 7; cls++) {
-      expect(expandParentLabel(`${cls}.1.1`, 'enzyme')).toContain('·')
+      expect(expandParentLabel(`${cls}.1.1`, 'enzyme')).toContain('(class: ')
     }
   })
 

@@ -1004,6 +1004,43 @@ describe('ExplorePage — Top EGC Group column shows every real COG category', (
   })
 })
 
+describe('ExplorePage — enzyme groups are headed by their own name', () => {
+  function mockEnzyme() {
+    mockFetch.mockImplementation((url: string) => {
+      if (!url.includes('/api/annotations/top')) return Promise.resolve(jsonResponse({}))
+      if (url.includes('ids=')) {
+        return Promise.resolve(jsonResponse({
+          data: [{ annotation_id: '1.1.1', name: 'With NAD+ or NADP+ as acceptor', parent: '1.1', mean_egc: 500, max_egc: 900, sample_count: 128 }],
+        }))
+      }
+      return Promise.resolve(jsonResponse({
+        data: [
+          { annotation_id: '1.1.1.1', name: 'alcohol dehydrogenase', parent: '1.1.1', mean_egc: 100, max_egc: 200, sample_count: 128 },
+          { annotation_id: '1.1.1.2', name: 'alcohol dehydrogenase (NADP+)', parent: '1.1.1', mean_egc: 50, max_egc: 90, sample_count: 128 },
+        ],
+        sample_count: 128,
+      }))
+    })
+  }
+
+  it('Annotations by Parent', async () => {
+    mockEnzyme()
+    render(<Harness initial={{ openSection: 'by-parent', parentSource: 'enzyme' }} />)
+    expect(await screen.findByText('1.1.1 · With NAD+ or NADP+ as acceptor')).toBeInTheDocument()
+    expect(screen.queryByText('1.1.1 · Oxidoreductases')).not.toBeInTheDocument()
+  })
+
+  it('Dataset Overview', async () => {
+    mockEnzyme()
+    const user = userEvent.setup()
+    render(<Harness initial={{ openSection: 'overview', parentSource: 'cog' }} />)
+    await user.selectOptions(screen.getAllByRole('combobox')[0], 'enzyme')
+    await user.click(screen.getByRole('button', { name: /Load Overview/i }))
+    expect((await screen.findAllByText(/1\.1\.1 · With NAD\+ or NADP\+ as acceptor/)).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/1\.1\.1 · Oxidoreductases/)).not.toBeInTheDocument()
+  })
+})
+
 describe('ExplorePage — a section keeps what it loaded when you switch away and back', () => {
   function mockTop() {
     mockFetch.mockImplementation((url: string) =>
