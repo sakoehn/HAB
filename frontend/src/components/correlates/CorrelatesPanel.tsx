@@ -3,9 +3,10 @@
 // Hits /api/correlations/family (SQL backend Tier 2): enumerates every
 // eligible candidate in a chosen source, scores each against the reference
 // annotation, and applies Benjamini-Hochberg FDR across that family. Every
-// scored candidate comes back ranked by |r|, each flagged significant
-// (q < 0.05) or not -- the panel shows them all and marks the significant
-// ones, so weaker matches stay visible for exploration.
+// scored candidate comes back flagged significant (q < 0.05) or not,
+// significant ones first, each group ranked by |r| -- the panel shows them
+// all and marks the significant ones, so weaker matches stay visible for
+// exploration.
 //
 // Source selection is 4 always-visible buttons (kegg/cog/enzyme/taxonomy,
 // including the annotation's own source) rather than a cross/within tab --
@@ -13,8 +14,8 @@
 // entirely server-side.
 //
 // Lag sign convention (from backend, unchanged from the old panel):
-//   lag_hours > 0 → candidate peaks earlier than reference
-//   lag_hours < 0 → reference peaks earlier than candidate
+//   lag_hours > 0 → candidate peaks earlier than reference ("leads by")
+//   lag_hours < 0 → reference peaks earlier than candidate ("lags by")
 //   lag_hours = 0 → simultaneous
 
 import { useEffect, useRef, useState } from 'react'
