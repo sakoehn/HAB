@@ -45,7 +45,7 @@ function makeTwoDayTides() {
     const totalMin = i * 6
     const hh = String(8 + Math.floor(totalMin / 60)).padStart(2, '0')
     const mm = String(totalMin % 60).padStart(2, '0')
-    return { time: `${date} ${hh}:${mm}`, predicted_wl: 1 + Math.sin(i / 4), tide_event: null }
+    return { time: `${date} ${hh}:${mm}`, predicted_wl: 1 + Math.sin(i / 4) }
   })
   return [...oneDay('2021-05-27'), ...oneDay('2021-05-28')]
 }

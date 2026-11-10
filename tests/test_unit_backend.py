@@ -950,6 +950,19 @@ class TestLoadTidesEdgeCases:
         rows = cache_mod.load_tides()
         assert rows[0]["time"] == "2021-06-03 12:36"
 
+    def test_rows_carry_no_tide_event_label(self, tmp_path, monkeypatch):
+        """The file marks a high or low only when it lands on a 6-minute
+        reading (18 of about 90), so the label is left out of the API."""
+        import api.cache as cache_mod
+        csv_path = tmp_path / "tides.csv"
+        csv_path.write_text(
+            "# comment\n" * 7
+            + "time,predicted_wl,tide_event\n"
+            + "2021-06-03 11:36,3.2,High\n"
+        )
+        monkeypatch.setattr(cache_mod, "TIDES_CSV", str(csv_path))
+        assert set(cache_mod.load_tides()[0]) == {"time", "predicted_wl"}
+
 
 class TestGetAllSampleNamesEdgeCases:
     """Migration-script-only helper (see cache.py's own comment) -- the

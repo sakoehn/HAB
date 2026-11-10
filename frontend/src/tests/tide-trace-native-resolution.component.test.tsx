@@ -55,7 +55,7 @@ function makeDenseTides() {
     const totalMin = i * 6
     const hh = String(8 + Math.floor(totalMin / 60)).padStart(2, '0')
     const mm = String(totalMin % 60).padStart(2, '0')
-    return { time: `2021-05-27 ${hh}:${mm}`, predicted_wl: 1 + Math.sin(i / 4), tide_event: null }
+    return { time: `2021-05-27 ${hh}:${mm}`, predicted_wl: 1 + Math.sin(i / 4) }
   })
 }
 

@@ -80,7 +80,10 @@ def get_timepoint(sample_name: str) -> dict | None:
 
 def load_tides() -> list[dict]:
     """
-    Parse tides.csv into a list of {time, predicted_wl, tide_event} dicts.
+    Parse tides.csv into a list of {time, predicted_wl} dicts.
+
+    The file's tide_event column is left out: it marks a high or low only
+    when one lands exactly on a 6-minute reading, so most are unlabelled.
 
     The file has 7 leading '#' comment lines before the header row.
 
@@ -127,7 +130,6 @@ def load_tides() -> list[dict]:
         rows.append({
             "time":         shifted_time,
             "predicted_wl": predicted_wl,
-            "tide_event":   (row.get("tide_event") or "").strip() or None,
         })
 
     return rows

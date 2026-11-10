@@ -1295,7 +1295,7 @@ describe('resolveSunTimes', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function tidePoint(time: string, wl: number): TidePoint {
-  return { time, predicted_wl: wl, tide_event: null }
+  return { time, predicted_wl: wl }
 }
 
 describe('alignTideToChartPoints', () => {

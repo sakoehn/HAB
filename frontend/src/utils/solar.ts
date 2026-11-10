@@ -9,7 +9,6 @@ export type SunTimes = Record<string, { sunrise: string; sunset: string }>
 export type TidePoint = {
   time:         string  // "YYYY-MM-DD HH:MM", already shifted server-side
   predicted_wl: number  // meters
-  tide_event:   string | null
 }
 
 export type NightBand = {
