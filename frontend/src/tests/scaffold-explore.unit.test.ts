@@ -92,7 +92,7 @@
 import { describe, it, expect } from 'vitest'
 
 import { fmtDate, fmtTime } from '../utils/format'
-import { filterSummaryForChart, buildAggregatedChartRows } from '../components/scaffolds/scaffoldChartData'
+import { filterSummaryForChart, buildAggregatedChartRows, withZeroSamples } from '../components/scaffolds/scaffoldChartData'
 import { DETAIL_PAGE } from '../components/scaffolds/ScaffoldExplorePanel'
 import type { ScaffoldSummaryRow, ScaffoldDetailRow } from '../types'
 
@@ -849,5 +849,39 @@ describe('fmtTime — scaffold table time column', () => {
 
   it('midnight is 00:00', () => {
     expect(fmtTime('2021-05-10 00:00')).toBe('00:00')
+  })
+})
+
+describe('withZeroSamples — a sample with no scaffolds is drawn at 0', () => {
+  const ALL = [
+    { sample: 's1', datetime: '5/27/21 13:00' },
+    { sample: 's2', datetime: '5/27/21 17:00' },
+    { sample: 's3', datetime: '5/27/21 21:00' },
+  ]
+
+  it('adds a 0 row for each real sample the series is missing, in time order', () => {
+    const rows = [
+      { date: '5/27/21 21:00', scaffold_count: 5, gene_count: 7 },
+      { date: '5/27/21 13:00', scaffold_count: 3, gene_count: 4 },
+    ]
+    expect(withZeroSamples(rows, ALL)).toEqual([
+      { date: '5/27/21 13:00', scaffold_count: 3, gene_count: 4 },
+      { date: '5/27/21 17:00', scaffold_count: 0, gene_count: 0 },
+      { date: '5/27/21 21:00', scaffold_count: 5, gene_count: 7 },
+    ])
+  })
+
+  it('only fills samples inside the date range', () => {
+    const all = [...ALL, { sample: 's4', datetime: '5/28/21 1:00' }]
+    const rows = [{ date: '5/27/21 13:00', scaffold_count: 3, gene_count: 4 }]
+    expect(withZeroSamples(rows, all, '', '2021-05-27').map(r => r.date))
+      .toEqual(['5/27/21 13:00', '5/27/21 17:00', '5/27/21 21:00'])
+    // Callers pass rows already limited to the range; only the fill is new.
+    expect(withZeroSamples([], all, '2021-05-28', '').map(r => r.date)).toEqual(['5/28/21 1:00'])
+  })
+
+  it('leaves the rows as they are while the sample list is unavailable', () => {
+    const rows = [{ date: '5/27/21 13:00', scaffold_count: 3, gene_count: 4 }]
+    expect(withZeroSamples(rows, null)).toEqual(rows)
   })
 })

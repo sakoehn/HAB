@@ -44,6 +44,8 @@ import { homonymHints, withHomonymHint } from '../../utils/taxonomy'
 import { filterRedundantAnnotations, type DroppedRedundancy } from '../../utils/annotationHierarchy'
 import { apiFetch, downloadCsv } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime, toPlotlyDate } from '../../utils/format'
+import { useAllSamples } from '../../utils/useAllSamples'
+import { withZeroSamples } from './scaffoldChartData'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { SkeletonStatTiles, SkeletonChart, SkeletonTable } from '../ui/Skeleton'
 
@@ -232,6 +234,8 @@ export function GroupScaffoldModal({
 
   // ── Chart data: summed per date across all members ────────────────────
   // O(members × samples) — same complexity as the merge above.
+  // Samples where no member has scaffolds are drawn at 0 (see withZeroSamples).
+  const { allSamples } = useAllSamples()
   const chartData = useMemo<ChartRow[]>(() => {
     const dateMap: Record<string, ChartRow> = {}
     for (const row of rows) {
@@ -241,8 +245,11 @@ export function GroupScaffoldModal({
       dateMap[row.date].scaffold_count += row.scaffold_count
       dateMap[row.date].gene_count     += row.gene_count
     }
-    return Object.values(dateMap).sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date))
-  }, [rows])
+    return withZeroSamples(
+      Object.values(dateMap).sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date)),
+      allSamples,
+    )
+  }, [rows, allSamples])
 
   // How many of the group's original members actually contributed to
   // the sums below -- the ones dropped as redundant were deliberately never

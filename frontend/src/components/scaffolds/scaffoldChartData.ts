@@ -57,3 +57,27 @@ export function buildAggregatedChartRows(
   }
   return Object.values(dateMap).sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date))
 }
+
+// A scaffold summary only has rows for samples where the annotation has
+// scaffolds. Zero scaffolds is a real count -- the CSV writes it -- so the
+// chart gets a 0 row for every other real sample in the date range,
+// instead of a line drawn straight across them. `allSamples` is null
+// until /api/samples has loaded; the rows are then returned as they are.
+export function withZeroSamples(
+  rows:       AggregatedChartRow[],
+  allSamples: { datetime: string }[] | null,
+  dateFrom = '',
+  dateTo   = '',
+): AggregatedChartRow[] {
+  if (!allSamples) return rows
+  const have = new Set(rows.map(r => parseDateTime(r.date)))
+  const zeros = allSamples
+    .filter(s => {
+      const iso = isoDate(s.datetime)
+      if (dateFrom && iso < dateFrom) return false
+      if (dateTo   && iso > dateTo)   return false
+      return !have.has(parseDateTime(s.datetime))
+    })
+    .map(s => ({ date: s.datetime, scaffold_count: 0, gene_count: 0 }))
+  return [...rows, ...zeros].sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date))
+}

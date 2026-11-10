@@ -34,6 +34,8 @@ import type { Data as PlotlyData, Layout as PlotlyLayout } from 'plotly.js'
 import { SOURCE_TAG_CLS, taxonomyAwarePrimaryLabel } from '../../constants'
 import { apiFetch, downloadCsv, httpStatusFromError } from '../../utils/api'
 import { fmtDate, fmtTime, parseDateTime, toPlotlyDate } from '../../utils/format'
+import { useAllSamples } from '../../utils/useAllSamples'
+import { withZeroSamples } from './scaffoldChartData'
 import { minMeanMax } from '../../utils/stats'
 import { PLOTLY_HOVERLABEL } from '../../utils/chartTheme'
 import { SkeletonStatTiles, SkeletonChart, SkeletonTable } from '../ui/Skeleton'
@@ -175,9 +177,14 @@ export function ScaffoldModal({
       : String(bv).localeCompare(String(av))
   }), [summary, sortCol, sortDir])
 
+  // Samples without scaffolds are drawn at 0 (see withZeroSamples).
+  const { allSamples } = useAllSamples()
   const chartData = useMemo(
-    () => [...summary].sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date)),
-    [summary],
+    () => withZeroSamples(
+      [...summary].sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date)),
+      allSamples,
+    ),
+    [summary, allSamples],
   )
 
   const scaffoldStats = useMemo(

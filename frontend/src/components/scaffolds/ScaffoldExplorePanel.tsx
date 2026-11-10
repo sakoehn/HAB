@@ -69,7 +69,8 @@ import { taxonomyDepthFromId, homonymHints, withHomonymHint } from '../../utils/
 import { filterRedundantAnnotations, type DroppedRedundancy } from '../../utils/annotationHierarchy'
 import { DateRangePicker } from '../ui/DateRangePicker'
 import { HelpTooltip } from '../ui/HelpTooltip'
-import { filterSummaryForChart, buildAggregatedChartRows } from './scaffoldChartData'
+import { filterSummaryForChart, buildAggregatedChartRows, withZeroSamples } from './scaffoldChartData'
+import { useAllSamples } from '../../utils/useAllSamples'
 
 const TERM_COLORS = [
   'var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)',
@@ -94,6 +95,8 @@ export function ScaffoldExplorePanel({
   dataDateRange?: { min: string; max: string } | null
 }) {
   const [terms, setTerms]               = useState<ScaffoldExploreTerm[]>([])
+  // Samples without scaffolds are drawn at 0 (see withZeroSamples).
+  const { allSamples } = useAllSamples()
   const [searchQ, setSearchQ]           = useState('')
   const [searchSrc, setSearchSrc]       = useState('taxonomy')
   const [searchRes, setSearchRes]       = useState<TopAnnotation[]>([])
@@ -452,7 +455,7 @@ export function ScaffoldExplorePanel({
         id:    term.annotationId,
         label: term.annotationId,
         color: term.color,
-        data:  filterSummaryForChart(term.summary, dateFrom, dateTo),
+        data:  withZeroSamples(filterSummaryForChart(term.summary, dateFrom, dateTo), allSamples, dateFrom, dateTo),
       }))
     }
 
@@ -462,9 +465,9 @@ export function ScaffoldExplorePanel({
       id:    'aggregated',
       label: `All terms (${aggregatedTerms.length})`,
       color: 'var(--chart-1)',
-      data:  buildAggregatedChartRows(aggregatedTerms, dateFrom, dateTo),
+      data:  withZeroSamples(buildAggregatedChartRows(aggregatedTerms, dateFrom, dateTo), allSamples, dateFrom, dateTo),
     }]
-  }, [readyTerms, aggregatedTerms, dateFrom, dateTo, splitByTerm])
+  }, [readyTerms, aggregatedTerms, dateFrom, dateTo, splitByTerm, allSamples])
 
   const chartRows = useMemo(() => {
     const dateSet = new Set<string>()
@@ -1014,7 +1017,7 @@ export function ScaffoldExplorePanel({
                   <div className="chart-card" style={{ marginBottom: 12 }}>
                     <Plot
                       data={[
-                        buildScaffoldTrace(term.annotationId, term.color, rows, chartMetric, chartType),
+                        buildScaffoldTrace(term.annotationId, term.color, withZeroSamples(rows, allSamples, dateFrom, dateTo), chartMetric, chartType),
                       // eslint-disable-next-line @typescript-eslint/no-explicit-any
                       ] as any[]}
                       layout={{
