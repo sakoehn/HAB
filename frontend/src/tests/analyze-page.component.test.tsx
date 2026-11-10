@@ -1242,9 +1242,11 @@ describe('LeftResultList — help tooltips', () => {
     // screen.getByTitle('Help') is ambiguous between the two.
     const bulkBar = container.querySelector('.al-bulk-bar') as HTMLElement
     await userEvent.click(within(bulkBar).getByTitle('Help'))
-    await waitFor(() => {
-      expect(screen.getByText(/sums all checked items/i)).toBeInTheDocument()
-    })
+    const tip = await screen.findByText(/sums all checked items/i)
+    // Overlapping items (two pathways sharing KOs, or a KO and a COG
+    // for the same genes) count their shared genes once each.
+    expect(tip.textContent).toMatch(/share genes/i)
+    expect(tip.textContent).toMatch(/counted once for each/i)
   })
 
   it('source filter pills have a help tooltip when multiple sources are present', async () => {

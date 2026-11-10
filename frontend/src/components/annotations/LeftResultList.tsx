@@ -228,7 +228,7 @@ export function LeftResultList({
         </label>
 
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', alignItems: 'center' }}>
-          <HelpTooltip text="Check rows below to group or bulk-add them. + Add N puts each checked item on its own chart. ∑ Group sums all checked items into one combined chart (max 20)." />
+          <HelpTooltip text="Check rows below to group or bulk-add them. + Add N puts each checked item on its own chart. ∑ Group sums all checked items into one combined chart (max 20). If checked items share genes (two pathways with KOs in common, or a KO and a COG for the same genes), those genes are counted once for each item they belong to." />
           <button
             className="btn sm ghost"
             onClick={onGroupSelected}
