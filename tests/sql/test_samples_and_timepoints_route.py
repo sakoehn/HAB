@@ -138,6 +138,18 @@ def test_samples_and_timepoints_report_the_same_sample_set(client):
 # own 422, before paginate() ever runs.
 # ═══════════════════════════════════════════════════════════════════════════
 
+@pytest.mark.parametrize("route", ["/samples", "/timepoints"])
+def test_rows_come_back_in_time_order(client, route):
+    from api.index import timepoint_dt_sort_key
+    rows = client.get(route, params={"page_size": 200}).json()["data"]
+    dts = [(r.get("timepoint") or {}).get("datetime") if route == "/samples" else r["datetime"] for r in rows]
+    keys = [timepoint_dt_sort_key(d) for d in dts]
+    assert keys == sorted(keys)
+    # Sample ids do not run in time order, so this is a real check.
+    ids = [r["sample"] if route == "/samples" else r["taxon_oid"] for r in rows]
+    assert ids != sorted(ids)
+
+
 def test_samples_page_size_zero_is_rejected_not_a_500(client):
     resp = client.get("/samples", params={"page_size": 0})
     assert resp.status_code == 422

@@ -114,9 +114,9 @@ export function AboutPage() {
           <div className="api-ref">
             {([
               ['/api/timepoints',
-               'List all 128 sample timepoints with dates'],
+               'List all 128 sample timepoints with dates, in time order'],
               ['/api/samples',
-               'List all samples with timepoint metadata'],
+               'List all samples with timepoint metadata, in time order'],
               ['/api/search/annotations?q=…&sources=kegg',
                'Cross-sample annotation search: substring match on ID or name (3+ characters); a 1–2 character query is an exact ID lookup (COG category letters, EC classes). A KO:/EC: prefix is ignored. Each row has a match field (exact, starts or contains) saying how close it is; results come closest first, then by mean EGC'],
               ['/api/series/annotations?source=…&annotation_id=…&page_size=500',

@@ -225,7 +225,7 @@ def _filter_timepoints_to_real_samples(timepoints: dict, real_samples) -> list[d
 def list_timepoints(
     request: Request, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=1000),
 ):
-    """Return all samples with their readable dates, paginated."""
+    """Return all samples with their readable dates, in time order, paginated."""
     if not TIMEPOINTS:
         raise HTTPException(status_code=404, detail="Timepoints data not found")
     conn = connect_to_sql()
@@ -234,6 +234,7 @@ def list_timepoints(
     finally:
         close_sql_connection(conn)
     rows = _filter_timepoints_to_real_samples(TIMEPOINTS, real_samples)
+    rows.sort(key=lambda tp: timepoint_dt_sort_key(tp.get("datetime")))
     return paginate(rows, page, page_size)
 
 
@@ -241,13 +242,15 @@ def list_timepoints(
 def list_samples(
     request: Request, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=1000),
 ):
-    """Return all sample names with their readable dates, paginated."""
+    """Return all sample names with their readable dates, in time order, paginated."""
     conn = connect_to_sql()
     try:
         samples = get_all_sample_names_sql(conn)
     finally:
         close_sql_connection(conn)
-    return paginate([{"sample": s, "timepoint": get_timepoint(s)} for s in samples], page, page_size)
+    rows = [{"sample": s, "timepoint": get_timepoint(s)} for s in samples]
+    rows.sort(key=lambda r: timepoint_dt_sort_key((r["timepoint"] or {}).get("datetime")))
+    return paginate(rows, page, page_size)
 
 
 @router.get("/tides")
