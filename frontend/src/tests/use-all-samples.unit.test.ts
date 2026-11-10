@@ -14,6 +14,7 @@
  *   drops rows with no resolvable timepoint (can't be placed on a timeline)
  *   a fetch failure surfaces as allSamplesError, not a thrown exception
  *   a second concurrent hook instance reuses the cache (no duplicate fetch)
+ *   a failed fetch is retried by the next chart that mounts
  *
  * Run: npx vitest run src/tests/use-all-samples.unit.test.ts
  */
@@ -100,5 +101,21 @@ describe('useAllSamples', () => {
 
     renderHook(() => useAllSamples())
     expect(mockFetch.mock.calls.length).toBe(callsAfterFirstMount)
+  })
+
+  it('a failed fetch is retried by the next chart that mounts', async () => {
+    mockFetch.mockImplementationOnce(async () => errorResponse(500))
+    mockFetch.mockImplementation(async () => jsonResponse({
+      data: [{ sample: 'S1', timepoint: { taxon_oid: 'S1', timepoint: '1', datetime: '5/27/21 13:00' } }],
+    }))
+    const useAllSamples = await freshHook()
+
+    const first = renderHook(() => useAllSamples())
+    await waitFor(() => expect(first.result.current.allSamplesError).not.toBeNull())
+
+    const second = renderHook(() => useAllSamples())
+    await waitFor(() => expect(second.result.current.allSamples).toEqual([{ sample: 'S1', datetime: '5/27/21 13:00' }]))
+    expect(second.result.current.allSamplesError).toBeNull()
+    expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 })

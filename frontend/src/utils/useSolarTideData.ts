@@ -58,6 +58,8 @@ function loadSunTimes(): Promise<void> {
     })
     .catch(err => {
       sunTimesCache = { data: null, loading: false, error: String(err) }
+      // Forget the failed request so the next chart that mounts tries again.
+      sunTimesPromise = null
     })
     .finally(notify)
   return sunTimesPromise
@@ -72,6 +74,7 @@ function loadTides(): Promise<void> {
     })
     .catch(err => {
       tidesCache = { data: null, loading: false, error: String(err) }
+      tidesPromise = null
     })
     .finally(notify)
   return tidesPromise

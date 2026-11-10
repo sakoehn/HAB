@@ -58,6 +58,8 @@ function load(): Promise<void> {
     })
     .catch(err => {
       cache = { data: null, loading: false, error: String(err) }
+      // Forget the failed request so the next chart that mounts tries again.
+      promise = null
     })
     .finally(notify)
   return promise

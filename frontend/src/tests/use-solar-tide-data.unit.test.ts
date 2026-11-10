@@ -14,6 +14,7 @@
  *   enabled=true fetches both sun-times and tides
  *   sun-times and tides loading/error states are independent
  *   a second concurrent hook instance reuses the cache (no duplicate fetch)
+ *   a failed fetch is retried by the next chart that mounts, the other is not re-fetched
  *
  * Run: npx vitest run src/tests/use-solar-tide-data.unit.test.ts
  */
@@ -95,5 +96,24 @@ describe('useSolarTideData', () => {
 
     renderHook(() => useSolarTideData(true))
     expect(mockFetch.mock.calls.length).toBe(callsAfterFirstMount)
+  })
+
+  it('a failed fetch is retried by the next chart that mounts, the other is not re-fetched', async () => {
+    let tideCalls = 0
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/sun-times') return jsonResponse({ data: { sunrise: '06:00' } })
+      if (path === '/api/tides')     return ++tideCalls === 1 ? errorResponse(500) : jsonResponse({ data: [{ t: 'x', v: 1 }] })
+      throw new Error(`unexpected path: ${path}`)
+    })
+    const useSolarTideData = await freshHook()
+
+    const first = renderHook(() => useSolarTideData(true))
+    await waitFor(() => expect(first.result.current.tidesError).not.toBeNull())
+
+    const second = renderHook(() => useSolarTideData(true))
+    await waitFor(() => expect(second.result.current.tides).toEqual([{ t: 'x', v: 1 }]))
+    expect(second.result.current.tidesError).toBeNull()
+    expect(tideCalls).toBe(2)
+    expect(mockFetch.mock.calls.filter(c => c[0] === '/api/sun-times')).toHaveLength(1)
   })
 })
