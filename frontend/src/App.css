@@ -1,7 +1,7 @@
-﻿/* â”€â”€ Google Fonts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+﻿/* ── Google Fonts ─────────────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Literata:ital,wght@0,400;0,600;0,700;1,400;1,600&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
-/* â”€â”€ CSS Variables — Dark (default) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── CSS Variables — Dark (default) ─────────────────────────────────────── */
 :root,
 [data-theme="dark"] {
   --bg:        #0c0f18;
@@ -44,7 +44,7 @@
   --tide-stroke:         var(--teal);
 }
 
-/* â”€â”€ Light theme â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Light theme ─────────────────────────────────────────────────────────── */
 [data-theme="light"] {
   --bg:        #f0f3fa;
   --surface:   #ffffff;
@@ -79,7 +79,7 @@
   --tide-stroke:         var(--teal);
 }
 
-/* â”€â”€ Reset & Base â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Reset & Base ─────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body, #root {
@@ -124,7 +124,7 @@ h3 { font: 600 14px var(--sans); color: var(--text-h); }
   to   { opacity: 1; }
 }
 
-/* â”€â”€ Tags â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Tags ─────────────────────────────────────────────────────────────────── */
 .tag {
   display: inline-flex; align-items: center;
   padding: 2px 8px; border-radius: 3px;
@@ -142,7 +142,7 @@ h3 { font: 600 14px var(--sans); color: var(--text-h); }
 .tag.chart-3 { color: var(--chart-3); background: color-mix(in srgb, var(--chart-3) 12%, transparent); border-color: color-mix(in srgb, var(--chart-3) 30%, transparent); }
 .tag.chart-4 { color: var(--chart-4); background: color-mix(in srgb, var(--chart-4) 12%, transparent); border-color: color-mix(in srgb, var(--chart-4) 30%, transparent); }
 
-/* â”€â”€ Buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border-l);
@@ -162,7 +162,7 @@ h3 { font: 600 14px var(--sans); color: var(--text-h); }
 .btn.sm { padding: 5px 10px; font-size: 11px; border-radius: 5px; }
 .btn.xs { padding: 3px 7px; font-size: 10px; border-radius: 4px; gap: 3px; }
 
-/* â”€â”€ Form fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Form fields ──────────────────────────────────────────────────────────── */
 .field {
   padding: 8px 13px; border-radius: 6px;
   border: 1px solid var(--border-l);
@@ -176,7 +176,7 @@ h3 { font: 600 14px var(--sans); color: var(--text-h); }
 }
 select.field { cursor: pointer; }
 
-/* â”€â”€ Topbar — frosted glass â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Topbar — frosted glass ───────────────────────────────────────────────── */
 .topbar {
   grid-column: 1 / -1;
   grid-row: 1;
@@ -219,7 +219,7 @@ select.field { cursor: pointer; }
 .api-status.loading .dot { background: var(--amber); animation: blink 1s ease-in-out infinite; }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-/* â”€â”€ Theme Toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Theme Toggle ─────────────────────────────────────────────────────────── */
 .theme-toggle {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 12px; border-radius: 20px;
@@ -230,7 +230,7 @@ select.field { cursor: pointer; }
 .theme-toggle:hover { color: var(--text-h); border-color: var(--teal); }
 [data-theme="light"] .theme-toggle { background: rgba(0,0,0,.04); }
 
-/* â”€â”€ Refresh Button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Refresh Button ───────────────────────────────────────────────────────── */
 .refresh-btn {
   display: flex; align-items: center; gap: 5px;
   padding: 5px 11px; border-radius: 20px;
@@ -245,7 +245,7 @@ select.field { cursor: pointer; }
 .refresh-btn.sm { padding: 3px 8px; font-size: 10px; gap: 4px; }
 .page-header-actions { display: flex; gap: 8px; align-items: center; align-self: flex-end; }
 
-/* â”€â”€ Sidebar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
 .sidebar {
   grid-column: 1;
   grid-row: 2;
@@ -295,7 +295,7 @@ select.field { cursor: pointer; }
   font: 400 10px var(--mono); color: var(--text-dim); line-height: 1.8; letter-spacing: .03em;
 }
 
-/* â”€â”€ Main content â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Main content ─────────────────────────────────────────────────────────── */
 .main {
   display: flex;
   flex-direction: column;
@@ -307,7 +307,7 @@ select.field { cursor: pointer; }
   grid-row: 2;
 }
 
-/* â”€â”€ Page header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Page header ──────────────────────────────────────────────────────────── */
 .page-header {
   padding: 30px 36px 24px;
   border-bottom: 1px solid var(--border);
@@ -332,12 +332,12 @@ select.field { cursor: pointer; }
 .page-header-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
 .page-body { padding: 28px 36px; display: flex; flex-direction: column; gap: 24px; }
 
-/* â”€â”€ Search bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Search bar ───────────────────────────────────────────────────────────── */
 .search-bar { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
 .search-bar .field { flex: 1; min-width: 240px; }
 
 
-/* â”€â”€ Results table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Results table ────────────────────────────────────────────────────────── */
 .results-meta {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; flex-wrap: wrap;
@@ -380,7 +380,7 @@ select.field { cursor: pointer; }
   border-left: 2px solid var(--teal);
 }
 
-/* â”€â”€ EGC Chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── EGC Chart ────────────────────────────────────────────────────────────── */
 .chart-card {
   border: 1px solid var(--border); border-radius: 8px;
   padding: 18px 20px;
@@ -404,7 +404,7 @@ select.field { cursor: pointer; }
 }
 .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
-/* â”€â”€ Chart Controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Chart Controls ───────────────────────────────────────────────────────── */
 .chart-controls {
   display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
   padding: 9px 0 11px;
@@ -449,7 +449,7 @@ select.field { cursor: pointer; }
   background: var(--teal); cursor: pointer; border: none;
 }
 
-/* â”€â”€ Descriptive Statistics Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Descriptive Statistics Panel ────────────────────────────────────────── */
 .stats-panel {
   background: var(--surface3); border: 1px solid var(--border);
   border-radius: 6px; padding: 11px 14px; margin-bottom: 14px;
@@ -486,7 +486,7 @@ select.field { cursor: pointer; }
   margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* â”€â”€ Mappings section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Mappings section ─────────────────────────────────────────────────────── */
 .mappings-toggle {
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px; cursor: pointer;
   padding: 12px 0; border: none; background: none;
@@ -529,7 +529,7 @@ select.field { cursor: pointer; }
 .mappings-table tr:last-child td { border-bottom: none; }
 .mappings-table tr:hover td { background: rgba(61,217,184,.04); }
 
-/* â”€â”€ Compare chips â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Compare chips ────────────────────────────────────────────────────────── */
 .compare-chip {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 11px; border-radius: 6px;
@@ -544,7 +544,7 @@ select.field { cursor: pointer; }
 }
 .compare-chip .chip-remove:hover { opacity: 1; }
 
-/* â”€â”€ About page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── About page ───────────────────────────────────────────────────────────── */
 .about-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px;
 }
@@ -581,7 +581,7 @@ select.field { cursor: pointer; }
 .api-ref-path { font: 400 12px var(--mono); color: var(--text-h); flex: 1; word-break: break-all; }
 .api-ref-desc { font: 13px var(--sans); color: var(--text); margin-top: 3px; }
 
-/* â”€â”€ State messages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── State messages ───────────────────────────────────────────────────────── */
 .state-box {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 10px; padding: 48px 24px;
@@ -633,7 +633,7 @@ select.field { cursor: pointer; }
   clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 
-/* â”€â”€ Tooltip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Tooltip ──────────────────────────────────────────────────────────────── */
 .chart-tooltip {
   background: var(--surface2); border: 1px solid var(--border-l);
   border-radius: 7px; padding: 10px 13px;
@@ -646,7 +646,7 @@ select.field { cursor: pointer; }
 .chart-tooltip .tt-label { color: var(--text-dim); }
 .chart-tooltip .tt-val   { color: var(--text-h); margin-left: auto; padding-left: 14px; }
 
-/* â”€â”€ Copy ID button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Copy ID button ───────────────────────────────────────────────────────── */
 .copy-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 19px; height: 19px; border-radius: 4px;
@@ -656,7 +656,7 @@ select.field { cursor: pointer; }
 }
 .copy-btn:hover { border-color: var(--teal); color: var(--teal); background: var(--teal-dim); }
 
-/* â”€â”€ Date range picker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Date range picker ────────────────────────────────────────────────────── */
 .date-range { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .date-range-label { font: 400 11px var(--mono); color: var(--text-dim); white-space: nowrap; letter-spacing: .04em; }
 .date-field { width: 135px; padding: 6px 10px; font-size: 12px; }
@@ -692,13 +692,13 @@ select.field { cursor: pointer; }
 [data-theme="dark"]  .date-field { color-scheme: dark; }
 [data-theme="light"] .date-field { color-scheme: light; }
 
-/* â”€â”€ Pagination â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Pagination ───────────────────────────────────────────────────────────── */
 .pagination {
   display: flex; align-items: center; justify-content: center; gap: 12px; padding: 12px 0 4px;
 }
 .pagination-info { font: 400 12px var(--mono); color: var(--text-dim); }
 
-/* â”€â”€ Sidebar collapse â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Sidebar collapse ─────────────────────────────────────────────────────── */
 .layout-sidebar-open, .layout-sidebar-closed { display: contents; }
 #root:has(.sidebar-collapsed) { grid-template-columns: 48px 1fr; }
 .sidebar-collapsed { padding: 12px 0; align-items: center; }
@@ -713,7 +713,7 @@ select.field { cursor: pointer; }
 }
 .sidebar-toggle-btn:hover { color: var(--text-h); background: rgba(255,255,255,.08); }
 
-/* â”€â”€ Multi-term results columns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Multi-term results columns ───────────────────────────────────────────── */
 /* Each term gets its own column; columns scroll independently if overflow */
 .results-columns {
   display: grid;
@@ -726,7 +726,7 @@ select.field { cursor: pointer; }
   min-width: 0; /* prevent grid blowout */
 }
 
-/* â”€â”€ Explore section cards — 3 tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Explore section cards — 3 tabs ──────────────────────────────────────── */
 .explore-section-cards { display: flex; gap: 12px; flex-wrap: wrap; }
 
 .explore-card {
@@ -750,16 +750,16 @@ select.field { cursor: pointer; }
   background-size: 22px 22px;
 }
 
-/* â”€â”€ Parent groups â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Parent groups ────────────────────────────────────────────────────────── */
 .parent-group {
   border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin-bottom: 8px;
 }
 
-/* â”€â”€ Light mode date input â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Light mode date input ────────────────────────────────────────────────── */
 [data-theme="light"] input[type="date"] { color-scheme: light; }
 [data-theme="dark"]  input[type="date"] { color-scheme: dark; }
 
-/* â”€â”€ Subtitle helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Subtitle helper ──────────────────────────────────────────────────────── */
 .subtitle { font: 400 11px var(--mono); color: var(--text-dim); letter-spacing: .04em; }
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    Analyze page — two-column workspace
@@ -796,7 +796,7 @@ select.field { cursor: pointer; }
   flex: 1;
 }
 
-/* â”€â”€ Left column — sticky so it stays visible while right col grows â”€â”€ */
+/* ── Left column — sticky so it stays visible while right col grows ── */
 .al-left {
   display: flex;
   flex-direction: column;
@@ -1072,7 +1072,7 @@ select.field { cursor: pointer; }
   z-index: 9;
 }
 
-/* â”€â”€ Right column — grows freely, NO overflow trapping â”€â”€ */
+/* ── Right column — grows freely, NO overflow trapping ── */
 .al-right {
   display: flex;
   flex-direction: column;
@@ -1150,7 +1150,7 @@ select.field { cursor: pointer; }
 }
 .al-card-close:hover { color: var(--coral); border-color: var(--coral); background: rgba(240,112,96,.1); }
 
-/* â”€â”€ Compare drawer — FIXED to viewport bottom, always visible â”€â”€ */
+/* ── Compare drawer — FIXED to viewport bottom, always visible ── */
 .al-drawer {
   position: fixed;
   bottom: 0;
@@ -1248,7 +1248,7 @@ select.field { cursor: pointer; }
   overflow-y: auto;
   min-height: 0;
 }
-/* â”€â”€ Correlates Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Correlates Panel ─────────────────────────────────────────────────────── */
 .corr-panel {
   margin-top: 10px;
   border: 1px solid var(--border-l);
@@ -1376,7 +1376,7 @@ select.field { cursor: pointer; }
   border-color: rgba(61,217,184,.4);
 }
 
-/* â”€â”€ External database links â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── External database links ──────────────────────────────────────────────── */
 .ext-link {
   display: inline-flex;
   align-items: center;
@@ -1399,7 +1399,7 @@ select.field { cursor: pointer; }
 }
 .ext-link + .ext-link { margin-left: 3px; }
 
-/* â”€â”€ Correlates Panel (redesigned) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Correlates Panel (redesigned) ───────────────────────────────────────── */
 
 /* Trigger button */
 .corr-trigger {
@@ -1667,7 +1667,7 @@ select.field { cursor: pointer; }
   margin-right: 2px;
 }
 
-/* â”€â”€ Result info strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Result info strip ────────────────────────────────────────────────────── */
 .al-result-info {
   display: flex;
   align-items: baseline;
@@ -1694,7 +1694,7 @@ select.field { cursor: pointer; }
   text-align: right;
 }
 
-/* â”€â”€ Card Info Drawer (Option 1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Card Info Drawer (Option 1) ──────────────────────────────────────────── */
 .card-info-btn {
   width: 22px; height: 22px;
   border-radius: 50%;
@@ -1790,7 +1790,7 @@ select.field { cursor: pointer; }
   box-shadow: 0 4px 14px rgba(0,0,0,.25);
 }
 
-/* â”€â”€ Annotation Lookup Panel (Option 5 in Explore) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Annotation Lookup Panel (Option 5 in Explore) ────────────────────────── */
 .lookup-result {
   border: 1px solid var(--border-l);
   border-radius: 8px;
@@ -1872,7 +1872,7 @@ select.field { cursor: pointer; }
   padding: 4px 10px;
 }
 
-/* â”€â”€ Scaffold modal overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Scaffold modal overlay ───────────────────────────────────────────────── */
 .scaffold-modal-overlay {
   position: fixed;
   inset: 0;
@@ -2051,7 +2051,7 @@ select.field { cursor: pointer; }
 }
 .scaffold-summary-card-row:last-child { border-bottom: none; }
  
-/* â”€â”€ Basic / Advanced toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Basic / Advanced toggle ─────────────────────────────────────────────── */
 .mode-toggle {
   display: flex;
   align-items: center;
@@ -2080,7 +2080,7 @@ select.field { cursor: pointer; }
   font-weight: 600;
 }
  
-/* â”€â”€ First-run hint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── First-run hint ───────────────────────────────────────────────────────── */
 .first-run-hint {
   max-width: 560px;
   margin: 40px auto 0;
@@ -2128,7 +2128,7 @@ select.field { cursor: pointer; }
 }
 .frh-mode-hint strong { font-weight: 600; }
 
-/* â”€â”€ Day/Night + Tide chart overlay legend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Day/Night + Tide chart overlay legend ───────────────────────────────── */
 .chart-overlay-legend {
   display: flex;
   gap: 16px;
