@@ -1,13 +1,13 @@
 # Missing Annotations
 
-Companion to **E9** in `docs/AUDIT.md`: three of the four EGC notebooks
-(`EGC_COG_TREE.ipynb`, `EGC_KEGG_TREE.ipynb`, `EGC_ENZYME_TREE.ipynb`) skip
+Three of the four EGC notebooks (`EGC_COG_TREE.ipynb`,
+`EGC_KEGG_TREE.ipynb`, `EGC_ENZYME_TREE.ipynb`) skip
 any real annotation id that isn't found in an externally-sourced reference
 (NCBI's scraped COG category tables, KEGG's `ko00001.keg` BRITE hierarchy,
 KEGG's `ko01000.keg` EC hierarchy). That's the right behavior — a gene can't
-be rolled up into a tree node that doesn't exist — but until E9, nothing
-recorded *what* got dropped or *how much*, so a genuinely truncated download
-looked identical to a small number of expected gaps.
+be rolled up into a tree node that doesn't exist — but on its own, nothing
+would record *what* got dropped or *how much*, so a genuinely truncated
+download would look identical to a small number of expected gaps.
 
 This doc is the real answer, computed directly from the current dataset (not
 estimated): every id that appears in the raw per-gene annotation files
@@ -106,8 +106,8 @@ files, minus every id present as a leaf node (`depth == 2` for COG,
 output. Both sides come from real, already-regenerated data, so this is an
 exact accounting, not an approximation.
 
-As of E9 (`docs/AUDIT.md`), each of the three tree-building notebooks now
-prints its own drop count (and a few example ids) every time it runs, so
+Each of the three tree-building notebooks prints its own drop count (and a
+few example ids) every time it runs, so
 this doc can be regenerated and compared against a fresh run to catch a
 truncated/corrupted reference download — if the count jumps well above
-what's listed here, that's the signal E9 exists to surface.
+what's listed here, that's the signal to look for.

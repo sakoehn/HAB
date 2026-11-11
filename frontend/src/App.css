@@ -1003,7 +1003,7 @@ select.field { cursor: pointer; }
   overflow: hidden;
 }
 
-/* W21 (docs/AUDIT-2026-09-22.md): detection count next to a mean that's
+/* Detection count next to a mean that's
    only "mean when detected" -- de-emphasized further than the already-dim
    .al-row-meta text around it, since it's a caveat, not the headline number. */
 .al-row-detection-count {
