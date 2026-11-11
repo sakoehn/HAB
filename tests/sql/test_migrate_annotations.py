@@ -270,3 +270,16 @@ def test_kegg_and_enzyme_do_not_store_parent_name():
     # And parent_id DOES now show up, specifically as `parent`.
     assert kegg_row["parent"] == KEGG_ENTRY["parent_id"]
     assert enzyme_row["parent"] == ENZYME_ENTRY["parent_id"]
+
+
+# A file in the source folder whose name is not a real sample (a stray
+# copy, a test file) must stop the load, not become an extra sample.
+def test_a_file_that_is_not_a_known_sample_stops_the_load(tmp_path):
+    import pytest
+    from scripts.migrate_annotations_to_sql import check_samples_are_known
+    (tmp_path / "3300060358.cog.json").write_text("{}")
+    (tmp_path / "3300060358 (1).cog.json").write_text("{}")
+    with pytest.raises(SystemExit) as exc:
+        check_samples_are_known([("3300060358", "a"), ("3300060358 (1)", "b")])
+    assert "3300060358 (1)" in str(exc.value)
+    check_samples_are_known([("3300060358", "a")])

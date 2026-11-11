@@ -115,6 +115,22 @@ def iter_sample_files(source_dir: str, suffix: str):
             yield sample_name, full_path
 
 
+def check_samples_are_known(sample_files) -> None:
+    """Stop if any file's sample name is not a sample in the timepoints CSV.
+
+    Every matching file in the folder is loaded, so a stray file (a copy
+    like "3300060358 (1).cog.json", a test file) would otherwise become an
+    extra sample in every chart, mean and sample count.
+    """
+    from api.cache import TIMEPOINTS  # pylint: disable=import-outside-toplevel,import-error
+    unknown = sorted(sample for sample, _ in sample_files if sample not in TIMEPOINTS)
+    if unknown:
+        sys.exit(
+            f"{len(unknown)} file(s) are not samples in the timepoints CSV, so they would be "
+            f"loaded as extra samples: {', '.join(unknown[:10])}. Move them out of the folder."
+        )
+
+
 def populate_annotations_for_sample(conn: sqlite3.Connection, source: str, sample: str, annotations: dict) -> tuple:
     """Insert one sample's worth of annotation_series + scaffolds rows,
     replacing any existing rows for this (source, sample) pair first.
@@ -198,6 +214,7 @@ def populate_annotations(conn: sqlite3.Connection, source: str, source_dir: str,
         suffix: Filename suffix identifying this source's files.
     """
     sample_files = list(iter_sample_files(source_dir, suffix))
+    check_samples_are_known(sample_files)
     total_series = 0
     total_scaffolds = 0
 
