@@ -12,4 +12,4 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "FastAPI"))
 
-from api.taxon_lineage import normalize_lineage  # noqa: E402,F401  pylint: disable=wrong-import-position,import-error
+from api.taxon_lineage import lineage_segments, normalize_lineage  # noqa: E402,F401  pylint: disable=wrong-import-position,import-error

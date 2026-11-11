@@ -30,6 +30,8 @@ Run:
 """
 
 import os
+
+import pytest
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"))
@@ -240,52 +242,18 @@ def test_parse_taxon_path_handles_trailing_semicolon():
     assert result.full_path == raw
 
 
-def test_parse_taxon_path_handles_leading_semicolon():
-    # Arrange: a lineage string with a leading semicolon -- not an observed
-    # real case, defensive hardening only.
-    raw = ";Bacteria;Proteobacteria;Gammaproteobacteria;Alteromonadales;Alteromonadaceae"
-
-    # Act
-    result = parse_taxon_path(raw)
-
-    # Assert: the leading empty segment is POSITIONAL -- it occupies the
-    # `domain` slot as None, and everything else shifts down one rank from
-    # where it would sit in a well-formed 8-rank string (same rule as
-    # test_parse_taxon_path_handles_multiple_consecutive_semicolons below;
-    # empty segments are never silently skipped, regardless of position)
-    assert result.domain is None
-    assert result.phylum == "Bacteria"
-    assert result.class_ == "Proteobacteria"
-    assert result.order == "Gammaproteobacteria"
-    assert result.family == "Alteromonadales"
-    assert result.genus == "Alteromonadaceae"
-    assert result.species is None
-    assert result.strain is None
-    assert result.full_path == raw
+def test_parse_taxon_path_refuses_a_leading_empty_rank():
+    # An empty rank before real ones can't be read the same way by
+    # EGC_TAX_TREE.ipynb (which builds each taxon id from the names above
+    # it) and by taxon_paths' fixed rank columns, so both refuse it.
+    # Not seen in the real data.
+    with pytest.raises(ValueError, match="empty rank"):
+        parse_taxon_path(";Bacteria;Proteobacteria;Gammaproteobacteria;Alteromonadales;Alteromonadaceae")
 
 
-def test_parse_taxon_path_handles_multiple_consecutive_semicolons():
-    # Arrange: a lineage string with runs of consecutive semicolons.
-    # "Bacteria" ";;" "Proteobacteria" ";;;" "Gammaproteobacteria" ";" "Alteromonadales" ";" "Alteromonadaceae"
-    # -- a run of N consecutive semicolons between two real tokens produces
-    # N-1 empty segments in between (standard str.split behavior), so the
-    # ";;" gap is 1 empty rank and the ";;;" gap is 2 empty ranks.
-    raw = "Bacteria;;Proteobacteria;;;Gammaproteobacteria;Alteromonadales;Alteromonadaceae"
-
-    # Act
-    result = parse_taxon_path(raw)
-
-    # Assert: 8 positional segments total --
-    # [Bacteria, "", Proteobacteria, "", "", Gammaproteobacteria, Alteromonadales, Alteromonadaceae]
-    assert result.domain == "Bacteria"
-    assert result.phylum is None            # 1 empty rank from the ";;" gap
-    assert result.class_ == "Proteobacteria"
-    assert result.order is None             # 1st empty rank from the ";;;" gap
-    assert result.family is None            # 2nd empty rank from the ";;;" gap
-    assert result.genus == "Gammaproteobacteria"
-    assert result.species == "Alteromonadales"
-    assert result.strain == "Alteromonadaceae"
-    assert result.full_path == raw
+def test_parse_taxon_path_refuses_empty_middle_ranks():
+    with pytest.raises(ValueError, match="empty rank"):
+        parse_taxon_path("Bacteria;;Proteobacteria;;;Gammaproteobacteria;Alteromonadales;Alteromonadaceae")
 
 
 def test_parse_taxon_path_handles_only_semicolons():
@@ -326,24 +294,10 @@ def test_parse_taxon_path_handles_whitespace_only():
     assert result.full_path == raw
 
 
-def test_parse_taxon_path_handles_mixed_empty_and_whitespace_ranks():
-    # Arrange: a lineage string with mixed empty and whitespace-only ranks.
-    # Positional segments: [Bacteria, " ", Proteobacteria, "", " ", Gammaproteobacteria, Alteromonadales, Alteromonadaceae]
-    raw = "Bacteria; ;Proteobacteria;; ;Gammaproteobacteria;Alteromonadales;Alteromonadaceae"
-
-    # Act
-    result = parse_taxon_path(raw)
-
-    # Assert: both "" and whitespace-only segments are treated as None, positionally
-    assert result.domain == "Bacteria"
-    assert result.phylum is None       # whitespace-only rank
-    assert result.class_ == "Proteobacteria"
-    assert result.order is None        # empty rank
-    assert result.family is None       # whitespace-only rank
-    assert result.genus == "Gammaproteobacteria"
-    assert result.species == "Alteromonadales"
-    assert result.strain == "Alteromonadaceae"
-    assert result.full_path == raw
+def test_parse_taxon_path_refuses_whitespace_only_middle_ranks():
+    # A rank of only spaces is empty too.
+    with pytest.raises(ValueError, match="empty rank"):
+        parse_taxon_path("Bacteria; ;Proteobacteria;; ;Gammaproteobacteria;Alteromonadales;Alteromonadaceae")
 
 
 def test_parse_taxon_path_round_trip_reconstructs_full_path():

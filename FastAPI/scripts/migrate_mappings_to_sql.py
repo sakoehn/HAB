@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from api.cache import get_all_sample_names  # pylint: disable=wrong-import-position,import-error
 from api.config import MAPPINGS_DIR, METAGENOME_SAMPLES_DIR, SQLITE_DB_PATH  # pylint: disable=wrong-import-position,import-error
-from api.taxon_lineage import normalize_lineage  # pylint: disable=wrong-import-position,import-error
+from api.taxon_lineage import lineage_segments, normalize_lineage  # pylint: disable=wrong-import-position,import-error
 
 
 class TaxonPath(NamedTuple):
@@ -87,8 +87,7 @@ def parse_taxon_path(raw: str | None) -> TaxonPath:
         )
 
     raw = normalize_lineage(raw)
-    parts = raw.split(';', 7)
-    cleaned = [p.strip() or None for p in parts]
+    cleaned: list[str | None] = list(lineage_segments(raw))
     while len(cleaned) < 8:
         cleaned.append(None)
     domain, phylum, class_, order, family, genus, species, strain = cleaned

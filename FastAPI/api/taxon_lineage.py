@@ -36,3 +36,32 @@ def normalize_lineage(raw: str | None) -> str | None:
         return raw
     strain = ", ".join(p.strip() for p in parts[RANK_COUNT - 1:])
     return ";".join(parts[:RANK_COUNT - 1] + [strain])
+
+
+def lineage_segments(raw: str | None) -> list[str]:
+    """Split a raw lineage into its rank names, domain first.
+
+    The one split shared by EGC_TAX_TREE.ipynb (whose taxon ids are the
+    names joined up to each rank) and taxon_paths (one column per rank), so
+    every rank lands at the same position in both. Each name is stripped
+    and empty trailing ranks are dropped. An empty rank before a real one
+    has no reading both can share -- skipping it would shift every rank
+    below up a level -- so it is refused; none occurs in the real data.
+
+    Args:
+        raw: A raw lineage string, or None/"".
+
+    Returns:
+        The rank names, at most RANK_COUNT; [] when there are none.
+
+    Raises:
+        ValueError: if an empty rank comes before a non-empty one.
+    """
+    if not raw:
+        return []
+    parts = [p.strip() for p in normalize_lineage(raw).split(";")]
+    while parts and not parts[-1]:
+        parts.pop()
+    if "" in parts:
+        raise ValueError(f"lineage has an empty rank before a real one: {raw!r}")
+    return parts

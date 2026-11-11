@@ -1,27 +1,17 @@
 """
 test_taxon_paths_real_data.py
 ================================
-EGC_TAX_TREE.ipynb's
-lineage-parsing cell (`taxpath = [p.strip() for p in raw_parts if p.strip()]`)
-DROPS every empty segment, shifting every rank after it left by one
-position. `parse_taxon_path()` (FastAPI/scripts/migrate_mappings_to_sql.py),
-which builds the separate `taxon_paths` table, is POSITIONAL instead -- an
-empty segment becomes None at its own rank, without shifting anything.
+EGC_TAX_TREE.ipynb and `parse_taxon_path()` (which builds `taxon_paths`)
+both split a lineage with `lineage_segments()` (FastAPI/api/taxon_lineage.py),
+so every rank sits at the same position in both. A lineage with an EMPTY
+MIDDLE segment (an empty rank before a real one; trailing ones are just
+dropped) has no position both could agree on, so lineage_segments refuses
+it and a rebuild stops there.
 
-If a real phylodist lineage ever had an EMPTY MIDDLE segment (not counting
-a trailing one, which both sides handle the same way -- they just stop),
-these two systems would compute different depths for the same real
-organism: the notebook's tax_tree/annotation_series/annotation_catalog
-data on one side, taxon_paths on the other.
-
-Investigated directly against the real dataset before writing any fix:
-scanned all 128 real .a.phylodist.txt files, 71,121,876 total lineage
-observations, 0 with an empty middle segment. The two systems currently
-agree on every real lineage in this dataset -- there is no live bug to
-fix today, only a theoretical one. This test is the regression guard: if
-a future data release ever introduces an empty-middle-segment lineage,
-this fails loudly instead of silently producing a depth mismatch between
-annotation_catalog and taxon_paths.
+Scanned against the real dataset: all 128 real .a.phylodist.txt files,
+71,121,876 lineage observations, 0 with an empty middle segment. This test
+is the guard that keeps it so: if a future data release introduces one,
+it fails here, ahead of the rebuild stopping on it.
 
 Data-dependent: needs the real Metagenome_Samples/ tree (not in git, not
 in CI -- see test_mappings_notebook_matches.py's HAB_DATA_ROOT convention,
