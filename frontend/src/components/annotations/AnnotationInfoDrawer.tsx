@@ -40,7 +40,16 @@ export function AnnotationInfoDrawer({
   // 0 of 7,333 real EC nodes; taxonomy's parent is a full lineage-prefix,
   // never ambiguous), so only kegg/cog need this.
   const [realParents, setRealParents] = useState<{ annotation_id: string; name: string }[]>([])
-  const [realParentsStatus, setRealParentsStatus] = useState<'idle' | 'ok'>('idle')
+  const [realParentsStatus, setRealParentsStatus] = useState<'idle' | 'ok' | 'failed'>('idle')
+  const multiParent = source === 'kegg' || source === 'cog'
+  // kegg/cog show the real parents once loaded, and the stored value only
+  // if that fetch failed -- never the stored value while it is loading,
+  // since for most KOs it is a BRITE table rather than a pathway.
+  const parentLabels: string[] | null = !multiParent || realParentsStatus === 'failed'
+    ? (parent ? [expandParentLabel(parent, source)] : null)
+    : realParentsStatus === 'ok' && realParents.length > 0
+      ? realParents.map(p => p.name)
+      : null
 
   useEffect(() => {
     if (!open || realParentsStatus !== 'idle') return
@@ -58,7 +67,7 @@ export function AnnotationInfoDrawer({
         setRealParents([...byId.values()])
         setRealParentsStatus('ok')
       })
-      .catch(() => setRealParentsStatus('ok')) // fetch failed -- fall back to the stored single value below
+      .catch(() => setRealParentsStatus('failed')) // fall back to the stored single value below
   }, [open, source, annotationId, realParentsStatus])
 
   return (
@@ -90,15 +99,13 @@ export function AnnotationInfoDrawer({
             </div>
           )}
 
-          {parent && (
+          {parentLabels && (
             <div className="card-info-row">
               <span className="card-info-label">
-                {realParents.length > 1 ? 'Parents' : 'Parent'}
+                {parentLabels.length > 1 ? 'Parents' : 'Parent'}
               </span>
               <span className="card-info-value">
-                {realParents.length > 0
-                  ? realParents.map(p => p.name).join(', ')
-                  : expandParentLabel(parent, source)}
+                {parentLabels.join(', ')}
               </span>
             </div>
           )}

@@ -112,6 +112,53 @@ describe('AnnotationInfoDrawer — shows every real parent, not just the stored 
     )
   })
 
+  it('does not show the stored parent while the real parents are still loading', async () => {
+    let resolvePath!: (v: unknown) => void
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/kegg/path')) return new Promise(r => { resolvePath = r })
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(
+      <AnnotationInfoDrawer annotationId="K00844" source="kegg" name="HK; hexokinase" parent="04131" />,
+    )
+    await openDrawer()
+    await waitFor(() => expect(mockFetch).toHaveBeenCalled())
+    expect(screen.queryByText(/Membrane trafficking|04131/)).not.toBeInTheDocument()
+
+    resolvePath(jsonResponse({
+      annotation_id: 'K00844', path_count: 1,
+      paths: [[
+        { annotation_id: '09100', name: 'Metabolism', depth: 1 },
+        { annotation_id: '09101', name: 'Carbohydrate metabolism', depth: 2 },
+        { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 3 },
+        { annotation_id: 'K00844', name: 'HK; hexokinase', depth: 4 },
+      ]],
+    }))
+    await waitFor(() => expect(screen.getByText('Parent').closest('.card-info-row')).toHaveTextContent('Glycolysis / Gluconeogenesis'))
+    expect(screen.queryByText(/04131/)).not.toBeInTheDocument()
+  })
+
+  it('shows the real parents even when no parent is stored', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/cog/path')) {
+        return Promise.resolve(jsonResponse({
+          annotation_id: 'COG0028', path_count: 2,
+          paths: [
+            [{ annotation_id: 'E', name: 'Amino acid transport and metabolism', depth: 1 }, { annotation_id: 'COG0028', name: 'IlvB', depth: 2 }],
+            [{ annotation_id: 'H', name: 'Coenzyme transport and metabolism', depth: 1 }, { annotation_id: 'COG0028', name: 'IlvB', depth: 2 }],
+          ],
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    render(<AnnotationInfoDrawer annotationId="COG0028" source="cog" name="IlvB" parent={null} />)
+    await openDrawer()
+    await waitFor(() => expect(screen.getByText('Parents')).toBeInTheDocument())
+    const row = screen.getByText('Parents').closest('.card-info-row')
+    expect(row).toHaveTextContent('Amino acid transport and metabolism')
+    expect(row).toHaveTextContent('Coenzyme transport and metabolism')
+  })
+
   it('falls back to the stored parent value when the real-path fetch fails', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/kegg/path')) return Promise.reject(new Error('network error'))
