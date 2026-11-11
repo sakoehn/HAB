@@ -61,8 +61,9 @@ async function fetchMemberSeries(
 }
 
 // Sums both egc and norm_egc per datetime across a group's members so
-// MultiEgcChart can serve raw mode and L1 mode correctly for group series.
-// norm_egc = egc / total_sample_depth (pre-computed by pipeline); summing
+// MultiEgcChart can show either metric (EGC or Relative Abundance) for
+// group series. norm_egc = egc / the sample's annotated-gene total
+// (pre-computed by the pipeline); summing
 // across members gives true depth-normalised group abundance, on the same
 // scale as any single annotation's norm_egc.
 //

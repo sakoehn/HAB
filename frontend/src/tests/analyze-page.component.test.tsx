@@ -2516,7 +2516,7 @@ describe('ExplorePage — Dataset Overview happy path', () => {
     await userEvent.click(await screen.findByText('Load time series →'))
 
     await waitFor(() => {
-      expect(screen.getByText('Summed EGC over time — top 5 parent groups')).toBeInTheDocument()
+      expect(screen.getByText('Summed over time — top 5 parent groups')).toBeInTheDocument()
     })
   })
 })

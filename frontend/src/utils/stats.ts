@@ -84,12 +84,12 @@ function keggLevel3Label(name: string | null | undefined): string {
   return 'KEGG group'
 }
 
-export function depthLabel(depth: number, source: string, category?: string | null, name?: string | null): string {
+export function depthLabel(depth: number, source: string, name?: string | null): string {
   if (source === 'kegg' && depth === 3) return keggLevel3Label(name)
   if (source === 'kegg')     return ({ 1: 'pathway class', 2: 'subcategory', 4: 'leaf (KO)' } as Record<number, string>)[depth] ?? String(depth)
   if (source === 'cog')      return ({ 1: 'category', 2: 'leaf (COG)' } as Record<number, string>)[depth] ?? String(depth)
   if (source === 'enzyme')   return ({ 1: 'class', 2: 'subclass', 3: 'sub-subclass', 4: 'leaf (EC)' } as Record<number, string>)[depth] ?? String(depth)
-  if (source === 'taxonomy') return taxonomyRankLabel(depth, category)
+  if (source === 'taxonomy') return taxonomyRankLabel(depth)
   return String(depth)
 }
 

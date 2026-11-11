@@ -16,7 +16,6 @@ import { useAllSamples } from '../../utils/useAllSamples'
 import { downloadCsv } from '../../utils/api'
 import { PLOTLY_HOVERLABEL, getEgcYLabel, getEgcHoverYLabel } from '../../utils/chartTheme'
 import { taxonomyRankLabel, SOURCE_COLORS } from '../../constants'
-import { taxonomyDomainFromId } from '../../utils/taxonomy'
 import { StatsPanel }     from '../ui/StatsPanel'
 import { DateRangePicker } from '../ui/DateRangePicker'
 import { ChartControls }  from './ChartControls'
@@ -217,7 +216,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
     }),
   [allPoints, dateFrom, dateTo, selectedDates, allSelected, selectedTimes, allTimesSelected])
 
-  const visibleSamplesKey = filteredPoints.map(p => p.sample).join(' ')
+  const visibleSamplesKey = filteredPoints.map(p => p.sample).join(',')
   useEffect(() => {
     onVisibleSamplesChange?.(filteredPoints.map(p => p.sample))
   }, [visibleSamplesKey]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -509,7 +508,7 @@ export const EgcChart = forwardRef<EgcChartHandle, {
                 onClick={() => setShowLineage(s => !s)}
                 title={showLineage ? 'Hide full lineage' : 'Show full lineage'}
               >
-                {taxonomyRankLabel(depth, taxonomyDomainFromId(annotationId))} {showLineage ? '▴' : '▾'}
+                {taxonomyRankLabel(depth)} {showLineage ? '▴' : '▾'}
               </button>
             </div>
           ) : (

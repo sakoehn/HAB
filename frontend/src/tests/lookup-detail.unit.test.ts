@@ -6,7 +6,7 @@
  *
  * All logic here is pure (no DOM, no React):
  *
- * depthLabel(depth, source, category, name)
+ * depthLabel(depth, source, name)
  *   Returns a human-readable hierarchy label for each source type and depth
  *   level. Real import from utils/stats.ts (extracted out of ExplorePage's
  *   render, which now calls the same shared function) -- not a hand-copied
@@ -67,20 +67,20 @@ describe('depthLabel — KEGG', () => {
   })
 
   it('depth 3 [PATH:] entry = pathway', () => {
-    expect(depthLabel(3, 'kegg', null, 'ABC transporters [PATH:ko02010]')).toBe('pathway')
+    expect(depthLabel(3, 'kegg', 'ABC transporters [PATH:ko02010]')).toBe('pathway')
   })
 
   it('depth 3 [BR:] entry = BRITE table', () => {
-    expect(depthLabel(3, 'kegg', null, 'Transporters [BR:ko02000]')).toBe('BRITE table')
+    expect(depthLabel(3, 'kegg', 'Transporters [BR:ko02000]')).toBe('BRITE table')
   })
 
   it('depth 3 entry with neither marker = KEGG group (a "not included" bin)', () => {
-    expect(depthLabel(3, 'kegg', null, 'Enzymes with EC numbers')).toBe('KEGG group')
+    expect(depthLabel(3, 'kegg', 'Enzymes with EC numbers')).toBe('KEGG group')
   })
 
   it('a name does not change any other level', () => {
-    expect(depthLabel(4, 'kegg', null, 'HK; hexokinase [EC:2.7.1.1]')).toBe('leaf (KO)')
-    expect(depthLabel(3, 'enzyme', null, 'With NAD+ or NADP+ as acceptor')).toBe('sub-subclass')
+    expect(depthLabel(4, 'kegg', 'HK; hexokinase [EC:2.7.1.1]')).toBe('leaf (KO)')
+    expect(depthLabel(3, 'enzyme', 'With NAD+ or NADP+ as acceptor')).toBe('sub-subclass')
   })
 
   it('depth 4 = leaf (KO) — the KO entries actually searched are at this level', () => {
@@ -139,7 +139,7 @@ describe('depthLabel — taxonomy / unknown source', () => {
   it('taxonomy: defers to taxonomyRankLabel, not a raw depth number', () => {
     // This is the one branch where the inline ExplorePage copy this test
     // used to hand-mirror had already drifted from the real function --
-    // the real depthLabel calls taxonomyRankLabel(depth, category) for
+    // the real depthLabel calls taxonomyRankLabel(depth) for
     // taxonomy, which returns a real rank name, not String(depth). See
     // taxonomy-utils.unit.test.ts for taxonomyRankLabel's own full
     // rank-name coverage; this just confirms depthLabel delegates to it.

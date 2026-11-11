@@ -676,7 +676,7 @@ export const TAXONOMY_RANK_NAMES: Record<number, string> = {
 // itself (every domain uses the same ladder), kept in the signature since
 // callers already resolve and pass it and a future domain-specific rank
 // naming difference may need it again.
-export function taxonomyRankLabel(depth: number | null, _domain?: string | null): string {
+export function taxonomyRankLabel(depth: number | null): string {
   if (depth == null) return 'Unknown rank'
   return TAXONOMY_RANK_NAMES[depth] ?? `Level ${depth}`
 }

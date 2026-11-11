@@ -326,43 +326,26 @@ describe('taxonomyDomainFromId', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('taxonomyRankLabel', () => {
-  it('null depth: "Unknown rank" regardless of domain', () => {
+  it('null depth: "Unknown rank"', () => {
     expect(taxonomyRankLabel(null)).toBe('Unknown rank')
-    expect(taxonomyRankLabel(null, 'Eukaryota')).toBe('Unknown rank')
   })
 
-  it('no domain passed: falls back to the fixed ladder (backwards-compatible default)', () => {
+  // Every domain, Eukaryota included, uses the same fixed ladder.
+  it('depth 1-8: the fixed rank ladder', () => {
     expect(taxonomyRankLabel(1)).toBe('Domain')
+    expect(taxonomyRankLabel(2)).toBe('Phylum')
     expect(taxonomyRankLabel(3)).toBe('Class')
+    expect(taxonomyRankLabel(6)).toBe('Genus')
+    expect(taxonomyRankLabel(8)).toBe('Strain')
   })
 
-  it('Bacteria/Archaea/Viruses: uses the fixed ladder', () => {
-    expect(taxonomyRankLabel(1, 'Bacteria')).toBe('Domain')
-    expect(taxonomyRankLabel(2, 'Bacteria')).toBe('Phylum')
-    expect(taxonomyRankLabel(6, 'Archaea')).toBe('Genus')
-    expect(taxonomyRankLabel(8, 'Viruses')).toBe('Strain')
+  it('depth beyond the ladder (9+): "Level N"', () => {
+    expect(taxonomyRankLabel(9)).toBe('Level 9')
   })
 
-  it('Eukaryota: uses the same fixed ladder as every other domain', () => {
-    expect(taxonomyRankLabel(3, 'Eukaryota')).toBe('Class')
-    expect(taxonomyRankLabel(6, 'Eukaryota')).toBe('Genus')
-    expect(taxonomyRankLabel(1, 'Eukaryota')).toBe('Domain')
-  })
-
-  it('depth beyond the ladder (9+): "Level N" regardless of domain', () => {
-    expect(taxonomyRankLabel(9, 'Bacteria')).toBe('Level 9')
-    expect(taxonomyRankLabel(9, 'Eukaryota')).toBe('Level 9')
-  })
-
-  it('real usage pattern: taxonomyRankLabel(depth, taxonomyDomainFromId(annotationId))', () => {
-    const bacteriaId  = 'Bacteria;Proteobacteria;Alphaproteobacteria'
-    const eukaryotaId = 'Eukaryota;Metazoa;Chordata'
-    expect(taxonomyRankLabel(
-      taxonomyDepthFromId(bacteriaId), taxonomyDomainFromId(bacteriaId),
-    )).toBe('Class')
-    expect(taxonomyRankLabel(
-      taxonomyDepthFromId(eukaryotaId), taxonomyDomainFromId(eukaryotaId),
-    )).toBe('Class')
+  it('real usage pattern: taxonomyRankLabel(taxonomyDepthFromId(annotationId))', () => {
+    expect(taxonomyRankLabel(taxonomyDepthFromId('Bacteria;Proteobacteria;Alphaproteobacteria'))).toBe('Class')
+    expect(taxonomyRankLabel(taxonomyDepthFromId('Eukaryota;Metazoa;Chordata'))).toBe('Class')
   })
 })
 

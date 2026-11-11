@@ -53,7 +53,7 @@ function BrowseNodeRow({
   onSelectRoot:   (annotationId: string) => void
   onToggleExpand: (node: TaxonomyTreeNode) => void
 }) {
-  const rank = taxonomyRankLabel(node.depth, node.category)
+  const rank = taxonomyRankLabel(node.depth)
 
   return (
     <div className="tax-node">

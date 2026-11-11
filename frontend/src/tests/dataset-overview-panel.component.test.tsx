@@ -159,7 +159,7 @@ describe('DatasetOverviewPanel — 40-annotation temporal-chart fetch cap', () =
     await user.click(screen.getByRole('button', { name: /Load time series/i }))
 
     await waitFor(() => {
-      expect(screen.getByText(/Summed EGC over time/i)).toBeInTheDocument()
+      expect(screen.getByText(/Summed over time/i)).toBeInTheDocument()
     })
     expect(screen.queryByTestId('overview-series-truncated-warning')).not.toBeInTheDocument()
   })

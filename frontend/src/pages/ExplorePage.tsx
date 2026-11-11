@@ -631,7 +631,7 @@ export function DatasetOverviewPanel({
                   letterSpacing: '.14em',
                   marginBottom:  10,
                 }}>
-                  Summed EGC over time — top 5 parent groups
+                  Summed over time — top 5 parent groups
                 </div>
                 <ChartErrorBoundary label="Explore temporal chart">
                   {/* Must read loadedParams, not the live dateFrom/dateTo
@@ -1494,12 +1494,10 @@ export function ExplorePage({
   }
 
   // Rank column / CSV `rank`: the same per-source names as the Lookup card's
-  // Depth row and the Rank filter pills (depthLabel). Taxonomy's domain is
-  // the first segment of its lineage id.
+  // Depth row and the Rank filter pills (depthLabel).
   function topRankLabel(row: TopAnnotation): string {
     if (row.depth == null) return '—'
-    const domain = effectiveTopSource === 'taxonomy' ? row.annotation_id.split(';')[0] : null
-    return depthLabel(row.depth, effectiveTopSource, domain, row.name)
+    return depthLabel(row.depth, effectiveTopSource, row.name)
   }
 
   // The Group column's display -- real
@@ -2365,7 +2363,7 @@ export function ExplorePage({
                                     color:       'var(--text-dim)',
                                     fontWeight:  400,
                                   }}>
-                                    ({depthLabel(depth, effectiveLookupSource, rawCategory, r.name)})
+                                    ({depthLabel(depth, effectiveLookupSource, r.name)})
                                   </span>
                                 </span>
                               </div>

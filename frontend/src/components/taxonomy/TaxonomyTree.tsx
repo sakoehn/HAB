@@ -95,7 +95,7 @@ function TaxonomyNodeRow({
   const keep = mode === 'keep'
   const isExcluded = excludedIds.has(node.annotationId)
   const isCovered  = !isExcluded && isCoveredByAnotherExclusion(node.annotationId, excludedIds)
-  const rank       = taxonomyRankLabel(node.depth, node.category)
+  const rank       = taxonomyRankLabel(node.depth)
 
   return (
     <div className="tax-node">

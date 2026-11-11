@@ -446,7 +446,7 @@ function CompareDrawer({
       }
 
       // Group card — sum both egc and norm_egc per datetime so MultiEgcChart
-      // can serve both raw and L1 modes correctly. norm_egc is the true
+      // can show either metric (EGC or Relative Abundance). norm_egc is the true
       // depth-normalised value (egc / the sample's annotated-gene total) from
       // the pipeline — summing it across members gives group-level
       // depth-normalised abundance on the same scale as single annotations.

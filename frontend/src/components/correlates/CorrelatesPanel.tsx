@@ -25,7 +25,6 @@ import type {
   CorrelationFamilyResult, CorrelationFamilyResponse,
 } from '../../types'
 import { SOURCE_TAG_CLS, taxonomyRankLabel } from '../../constants'
-import { taxonomyDomainFromId } from '../../utils/taxonomy'
 import { apiFetch, httpStatusFromError } from '../../utils/api'
 import { ExternalLink } from '../ui/ExternalLinks'
 import { HelpTooltip } from '../ui/HelpTooltip'
@@ -397,8 +396,8 @@ export function CorrelatesPanel({
                             />
                           </span>
                           {targetSource === 'taxonomy' ? (
-                            <span className="corr-row-name" title={`Taxonomic rank: ${taxonomyRankLabel(row.depth, taxonomyDomainFromId(row.annotation_id))}`}>
-                              ({taxonomyRankLabel(row.depth, taxonomyDomainFromId(row.annotation_id))})
+                            <span className="corr-row-name" title={`Taxonomic rank: ${taxonomyRankLabel(row.depth)}`}>
+                              ({taxonomyRankLabel(row.depth)})
                             </span>
                           ) : row.name && (
                             <span className="corr-row-name" title={row.name}>

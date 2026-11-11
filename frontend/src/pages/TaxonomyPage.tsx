@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { AnnotationItem, ApiStatus, SeriesCache } from '../types'
 import { apiFetch, downloadCsv } from '../utils/api'
-import { computeExclusionSeries, computeInclusionSeries, filterRedundantExclusions, computeChartTitle, bareTaxonName, taxonomyDomainFromId } from '../utils/taxonomy'
+import { computeExclusionSeries, computeInclusionSeries, filterRedundantExclusions, computeChartTitle, bareTaxonName } from '../utils/taxonomy'
 import { TAXONOMY_RANK_NAMES, taxonomyRankLabel } from '../constants'
 import { DateRangePicker } from '../components/ui/DateRangePicker'
 import { ChartErrorBoundary } from '../components/ui/ChartErrorBoundary'
@@ -345,7 +345,7 @@ export function TaxonomyPage({
                         letterSpacing: '.06em',
                         flexShrink:    0,
                       }}>
-                        {taxonomyRankLabel(r.depth ?? null, taxonomyDomainFromId(r.annotation_id))}
+                        {taxonomyRankLabel(r.depth ?? null)}
                       </span>
                       <span
                         title={r.annotation_id}
