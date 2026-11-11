@@ -211,6 +211,41 @@ def populate_mappings_for_sample(
     """
     tsv_path = os.path.join(MAPPINGS_DIR, f"{sample}_mapping.tsv")
 
+    mapping_rows = []
+    cog_by_gene: dict[str, list[str]] = {}
+    enzyme_by_gene: dict[str, list[str]] = {}
+    # A lineage with no taxon_paths row would store its gene with no
+    # taxonomy, quietly dropping it from that organism.
+    unmatched: set[str] = set()
+
+    with open(tsv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in reader:
+            gene_id = row["gene_id"]
+            taxonomy = row["taxonomy"] or None
+            taxon_path_id = taxon_lookup.get(normalize_lineage(taxonomy)) if taxonomy else None
+            if taxonomy and taxon_path_id is None:
+                unmatched.add(taxonomy)
+            mapping_rows.append((
+                sample,
+                gene_id,
+                row["scaffold_id"] or None,
+                taxon_path_id,
+                row["kegg"] or None,
+            ))
+            if row["cog"]:
+                cog_by_gene[gene_id] = row["cog"].split(",")
+            if row["enzyme"]:
+                enzyme_by_gene[gene_id] = row["enzyme"].split(",")
+
+    # Checked before this sample's existing rows are deleted, so stopping
+    # here leaves them as they were.
+    if unmatched:
+        sys.exit(
+            f"{sample}: {len(unmatched)} lineage(s) have no taxon_paths row, e.g. "
+            f"{sorted(unmatched)[0]!r}. Rebuild taxon_paths from the same files first."
+        )
+
     cursor = connection.cursor()
     if not skip_delete:
         cursor.execute(
@@ -220,27 +255,6 @@ def populate_mappings_for_sample(
             "DELETE FROM gene_enzyme WHERE mapping_id IN (SELECT id FROM mappings WHERE sample = ?)", (sample,)
         )
         cursor.execute("DELETE FROM mappings WHERE sample = ?", (sample,))
-
-    mapping_rows = []
-    cog_by_gene: dict[str, list[str]] = {}
-    enzyme_by_gene: dict[str, list[str]] = {}
-
-    with open(tsv_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        for row in reader:
-            gene_id = row["gene_id"]
-            taxonomy = row["taxonomy"] or None
-            mapping_rows.append((
-                sample,
-                gene_id,
-                row["scaffold_id"] or None,
-                taxon_lookup.get(normalize_lineage(taxonomy)) if taxonomy else None,
-                row["kegg"] or None,
-            ))
-            if row["cog"]:
-                cog_by_gene[gene_id] = row["cog"].split(",")
-            if row["enzyme"]:
-                enzyme_by_gene[gene_id] = row["enzyme"].split(",")
 
     cursor.executemany(
         "INSERT INTO mappings (sample, gene_id, scaffold_id, taxon_path_id, kegg_id) VALUES (?, ?, ?, ?, ?)",
