@@ -415,7 +415,7 @@ describe('CorrelatesPanel — full ranked list with significance marked', () => 
 })
 
 describe('CorrelatesPanel — explains that a first search can be slow', () => {
-  it('the Method row has a help tooltip saying the first search of a combination can take a while', async () => {
+  it('the Method row has a help tooltip saying the first search of a combination takes a few seconds', async () => {
     mockFetch.mockResolvedValue(jsonResponse([]))
     const user = userEvent.setup()
     render(<CorrelatesPanel annotationId="COG0055" source="cog" onAddAnnotation={vi.fn()} />)
@@ -423,7 +423,12 @@ describe('CorrelatesPanel — explains that a first search can be slow', () => {
     const methodRow = (await screen.findByText('Method:')).parentElement!
     await user.click(within(methodRow).getByTitle('Help'))
     await waitFor(() => expect(screen.getByText(/first time/i)).toBeInTheDocument())
-    expect(screen.getByText(/first time/i).textContent).toMatch(/saved|cached/i)
+    const text = screen.getByText(/first time/i).textContent
+    expect(text).toMatch(/saved|cached/i)
+    // Measured live after the scorer was vectorised: about 5 s for the
+    // largest families, so the old "up to several minutes" is wrong.
+    expect(text).toMatch(/seconds/i)
+    expect(text).not.toMatch(/minutes/i)
   })
 })
 
