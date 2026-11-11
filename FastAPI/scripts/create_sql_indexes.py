@@ -101,6 +101,21 @@ tests/sql/test_mappings_sql.py), not "index everything":
       index, SQLite drops the temp b-tree step entirely and answers from
       the index's own sort order; 0.32s locally afterward.
 
+  annotation_series(source, annotation_id, sample, egc, norm_egc) -- a
+      covering index for the correlation family read
+      (correlation_loaders.load_family_matrix), which fetches every
+      candidate's values at once. Through (source, annotation_id) alone,
+      each value is a separate jump to its table row, and one
+      annotation's rows are spread through the file because they were
+      inserted a sample at a time. Measured live, 2026-11-11 (server
+      with 1.9 GB of memory): reading psbA's 5,783 taxonomy candidates
+      (663,935 values) took 184.6s, and 176.8s again straight after --
+      the rows didn't fit in memory -- so a cold taxonomy family hit the
+      60s proxy limit even after scoring was vectorised. With every
+      value inside the index, an annotation's values sit together. Adds
+      955 MB; 80s to build locally. Locally (data already in memory) the
+      same read went from 2.89s to 0.36s.
+
 Run:
     python scripts/create_sql_indexes.py
 """
@@ -144,7 +159,10 @@ CREATE INDEX IF NOT EXISTS idx_scaffolds_annotation_series_id ON scaffolds(annot
 CREATE INDEX IF NOT EXISTS idx_annotation_series_source_annotation_id ON annotation_series(source, annotation_id);
 CREATE INDEX IF NOT EXISTS idx_annotation_catalog_source_annotation_id ON annotation_catalog(source, annotation_id);
 
-CREATE INDEX IF NOT EXISTS idx_annotation_series_sample ON annotation_series(sample)
+CREATE INDEX IF NOT EXISTS idx_annotation_series_sample ON annotation_series(sample);
+
+CREATE INDEX IF NOT EXISTS idx_annotation_series_family_values
+    ON annotation_series(source, annotation_id, sample, egc, norm_egc)
 """
 
 
