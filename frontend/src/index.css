@@ -20,10 +20,10 @@
   --coral:     #e8705a;
   --violet:    #7b8ef0;
 
-  --chart-1:     #56B4E9;  /* Sky Blue (kegg) â€” Wong CB-safe */
-  --chart-2:     #CC79A7;  /* Reddish Purple (cog) â€” Wong, pink to CB */
-  --chart-3:     #E69F00;  /* Orange (enzyme) â€” Wong, yellow to CB */
-  --chart-4:     #009E73;  /* Bluish Green (taxonomy) â€” Wong, teal to CB */
+  --chart-1:     #56B4E9;  /* Sky Blue (kegg) — Wong CB-safe */
+  --chart-2:     #CC79A7;  /* Reddish Purple (cog) — Wong, pink to CB */
+  --chart-3:     #E69F00;  /* Orange (enzyme) — Wong, yellow to CB */
+  --chart-4:     #009E73;  /* Bluish Green (taxonomy) — Wong, teal to CB */
   --chart-group: #c8c8c8;  /* grouped line: neutral on dark bg */
 
   --sans:  'DM Sans', sans-serif;
@@ -91,7 +91,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .tag.amber { background: rgba(240,180,41,.1); border-color: rgba(240,180,41,.3); color: var(--amber); }
 .tag.coral { background: rgba(232,112,90,.1); border-color: rgba(232,112,90,.3); color: var(--coral); }
 .tag.violet{ background: rgba(123,142,240,.1); border-color: rgba(123,142,240,.3); color: var(--violet); }
-/* Source tags â€” always in sync with chart colors */
+/* Source tags — always in sync with chart colors */
 .tag.chart-1 { color: var(--chart-1); background: color-mix(in srgb, var(--chart-1) 12%, transparent); border-color: color-mix(in srgb, var(--chart-1) 30%, transparent); }
 .tag.chart-2 { color: var(--chart-2); background: color-mix(in srgb, var(--chart-2) 12%, transparent); border-color: color-mix(in srgb, var(--chart-2) 30%, transparent); }
 .tag.chart-3 { color: var(--chart-3); background: color-mix(in srgb, var(--chart-3) 12%, transparent); border-color: color-mix(in srgb, var(--chart-3) 30%, transparent); }

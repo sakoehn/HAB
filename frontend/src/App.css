@@ -1,7 +1,7 @@
 ﻿/* â”€â”€ Google Fonts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 @import url('https://fonts.googleapis.com/css2?family=Literata:ital,wght@0,400;0,600;0,700;1,400;1,600&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
-/* â”€â”€ CSS Variables â€” Dark (default) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* â”€â”€ CSS Variables — Dark (default) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 :root,
 [data-theme="dark"] {
   --bg:        #0c0f18;
@@ -22,10 +22,10 @@
   --amber:     #f5bc30;
   --coral:     #f07060;
 
-  --chart-1:     #56B4E9;  /* Sky Blue (kegg) â€” Wong CB-safe */
-  --chart-2:     #CC79A7;  /* Reddish Purple (cog) â€” pink to CB */
-  --chart-3:     #E69F00;  /* Orange (enzyme) â€” yellow to CB */
-  --chart-4:     #009E73;  /* Bluish Green (taxonomy) â€” teal to CB */
+  --chart-1:     #56B4E9;  /* Sky Blue (kegg) — Wong CB-safe */
+  --chart-2:     #CC79A7;  /* Reddish Purple (cog) — pink to CB */
+  --chart-3:     #E69F00;  /* Orange (enzyme) — yellow to CB */
+  --chart-4:     #009E73;  /* Bluish Green (taxonomy) — teal to CB */
   --chart-group: #c8c8c8;  /* grouped line: neutral on dark bg */
 
   --mono:  'IBM Plex Mono', 'Fira Code', monospace;
@@ -136,7 +136,7 @@ h3 { font: 600 14px var(--sans); color: var(--text-h); }
 .tag.violet { background: rgba(136,153,245,.1); color: var(--violet); border-color: rgba(136,153,245,.22); }
 .tag.amber  { background: rgba(245,188,48,.1); color: var(--amber); border-color: rgba(245,188,48,.22); }
 .tag.coral  { background: rgba(240,112,96,.1); color: var(--coral); border-color: rgba(240,112,96,.22); }
-/* Source tags â€” always in sync with chart colors, adapts to dark/light theme */
+/* Source tags — always in sync with chart colors, adapts to dark/light theme */
 .tag.chart-1 { color: var(--chart-1); background: color-mix(in srgb, var(--chart-1) 12%, transparent); border-color: color-mix(in srgb, var(--chart-1) 30%, transparent); }
 .tag.chart-2 { color: var(--chart-2); background: color-mix(in srgb, var(--chart-2) 12%, transparent); border-color: color-mix(in srgb, var(--chart-2) 30%, transparent); }
 .tag.chart-3 { color: var(--chart-3); background: color-mix(in srgb, var(--chart-3) 12%, transparent); border-color: color-mix(in srgb, var(--chart-3) 30%, transparent); }
@@ -176,7 +176,7 @@ h3 { font: 600 14px var(--sans); color: var(--text-h); }
 }
 select.field { cursor: pointer; }
 
-/* â”€â”€ Topbar â€” frosted glass â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* â”€â”€ Topbar — frosted glass â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .topbar {
   grid-column: 1 / -1;
   grid-row: 1;
@@ -726,7 +726,7 @@ select.field { cursor: pointer; }
   min-width: 0; /* prevent grid blowout */
 }
 
-/* â”€â”€ Explore section cards â€” 3 tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* â”€â”€ Explore section cards — 3 tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .explore-section-cards { display: flex; gap: 12px; flex-wrap: wrap; }
 
 .explore-card {
@@ -762,10 +762,10 @@ select.field { cursor: pointer; }
 /* â”€â”€ Subtitle helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .subtitle { font: 400 11px var(--mono); color: var(--text-dim); letter-spacing: .04em; }
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   Analyze page â€” two-column workspace
+   Analyze page — two-column workspace
    â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
-/* Page root â€” flex column, grows with content, scrolls via .main */
+/* Page root — flex column, grows with content, scrolls via .main */
 .al-page {
   display: flex;
   flex-direction: column;
@@ -773,7 +773,7 @@ select.field { cursor: pointer; }
   min-height: 0;
 }
 
-/* Search section â€” sits below the page header, above the workspace */
+/* Search section — sits below the page header, above the workspace */
 .al-topbar {
   padding: 12px 20px 10px;
   border-bottom: 1px solid var(--border);
@@ -788,7 +788,7 @@ select.field { cursor: pointer; }
 }
 .al-search-area .field { flex: 1; }
 
-/* Two-column workspace â€” align-items:flex-start so each col is its natural height */
+/* Two-column workspace — align-items:flex-start so each col is its natural height */
 .al-workspace {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
@@ -796,7 +796,7 @@ select.field { cursor: pointer; }
   flex: 1;
 }
 
-/* â”€â”€ Left column â€” sticky so it stays visible while right col grows â”€â”€ */
+/* â”€â”€ Left column — sticky so it stays visible while right col grows â”€â”€ */
 .al-left {
   display: flex;
   flex-direction: column;
@@ -929,7 +929,7 @@ select.field { cursor: pointer; }
 .al-row-checked { background: var(--teal-dim) !important; }
 .al-row-in-right { opacity: .7; }
 
-/* Custom checkbox button â€” visually obvious, shows tick when checked */
+/* Custom checkbox button — visually obvious, shows tick when checked */
 .al-row-checkbox {
   flex-shrink: 0;
   width: 18px;
@@ -1051,7 +1051,7 @@ select.field { cursor: pointer; }
   margin-left: 4px;
 }
 
-/* Disabled state for btn sm variants â€” clear but not invisible */
+/* Disabled state for btn sm variants — clear but not invisible */
 .btn.sm:disabled {
   opacity: .35;
   cursor: not-allowed;
@@ -1072,14 +1072,14 @@ select.field { cursor: pointer; }
   z-index: 9;
 }
 
-/* â”€â”€ Right column â€” grows freely, NO overflow trapping â”€â”€ */
+/* â”€â”€ Right column — grows freely, NO overflow trapping â”€â”€ */
 .al-right {
   display: flex;
   flex-direction: column;
   background: var(--bg);
 }
 
-/* Cards area â€” grows with content, bottom padding clears fixed drawer */
+/* Cards area — grows with content, bottom padding clears fixed drawer */
 .al-right-cards {
   padding: 20px 24px 280px; /* 280px bottom clears the fixed drawer */
   display: flex;
@@ -1150,7 +1150,7 @@ select.field { cursor: pointer; }
 }
 .al-card-close:hover { color: var(--coral); border-color: var(--coral); background: rgba(240,112,96,.1); }
 
-/* â”€â”€ Compare drawer â€” FIXED to viewport bottom, always visible â”€â”€ */
+/* â”€â”€ Compare drawer — FIXED to viewport bottom, always visible â”€â”€ */
 .al-drawer {
   position: fixed;
   bottom: 0;
@@ -1173,7 +1173,7 @@ select.field { cursor: pointer; }
   left: calc(48px + 320px);
 }
 
-/* Drag resize grip â€” sits at the very top of the drawer, full width */
+/* Drag resize grip — sits at the very top of the drawer, full width */
 .al-drawer-resize-grip {
   position: absolute;
   top: 0;
@@ -1190,7 +1190,7 @@ select.field { cursor: pointer; }
   background: rgba(61,217,184,.25);
 }
 
-/* al-drawer-handle removed â€” replaced by al-drawer-resize-grip */
+/* al-drawer-handle removed — replaced by al-drawer-resize-grip */
 
 .al-drawer-header {
   display: flex;
@@ -1518,7 +1518,7 @@ select.field { cursor: pointer; }
 .corr-row:last-child { border-bottom: none; }
 .corr-row:hover { background: rgba(61,217,184,.03); }
 
-/* r-strength bar â€” sits behind row content */
+/* r-strength bar — sits behind row content */
 .corr-r-bar {
   position: absolute;
   left: 0; top: 0; bottom: 0;
