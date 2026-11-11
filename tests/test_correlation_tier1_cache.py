@@ -216,7 +216,7 @@ class TestLagSignDependsOnCallersReference:
         insert_series(conn, "kegg", "K00001", low_values)
         insert_series(conn, "kegg", "K00002", high_values)
 
-    def test_freshly_computed_lag_is_negated_when_reference_is_the_higher_id(self, conn):
+    def test_freshly_computed_lag_with_the_lower_id_as_reference(self, conn):
         self._seed_offset_by_two_series(conn)
 
         # Caller's reference (catalog_id_a) is 1, the numeric low -- lag is
@@ -225,6 +225,16 @@ class TestLagSignDependsOnCallersReference:
             conn, 1, 2, metric="egc", method="raw_pearson", get_sample_order=lambda: self.SAMPLES20,
         )
         assert result_low_as_ref["lag_samples"] == 2
+
+    def test_freshly_computed_lag_is_negated_when_reference_is_the_higher_id(self, conn):
+        self._seed_offset_by_two_series(conn)
+
+        # Nothing cached yet: id 2 (the numeric high) as the caller's
+        # reference, so the freshly scored lag must come back negated.
+        result_high_as_ref = _get_or_compute_correlation(
+            conn, 2, 1, metric="egc", method="raw_pearson", get_sample_order=lambda: self.SAMPLES20,
+        )
+        assert result_high_as_ref["lag_samples"] == -2
 
     def test_cache_hit_lag_is_negated_when_reference_is_the_higher_id(self, conn):
         self._seed_offset_by_two_series(conn)
