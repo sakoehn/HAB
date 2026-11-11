@@ -1,0 +1,65 @@
+CORRELATION FINDER BASELINE (today's code, before vectorising)
+date 2026-11-11 11:48  commit 45b7bd0  db hab_mappings.db (63.9 GB, real data, read-only)
+machine Intel64 Family 6 Model 183 Stepping 1, GenuineIntel | 28 logical CPUs | Windows-11-10.0.26200-SP0
+python 3.13.14  numpy 2.4.2  scipy 1.17.1
+timings: wall clock, single run each; 'read' = load_vector once per candidate (as the endpoint does),
+'score' = score_pair per candidate, 'save' = INSERT + commit per scored candidate into a scratch copy of correlations_cache
+note: local SSD + Windows file cache; the AWS server's disk is likely slower for 'read' (not measured here)
+
+load_sample_order: 0.65 s (128 samples)
+
+[1] ref kegg K02703 (psbA; photosystem II P680 reaction center D1 ; detected in 128 samples)
+    vs kegg, spearman: 12,807 candidates
+    scored 10,277, could not score 2,530
+    read     8.21 s  (0.64 ms/candidate; second read 2.59 s) 
+    score   50.31 s  (3.93 ms/candidate)
+    save     3.03 s  (0.30 ms/row, 10,277 commits)
+    TOTAL   61.56 s  (over the 60 s nginx limit)
+
+[2] ref kegg K02703 (psbA; photosystem II P680 reaction center D1 ; detected in 128 samples)
+    vs kegg, raw_pearson: 12,807 candidates
+    scored 10,277, could not score 2,530
+    read     8.21 s  (0.64 ms/candidate; second read 2.59 s) (reused from the run above; not re-timed)
+    score   35.07 s  (2.74 ms/candidate)
+    save     2.89 s  (0.28 ms/row, 10,277 commits)
+    TOTAL   46.17 s  
+
+[3] ref cog COG0001 (Glutamate-1-semialdehyde aminotransferase; detected in 128 samples)
+    vs cog, spearman: 4,377 candidates
+    scored 4,377, could not score 0
+    read     5.08 s  (1.16 ms/candidate; second read 1.55 s) 
+    score   21.83 s  (4.99 ms/candidate)
+    save     1.22 s  (0.28 ms/row, 4,377 commits)
+    TOTAL   28.13 s  
+
+[4] ref kegg K02703 (psbA; photosystem II P680 reaction center D1 ; detected in 128 samples)
+    vs enzyme, spearman: 3,583 candidates
+    scored 3,211, could not score 372
+    read     2.38 s  (0.66 ms/candidate; second read 0.78 s) 
+    score   15.51 s  (4.33 ms/candidate)
+    save     0.97 s  (0.30 ms/row, 3,211 commits)
+    TOTAL   18.85 s  
+
+[5] ref kegg K02703 (psbA; photosystem II P680 reaction center D1 ; detected in 128 samples)
+    vs taxonomy, spearman: 5,783 candidates
+    scored 5,608, could not score 175
+    read    44.86 s  (7.76 ms/candidate; second read 2.63 s) 
+    score   27.55 s  (4.76 ms/candidate)
+    save     1.57 s  (0.28 ms/row, 5,608 commits)
+    TOTAL   73.98 s  (over the 60 s nginx limit)
+
+[6] ref kegg K08105 (D4ST1; dermatan 4-sulfotransferase 1 [EC:2.8.; detected in 25 samples)
+    vs enzyme, spearman: 3,583 candidates
+    scored 2,791, could not score 792
+    read     0.78 s  (0.22 ms/candidate; second read 0.78 s) 
+    score   12.20 s  (3.40 ms/candidate)
+    save     0.78 s  (0.28 ms/row, 2,791 commits)
+    TOTAL   13.76 s  
+
+How often would the prototype's sparse-reference crash hit? (references detected in < 30 samples)
+    source      total  <10 samples  10-29 samples    >=30
+    cog         4,637            0              0   4,637
+    enzyme      3,583          372            230   2,981
+    kegg       12,863        2,531          1,365   8,967
+    taxonomy   68,818       11,405          7,759  49,654
+    (<10: can never be scored at all; 10-29: scorable today, would crash the prototype)

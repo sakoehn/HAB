@@ -487,7 +487,7 @@ Not re-described; listed so a fresh agent has one place to look. **E6/E14** KEGG
 - [x] **X1** vectorised family scoring with equality test against `score_pair`; batched cache writes; sentinel rows; `synchronous=NORMAL`; cold kegg family under 10 s locally — 76f12aa, d32f061, cd7dad6; unscorable pairs go in a separate correlations_unscored table instead of sentinel rows; plus the covering index idx_annotation_series_family_values (4c53c08), which the live server needed: cold psbA vs kegg 5.6 s locally, cold taxonomy family 4.6 s live
 - [x] **X2** date-filtered `/annotations/top` uses `(source, sample)` seeks; live taxonomy 3-day range under 5 s — 9fa358d, not via (source, sample) seeks: measured live, those were slower (48 s vs 19.6 s); instead the numbers come from the covering index and name/parent/depth from annotation_catalog. Live 3-day taxonomy range 14 s (was 36-69 s), not under 5 s
 - ❌ **X3** sample names via loose index scan or `annotation_series`, computed at startup — not needed: SQLite 3.46 (live) and 3.50 already skip ahead through the index for this DISTINCT (SeekGT in the bytecode, despite the plan's "SCAN"); 128 names in 0.04 s live, whole startup 5 s, and it already runs once at startup since 10e875c
-- [ ] **X4** catalog top `LIMIT`; search ordering in SQL
+- [x] **X4** catalog top `LIMIT`; search ordering in SQL — search done differently (46f271c): ordering stays in Python (it needs the exact/starts/contains tiers), but category and scaffold_count, which were most of the time, are looked up only for the returned page; catalog `LIMIT` ❌ not needed: 0.06-0.34 s live and cached 30 min. See section 10
 
 ---
 
@@ -503,3 +503,43 @@ Not re-described; listed so a fresh agent has one place to look. **E6/E14** KEGG
 - `frontend/`: `audit-app-handoff.test.tsx` (F4), `audit-compare.test.tsx` (F13 and the Clear Page Low; copy into `frontend/src/tests/` to run, Vitest refuses files outside its root), `check_rollup.py` (live Archaea roll-up check), `solar_check.py`.
 
 The Python scripts resolve `FastAPI/` relative to their own location; the frontend probes need Node 24 on `PATH`.
+
+---
+
+## 10. Measurements made while fixing section 4 (2026-11-11)
+
+Everything in section 4 was measured before it was changed, locally on the real 63.9 GB database and on the live server (1.9 GB of memory, SQLite 3.46.1), because local numbers kept misleading: the desktop holds most of the database in memory and the server cannot. Scripts and raw outputs: `docs/audit-2026-11-03-artifacts/measurements-2026-11-11/` (see its README).
+
+### Correlation finder (X1, N1)
+
+Cold first request for a family, spearman unless noted:
+
+| family | candidates | before, local | after, local | after, live |
+|---|---|---|---|---|
+| psbA K02703 vs kegg | 12,807 | 61.6 s | 5.6 s | 30.5 s without the covering index; not re-timed with it |
+| psbA vs kegg, raw_pearson | 12,807 | 46.2 s | 4.1 s | |
+| COG0001 vs cog | 4,377 | 28.1 s | 2.8 s | |
+| psbA vs enzyme | 3,583 | 18.9 s | 1.8 s | |
+| psbA vs taxonomy | 5,783 | 74.0 s | 4.2 s | 504 at 60 s without the index |
+| ureC K01428 vs taxonomy | | | | **4.6 s** with the index |
+| K08105 (25 samples) vs enzyme | 3,583 | 13.8 s | 1.7 s | |
+
+Warm (same request again): 0.01-0.06 s local, 0.18 s live. Scoring alone fell from about 4 ms to about 0.2 ms per candidate (15-25x); the vectorised scorer agreed with `score_pair` on all 37,787 candidates of five real families (largest difference in r 7e-16).
+
+Two things the audit's prototype and estimates did not cover, both found by measuring:
+
+- **The prototype crashed for sparse references.** `_m_eff_rows` shifts the autocorrelation series without the zero padding `_lag_tests_m_eff` uses, so a reference with fewer than 30 shared points raised `ValueError`. 9,354 real references (1,365 kegg, 230 enzyme, 7,759 taxonomy) are detected in 10-29 samples. The shipped version pads, and the equality tests include sparse references.
+- **On the server the read, not the scoring, was the limit.** After vectorising, reading a family's values took 15.7 s for cog and 184.6 s for taxonomy (176.8 s again straight after: the rows did not fit in memory). The covering index `idx_annotation_series_family_values (source, annotation_id, sample, egc, norm_egc)` (item 8 of the X1 design) brought these to 0.95 s and 3.68 s. Built live in 279.6 s; adds about 1 GB.
+
+### Date-filtered top annotations (X2)
+
+The audit's suggestion, `(source, sample)` seeks, was faster locally (1.5 s vs 2.8 s) but **slower live**: 48 s vs 19.6 s for a 3-day taxonomy range. Both forms read one table row per annotation per sample, only in a different order. Measured live, today's query itself ranged from 18 s to 69 s depending on what was already in memory. The change made instead takes the numbers from the covering index alone and name/parent/depth from `annotation_catalog` (identical to the series values for every annotation in the database): 11-15 s live in the same tests, kegg under 1 s; live after deploying, the audit's own example took 14.0 s (was 54.1 s). Old and new give identical rows for 48 combinations of source, date range and filter.
+
+### Sample names at startup (X3)
+
+Not needed. The query plan reads "SCAN … idx_mappings_sample_gene", but SQLite 3.46 and later skip from one sample to the next (a `SeekGT` step in the bytecode): 0.04 s live for the 128 names. Since 10e875c it also runs once at startup, which took 5 s in all.
+
+### X4
+
+Live: the unfiltered catalog top is 0.06-0.34 s and cached for 30 minutes, so no `LIMIT` was added. In search, the two per-row `annotation_series` lookups were most of the time (0.45-1.07 s for 973-6,119 matches, against 0.04-0.10 s without), so they now run for the returned page only. Through the website a 1-2 character search is an exact id lookup, so the broadest reachable search is a 3-letter one ("bac", 21,191 matches). Fifteen searches, including 5,000-row pages, return identical responses before and after.
+

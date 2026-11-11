@@ -1,0 +1,84 @@
+Live server (metatrace.uw.edu, 1.9 GB RAM, SQLite 3.46.1), 2026-11-11.
+Outputs as printed; each script is in this folder. All scripts open the
+database read-only except the real HTTP requests (curl), which save normal
+correlation results like any visitor.
+
+== Correlation finder, after vectorising (commits 76f12aa, d32f061, cd7dad6), before the covering index
+curl, cold psbA (K02703) vs kegg, spearman:      200 in 30.46 s
+curl, same again (warm):                          200 in 0.18 s
+curl, cold psbA vs taxonomy, spearman:            504 at 60.09 s   (finished in the background; retry 200 in 3.64 s)
+
+time_family_pieces.py kegg K02703 cog
+sample order                    2.03 s
+candidate list                  0.13 s
+reference values                0.02 s
+read 4,637 candidates          15.68 s     (578,902 values)
+score (spearman)                2.47 s
+read again (now cached)         2.93 s
+
+time_family_pieces.py kegg K02703 taxonomy
+sample order                    2.00 s
+candidate list                  4.28 s
+reference values                0.03 s
+read 5,783 candidates         184.55 s     (663,935 values)
+score (spearman)                3.12 s
+read again (now cached)       176.82 s
+
+== Covering index idx_annotation_series_family_values (4c53c08)
+create_sql_indexes.py, service stopped:   Indexes built in 279.6 s  (disk 64G -> 65G used of 77G)
+
+time_family_pieces.py kegg K02703 cog
+sample order                    0.48 s
+candidate list                  0.14 s
+read 4,637 candidates           0.95 s
+score (spearman)                2.10 s
+read again (now cached)         0.72 s
+
+time_family_pieces.py kegg K02703 taxonomy
+sample order                    0.45 s
+candidate list                  3.49 s
+read 5,783 candidates           3.68 s
+score (spearman)                2.92 s
+read again (now cached)         1.10 s
+
+curl, cold ureC (K01428) vs taxonomy, spearman:   200 in 4.64 s
+
+== Date-filtered /annotations/top (X2)
+time_date_range_top.py -- (source, sample) row values, REJECTED (two runs):
+taxonomy rank 7   cold, own range : today 19.57 s   new 48.07 s  | swapped: today 11.61 s  new 42.30 s
+kegg rank 4       cold, own range : today  3.31 s   new  2.52 s  | swapped: today  0.72 s  new  0.48 s
+taxonomy rank 7   cold, own range : today 17.62 s   new 46.90 s  | swapped: today 11.44 s  new 35.98 s
+kegg rank 4       cold, own range : today  3.31 s   new  3.78 s  | swapped: today  1.35 s  new  0.65 s
+(identical results every time)
+
+time_date_range_top2.py -- covering index + annotation_catalog join, CHOSEN (two runs):
+taxonomy rank 7   first, own range : new 13.03 s   today 36.25 s  | swapped: new 10.70 s  today 69.42 s
+kegg rank 4       first, own range : new  0.83 s   today  3.04 s  | swapped: new  0.39 s  today  5.07 s
+taxonomy rank 7   first, own range : new 14.49 s   today 36.00 s  | swapped: new 12.79 s  today 60.16 s
+kegg rank 4       first, own range : new  0.82 s   today  2.86 s  | swapped: new  0.32 s  today  3.48 s
+(identical rows every time)
+
+After deploying 9fa358d, curl:
+/annotations/top?source=taxonomy&limit=5&date_from=2021-06-02&date_to=2021-06-04&depth=7   200 in 13.95 s   (audit: 54.1 s)
+/annotations/top?source=kegg&limit=5&date_from=2021-06-02&date_to=2021-06-04&depth=4       200 in 1.18 s
+
+== Sample names at startup (X3)
+check_sample_names.py
+SQLite version: 3.46.1
+skips ahead (SeekGT step): True
+sample names: 128 in 0.04 s
+journal: Started 22:49:35, Application startup complete 22:49:40 (5 s including this query)
+
+== X4
+check_x4.py
+1. Top EGC, no date filter (whole catalog list, then keep 200):
+   taxonomy depth [7]    20,936 rows: 0.28 s
+   taxonomy depth None   68,818 rows: 0.34 s
+   kegg     depth [4]    12,253 rows: 0.06 s
+2. Search across all four sources:
+   q='kinase'     973 matches:   0.45 s as today,  0.10 s without the per-row lookups
+   q='protein'  6,119 matches:   0.86 s as today,  0.04 s without the per-row lookups
+   q='Vibrio'   2,199 matches:   1.07 s as today,  0.04 s without the per-row lookups
+   q='a'       83,426 matches:  10.77 s as today,  0.09 s without the per-row lookups
+   (through the website a 1-2 character q is an exact id lookup, so 'a' is not reachable there;
+    the broadest real search is 3+ letters, e.g. 'bac', 21,191 matches)

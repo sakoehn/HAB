@@ -1,0 +1,38 @@
+CORRELATION FINDER AFTER VECTORISING (real /correlations/family endpoint)
+date 2026-11-11 12:57  commit cd7dad6  db hab_mappings.db (63.9 GB, real data)
+machine Intel64 Family 6 Model 183 Stepping 1, GenuineIntel | 28 logical CPUs | python 3.13.14  numpy 2.4.2  scipy 1.17.1
+cold = first request (nothing saved for this family); warm = the same request again
+note: this data was already read during earlier runs today, so Windows has much of it in memory;
+      the baseline's first reads were partly from disk (e.g. taxonomy 44.9 s cold vs 2.6 s again)
+
+[1] ref kegg K02703 vs kegg, spearman: 12,807 candidates (scored 10,277, could not score 2,530, significant 3,575)
+    cold    5.63 s   (before: 61.56 s -> 11x faster)
+          fetch saved 0.00 s | sample order 0.22 s | read 2.87 s | score 2.43 s | save 0.03 s
+    warm    0.05 s   (second request identical to first: True)
+
+[2] ref kegg K02703 vs kegg, raw_pearson: 12,807 candidates (scored 10,277, could not score 2,530, significant 3,663)
+    cold    4.10 s   (before: 46.17 s -> 11x faster)
+          fetch saved 0.00 s | sample order 0.22 s | read 2.85 s | score 0.95 s | save 0.03 s
+    warm    0.06 s   (second request identical to first: True)
+
+[3] ref cog COG0001 vs cog, spearman: 4,377 candidates (scored 4,377, could not score 0, significant 3,450)
+    cold    2.78 s   (before: 28.13 s -> 10x faster)
+          fetch saved 0.00 s | sample order 0.22 s | read 1.74 s | score 0.79 s | save 0.01 s
+    warm    0.02 s   (second request identical to first: True)
+
+[4] ref kegg K02703 vs enzyme, spearman: 3,583 candidates (scored 3,211, could not score 372, significant 1,530)
+    cold    1.78 s   (before: 18.85 s -> 11x faster)
+          fetch saved 0.01 s | sample order 0.22 s | read 0.86 s | score 0.65 s | save 0.03 s
+    warm    0.03 s   (second request identical to first: True)
+
+[5] ref kegg K02703 vs taxonomy, spearman: 5,783 candidates (scored 5,608, could not score 175, significant 3,353)
+    cold    4.20 s   (before: 73.98 s -> 18x faster)
+          fetch saved 0.02 s | sample order 0.22 s | read 2.87 s | score 1.03 s | save 0.02 s
+    warm    0.06 s   (second request identical to first: True)
+
+[6] ref kegg K08105 vs enzyme, spearman: 3,583 candidates (scored 2,791, could not score 792, significant 1)
+    cold    1.66 s   (before: 13.76 s -> 8x faster)
+          fetch saved 0.00 s | sample order 0.22 s | read 0.86 s | score 0.56 s | save 0.01 s
+    warm    0.01 s   (second request identical to first: True)
+
+saved rows now: correlations_cache 36,541, correlations_unscored 6,399
