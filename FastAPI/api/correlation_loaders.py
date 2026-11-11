@@ -13,6 +13,8 @@ were ever used by the live endpoint.
 
 import sqlite3
 
+import numpy as np
+
 from .index import timepoint_sort_key
 
 # Genus-and-coarser cutoff for taxonomy correlation candidates -- see
@@ -104,3 +106,38 @@ def load_vector(
         else:
             final_result.append(None)
     return final_result
+
+
+def load_family_matrix(
+    conn: sqlite3.Connection,
+    source: str,
+    annotation_ids: list[str],
+    sample_order: list[str],
+    metric: str,
+    chunk_size: int = 900,
+) -> np.ndarray:
+    """Many annotations' raw egc/norm_egc values as one table: row i is
+    annotation_ids[i], column j is sample_order[j], NaN where load_vector
+    would give None (no row for that sample, or a NULL value).
+
+    One query per chunk_size annotations instead of one per annotation;
+    900 stays under SQLite's limit on query parameters. The cursor is read
+    row by row rather than fetchall'd, so a whole family's rows are never
+    held in memory as Python tuples."""
+    if metric not in ("egc", "norm_egc"):
+        raise ValueError(f"{metric} not found.")
+    row_of = {annotation_id: i for i, annotation_id in enumerate(annotation_ids)}
+    column_of = {sample: j for j, sample in enumerate(sample_order)}
+    table = np.full((len(annotation_ids), len(sample_order)), np.nan)
+    for start in range(0, len(annotation_ids), chunk_size):
+        chunk = annotation_ids[start:start + chunk_size]
+        placeholders = ",".join("?" * len(chunk))
+        cursor = conn.execute(
+            f"SELECT annotation_id, sample, {metric} FROM annotation_series "
+            f"WHERE source = ? AND annotation_id IN ({placeholders})",
+            (source, *chunk),
+        )
+        for annotation_id, sample, value in cursor:
+            if value is not None and sample in column_of:
+                table[row_of[annotation_id], column_of[sample]] = value
+    return table

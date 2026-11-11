@@ -471,17 +471,17 @@ class TestCorrelationFamilyLock:
         # request waits, then finds all three saved. Expected total with
         # the lock working: 3. Without it both requests score all three: 6.
         call_count = {"n": 0}
-        real_score_pair = correlation_sql.score_pair
+        real_score = correlation_sql.score_family_checked
 
-        def counting_slow_score_pair(ref, cand, method):
+        def counting_slow_score(ref, table, method):
             # Small real sleep (not a mock) so a second thread genuinely
             # has a window to start its own redundant computation if the
             # lock isn't actually serializing them.
             time.sleep(0.05)
-            call_count["n"] += 1
-            return real_score_pair(ref, cand, method)
+            call_count["n"] += len(table)
+            return real_score(ref, table, method)
 
-        monkeypatch.setattr(correlation_sql, "score_pair", counting_slow_score_pair)
+        monkeypatch.setattr(correlation_sql, "score_family_checked", counting_slow_score)
 
         results = []
         def make_request():
@@ -507,7 +507,7 @@ class TestCorrelationFamilyLock:
             assert resp.status_code == 200
 
         assert call_count["n"] == 3, (
-            f"score_pair called {call_count['n']} times, expected exactly 3 "
+            f"{call_count['n']} candidates scored, expected exactly 3 "
             "(once per candidate -- more means the second request re-scored "
             "candidates the first had already saved)"
         )
@@ -656,18 +656,25 @@ class TestCorrelationFamilyEveryCandidateTested:
         )
 
     def test_every_candidate_is_scored_with_the_requested_method_only(self, two_candidate_client, monkeypatch):
-        real_get_or_compute = correlation_sql._get_or_compute_correlation
-        calls = []
+        real_load = correlation_sql.load_family_matrix
+        real_score = correlation_sql.score_family_checked
+        loaded, methods = [], []
 
-        def spy(conn, ref_id, cand_id, metric, method, **kwargs):
-            calls.append((cand_id, method))
-            return real_get_or_compute(conn, ref_id, cand_id, metric, method, **kwargs)
+        def load_spy(conn, source, annotation_ids, sample_order, metric):
+            loaded.extend(annotation_ids)
+            return real_load(conn, source, annotation_ids, sample_order, metric)
 
-        monkeypatch.setattr(correlation_sql, "_get_or_compute_correlation", spy)
+        def score_spy(ref, table, method):
+            methods.append(method)
+            return real_score(ref, table, method)
+
+        monkeypatch.setattr(correlation_sql, "load_family_matrix", load_spy)
+        monkeypatch.setattr(correlation_sql, "score_family_checked", score_spy)
         response = self._family(two_candidate_client)
 
         assert response.status_code == 200
-        assert sorted(calls) == [(2, "spearman"), (3, "spearman")]
+        assert sorted(loaded) == ["K00002", "K00003"]
+        assert methods == ["spearman"]
 
     def test_strong_candidate_is_significant_and_unrelated_one_is_not(self, two_candidate_client):
         body = self._family(two_candidate_client).json()

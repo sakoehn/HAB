@@ -17,18 +17,20 @@ from .cache import AnnotationSource
 from .cache_sql import _kegg_node_depth, KEGG_LEVEL_COLUMNS, _cog_node_depth, COG_LEVEL_COLUMNS
 from .config import CORRELATION_LAGS, LAG_HOURS_PER_SAMPLE
 from .correlation_loaders import (
+    load_family_matrix,
     load_vector,
     load_sample_order,
     TAXONOMY_DEPTH_CUTOFF,
 )
+from .correlation_vector import score_family_checked
 
 router = APIRouter()
 
 # ── Input validation ──────────────────────────────────────────────────────────
 # Both endpoints check method/metric against these allowlists up front and
 # return 400 before doing any work. Otherwise a typo would only surface
-# deep inside the per-candidate scoring loop (core_scoring / load_vector),
-# as a 500 after a whole family's worth of computation.
+# deep inside the scoring (load_vector / the transform), as a 500 after
+# the work of loading the family.
 VALID_METHODS = {"raw_pearson", "log_pearson", "spearman"}
 VALID_METRICS = {"egc", "norm_egc"}
 
@@ -682,10 +684,8 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
             return {'r': row[3], 'p': row[7], 'lag_samples': -winner_lag if reference_is_high else winner_lag, 'n_pairs': row[8], 'at_p_floor': winner_at_p_floor}
         except sqlite3.OperationalError:
             # A lock-timeout mid-write (plausible against a ~60 GB db with a
-            # large un-checkpointed WAL) must not propagate up through the
-            # family endpoint's per-candidate loop -- that would 500 the
-            # WHOLE request and discard every other candidate's
-            # already-computed result. The cache write is best-effort: roll
+            # large un-checkpointed WAL) must not 500 the request when the
+            # result is already computed. The cache write is best-effort: roll
             # back the failed write and still return the real result below.
             # It just won't be cached; a future request recomputes it.
             conn.rollback()
@@ -715,6 +715,11 @@ def _connect() -> sqlite3.Connection:
     """
     conn = sqlite3.connect(SQLITE_DB_PATH)
     conn.execute("PRAGMA busy_timeout = 10000")
+    # In WAL mode NORMAL keeps the database consistent but lets a commit
+    # return without waiting for the disk to confirm it; a power cut can
+    # lose only the last few commits. Everything written through this
+    # connection is a recomputable correlation result.
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
@@ -737,6 +742,91 @@ def correlate_endpoint(catalog_id_a: int, catalog_id_b: int, metric: str, method
 
 
 # ── Endpoint: Tier 2, family + FDR ────────────────────────────────
+
+# Candidates scored and saved together. Bounds memory (the vector scorer's
+# temporaries are about 15 KB per candidate per method) and is how much
+# work a server stop mid-family can lose: each batch is saved in one
+# commit before the next starts.
+FAMILY_BATCH_SIZE = 4000
+
+
+def _fetch_saved_family(conn, ref_catalog_id, metric, method):
+    """Every saved result involving the reference at the current
+    CORRELATION_METHOD_VERSION, in two queries: {candidate id: result with
+    the lag relative to the reference} and the set of candidate ids saved
+    as unscorable."""
+    params = (ref_catalog_id, ref_catalog_id, metric, method, CORRELATION_METHOD_VERSION)
+    saved = {}
+    for id_a, id_b, r, lag, p, n_pairs, at_p_floor in conn.execute("""
+            SELECT catalog_id_a, catalog_id_b, r, lag_samples, p_value, n_pairs, at_p_floor
+            FROM correlations_cache
+            WHERE (catalog_id_a = ? OR catalog_id_b = ?) AND metric = ? AND method = ?
+              AND method_version = ?
+    """, params):
+        # Rows are stored relative to the lower id; flip the lag back when
+        # the reference is the higher one.
+        other, flip = (id_b, False) if id_a == ref_catalog_id else (id_a, True)
+        saved[other] = {
+            "r": r, "p": p, "lag_samples": -lag if flip else lag, "n_pairs": n_pairs,
+            "at_p_floor": bool(at_p_floor) if at_p_floor is not None else None,
+        }
+    unscored = {
+        id_b if id_a == ref_catalog_id else id_a
+        for id_a, id_b in conn.execute("""
+            SELECT catalog_id_a, catalog_id_b FROM correlations_unscored
+            WHERE (catalog_id_a = ? OR catalog_id_b = ?) AND metric = ? AND method = ?
+              AND method_version = ?
+        """, params)
+    }
+    return saved, unscored
+
+
+def _save_batch(conn, score_rows, unscored_rows) -> None:
+    """Save one batch's scores and unscorable pairs in a single commit.
+    OR IGNORE skips a pair another request saved first (same version,
+    same math). Best-effort like every cache write: a lock timeout rolls
+    back and the results are still returned, just not saved."""
+    try:
+        conn.executemany("""
+            INSERT OR IGNORE INTO correlations_cache (catalog_id_a, catalog_id_b, r, metric,
+            method, lag_samples, p_value, n_pairs, at_p_floor, method_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, score_rows)
+        conn.executemany("""
+            INSERT OR IGNORE INTO correlations_unscored (catalog_id_a, catalog_id_b, metric,
+            method, method_version, reason, max_shared)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, unscored_rows)
+        conn.commit()
+    except sqlite3.OperationalError:
+        conn.rollback()
+
+
+def _score_and_save_batch(conn, ref_catalog_id, ref_vec, batch, target_source, metric, method, sample_order):
+    """Load, score and save one batch of candidates. Returns
+    {candidate id: result} for the ones that scored."""
+    table = load_family_matrix(conn, target_source, [c["annotation_id"] for c in batch], sample_order, metric)
+    result = score_family_checked(ref_vec, table, method)
+    scores, score_rows, unscored_rows = {}, [], []
+    for i, cand in enumerate(batch):
+        low, high = sorted((ref_catalog_id, cand["id"]))
+        flip = ref_catalog_id > cand["id"]
+        if not result["ok"][i]:
+            unscored_rows.append((low, high, metric, method, CORRELATION_METHOD_VERSION,
+                                  result["reason"][i], int(result["max_shared"][i])))
+            continue
+        r, p = float(result["r"][i]), float(result["p"][i])
+        # sqlite would store NaN as NULL, which the NOT NULL columns refuse
+        # and OR IGNORE would then drop silently; leave it out instead.
+        if not (math.isfinite(r) and math.isfinite(p)):
+            continue
+        lag, n_pairs = int(result["lag"][i]), int(result["n_pairs"][i])
+        scores[cand["id"]] = {"r": r, "p": p, "lag_samples": lag, "n_pairs": n_pairs, "at_p_floor": None}
+        score_rows.append((low, high, r, metric, method, -lag if flip else lag, p, n_pairs, None,
+                           CORRELATION_METHOD_VERSION))
+    _save_batch(conn, score_rows, unscored_rows)
+    return scores
+
 
 @router.get("/correlations/family")
 def correlation_family_endpoint(
@@ -763,45 +853,27 @@ def correlation_family_endpoint(
 
         candidates = get_family_candidates(conn, ref_catalog_id, target_source)
 
-        # Memoized so it only runs (at most once) if some candidate in this
-        # family is actually a cache miss -- an all-cache-hit family (the
-        # steady-state case once Tier 1 is warm) never pays for it.
-        # Memoized the same way as get_sample_order below, but keyed per
-        # (source, annotation_id) -- without this, the REFERENCE
-        # annotation's vector gets reloaded from annotation_series on
-        # every single candidate iteration (it's one side of every pair
-        # scored in this family), even though it's identical every time.
-        # Found live in production, 2026-09-25: a single load_vector call
-        # measured ~75ms on this instance's storage; across a
-        # 12,863-candidate kegg family that's ~16 minutes of pure waste
-        # reloading the same reference vector.
-        _vector_cache: dict[tuple[str, str], list] = {}
-        def get_vector(source: str, annotation_id: str) -> list:
-            key = (source, annotation_id)
-            if key not in _vector_cache:
-                _vector_cache[key] = load_vector(conn, source, annotation_id, get_sample_order(), metric)
-            return _vector_cache[key]
-
-        _sample_order_box = []
-        def get_sample_order():
-            if not _sample_order_box:
-                _sample_order_box.append(load_sample_order(conn))
-            return _sample_order_box[0]
-
         # Serializes concurrent/retried requests for this EXACT family so
         # they cooperate on the cache instead of redundantly recomputing
-        # the same still-uncached candidates in parallel -- see
-        # _get_family_lock's docstring. A waiter that blocks here and
-        # then proceeds will find most or all candidates already cached
-        # by whichever request got there first, so its own pass is fast.
+        # the same still-unsaved candidates in parallel -- see
+        # _get_family_lock's docstring. A waiter that blocks here and then
+        # proceeds finds the first request's batches already saved.
         family_lock = _get_family_lock((ref_catalog_id, target_source, metric, method))
         with family_lock:
+            saved, unscored = _fetch_saved_family(conn, ref_catalog_id, metric, method)
+            todo = [c for c in candidates if c["id"] not in saved and c["id"] not in unscored]
+            if todo:
+                sample_order = load_sample_order(conn)
+                ref_vec = np.array(
+                    load_vector(conn, ref_source, ref_annotation_id, sample_order, metric), dtype=float)
+                for start in range(0, len(todo), FAMILY_BATCH_SIZE):
+                    saved.update(_score_and_save_batch(
+                        conn, ref_catalog_id, ref_vec, todo[start:start + FAMILY_BATCH_SIZE],
+                        target_source, metric, method, sample_order))
+
             scored = []
             for cand in candidates:
-                result = _get_or_compute_correlation(
-                    conn, ref_catalog_id, cand["id"], metric, method,
-                    get_sample_order=get_sample_order, get_vector=get_vector,
-                )
+                result = saved.get(cand["id"])
                 if result is None:
                     continue
                 scored.append({
@@ -814,7 +886,7 @@ def correlation_family_endpoint(
                     "lag_samples":   result["lag_samples"],
                     "lag_hours":     result["lag_samples"] * LAG_HOURS_PER_SAMPLE,
                     "n_pairs":       result["n_pairs"],
-                    "at_p_floor":    result.get("at_p_floor"),
+                    "at_p_floor":    result["at_p_floor"],
                 })
 
         scored = _apply_fdr(scored)

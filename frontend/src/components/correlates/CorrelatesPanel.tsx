@@ -98,14 +98,15 @@ export function CorrelatesPanel({
   }, [targetSource, method, metric])
 
   // Every method retries when a request times out or the server answers
-  // 5xx: the first search of a combination can outlast the 60s proxy
-  // limit, but the server keeps computing and saving each pair, so a retry
-  // picks up where it left off. correlation_family_endpoint is a
+  // 5xx. A first search of a combination normally finishes in seconds,
+  // well inside the 60s proxy limit; the retry is a safety net for a slow
+  // or busy server. The server saves its results a batch of candidates at
+  // a time, so a retry picks up where it left off. correlation_family_endpoint is a
   // synchronous route, which FastAPI runs in a background thread -- so
   // even after this request's own timeout fires, the server keeps scoring
-  // candidates and caching each one individually. A client-side timeout
+  // and saving batches. A client-side timeout
   // here is therefore not a real failure; it just means "ask again" gets
-  // you further along, since already-cached pairs return instantly. Capped at
+  // you further along, since already-saved candidates return instantly. Capped at
   // MAX_RETRIES (not truly unlimited) so a genuinely dead backend still
   // surfaces eventually rather than retrying forever.
   const MAX_RETRIES = 12
@@ -131,14 +132,11 @@ export function CorrelatesPanel({
         `&target_source=${encodeURIComponent(targetSource)}` +
         `&metric=${metric}` +
         `&method=${method}`
-      // Cold (never-yet-cached) families can take minutes to compute --
-      // well past apiFetch's normal 60s default -- so this gets a much
-      // longer timeout. Every result is permanently cached server-side
-      // (Tier 1), so this cost is one-time per (ref, source, metric,
-      // method) combination, not recurring. 10 min covers taxonomy's
-      // worst case even after the genus-and-coarser depth cutoff
-      // (measured ~9 min cold against the real db); every other source
-      // finishes in well under a minute.
+      // A cold (never-yet-saved) family normally takes seconds, but a slow
+      // disk or a busy server can stretch it past apiFetch's normal 60s
+      // default, so this keeps a much longer timeout as a safety net.
+      // Every result is saved server-side, so the cost is one-time per
+      // (ref, source, metric, method) combination, not recurring.
       const result = await apiFetch<CorrelationFamilyResponse>(url, 600_000)
       if (requestId !== requestSeqRef.current) return
       setData(result?.results ?? [])

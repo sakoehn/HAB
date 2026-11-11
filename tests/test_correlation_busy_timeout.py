@@ -64,6 +64,18 @@ def test_connect_sets_the_intended_busy_timeout(db_path):
         conn.close()
 
 
+def test_connect_commits_without_waiting_for_a_full_disk_flush(db_path):
+    # synchronous = NORMAL (1): in WAL mode a commit no longer waits for
+    # the disk to confirm; a power cut can lose the last few saved
+    # correlation results, which are recomputed on the next request. The
+    # default, FULL (2), made every per-candidate commit wait.
+    conn = _connect()
+    try:
+        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
 def test_second_writer_waits_instead_of_erroring_immediately(db_path):
     # Note: given the ambient-default discovery above, this alone doesn't
     # prove _connect()'s specific PRAGMA is what prevented the crash for a
