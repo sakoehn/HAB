@@ -64,8 +64,8 @@ def _run_notebook(samples, base_ds: Path, metagenome_dir: Path):
 def synthetic_run(tmp_path):
     """Same tricky gene set as TestBuildLogicSynthetic (duplicate COG hit,
     two distinct COGs, two distinct ECs, a KEGG-only-no-COG gene, a gene
-    with no taxonomy), plus s2 with a missing ko.txt and s3 with no raw
-    files at all."""
+    with no taxonomy), plus s2 with only COG hits (its other three files
+    present but empty)."""
     meta = tmp_path / "Metagenome_Samples"
     _write_raw_hits(meta / "s1" / "s1.a.cog.txt", [
         _cog_row("scafA_100_200", "COG0001"),
@@ -89,10 +89,18 @@ def synthetic_run(tmp_path):
         _phylodist_row("scafB_10_50", "Viruses"),
     ])
     _write_raw_hits(meta / "s2" / "s2.a.cog.txt", [_cog_row("scafX_1_10", "COG0099")])
+    for kind in ("ko", "ec", "phylodist"):
+        _write_raw_hits(meta / "s2" / f"s2.a.{kind}.txt", [])
 
     base_ds = tmp_path / "DataStructures"
-    _run_notebook(["s1", "s2", "s3"], base_ds, meta)
+    _run_notebook(["s1", "s2"], base_ds, meta)
     return meta, base_ds / "Mappings_by_Sample"
+
+
+def _sample_with_files(meta: Path, sample: str, kinds, cog_rows):
+    for kind in kinds:
+        rows = cog_rows if kind == "cog" else []
+        _write_raw_hits(meta / sample / f"{sample}.a.{kind}.txt", rows)
 
 
 @pytest.mark.skipif(not NOTEBOOK.exists(), reason=f"{NOTEBOOK} not found")
@@ -119,9 +127,20 @@ class TestMappingsNotebookExecutes:
         assert actual["scafC_5_60"]["scaffold_id"] == "scafC"               # from gene_id, no taxonomy
         assert actual["scafC_5_60"]["taxonomy"] is None
 
-    def test_sample_with_no_raw_files_writes_no_tsv(self, synthetic_run):
-        _, out_dir = synthetic_run
-        assert not (out_dir / "s3_mapping.tsv").exists()
+    def test_a_missing_hit_file_stops_the_run(self, tmp_path):
+        # Every sample has all four hit files, so a missing one is a failed
+        # download, not "nothing detected": the notebook must stop, naming it.
+        meta = tmp_path / "Metagenome_Samples"
+        _sample_with_files(meta, "s1", ("cog", "ec", "phylodist"), [_cog_row("scafA_1_10", "COG0001")])
+        with pytest.raises(FileNotFoundError, match="s1.a.ko.txt"):
+            _run_notebook(["s1"], tmp_path / "DataStructures", meta)
+
+    def test_a_sample_with_no_genes_stops_the_run(self, tmp_path):
+        meta = tmp_path / "Metagenome_Samples"
+        _sample_with_files(meta, "s1", ("cog", "ko", "ec", "phylodist"), [])
+        with pytest.raises(ValueError, match="s1: no genes"):
+            _run_notebook(["s1"], tmp_path / "DataStructures", meta)
+        assert not (tmp_path / "DataStructures" / "Mappings_by_Sample" / "s1_mapping.tsv").exists()
 
     def test_tsv_header_is_the_documented_column_order(self, synthetic_run):
         _, out_dir = synthetic_run
