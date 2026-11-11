@@ -37,44 +37,44 @@ def _json(**entries):
 
 def test_identical_values_report_nothing():
     data = _json(COG0001=(1.5, 0.002), COG0002=(0.0, 0.0))
-    rows = {"COG0001": (1.5, 0.002), "COG0002": (0.0, 0.0)}
+    rows = {"COG0001": (1.5, 0.002, 0, 0), "COG0002": (0.0, 0.0, 0, 0)}
     assert compare_values(data, rows) == []
 
 
 def test_wrong_egc_is_reported():
     data = _json(COG0001=(1.5, 0.002))
-    rows = {"COG0001": (9.9, 0.002)}
+    rows = {"COG0001": (9.9, 0.002, 0, 0)}
     assert compare_values(data, rows) == [("COG0001", "egc", 1.5, 9.9)]
 
 
 def test_wrong_norm_egc_is_reported():
     data = _json(COG0001=(1.5, 0.002))
-    rows = {"COG0001": (1.5, 0.003)}
+    rows = {"COG0001": (1.5, 0.003, 0, 0)}
     assert compare_values(data, rows) == [("COG0001", "norm_egc", 0.002, 0.003)]
 
 
 def test_annotation_missing_from_db_is_reported():
     data = _json(COG0001=(1.5, 0.002), COG0002=(2.0, 0.004))
-    rows = {"COG0001": (1.5, 0.002)}
+    rows = {"COG0001": (1.5, 0.002, 0, 0)}
     assert compare_values(data, rows) == [("COG0002", "missing_in_sql", None, None)]
 
 
 def test_annotation_extra_in_db_is_reported():
     data = _json(COG0001=(1.5, 0.002))
-    rows = {"COG0001": (1.5, 0.002), "COG9999": (3.0, 0.1)}
+    rows = {"COG0001": (1.5, 0.002, 0, 0), "COG9999": (3.0, 0.1, 0, 0)}
     assert compare_values(data, rows) == [("COG9999", "missing_in_json", None, None)]
 
 
 def test_none_vs_number_is_a_mismatch_but_none_vs_none_is_not():
     data = _json(COG0001=(None, 0.002), COG0002=(None, None))
-    rows = {"COG0001": (0.0, 0.002), "COG0002": (None, None)}
+    rows = {"COG0001": (0.0, 0.002, 0, 0), "COG0002": (None, None, 0, 0)}
     assert compare_values(data, rows) == [("COG0001", "egc", None, 0.0)]
 
 
 def test_float_round_trip_noise_within_tolerance_is_not_a_mismatch():
     # REAL storage can differ from the JSON's decimal text by the last ulp.
     data = _json(COG0001=(0.1 + 0.2, 1e-7))
-    rows = {"COG0001": (0.3, 1e-7 * (1 + 1e-12))}
+    rows = {"COG0001": (0.3, 1e-7 * (1 + 1e-12), 0, 0)}
     assert compare_values(data, rows) == []
 
 
@@ -82,17 +82,17 @@ def test_values_from_sql_scopes_to_one_source_and_sample():
     conn = sqlite3.connect(":memory:")
     conn.execute(
         "CREATE TABLE annotation_series (source TEXT, sample TEXT, "
-        "annotation_id TEXT, egc REAL, norm_egc REAL)"
+        "annotation_id TEXT, egc REAL, norm_egc REAL, scaffold_count INTEGER DEFAULT 0, gene_count INTEGER DEFAULT 0)"
     )
     conn.executemany(
-        "INSERT INTO annotation_series VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO annotation_series (source, sample, annotation_id, egc, norm_egc) VALUES (?, ?, ?, ?, ?)",
         [
             ("cog", "S1", "COG0001", 1.5, 0.002),
             ("cog", "S2", "COG0001", 7.0, 0.009),   # other sample
             ("kegg", "S1", "K00001", 4.0, 0.005),   # other source
         ],
     )
-    assert values_from_sql(conn, "cog", "S1") == {"COG0001": (1.5, 0.002)}
+    assert values_from_sql(conn, "cog", "S1") == {"COG0001": (1.5, 0.002, 0, 0)}
 
 
 def test_values_from_sql_end_to_end_with_compare_catches_a_bad_value():
@@ -100,19 +100,30 @@ def test_values_from_sql_end_to_end_with_compare_catches_a_bad_value():
     conn = sqlite3.connect(":memory:")
     conn.execute(
         "CREATE TABLE annotation_series (source TEXT, sample TEXT, "
-        "annotation_id TEXT, egc REAL, norm_egc REAL)"
+        "annotation_id TEXT, egc REAL, norm_egc REAL, scaffold_count INTEGER DEFAULT 0, gene_count INTEGER DEFAULT 0)"
     )
-    conn.execute("INSERT INTO annotation_series VALUES ('cog', 'S1', 'COG0001', 2.0, 0.002)")
+    conn.execute("INSERT INTO annotation_series (source, sample, annotation_id, egc, norm_egc) VALUES ('cog', 'S1', 'COG0001', 2.0, 0.002)")
     data = _json(COG0001=(1.5, 0.002))
     assert compare_values(data, values_from_sql(conn, "cog", "S1")) == [
         ("COG0001", "egc", 1.5, 2.0)
     ]
 
 
+def test_wrong_scaffold_or_gene_count_is_reported():
+    """The scaffold panels read scaffold_count and gene_count, so they are
+    checked too: the JSON's scaffolds map gives 2 scaffolds and 5 genes."""
+    data = {"COG0001": {"egc": 1.5, "norm_egc": 0.002, "scaffolds": {"sc1": 2, "sc2": 3}}}
+    assert compare_values(data, {"COG0001": (1.5, 0.002, 2, 5)}) == []
+    assert compare_values(data, {"COG0001": (1.5, 0.002, 1, 4)}) == [
+        ("COG0001", "scaffold_count", 2, 1),
+        ("COG0001", "gene_count", 5, 4),
+    ]
+
+
 @pytest.mark.parametrize("bad", [float("nan")])
 def test_nan_is_never_silently_equal(bad):
     data = _json(COG0001=(bad, 0.002))
-    rows = {"COG0001": (1.5, 0.002)}
+    rows = {"COG0001": (1.5, 0.002, 0, 0)}
     assert len(compare_values(data, rows)) == 1
 
 
@@ -126,10 +137,10 @@ def test_count_from_json_checks_values_per_sample_file(tmp_path):
     conn = sqlite3.connect(":memory:")
     conn.execute(
         "CREATE TABLE annotation_series (source TEXT, sample TEXT, "
-        "annotation_id TEXT, egc REAL, norm_egc REAL)"
+        "annotation_id TEXT, egc REAL, norm_egc REAL, scaffold_count INTEGER DEFAULT 0, gene_count INTEGER DEFAULT 0)"
     )
     conn.executemany(
-        "INSERT INTO annotation_series VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO annotation_series (source, sample, annotation_id, egc, norm_egc) VALUES (?, ?, ?, ?, ?)",
         [("cog", "S1", "COG0001", 1.5, 0.002), ("cog", "S2", "COG0001", 7.0, 0.5)],
     )
     samples, series, scaffolds, mismatches = count_from_json(str(tmp_path), ".cog.json", conn, "cog")
