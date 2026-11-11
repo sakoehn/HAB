@@ -465,28 +465,28 @@ Not re-described; listed so a fresh agent has one place to look. **E6/E14** KEGG
 
 ## 8. Checklist
 
-- [ ] **F1** Export-all mappings CSV complete or refused with a message; "every row" text conditional on the real total
-- [ ] **F2** `KO:`/`EC:` prefixes accepted by `/search/annotations` (`q` and `annotation_id`); route tests
-- [ ] **F3** exact id ranked first; Lookup auto-selects an exact id; page size or load-more
-- [ ] **F4** Analyze handoff uses an exact-id request; handoff test pinned
-- [ ] **F5** KEGG sibling exclusion limited to pathway parents; BRITE tables labelled; Methods page updated; test with a BRITE-only KO
-- [ ] **F6** group totals show the category's own mean; member Σ labelled as overlapping and partial
-- [ ] **F7** Z-score window stated (or computed over the full series); CSV records the window
-- [ ] **F8** lag hours stated as nominal, or computed on the real time axis
-- [ ] **F9** lag shown only for significant rows or flagged at the window edge
-- [ ] **F10** `N/(N−j)` ACF estimator; simulation bar at 6%; Methods "about half" corrected; cache cleared/versioned (N3)
-- [ ] **F11** `/annotations/top` takes a depth; Top EGC sends the rank
-- [ ] **F12** sequence guards in Scaffold Information and Bulk Download search; `r.source` used
-- [ ] **F13** Compare: no duplicates via select-all, no colour reset on handoff, groups keyed by member set, skipped groups reported
-- [ ] **F14** homonym hints append the rank when they collide
-- [ ] **F15** partial-EC external link goes to a real page
-- [ ] **F16** Mappings panel shows gene and scaffold; "N genes"
-- [ ] **F17** `include_parent` with an undetected parent → 404
-- [ ] **F18** untested-candidate count returned and shown; Methods sentence softened
-- [ ] **Low items** of section 3 triaged
-- [ ] **X1** vectorised family scoring with equality test against `score_pair`; batched cache writes; sentinel rows; `synchronous=NORMAL`; cold kegg family under 10 s locally
-- [ ] **X2** date-filtered `/annotations/top` uses `(source, sample)` seeks; live taxonomy 3-day range under 5 s
-- [ ] **X3** sample names via loose index scan or `annotation_series`, computed at startup
+- [x] **F1** Export-all mappings CSV complete or refused with a message; "every row" text conditional on the real total (05867d3: streams every record)
+- [x] **F2** `KO:`/`EC:` prefixes accepted by `/search/annotations` (`q` and `annotation_id`); route tests (8e8b065)
+- [x] **F3** exact id ranked first; Lookup auto-selects an exact id; page size or load-more (0668f1b)
+- [x] **F4** Analyze handoff uses an exact-id request; handoff test pinned (5822ec2)
+- [x] **F5** KEGG sibling exclusion limited to pathway parents; BRITE tables labelled; Methods page updated; test with a BRITE-only KO (a8d6800, 9a87217)
+- [x] **F6** group totals show the category's own mean; member Σ labelled as overlapping and partial (c20044d)
+- [x] **F7** Z-score window stated (or computed over the full series); CSV records the window (62b177b: computed over the full series)
+- [x] **F8** lag hours stated as nominal, or computed on the real time axis (236cb36: stated as nominal)
+- [x] **F9** lag shown only for significant rows or flagged at the window edge (8db3371: faded when not significant, edge marked 24h+)
+- [x] **F10** `N/(N−j)` ACF estimator; simulation bar at 6%; Methods "about half" corrected; cache cleared/versioned (N3) — estimator kept and the measured rate stated on the Methods page instead, Michael's choice (ef5b5b6); cache versioned (d32f061)
+- [x] **F11** `/annotations/top` takes a depth; Top EGC sends the rank (f21aa5c)
+- [x] **F12** sequence guards in Scaffold Information and Bulk Download search; `r.source` used (756b74f)
+- [x] **F13** Compare: no duplicates via select-all, no colour reset on handoff, groups keyed by member set, skipped groups reported (83d7ca2)
+- [x] **F14** homonym hints append the rank when they collide (c738943)
+- [x] **F15** partial-EC external link goes to a real page (523e34d)
+- [x] **F16** Mappings panel shows gene and scaffold; "N genes" (0cf26ac)
+- [x] **F17** `include_parent` with an undetected parent → 404 (84d6637)
+- [x] **F18** untested-candidate count returned and shown; Methods sentence softened (3e8b7b4)
+- [x] **Low items** of section 3 triaged — all six groups done (through 5323455 and 8629009)
+- [x] **X1** vectorised family scoring with equality test against `score_pair`; batched cache writes; sentinel rows; `synchronous=NORMAL`; cold kegg family under 10 s locally — 76f12aa, d32f061, cd7dad6; unscorable pairs go in a separate correlations_unscored table instead of sentinel rows; plus the covering index idx_annotation_series_family_values (4c53c08), which the live server needed: cold psbA vs kegg 5.6 s locally, cold taxonomy family 4.6 s live
+- [x] **X2** date-filtered `/annotations/top` uses `(source, sample)` seeks; live taxonomy 3-day range under 5 s — 9fa358d, not via (source, sample) seeks: measured live, those were slower (48 s vs 19.6 s); instead the numbers come from the covering index and name/parent/depth from annotation_catalog. Live 3-day taxonomy range 14 s (was 36-69 s), not under 5 s
+- ❌ **X3** sample names via loose index scan or `annotation_series`, computed at startup — not needed: SQLite 3.46 (live) and 3.50 already skip ahead through the index for this DISTINCT (SeekGT in the bytecode, despite the plan's "SCAN"); 128 names in 0.04 s live, whole startup 5 s, and it already runs once at startup since 10e875c
 - [ ] **X4** catalog top `LIMIT`; search ordering in SQL
 
 ---
