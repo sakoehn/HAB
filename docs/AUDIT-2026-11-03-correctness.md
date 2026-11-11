@@ -541,5 +541,5 @@ Not needed. The query plan reads "SCAN … idx_mappings_sample_gene", but SQLite
 
 ### X4
 
-Live: the unfiltered catalog top is 0.06-0.34 s and cached for 30 minutes, so no `LIMIT` was added. In search, the two per-row `annotation_series` lookups were most of the time (0.45-1.07 s for 973-6,119 matches, against 0.04-0.10 s without), so they now run for the returned page only. Through the website a 1-2 character search is an exact id lookup, so the broadest reachable search is a 3-letter one ("bac", 21,191 matches). Fifteen searches, including 5,000-row pages, return identical responses before and after.
+Live: the unfiltered catalog top is 0.06-0.34 s and cached for 30 minutes, so no `LIMIT` was added. In search, the two per-row `annotation_series` lookups were most of the time (0.45-1.07 s for 973-6,119 matches, against 0.04-0.10 s without), so they now run for the returned page only. Live after deploying, through the site: "Vibrio" 0.13 s (was 1.07 s), "bac" 0.20 s. Through the website a 1-2 character search is an exact id lookup, so the broadest reachable search is a 3-letter one ("bac", 21,191 matches). Fifteen searches, including 5,000-row pages, return identical responses before and after.
 

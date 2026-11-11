@@ -82,3 +82,7 @@ check_x4.py
    q='a'       83,426 matches:  10.77 s as today,  0.09 s without the per-row lookups
    (through the website a 1-2 character q is an exact id lookup, so 'a' is not reachable there;
     the broadest real search is 3+ letters, e.g. 'bac', 21,191 matches)
+
+After deploying 46f271c, curl (all four sources, page_size 25):
+/search/annotations?q=Vibrio   200 in 0.13 s
+/search/annotations?q=bac      200 in 0.20 s
