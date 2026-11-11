@@ -18,12 +18,14 @@ for tp in samples:
     with open(filename, 'r') as f:
         for line in f:
             line = line.strip()
-            if not line or line.startswith('#') or not line[0] == 'G':
+            if not line or line.startswith('#') or line == 'ID\tAvgFold':
                 continue
-                
+
             parts = line.split('\t')
-            if len(parts) < 2:
-                continue
+            # Every other line must be a gene and its depth: skipping one
+            # would lose that scaffold's depth and quietly change its EGC.
+            if not line[0] == 'G' or len(parts) < 2:
+                raise ValueError(f"{filename}: unexpected line {line[:80]!r}")
                 
             gene, cov = parts[0], float(parts[1])
             scaffold = '_'.join(gene.split('_', 2)[:2])
