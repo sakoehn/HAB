@@ -803,28 +803,37 @@ def get_top_annotations_sql(
         max_egc, mean_norm_egc, max_norm_egc, sample_count.
     """
     placeholders = ",".join("?" for _ in sample_names)
-    # MIN() used instead of bare columns: name/parent/depth are constant per
-    # (source, annotation_id), but SQLite only guarantees a bare column's
-    # value is deterministic in GROUP BY when the query has exactly one
-    # MIN()/MAX() -- this one has four (two AVG, two MAX on egc/norm_egc).
+    # The per-sample numbers come from idx_annotation_series_family_values
+    # alone (it holds source, annotation_id, sample, egc and norm_egc), and
+    # name/parent/depth -- the same in every sample -- from
+    # annotation_catalog once per annotation. Taking them from
+    # annotation_series instead meant one table-row read per annotation per
+    # sample, scattered through the file: 36-69 s live for 3 days of
+    # taxonomy, against 11-15 s this way.
     # depth included for the same reason as get_top_annotations_from_catalog_sql
-    # -- this is the date-filtered sibling path.
+    # -- this is the date-filtered sibling path. Ties on mean_egc are
+    # ordered by annotation_id so the same request always lists them the
+    # same way.
     query = f"""
-        SELECT annotation_id,
-               MIN(name) AS name,
-               MIN(parent) AS parent,
-               MIN(depth) AS depth,
-               AVG(egc) AS mean_egc,
-               MAX(egc) AS max_egc,
-               AVG(norm_egc) AS mean_norm_egc,
-               MAX(norm_egc) AS max_norm_egc,
-               COUNT(DISTINCT sample) AS sample_count
-        FROM annotation_series
-        WHERE source = ? AND sample IN ({placeholders}){_ids_filter(annotation_ids)}{_depths_filter(depths)}
-        GROUP BY annotation_id
-        ORDER BY mean_egc DESC
+        SELECT s.annotation_id,
+               c.name, c.parent, c.depth,
+               s.mean_egc, s.max_egc, s.mean_norm_egc, s.max_norm_egc, s.sample_count
+        FROM (
+            SELECT annotation_id,
+                   AVG(egc) AS mean_egc,
+                   MAX(egc) AS max_egc,
+                   AVG(norm_egc) AS mean_norm_egc,
+                   MAX(norm_egc) AS max_norm_egc,
+                   COUNT(DISTINCT sample) AS sample_count
+            FROM annotation_series
+            WHERE source = ? AND sample IN ({placeholders}){_ids_filter(annotation_ids)}
+            GROUP BY annotation_id
+        ) s
+        JOIN annotation_catalog c ON c.source = ? AND c.annotation_id = s.annotation_id
+        WHERE 1 = 1{_depths_filter(depths, column="c.depth")}
+        ORDER BY s.mean_egc DESC, s.annotation_id
     """
-    params = [source] + sample_names + (annotation_ids or []) + (depths or [])
+    params = [source] + sample_names + (annotation_ids or []) + [source] + (depths or [])
     cursor = conn.execute(query, params)
     rows = cursor.fetchall()
     return [
@@ -849,13 +858,13 @@ def _ids_filter(annotation_ids: list[str] | None) -> str:
     return f" AND annotation_id IN ({','.join('?' for _ in annotation_ids)})"
 
 
-def _depths_filter(depths: list[int] | None) -> str:
+def _depths_filter(depths: list[int] | None, column: str = "depth") -> str:
     """SQL restricting a top-annotations query to the given hierarchy
     levels, if any. Every category's EGC contains its members', so without
     this a top list is all categories."""
     if not depths:
         return ""
-    return f" AND depth IN ({','.join('?' for _ in depths)})"
+    return f" AND {column} IN ({','.join('?' for _ in depths)})"
 
 
 def get_top_annotations_from_catalog_sql(

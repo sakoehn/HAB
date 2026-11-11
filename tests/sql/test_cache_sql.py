@@ -1428,3 +1428,17 @@ def test_taxa_at_rank_depth_outside_valid_range_raises(conn, bad_depth):
     above."""
     with pytest.raises(ValueError):
         get_taxa_at_rank_sql(conn, depth=bad_depth)
+
+
+def test_date_filtered_top_reads_only_the_covering_index_on_the_real_db(conn):
+    """With the real db's statistics (what the live planner sees), the
+    date-filtered aggregation must not read annotation_series table rows:
+    name/parent/depth come from annotation_catalog. Reading a row per
+    sample made a 3-day taxonomy range take 36-69 s live."""
+    queries = []
+    conn.set_trace_callback(queries.append)
+    get_top_annotations_sql(conn, "taxonomy", TWO_SAMPLES, depths=[7])
+    conn.set_trace_callback(None)
+    steps = [row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + queries[-1])]
+    series_steps = [s for s in steps if "annotation_series" in s]
+    assert series_steps and all("COVERING INDEX" in s for s in series_steps), steps
