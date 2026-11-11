@@ -138,10 +138,16 @@ export function isoDate(dt: string): string {
     return `${mdy.year}-${m}-${day}`
   }
 
+  // An ISO string already names its own calendar day; converting through
+  // toISOString would move it to UTC's day (a day early east of UTC).
+  if (/^\d{4}-\d{2}-\d{2}/.test(dt)) return dt.slice(0, 10)
+
   const d = new Date(dt)
   if (isNaN(d.getTime())) return dt.slice(0, 10)
 
-  return d.toISOString().slice(0, 10)
+  const m   = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
 }
 
 // ── computeDayBands ────────────────────────────────────────────────────────

@@ -350,6 +350,20 @@ describe('isoDate — used for date range comparison', () => {
     expect(isoDate('2021-05-27T08:00:00')).toBe('2021-05-27')
   })
 
+  // East of UTC, 08:00 on 27 May is still 26 May in UTC; the written day
+  // must win. Node applies a TZ assigned at runtime.
+  it('keeps the written day in a time zone east of UTC', () => {
+    const saved = process.env.TZ
+    process.env.TZ = 'Asia/Tokyo'
+    try {
+      expect(new Date(2021, 4, 27).getTimezoneOffset()).toBe(-540)
+      expect(isoDate('2021-05-27T08:00:00')).toBe('2021-05-27')
+    } finally {
+      if (saved === undefined) delete process.env.TZ
+      else process.env.TZ = saved
+    }
+  })
+
   it('produces YYYY-MM-DD from slash-date format', () => {
     // '05/27/21 08:00' is a valid date string
     const result = isoDate('05/27/21 08:00')
