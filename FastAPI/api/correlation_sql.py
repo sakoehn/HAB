@@ -540,6 +540,14 @@ def core_scoring(vec_a: list[float], vec_b: list[float], method: str):
     pval = _effective_n_pvalue(r, _effective_n(x, y))
     return (r, pval, len(x))
 
+# Version of the scoring math below (and of api/correlation_vector.py,
+# which must give the same answers). Every saved result is stamped with it
+# and results from any other version are ignored, so changing the math
+# never serves stale answers. Bump it whenever the math changes;
+# tests/test_correlation_fingerprint.py fails until you do.
+CORRELATION_METHOD_VERSION = 1
+
+
 def score_pair(ref: list[float], cand: list[float], method):
     """Returns (r, p, lag, n_pairs, at_p_floor). p is the best lag's
     effective-N p-value, Bonferroni-corrected by the number of separate
@@ -551,6 +559,52 @@ def score_pair(ref: list[float], cand: list[float], method):
     if best_r is None or best_lag is None or best_p is None: return None
     bonf_p = _bonferroni_correct(best_p, _lag_tests_m_eff(ref, cand, method))
     return best_r, bonf_p, best_lag, best_n, None
+
+def _unscored_reason(ref: list[float], cand: list[float], lags: list[int] = CORRELATION_LAGS):
+    """Why score_pair returned None for this pair, and the most shared
+    timepoints at any lag: fewer than 10 at every lag is "too_few_points",
+    otherwise the overlap had no variation ("no_variation")."""
+    n = len(ref)
+    max_shared = 0
+    for lag in lags:
+        if lag >= 0:
+            a = ref[lag:]
+            b = cand[:n - lag] if lag > 0 else cand
+        else:
+            a = ref[:n + lag]
+            b = cand[-lag:]
+        shared = sum(1 for x, y in zip(a, b) if x is not None and x > 0 and y is not None and y > 0)
+        max_shared = max(max_shared, shared)
+    return ("too_few_points" if max_shared < 10 else "no_variation"), max_shared
+
+
+def _save_unscored(conn, low, high, metric, method, reason, max_shared) -> None:
+    """Record a pair that could not be scored. Best-effort, like the cache
+    write: a concurrent request saving the same pair is skipped (OR
+    IGNORE), and a lock timeout just leaves it unsaved."""
+    try:
+        conn.execute("""
+            INSERT OR IGNORE INTO correlations_unscored (catalog_id_a, catalog_id_b, metric,
+            method, method_version, reason, max_shared)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (low, high, metric, method, CORRELATION_METHOD_VERSION, reason, max_shared))
+        conn.commit()
+    except sqlite3.OperationalError:
+        conn.rollback()
+
+
+def delete_old_correlation_versions(conn) -> int:
+    """Delete saved results from any CORRELATION_METHOD_VERSION but the
+    current one. They are already ignored; this only frees the space.
+    Returns the number of rows deleted."""
+    deleted = 0
+    for table in ("correlations_cache", "correlations_unscored"):
+        deleted += conn.execute(
+            f"DELETE FROM {table} WHERE method_version != ?", (CORRELATION_METHOD_VERSION,)
+        ).rowcount
+    conn.commit()
+    return deleted
+
 
 # ── Internal: Tier 1 read-through cache ─────────────────────────
 def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method, get_sample_order=None, get_vector=None):
@@ -565,12 +619,20 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
 
     reference_is_high = catalog_id_a > catalog_id_b
 
+    key = (low, high, metric, method, CORRELATION_METHOD_VERSION)
     cursor = conn.execute(f"""
             SELECT *
             FROM correlations_cache
             WHERE catalog_id_a = ? AND catalog_id_b = ? AND metric = ? AND method = ?
-    """, (low, high, metric, method))
+              AND method_version = ?
+    """, key)
     row = cursor.fetchone()
+    if row is None and conn.execute("""
+            SELECT 1 FROM correlations_unscored
+            WHERE catalog_id_a = ? AND catalog_id_b = ? AND metric = ? AND method = ?
+              AND method_version = ?
+    """, key).fetchone():
+        return None
     if row:
 
         lag = row[6]
@@ -593,21 +655,25 @@ def _get_or_compute_correlation(conn, catalog_id_a, catalog_id_b, metric, method
             vec_high = load_vector(conn, row_high[0], row_high[1], sample_order, metric)
         result = score_pair(vec_low, vec_high, method)
 
-        if result is None: return None # idk what is best to return here
+        if result is None:
+            reason, max_shared = _unscored_reason(vec_low, vec_high)
+            _save_unscored(conn, low, high, metric, method, reason, max_shared)
+            return None
         r, bonf_p, lag, n_pairs, at_p_floor = result[0], result[1], result[2], result[3], result[4]
         try:
             conn.execute(f"""
                 INSERT INTO correlations_cache (catalog_id_a, catalog_id_b, r, metric,
-                method, lag_samples, p_value, n_pairs, at_p_floor)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (low, high, r, metric, method, lag, bonf_p, n_pairs, at_p_floor))
+                method, lag_samples, p_value, n_pairs, at_p_floor, method_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (low, high, r, metric, method, lag, bonf_p, n_pairs, at_p_floor, CORRELATION_METHOD_VERSION))
             conn.commit()
         except sqlite3.IntegrityError:
             conn.rollback()
             cursor = conn.execute(f"""
                 SELECT * FROM correlations_cache
                 WHERE catalog_id_a = ? AND catalog_id_b = ? AND metric = ? AND method = ?
-            """, (low, high, metric, method))
+                  AND method_version = ?
+            """, key)
             row = cursor.fetchone()
             if row is None:
                 return None

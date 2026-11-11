@@ -13,49 +13,15 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "FastAPI"))
 
-from api.correlation_sql import _get_or_compute_correlation, score_pair
+from api.correlation_sql import (
+    CORRELATION_METHOD_VERSION,
+    _get_or_compute_correlation,
+    delete_old_correlation_versions,
+    score_pair,
+)
 
-SCHEMA = """
-CREATE TABLE annotation_catalog(
-    id INTEGER PRIMARY KEY,
-    source TEXT NOT NULL,
-    annotation_id TEXT NOT NULL,
-    name TEXT,
-    parent TEXT,
-    depth INTEGER,
-    UNIQUE (source, annotation_id)
-);
-
-CREATE TABLE annotation_series(
-    id INTEGER PRIMARY KEY,
-    source TEXT NOT NULL,
-    sample TEXT NOT NULL,
-    annotation_id TEXT NOT NULL,
-    name TEXT,
-    category TEXT,
-    parent TEXT,
-    depth INTEGER,
-    egc REAL,
-    norm_egc REAL,
-    scaffold_count INTEGER,
-    gene_count INTEGER,
-    UNIQUE(source, sample, annotation_id)
-);
-
-CREATE TABLE correlations_cache(
-    id INTEGER PRIMARY KEY,
-    catalog_id_a INTEGER NOT NULL,
-    catalog_id_b INTEGER NOT NULL,
-    r REAL NOT NULL,
-    metric TEXT NOT NULL,
-    method TEXT NOT NULL,
-    lag_samples INTEGER NOT NULL,
-    p_value REAL NOT NULL,
-    n_pairs INTEGER NOT NULL,
-    at_p_floor INTEGER,
-    UNIQUE (catalog_id_a, catalog_id_b, metric, method)
-);
-"""
+# The real table definitions, so these tests can't drift from the db.
+from scripts.create_sql_schema import SCHEMA
 
 
 @pytest.fixture
@@ -87,14 +53,30 @@ def insert_series(conn, source, annotation_id, values_by_sample, metric="egc"):
 
 
 def insert_cache_row(conn, catalog_id_a, catalog_id_b, r=0.5, metric="egc", method="raw_pearson",
-                      lag_samples=0, p_value=0.01, n_pairs=12, at_p_floor=None):
+                      lag_samples=0, p_value=0.01, n_pairs=12, at_p_floor=None,
+                      method_version=CORRELATION_METHOD_VERSION):
     conn.execute(
         "INSERT INTO correlations_cache "
-        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, at_p_floor) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, at_p_floor),
+        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, at_p_floor, method_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, at_p_floor, method_version),
     )
     conn.commit()
+
+
+def insert_unscored_row(conn, catalog_id_a, catalog_id_b, metric="egc", method="raw_pearson",
+                        reason="too_few_points", max_shared=4, method_version=CORRELATION_METHOD_VERSION):
+    conn.execute(
+        "INSERT INTO correlations_unscored "
+        "(catalog_id_a, catalog_id_b, metric, method, method_version, reason, max_shared) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (catalog_id_a, catalog_id_b, metric, method, method_version, reason, max_shared),
+    )
+    conn.commit()
+
+
+def count(conn, table):
+    return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 
 SAMPLES = [f"s{i:02d}" for i in range(1, 13)]  # 12 samples, well above the 10-point floor
@@ -180,10 +162,13 @@ class TestCacheMiss:
         result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="raw_pearson")
 
         assert result is None
-        rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
-        assert rows == 0  # nothing bad got written either
+        assert count(conn, "correlations_cache") == 0  # nothing bad got written either
+        row = conn.execute(
+            "SELECT catalog_id_a, catalog_id_b, reason, max_shared, method_version FROM correlations_unscored"
+        ).fetchone()
+        assert row == (1, 2, "no_variation", 12, CORRELATION_METHOD_VERSION)
 
-    def test_returns_none_and_inserts_nothing_when_too_few_valid_pairs(self, conn):
+    def test_returns_none_and_records_why_when_too_few_valid_pairs(self, conn):
         insert_catalog(conn, 1, "kegg", "K00001")
         insert_catalog(conn, 2, "kegg", "K00002")
         # Only 4 samples -- below the 10-point floor in core_scoring.
@@ -194,8 +179,110 @@ class TestCacheMiss:
         result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="raw_pearson")
 
         assert result is None
-        rows = conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0]
-        assert rows == 0
+        assert count(conn, "correlations_cache") == 0
+        row = conn.execute("SELECT reason, max_shared FROM correlations_unscored").fetchone()
+        assert row == ("too_few_points", 4)
+
+
+class TestUnscoredPairs:
+    def test_a_recorded_unscored_pair_is_not_recomputed(self, conn):
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        insert_unscored_row(conn, 1, 2)
+
+        def must_not_load(*_args):
+            raise AssertionError("loaded a vector for a pair already recorded as unscored")
+
+        result = _get_or_compute_correlation(conn, 2, 1, metric="egc", method="raw_pearson",
+                                             get_vector=must_not_load)
+
+        assert result is None
+
+    def test_unscored_rows_are_kept_per_method(self, conn):
+        # Recorded as unscored for spearman only: raw_pearson still computes.
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        insert_series(conn, "kegg", "K00001", {s: 10.0 + i for i, s in enumerate(SAMPLES)})
+        insert_series(conn, "kegg", "K00002", {s: 20.0 - i for i, s in enumerate(SAMPLES)})
+        insert_unscored_row(conn, 1, 2, method="spearman")
+
+        result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="raw_pearson")
+
+        assert result is not None
+
+    def test_racing_unscored_write_is_not_an_error(self, conn):
+        # Two requests both finding the pair unscorable: the second write
+        # must be skipped quietly, not raise.
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        insert_series(conn, "kegg", "K00001", {s: 10.0 + i for i, s in enumerate(SAMPLES[:4])})
+        insert_series(conn, "kegg", "K00002", {s: 10.0 + i for i, s in enumerate(SAMPLES[:4])})
+
+        class RacingUnscoredProxy:
+            """Lets another "request" record the pair as unscored between
+            our check and our own write."""
+            def __init__(self, real_conn):
+                self._real = real_conn
+                self._raced = False
+
+            def execute(self, sql, params=()):
+                if not self._raced and "INTO correlations_unscored" in sql:
+                    self._raced = True
+                    insert_unscored_row(self._real, 1, 2)
+                return self._real.execute(sql, params)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        result = _get_or_compute_correlation(RacingUnscoredProxy(conn), 1, 2, metric="egc", method="raw_pearson")
+
+        assert result is None
+        assert count(conn, "correlations_unscored") == 1
+
+
+class TestMethodVersion:
+    """Every saved answer carries the version of the math that produced
+    it; answers from any other version are ignored and recomputed."""
+
+    def test_cache_row_from_another_version_is_ignored_and_recomputed(self, conn):
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        identical_values = {s: 10.0 + i for i, s in enumerate(SAMPLES)}
+        insert_series(conn, "kegg", "K00001", identical_values)
+        insert_series(conn, "kegg", "K00002", identical_values)
+        insert_cache_row(conn, 1, 2, r=0.123, method_version=CORRELATION_METHOD_VERSION - 1)
+
+        result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="raw_pearson")
+
+        assert result["r"] == pytest.approx(1.0)  # recomputed, not the stale 0.123
+        versions = sorted(r[0] for r in conn.execute("SELECT method_version FROM correlations_cache"))
+        assert versions == [CORRELATION_METHOD_VERSION - 1, CORRELATION_METHOD_VERSION]
+
+    def test_unscored_row_from_another_version_is_ignored(self, conn):
+        insert_catalog(conn, 1, "kegg", "K00001")
+        insert_catalog(conn, 2, "kegg", "K00002")
+        identical_values = {s: 10.0 + i for i, s in enumerate(SAMPLES)}
+        insert_series(conn, "kegg", "K00001", identical_values)
+        insert_series(conn, "kegg", "K00002", identical_values)
+        insert_unscored_row(conn, 1, 2, method_version=CORRELATION_METHOD_VERSION - 1)
+
+        result = _get_or_compute_correlation(conn, 1, 2, metric="egc", method="raw_pearson")
+
+        assert result is not None
+
+    def test_delete_old_versions_keeps_only_the_current_one(self, conn):
+        for i in range(1, 5):
+            insert_catalog(conn, i, "kegg", f"K0000{i}")
+        insert_cache_row(conn, 1, 2, method_version=CORRELATION_METHOD_VERSION - 1)
+        insert_cache_row(conn, 1, 3)
+        insert_unscored_row(conn, 1, 4, method_version=CORRELATION_METHOD_VERSION - 1)
+        insert_unscored_row(conn, 2, 3)
+
+        deleted = delete_old_correlation_versions(conn)
+
+        assert deleted == 2
+        assert conn.execute("SELECT catalog_id_b FROM correlations_cache").fetchall() == [(3,)]
+        assert conn.execute("SELECT catalog_id_a, catalog_id_b FROM correlations_unscored").fetchall() == [(2, 3)]
 
 
 class TestLagSignDependsOnCallersReference:
@@ -375,9 +462,10 @@ class TestConcurrentInsertRace:
                     self._raced = True
                     self._real.execute(
                         "INSERT INTO correlations_cache "
-                        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
-                        "VALUES (1, 2, ?, 'egc', 'raw_pearson', ?, ?, ?)",
-                        (winner_row["r"], winner_row["lag_samples"], winner_row["p"], winner_row["n_pairs"]),
+                        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, method_version) "
+                        "VALUES (1, 2, ?, 'egc', 'raw_pearson', ?, ?, ?, ?)",
+                        (winner_row["r"], winner_row["lag_samples"], winner_row["p"], winner_row["n_pairs"],
+                         CORRELATION_METHOD_VERSION),
                     )
                     self._real.commit()
                 return self._real.execute(sql, params)

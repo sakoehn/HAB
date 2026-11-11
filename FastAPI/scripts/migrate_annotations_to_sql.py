@@ -230,20 +230,22 @@ def populate_annotations(conn: sqlite3.Connection, source: str, source_dir: str,
 
 
 def invalidate_correlations_cache(conn: sqlite3.Connection) -> int:
-    """Wipe correlations_cache entirely.
+    """Wipe correlations_cache and correlations_unscored entirely.
 
-    Every row in it was computed against a specific sample alignment --
+    Every row in them was computed against a specific sample alignment --
     lag offsets and pairwise-complete filtering are both indexed by sample
     *position*, so a single new (or corrected) sample shifts alignment for
-    every existing cached pair, not just ones touching that sample. Not
-    selective on purpose.
+    every existing cached pair, not just ones touching that sample. A pair
+    that couldn't be scored before may be scorable after. Not selective on
+    purpose.
 
     Returns:
-        Number of rows deleted, for the caller to log.
+        Number of rows deleted from both tables, for the caller to log.
     """
-    cursor = conn.execute("DELETE FROM correlations_cache")
+    deleted = conn.execute("DELETE FROM correlations_cache").rowcount
+    deleted += conn.execute("DELETE FROM correlations_unscored").rowcount
     conn.commit()
-    return cursor.rowcount
+    return deleted
 
 
 def main():

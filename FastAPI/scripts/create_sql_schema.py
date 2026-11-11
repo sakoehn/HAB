@@ -191,9 +191,28 @@ CREATE TABLE IF NOT EXISTS correlations_cache(
     -- for every row the current methods write. Kept so existing databases
     -- (see scripts/add_at_p_floor_column.py) don't need a schema change.
     at_p_floor  INTEGER,
-    UNIQUE (catalog_id_a, catalog_id_b, metric, method)
+    -- CORRELATION_METHOD_VERSION (api/correlation_sql.py) of the math that
+    -- produced this row; rows from any other version are ignored. Last,
+    -- so the columns before it keep their positions.
+    method_version  INTEGER NOT NULL,
+    UNIQUE (catalog_id_a, catalog_id_b, metric, method, method_version)
 );
 CREATE INDEX IF NOT EXISTS idx_correlations_cache_catalog_id_b ON correlations_cache(catalog_id_b);
+
+-- Pairs that could not be scored, saved so they aren't re-tried on every
+-- request, with why. Same key as correlations_cache.
+CREATE TABLE IF NOT EXISTS correlations_unscored(
+    id     INTEGER PRIMARY KEY,
+    catalog_id_a    INTEGER NOT NULL REFERENCES annotation_catalog(id),
+    catalog_id_b    INTEGER NOT NULL REFERENCES annotation_catalog(id),
+    metric          TEXT NOT NULL,
+    method          TEXT NOT NULL,
+    method_version  INTEGER NOT NULL,
+    reason          TEXT NOT NULL, -- 'too_few_points' | 'no_variation'
+    max_shared      INTEGER NOT NULL, -- most shared timepoints at any lag
+    UNIQUE (catalog_id_a, catalog_id_b, metric, method, method_version)
+);
+CREATE INDEX IF NOT EXISTS idx_correlations_unscored_catalog_id_b ON correlations_unscored(catalog_id_b);
 """
 
 

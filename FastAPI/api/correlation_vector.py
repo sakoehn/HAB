@@ -218,11 +218,11 @@ def score_family(ref, table, method: str, lags=CORRELATION_LAGS) -> dict:
         else:
             a, a_present = ref_values[:n + lag], ref_present[:n + lag]
             b, b_present = table_values[:, -lag:], table_present[:, -lag:]
-        if a.shape[0] < MIN_SHARED_POINTS:
-            continue
         mask = a_present[None, :] & b_present
         k = mask.sum(1)
         max_shared = np.maximum(max_shared, k)
+        if a.shape[0] < MIN_SHARED_POINTS:
+            continue
         enough = k >= MIN_SHARED_POINTS
         x = np.broadcast_to(a[None, :], b.shape)
         y = b

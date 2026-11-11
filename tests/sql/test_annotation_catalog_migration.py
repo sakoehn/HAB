@@ -31,46 +31,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"
 
 from scripts.migrate_annotation_catalog_sql import populate_annotation_catalog  # noqa: E402
 
-SCHEMA = """
-CREATE TABLE annotation_series(
-    id         INTEGER PRIMARY KEY,
-    source     TEXT NOT NULL,
-    sample     TEXT NOT NULL,
-    annotation_id  TEXT NOT NULL,
-    name           TEXT,
-    parent         TEXT,
-    depth          INTEGER,
-    egc            REAL,
-    norm_egc       REAL
-);
-
-CREATE TABLE annotation_catalog(
-    id INTEGER PRIMARY KEY,
-    source  TEXT NOT NULL,
-    annotation_id TEXT NOT NULL,
-    name TEXT,
-    parent TEXT,
-    depth INTEGER,
-    mean_egc REAL,
-    max_egc REAL,
-    mean_norm_egc REAL,
-    max_norm_egc REAL,
-    sample_count INTEGER,
-    UNIQUE (source, annotation_id)
-);
-
-CREATE TABLE correlations_cache(
-    id     INTEGER PRIMARY KEY,
-    catalog_id_a INTEGER NOT NULL,
-    catalog_id_b INTEGER NOT NULL,
-    r            REAL NOT NULL,
-    metric       TEXT NOT NULL,
-    method       TEXT NOT NULL,
-    lag_samples  INTEGER NOT NULL,
-    p_value      REAL NOT NULL,
-    n_pairs      INTEGER NOT NULL
-);
-"""
+# The real table definitions, so this test can't drift from the db.
+from scripts.create_sql_schema import SCHEMA  # noqa: E402
 
 
 # pylint: disable=redefined-outer-name
@@ -96,8 +58,8 @@ def insert_series(conn, source, annotation_id, sample, egc=10.0):
 def insert_cached_pair(conn, catalog_id_a, catalog_id_b):
     conn.execute(
         "INSERT INTO correlations_cache "
-        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
-        "VALUES (?, ?, 0.5, 'egc', 'spearman', 0, 0.01, 50)",
+        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, method_version) "
+        "VALUES (?, ?, 0.5, 'egc', 'spearman', 0, 0.01, 50, 1)",
         (catalog_id_a, catalog_id_b),
     )
     conn.commit()

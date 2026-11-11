@@ -15,7 +15,7 @@ from scipy import stats
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "FastAPI"))
 
 from api.config import CORRELATION_LAGS
-from api.correlation_sql import _lag_tests_m_eff, score_pair
+from api.correlation_sql import _lag_tests_m_eff, _unscored_reason, score_pair
 from api.correlation_vector import rank_rows, score_family, score_family_checked
 
 METHODS = ["raw_pearson", "log_pearson", "spearman"]
@@ -201,6 +201,27 @@ class TestNotScoredReason:
         assert not result["ok"][0]
         assert result["reason"][0] == "no_variation"
         assert result["max_shared"][0] == 128
+
+    @pytest.mark.parametrize("family", [dict(seed=11), dict(seed=12, ref_present=12), dict(seed=13, n=30)])
+    def test_matches_the_single_pair_route(self, family):
+        # /correlation saves the reason through _unscored_reason; both
+        # routes write the same correlations_unscored rows.
+        ref, table = _family(**family)
+        result = score_family_checked(ref, table, "spearman")
+        unscored = np.nonzero(~result["ok"])[0]
+        assert len(unscored) > 5
+        for i in unscored:
+            reason, max_shared = _unscored_reason(_as_list(ref), _as_list(table[i]))
+            assert (result["reason"][i], result["max_shared"][i]) == (reason, max_shared), f"row {i}"
+
+    def test_counts_shared_points_even_when_every_lag_is_too_short(self):
+        # Only 8 samples in all: no lag has 10 points to test, but the
+        # count still says how many timepoints the pair shares.
+        ref = np.arange(1.0, 9.0)
+        cand = np.array([1.0, 2.0, np.nan, 4.0, np.nan, 6.0, np.nan, np.nan])
+        result = score_family_checked(ref, cand[None, :], "spearman")
+        assert (result["reason"][0], result["max_shared"][0]) == ("too_few_points", 4)
+        assert _unscored_reason(_as_list(ref), _as_list(cand)) == ("too_few_points", 4)
 
     def test_scored_rows_have_no_reason(self):
         ref, table = _family(seed=10)

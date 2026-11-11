@@ -8,8 +8,8 @@ was split by the taxonomy tree into two fake nodes holding identical data:
 a strain-level node named by the text before the ";" and a 9th-level node
 under it. This keeps one strain-level node, named by normalize_lineage
 ("Drosophila melanogaster y, cn bw sp"), deletes the 9th-level copy (its
-annotation_series, scaffolds, annotation_catalog and correlations_cache
-rows), and writes taxon_paths' strain/full_path the same way, so the
+annotation_series, scaffolds, annotation_catalog, correlations_cache and
+correlations_unscored rows), and writes taxon_paths' strain/full_path the same way, so the
 strain's id matches taxon_paths and its mappings are found.
 
 Everything runs in one transaction; it stops without changing anything if
@@ -67,8 +67,9 @@ def fix_semicolon_strains(conn: sqlite3.Connection) -> dict:
             conn.execute("DELETE FROM annotation_series WHERE source = 'taxonomy' AND annotation_id = ?", (fake9,))
             fake9_catalog = [r[0] for r in conn.execute(
                 "SELECT id FROM annotation_catalog WHERE source = 'taxonomy' AND annotation_id = ?", (fake9,))]
-            conn.executemany("DELETE FROM correlations_cache WHERE catalog_id_a = ? OR catalog_id_b = ?",
-                             [(i, i) for i in fake9_catalog])
+            for table in ("correlations_cache", "correlations_unscored"):
+                conn.executemany(f"DELETE FROM {table} WHERE catalog_id_a = ? OR catalog_id_b = ?",
+                                 [(i, i) for i in fake9_catalog])
             conn.execute("DELETE FROM annotation_catalog WHERE source = 'taxonomy' AND annotation_id = ?", (fake9,))
             conn.execute(
                 "UPDATE annotation_series SET annotation_id = ?, name = ? WHERE source = 'taxonomy' AND annotation_id = ?",

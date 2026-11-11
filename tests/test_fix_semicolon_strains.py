@@ -44,6 +44,9 @@ def _db():
         CREATE TABLE correlations_cache (id INTEGER PRIMARY KEY, catalog_id_a INTEGER,
             catalog_id_b INTEGER, r REAL, metric TEXT, method TEXT, lag_samples INTEGER,
             p_value REAL, n_pairs INTEGER, at_p_floor INTEGER);
+        CREATE TABLE correlations_unscored (id INTEGER PRIMARY KEY, catalog_id_a INTEGER,
+            catalog_id_b INTEGER, metric TEXT, method TEXT, method_version INTEGER,
+            reason TEXT, max_shared INTEGER);
         CREATE TABLE taxon_paths (id INTEGER PRIMARY KEY, domain TEXT, phylum TEXT, class_ TEXT,
             "order" TEXT, family TEXT, genus TEXT, species TEXT, strain TEXT, full_path TEXT);
     """)
@@ -111,3 +114,17 @@ def test_refuses_when_the_fake_strain_has_another_child():
         fix_semicolon_strains(conn)
     # nothing was changed
     assert conn.execute("SELECT COUNT(*) FROM annotation_catalog WHERE annotation_id = ?", (FAKE9,)).fetchone()[0] == 1
+
+
+def test_drops_saved_correlation_results_for_the_removed_node():
+    conn = _db()
+    ids = dict(conn.execute("SELECT annotation_id, id FROM annotation_catalog"))
+    conn.execute("INSERT INTO correlations_cache (catalog_id_a, catalog_id_b) VALUES (?, ?)", (ids[SPECIES], ids[FAKE9]))
+    conn.execute("INSERT INTO correlations_unscored (catalog_id_a, catalog_id_b) VALUES (?, ?)", (ids[FAKE9], 999))
+    conn.execute("INSERT INTO correlations_unscored (catalog_id_a, catalog_id_b) VALUES (?, ?)", (ids[SPECIES], 999))
+    conn.commit()
+
+    fix_semicolon_strains(conn)
+
+    assert conn.execute("SELECT COUNT(*) FROM correlations_cache").fetchone()[0] == 0
+    assert conn.execute("SELECT catalog_id_a FROM correlations_unscored").fetchall() == [(ids[SPECIES],)]

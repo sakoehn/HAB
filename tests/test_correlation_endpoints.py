@@ -23,48 +23,10 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "FastAPI"))
 
 import api.correlation_sql as correlation_sql
+from api.correlation_sql import CORRELATION_METHOD_VERSION
 
-SCHEMA = """
-CREATE TABLE annotation_catalog(
-    id INTEGER PRIMARY KEY,
-    source TEXT NOT NULL,
-    annotation_id TEXT NOT NULL,
-    name TEXT,
-    parent TEXT,
-    depth INTEGER,
-    UNIQUE (source, annotation_id)
-);
-
-CREATE TABLE annotation_series(
-    id INTEGER PRIMARY KEY,
-    source TEXT NOT NULL,
-    sample TEXT NOT NULL,
-    annotation_id TEXT NOT NULL,
-    name TEXT,
-    category TEXT,
-    parent TEXT,
-    depth INTEGER,
-    egc REAL,
-    norm_egc REAL,
-    scaffold_count INTEGER,
-    gene_count INTEGER,
-    UNIQUE(source, sample, annotation_id)
-);
-
-CREATE TABLE correlations_cache(
-    id INTEGER PRIMARY KEY,
-    catalog_id_a INTEGER NOT NULL,
-    catalog_id_b INTEGER NOT NULL,
-    r REAL NOT NULL,
-    metric TEXT NOT NULL,
-    method TEXT NOT NULL,
-    lag_samples INTEGER NOT NULL,
-    p_value REAL NOT NULL,
-    n_pairs INTEGER NOT NULL,
-    at_p_floor INTEGER,
-    UNIQUE (catalog_id_a, catalog_id_b, metric, method)
-);
-"""
+# The real table definitions, so these tests can't drift from the db.
+from scripts.create_sql_schema import SCHEMA
 
 
 @pytest.fixture
@@ -102,22 +64,22 @@ def client(tmp_path, monkeypatch):
     # Pair (1,2): strong, clearly-significant correlation, lag=3 samples.
     conn.execute(
         "INSERT INTO correlations_cache "
-        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
-        "VALUES (1, 2, 0.9, 'egc', 'raw_pearson', 3, 0.0001, 12)"
+        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, method_version) "
+        f"VALUES (1, 2, 0.9, 'egc', 'raw_pearson', 3, 0.0001, 12, {CORRELATION_METHOD_VERSION})"
     )
     # Pair (1,3): weak, not significant.
     conn.execute(
         "INSERT INTO correlations_cache "
-        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
-        "VALUES (1, 3, 0.1, 'egc', 'raw_pearson', 0, 0.9, 12)"
+        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, method_version) "
+        f"VALUES (1, 3, 0.1, 'egc', 'raw_pearson', 0, 0.9, 12, {CORRELATION_METHOD_VERSION})"
     )
     # Pair (1,5): significant but weaker than (1,2) -- inserted with a
     # HIGHER catalog id than (1,2) so catalog-id order and |r| order
     # disagree, making a sort-order regression actually visible.
     conn.execute(
         "INSERT INTO correlations_cache "
-        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
-        "VALUES (1, 5, 0.5, 'egc', 'raw_pearson', 0, 0.001, 12)"
+        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, method_version) "
+        f"VALUES (1, 5, 0.5, 'egc', 'raw_pearson', 0, 0.001, 12, {CORRELATION_METHOD_VERSION})"
     )
     conn.commit()
     conn.close()
@@ -209,8 +171,8 @@ def computed_client(tmp_path, monkeypatch):
     # (method is part of the UNIQUE constraint).
     conn.execute(
         "INSERT INTO correlations_cache "
-        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
-        "VALUES (1, 2, 0.9, 'egc', 'raw_pearson', 3, 0.0001, 12)"
+        "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, method_version) "
+        f"VALUES (1, 2, 0.9, 'egc', 'raw_pearson', 3, 0.0001, 12, {CORRELATION_METHOD_VERSION})"
     )
     conn.commit()
     conn.close()
@@ -406,8 +368,8 @@ class TestCorrelationFamilyEndpoint:
         conn.execute("INSERT INTO annotation_catalog (id, source, annotation_id) VALUES (6, 'kegg', 'K00006')")
         conn.execute(
             "INSERT INTO correlations_cache "
-            "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs) "
-            "VALUES (1, 6, 0.95, 'egc', 'raw_pearson', 0, 0.6, 10)"
+            "(catalog_id_a, catalog_id_b, r, metric, method, lag_samples, p_value, n_pairs, method_version) "
+            f"VALUES (1, 6, 0.95, 'egc', 'raw_pearson', 0, 0.6, 10, {CORRELATION_METHOD_VERSION})"
         )
         conn.commit()
         conn.close()
@@ -502,15 +464,12 @@ class TestCorrelationFamilyLock:
     # uncached candidates in parallel instead of cooperating on the cache.
 
     def test_concurrent_requests_for_the_same_family_do_not_duplicate_work(self, computed_client, monkeypatch):
-        # Of this fixture's 3 candidates, K00002/K00004 return None (no
-        # series data / constant) and are NEVER cached -- so every
-        # request recomputes them regardless of any lock (2 unavoidable
-        # score_pair calls each, x2 concurrent requests = 4 total). Only
-        # K00006 produces a real score that gets cached -- the lock's
-        # whole point is that this ONE candidate must be genuinely
-        # computed only once across both requests, not once each.
-        # Expected total with the lock working: 4 (unavoidable) + 1
-        # (K00006, deduplicated) = 5. Without the lock: 4 + 2 = 6.
+        # Of this fixture's 3 candidates, K00002/K00004 can't be scored (no
+        # series data / constant) and K00006 can. Each is scored once by
+        # whichever request gets the lock first and saved (K00002/K00004 in
+        # correlations_unscored, K00006 in correlations_cache); the second
+        # request waits, then finds all three saved. Expected total with
+        # the lock working: 3. Without it both requests score all three: 6.
         call_count = {"n": 0}
         real_score_pair = correlation_sql.score_pair
 
@@ -547,12 +506,10 @@ class TestCorrelationFamilyLock:
         for resp in results:
             assert resp.status_code == 200
 
-        assert call_count["n"] == 5, (
-            f"score_pair called {call_count['n']} times, expected exactly 5 "
-            "(4 unavoidable for the 2 never-cached candidates x 2 requests, "
-            "+ 1 for K00006 -- if this is 6, the lock let both requests "
-            "redundantly compute K00006 instead of the second one waiting "
-            "and then getting a cache hit)"
+        assert call_count["n"] == 3, (
+            f"score_pair called {call_count['n']} times, expected exactly 3 "
+            "(once per candidate -- more means the second request re-scored "
+            "candidates the first had already saved)"
         )
 
 

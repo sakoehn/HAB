@@ -21,6 +21,7 @@ Usage
 """
 
 import logging
+import sqlite3
 
 from contextlib import asynccontextmanager
 
@@ -42,6 +43,21 @@ logger = logging.getLogger(__name__)
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
+def _delete_old_correlation_versions() -> None:
+    """Free the space held by correlation results from an older version of
+    the math (they are already ignored). Best-effort: a locked database
+    just leaves them for the next start."""
+    conn = correlation_sql._connect()
+    try:
+        deleted = correlation_sql.delete_old_correlation_versions(conn)
+        if deleted:
+            logger.info("Deleted %d correlation results from older method versions", deleted)
+    except sqlite3.OperationalError as error:
+        logger.warning("Skipped deleting old correlation results: %s", error)
+    finally:
+        conn.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Open the SQLite connection and validate the sample time axis on startup."""
@@ -53,6 +69,7 @@ async def lifespan(app: FastAPI):
     # correlation's lag_samples with no visible symptom.
     assert_sample_order_is_trustworthy(load_sample_order(app.state.sql_conn))
     index_module.assert_date_range_matches_samples(get_all_sample_names_sql(app.state.sql_conn))
+    _delete_old_correlation_versions()
 
     yield
 
