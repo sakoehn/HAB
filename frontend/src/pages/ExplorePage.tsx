@@ -941,7 +941,7 @@ export function AnnotationsByParentPanel({
               <th style={{ width: 32 }}>#</th>
               <th>Parent / Category</th>
               <th>Annotations</th>
-              <th>Category mean EGC</th>
+              <th>Category mean EGC when detected</th>
               <th>Σ listed members</th>
               <th>Relative</th>
             </tr>
@@ -1087,7 +1087,7 @@ export function AnnotationsByParentPanel({
                         <tr>
                           <th>Annotation ID</th>
                           <th>Name</th>
-                          <th>Mean EGC</th>
+                          <th>Mean EGC when detected</th>
                           <th>Samples</th>
                           <th title="Δ EGC (raw): mean of the last quarter of the detected points minus the mean of the first quarter — quarters of the points where it was detected, not of the time span">
                             Trend Δ EGC
@@ -1868,7 +1868,7 @@ export function ExplorePage({
                       <th>Name</th>
                       <th>Rank</th>
                       <th>Group</th>
-                      <ExploreSortTh col="mean_egc"     label="Mean EGC" sortCol={state.sortCol} sortDir={state.sortDir} onSort={toggleSort} />
+                      <ExploreSortTh col="mean_egc"     label="Mean EGC when detected" sortCol={state.sortCol} sortDir={state.sortDir} onSort={toggleSort} />
                       <ExploreSortTh col="sample_count" label="Samples"  sortCol={state.sortCol} sortDir={state.sortDir} onSort={toggleSort} />
                       <th>Scaffolds</th>
                       <th>Hierarchy</th>
@@ -2371,7 +2371,7 @@ export function ExplorePage({
                               </div>
                             )}
                             <div className="lookup-meta-row">
-                              <span className="lookup-meta-label">Mean EGC</span>
+                              <span className="lookup-meta-label">Mean EGC when detected</span>
                               <span className="lookup-meta-value mono">
                                 {r.mean_egc.toExponential(3)}
                               </span>
@@ -2388,7 +2388,7 @@ export function ExplorePage({
                                   className="lookup-meta-label"
                                   title="Average, over the samples where it was detected, of each sample's relative abundance (EGC ÷ that sample's depth-weighted count of all annotated genes) — comparable across samples"
                                 >
-                                  Mean norm EGC
+                                  Mean norm EGC when detected
                                 </span>
                                 <span className="lookup-meta-value mono">
                                   {r.mean_norm_egc.toExponential(3)}

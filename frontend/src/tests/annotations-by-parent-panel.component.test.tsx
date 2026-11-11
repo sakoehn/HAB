@@ -116,7 +116,7 @@ describe('AnnotationsByParentPanel — summed vs group-trend view toggle', () =>
     mockFetch.mockResolvedValue(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
     render(<AnnotationsByParentPanel source="cog" />)
     await waitFor(() => expect(screen.getByText('Custom Group')).toBeInTheDocument())
-    expect(screen.queryByText('Category mean EGC')).not.toBeInTheDocument()
+    expect(screen.queryByText('Category mean EGC when detected')).not.toBeInTheDocument()
   })
 
   it('switching to "Summed by parent" shows the aggregate table instead', async () => {
@@ -129,7 +129,7 @@ describe('AnnotationsByParentPanel — summed vs group-trend view toggle', () =>
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /Summed by parent/i }))
 
-    expect(screen.getByText('Category mean EGC')).toBeInTheDocument()
+    expect(screen.getByText('Category mean EGC when detected')).toBeInTheDocument()
     // Aggregate view has no per-group expand toggle.
     expect(screen.queryByRole('button', { name: /Custom Group\s*\d+ annotations/i })).not.toBeInTheDocument()
   })
@@ -161,7 +161,7 @@ describe('AnnotationsByParentPanel — expanding a group to load its series', ()
     // COG0001 legitimately appears twice once the chart renders too (its
     // own id + name both being "COG0001") -- assert presence, not uniqueness.
     await waitFor(() => expect(screen.getAllByText('COG0001').length).toBeGreaterThan(0))
-    expect(screen.getByText('Mean EGC')).toBeInTheDocument()
+    expect(screen.getByText('Mean EGC when detected')).toBeInTheDocument()
   })
 
   it('shows a partial-failure warning with a working retry when some member fetches fail', async () => {
@@ -262,7 +262,7 @@ describe('AnnotationsByParentPanel — expanding a group to load its series', ()
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /SmallGroup/ }))
 
-    await waitFor(() => expect(screen.getByText('Mean EGC')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Mean EGC when detected')).toBeInTheDocument())
     expect(screen.queryByTestId('parent-group-trend-truncated-warning')).not.toBeInTheDocument()
   })
 
@@ -633,7 +633,7 @@ describe('AnnotationsByParentPanel — group size is the category\'s own total',
 
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /Summed by parent/i }))
-    expect(screen.getByText('Category mean EGC')).toBeInTheDocument()
+    expect(screen.getByText('Category mean EGC when detected')).toBeInTheDocument()
     expect(screen.getByText('Σ listed members')).toBeInTheDocument()
     const firstRow = screen.getAllByRole('row')[1]
     expect(within(firstRow).getByText('1.00e+2')).toBeInTheDocument()

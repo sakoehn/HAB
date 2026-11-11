@@ -342,7 +342,8 @@ describe('ExplorePage — Annotation Lookup says what Mean norm EGC is', () => {
     await user.type(screen.getByPlaceholderText(/ID \(K02014\)/i), 'K02014')
     await user.click(screen.getByRole('button', { name: /^Search$/i }))
 
-    const label = await screen.findByText('Mean norm EGC')
+    const label = await screen.findByText('Mean norm EGC when detected')
+    expect(screen.getByText('Mean EGC when detected')).toBeInTheDocument()
     expect(label.title).toMatch(/average/i)
     expect(label.title).toMatch(/where it was detected/)
     expect(label.title).not.toMatch(/total sample depth/)
