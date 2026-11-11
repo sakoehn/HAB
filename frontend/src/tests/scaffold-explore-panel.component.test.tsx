@@ -690,6 +690,8 @@ describe('ScaffoldExplorePanel — redundant terms', () => {
     await waitFor(() => {
       expect(document.querySelectorAll('.scaffold-summary-card-row').length).toBe(2)
     })
+    // Opens split by term; switch to the summed "All terms" line.
+    await userEvent.click(screen.getByText('Split by term'))
 
     // COG0055's own value is already inside H's -- summing both would
     // double-count it, so it must be left out of the aggregated line.
@@ -726,15 +728,35 @@ describe('ScaffoldExplorePanel — redundant terms', () => {
     await waitFor(() => {
       expect(document.querySelectorAll('.scaffold-summary-card-row').length).toBe(2)
     })
+    await userEvent.click(screen.getByText('Split by term'))  // to "All terms"
     await waitFor(() => {
       expect(screen.getByText(/already counted inside another tracked term/i)).toBeInTheDocument()
     })
 
-    await userEvent.click(screen.getByText('Split by term'))
+    await userEvent.click(screen.getByText('Split by term'))  // back to split
 
     expect(screen.queryByText(/already counted inside another tracked term/i)).not.toBeInTheDocument()
     expect(screen.getAllByText('H').length).toBeGreaterThan(0)
     expect(screen.getAllByText('COG0055').length).toBeGreaterThan(0)
+  })
+})
+
+// Each term's own line is exact; the summed line counts a scaffold that
+// carries two tracked terms twice, so the chart opens split by term.
+describe('ScaffoldExplorePanel — opens split by term', () => {
+  it('shows one line per term, not "All terms", until asked', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/scaffolds/summary'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => SUMMARY_ROWS })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+    render(<ScaffoldExplorePanel initialTerms={[{ annotationId: 'H', source: 'cog' }, { annotationId: 'E', source: 'cog' }]} />)
+
+    await waitFor(() => expect(screen.getByText('Split by term')).toHaveClass('on'))
+    expect(screen.queryByText(/^All terms/)).not.toBeInTheDocument()
+    const legend = document.querySelector('.chart-legend')!
+    expect(legend).toHaveTextContent('H')
+    expect(legend).toHaveTextContent('E')
   })
 })
 
@@ -754,6 +776,8 @@ describe('ScaffoldExplorePanel — aggregated sums disclose per-term counting', 
     })
     render(<ScaffoldExplorePanel initialTerms={[{ annotationId: 'H', source: 'cog' }, { annotationId: 'E', source: 'cog' }]} />)
 
+    await waitFor(() => expect(screen.getByText('Split by term')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('Split by term'))
     await waitFor(() => expect(screen.getByText('All terms (2)')).toBeInTheDocument())
     expect(screen.getByTestId('aggregated-overlap-note')).toHaveTextContent(/counted once for each/i)
   })

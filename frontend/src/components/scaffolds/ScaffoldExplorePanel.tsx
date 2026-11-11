@@ -122,7 +122,9 @@ export function ScaffoldExplorePanel({
   const [dateTo, setDateTo]             = useState('')
   const [chartMetric, setChartMetric]   = useState<'scaffold_count' | 'gene_count'>('scaffold_count')
   const [chartType, setChartType]       = useState<'line' | 'bar'>('line')
-  const [splitByTerm, setSplitByTerm]   = useState(false)
+  // Opens one line per term: each is exact, while the summed "All terms"
+  // line counts a scaffold carrying two tracked terms once per term.
+  const [splitByTerm, setSplitByTerm]   = useState(true)
 
   // Load terms passed in from navigation (e.g. "→ Explore" from Analyze).
   // Depends on a stable key so re-navigation with new terms is detected
