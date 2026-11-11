@@ -904,7 +904,8 @@ def get_top_annotations_from_catalog_sql(
         for row in rows
     ]
 
-def get_search_annotations(conn: sqlite3.Connection, sources: list[str], q: str | None, annotation_id: str | None, name_exact: str | None) -> list[dict]:
+def get_search_annotations(conn: sqlite3.Connection, sources: list[str], q: str | None, annotation_id: str | None,
+                           name_exact: str | None, with_series_details: bool = True) -> list[dict]:
     """Return annotation_catalog rows matching the given filters.
 
     Args:
@@ -913,10 +914,14 @@ def get_search_annotations(conn: sqlite3.Connection, sources: list[str], q: str 
         q: Substring to match against annotation_id or name.
         annotation_id: Exact annotation_id match. Takes precedence over q.
         name_exact: If given, additionally requires an exact name match.
+        with_series_details: Also fill category and scaffold_count (see
+            add_series_details). The search route passes False and fills
+            them for the page it returns only.
 
     Returns:
         List of dicts keyed source, annotation_id, name, parent, depth,
-        mean_egc, max_egc, mean_norm_egc, max_norm_egc, sample_count.
+        mean_egc, max_egc, mean_norm_egc, max_norm_egc, sample_count,
+        category, scaffold_count.
     """
     clauses = []
     params  = []
@@ -955,34 +960,16 @@ def get_search_annotations(conn: sqlite3.Connection, sources: list[str], q: str 
 
     where_sql = " AND ".join(clauses)
 
-    # category/scaffold_count aren't columns on annotation_catalog (a
-    # pre-aggregated table) -- they live per-sample on annotation_series.
-    # category is identical across every sample for a given (source,
-    # annotation_id) (confirmed live: 0 exceptions across the whole table),
-    # so an arbitrary single row is exact, not approximate. scaffold_count
-    # genuinely varies sample-to-sample, so this picks whichever sample the
-    # index happens to return first (unordered LIMIT 1) -- "a sample this
-    # annotation appears in", not a specific one (e.g. not "the earliest").
-    # Deliberately unordered: an `ORDER BY sample` inside the correlated
-    # subquery forces a per-group sort with no supporting index and was
-    # measured at minutes for the full taxonomy catalog vs ~8s unordered,
-    # or ~0.7s for a realistic filtered query (idx_annotation_series_source_annotation_id
-    # covers (source, annotation_id) but not sample ordering within that).
     query = f"""
     SELECT source, annotation_id,
            name, parent, mean_egc, max_egc,
            mean_norm_egc, max_norm_egc,
-           sample_count, depth,
-           (SELECT category FROM annotation_series s
-              WHERE s.source = ac.source AND s.annotation_id = ac.annotation_id LIMIT 1),
-           (SELECT scaffold_count FROM annotation_series s
-              WHERE s.source = ac.source AND s.annotation_id = ac.annotation_id LIMIT 1)
+           sample_count, depth
         FROM annotation_catalog ac
         WHERE {where_sql}
     """
     cursor = conn.execute(query, params)
-    rows = cursor.fetchall()
-    return [
+    rows = [
         {
             "source": row[0],
             "annotation_id": row[1],
@@ -994,11 +981,43 @@ def get_search_annotations(conn: sqlite3.Connection, sources: list[str], q: str 
             "max_norm_egc": row[7],
             "sample_count": row[8],
             "depth": row[9],
-            "category": row[10],
-            "scaffold_count": row[11],
+            "category": None,
+            "scaffold_count": None,
         }
-        for row in rows
+        for row in cursor.fetchall()
     ]
+    if with_series_details:
+        add_series_details(conn, rows)
+    return rows
+
+
+def add_series_details(conn: sqlite3.Connection, rows: list[dict]) -> list[dict]:
+    """Fill each search row's category and scaffold_count, in place.
+
+    Neither is a column of annotation_catalog; both live per sample on
+    annotation_series, so each row costs one annotation_series read. Done
+    only for the rows a response returns: for every match it was most of a
+    search's time on the live server (1.07 s for "Vibrio"'s 2,199 matches,
+    against 0.04 s without).
+
+    category is identical across every sample for a given (source,
+    annotation_id) (confirmed live: 0 exceptions across the whole table),
+    so an arbitrary single row is exact, not approximate. scaffold_count
+    genuinely varies sample-to-sample, so this takes whichever sample the
+    index happens to return first (unordered LIMIT 1) -- "a sample this
+    annotation appears in", not a specific one (e.g. not "the earliest").
+    Deliberately unordered: an ORDER BY sample here forces a per-annotation
+    sort with no supporting index and was measured at minutes for the full
+    taxonomy catalog. Both values come from that same one row.
+    """
+    for row in rows:
+        found = conn.execute(
+            "SELECT category, scaffold_count FROM annotation_series "
+            "WHERE source = ? AND annotation_id = ? LIMIT 1",
+            (row["source"], row["annotation_id"]),
+        ).fetchone()
+        row["category"], row["scaffold_count"] = found if found else (None, None)
+    return rows
 
 def _sort_group_concat(value: str | None) -> str | None:
     """Sort a comma-separated GROUP_CONCAT(DISTINCT ...) string's values.

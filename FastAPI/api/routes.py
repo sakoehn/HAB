@@ -86,6 +86,7 @@ from .cache_sql import (
     mapping_rows_per_sample_sql,
     samples_within_row_budget,
     get_search_annotations,
+    add_series_details,
     get_top_annotations_from_catalog_sql,
     get_taxa_at_rank_sql,
     get_path_review_sql,
@@ -692,21 +693,26 @@ def search_annotations(
     source_values = [s.value for s in sources]
     db = connect_to_sql()
     try:
-        results = get_search_annotations(db, source_values, search_q, search_id, name_exact)
+        results = get_search_annotations(db, source_values, search_q, search_id, name_exact,
+                                         with_series_details=False)
+        for row in results:
+            row["match"] = _search_match(row, search_q) if search_q is not None else "exact"
+        # Closest matches first, most abundant first within each group, before
+        # paginating, so a short page (Lookup shows 25) always holds them.
+        results.sort(key=lambda r: (_MATCH_TIERS[r["match"]], -(r.get("mean_egc") or 0)))
+        page_of_results = paginate(results, page, page_size)
+        # category/scaffold_count need an annotation_series read per row:
+        # only for the rows actually returned.
+        add_series_details(db, page_of_results["data"])
     finally:
         close_sql_connection(db)
-    for row in results:
-        row["match"] = _search_match(row, search_q) if search_q is not None else "exact"
-    # Closest matches first, most abundant first within each group, before
-    # paginating, so a short page (Lookup shows 25) always holds them.
-    results.sort(key=lambda r: (_MATCH_TIERS[r["match"]], -(r.get("mean_egc") or 0)))
     return {
         "query":         q,
         "annotation_id": annotation_id,
         "name_exact":    name_exact,
         "sources":       source_values,
         "total":         len(results),
-        **paginate(results, page, page_size),
+        **page_of_results,
     }
 
 

@@ -342,3 +342,43 @@ def test_exact_taxon_name_comes_before_longer_names(client):
     first = body["data"][0]
     assert first["name"] == "Synechococcus" and first["match"] == "exact"
     assert body["data"][1]["match"] != "exact" or body["data"][1]["name"] == "Synechococcus"
+
+
+def test_every_row_on_a_later_page_has_its_category_and_scaffold_count(client):
+    """category/scaffold_count are looked up after the page is cut out, so
+    check a page other than the first: each row's values must be the
+    annotation's own, as stored in annotation_series."""
+    import sqlite3
+    response = client.get("/search/annotations", params={
+        "q": "synthase", "sources": ["cog", "kegg", "enzyme"], "page": 3, "page_size": 40})
+    rows = response.json()["data"]
+    assert len(rows) == 40
+    conn = sqlite3.connect(f"file:{SQLITE_DB_PATH}?mode=ro", uri=True)
+    try:
+        for row in rows:
+            stored = conn.execute(
+                "SELECT DISTINCT category, scaffold_count FROM annotation_series WHERE source = ? AND annotation_id = ?",
+                (row["source"], row["annotation_id"])).fetchall()
+            assert row["category"] in {c for c, _ in stored}, row["annotation_id"]
+            assert row["scaffold_count"] in {s for _, s in stored}, row["annotation_id"]
+    finally:
+        conn.close()
+
+
+def test_category_and_scaffold_count_are_looked_up_only_for_the_page(client, monkeypatch):
+    """Looking them up for every match read thousands of annotation_series
+    rows nobody was shown: 1.07 s live for "Vibrio" (2,199 matches), against
+    0.04 s without."""
+    import api.routes as routes
+    looked_up = []
+    real = routes.add_series_details
+
+    def spy(conn, rows):
+        looked_up.append(len(rows))
+        return real(conn, rows)
+
+    monkeypatch.setattr(routes, "add_series_details", spy)
+    body = client.get("/search/annotations", params={
+        "q": "synthase", "sources": ["cog", "kegg", "enzyme"], "page": 2, "page_size": 25}).json()
+    assert body["total"] > 25
+    assert looked_up == [25]
