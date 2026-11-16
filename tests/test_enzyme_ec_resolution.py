@@ -1,19 +1,19 @@
 """
 test_enzyme_ec_resolution.py
 ===============================
-A partial/wildcard EC id (e.g. "3.6.1.-") is never a key in `brite`
-(EGC_ENZYME_TREE.ipynb's flat dict of real ko01000.keg nodes), but its
-ancestors usually are. resolve_partial_ec() (Notebooks/enzyme_ec_utils.py,
+A partial/wildcard EC id (e.g. "3.6.1.-") is never a key in the
+enzyme tree's flat node dict (EGC_ENZYME_TREE.ipynb, built from ExPASy
+ENZYME), but its ancestors usually are. resolve_partial_ec() (Notebooks/enzyme_ec_utils.py,
 imported by the notebook the same way it imports
 weighted_totals.py/All_Coverages.py) progressively strips trailing
-components until finding one that IS in brite, so the gene registers
+components until finding one that IS a node, so the gene registers
 under its real ancestors instead of being dropped.
 
 Imports the REAL function, not a hand-copied mirror, so the walk-up
 algorithm is tested on the actual implementation the notebook runs. On
 the real dataset the notebook resolves 135 distinct partial/wildcard EC
-ids and drops 20; K03924 moxR [EC:3.6.3.-] needs TWO levels of stripping
-since "3.6.3" itself isn't a ko01000.keg node -- only "3.6" is.
+ids; a missing middle level needs more than one strip (see the 3.6.3
+gap in the dict below).
 
 Run:
     pytest tests/test_enzyme_ec_resolution.py -v
@@ -44,9 +44,8 @@ BRITE = {
     "3.6.1":   {"depth": 3},
     "3.6.1.23": {"depth": 4},
     "3.6.4":   {"depth": 3},
-    # "3.6.3" deliberately absent -- real gap in ko01000.keg (e.g. an
-    # obsoleted/reclassified sub-subclass), confirmed directly against the
-    # real file for 3 of the 135 real partial ids seen in the dataset.
+    # "3.6.3" deliberately absent -- a retired sub-subclass, so a partial
+    # id under it has to be stripped twice.
 }
 
 
@@ -70,8 +69,7 @@ def test_class_level_partial_resolves_to_the_class_itself():
 
 
 def test_needs_two_strips_when_the_immediate_parent_is_itself_missing_from_brite():
-    # K03924 moxR [EC:3.6.3.-]: "3.6.3" is not
-    # a real ko01000.keg node (confirmed directly against the real file),
+    # "3.6.3" is not a node in this dict,
     # so one strip ("3.6.3") still doesn't resolve -- must fall through to
     # two strips ("3.6"), not stop after the first attempt.
     assert resolve_partial_ec("3.6.3.-", BRITE) == "3.6"
@@ -143,7 +141,7 @@ def test_retired_partial_subclass_is_credited_to_where_its_members_went():
 
 
 def test_new_number_missing_from_brite_walks_up_from_the_new_number():
-    # If a download of ko01000.keg ever lacks the new leaf, the gene still
+    # If the tree ever lacks the new leaf, the gene still
     # lands in the new branch (7.1.1), never back under the old one (1.6.1).
     brite = {k: v for k, v in BRITE_WITH_NEW_HOMES.items() if k != "7.1.1.1"}
     assert resolve_or_drop_ec("1.6.1.2", brite) == "7.1.1"
@@ -154,20 +152,8 @@ def test_unknown_missing_id_still_walks_up_from_its_own_number():
     assert resolve_or_drop_ec("3.6.4.99", BRITE_WITH_NEW_HOMES) == "3.6.4"
 
 
-def test_every_new_number_is_a_real_node_in_the_real_ko01000():
-    """Guards the table against a typo or a future ko01000.keg download that
-    drops one of the targets: each one must be a real BRITE node."""
-    import re
-    import pytest
-    from enzyme_ec_utils import TRANSFERRED_EC
-
-    keg = DATA_ROOT / "DataStructures" / "Enzyme" / "ko01000.keg"
-    if not keg.exists():
-        pytest.skip(f"{keg} not found")
-    real_ids = set()
-    for line in keg.read_text(encoding="utf-8").splitlines():
-        m = re.match(r"^[A-D]\s*(?:<[^>]+>)?\s*(\d+(?:\.\d+){0,3})\.?(?:\s|<|$)", line.strip())
-        if m:
-            real_ids.add(m.group(1))
-    missing = {old: new for old, new in TRANSFERRED_EC.items() if new not in real_ids}
-    assert missing == {}
+def test_renumbered_id_is_moved_even_when_the_old_number_is_still_a_node():
+    # ExPASy still lists DNA helicase 3.6.4.12 as current, but IUBMB moved
+    # it to 5.6.2.3 / 5.6.2.4 in 2021 -- the table wins.
+    nodes = {**BRITE_WITH_NEW_HOMES, "3.6.4.12": {"depth": 4}}
+    assert resolve_or_drop_ec("3.6.4.12", nodes) == "5.6.2"

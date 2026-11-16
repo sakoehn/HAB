@@ -408,10 +408,12 @@ class TestKEGGNames:
         assert not bad, f"ko_names.json disagrees with gene_product.txt: {bad}"
 
 
-class TestKEGGNoBriteFile:
-    """The KEGG notebooks no longer read KEGG's BRITE hierarchy file."""
+class TestNoKEGGBriteFile:
+    """The KEGG and Enzyme notebooks no longer read KEGG's BRITE files."""
 
-    @pytest.mark.parametrize("nb", KEGG_NOTEBOOKS, ids=[p.name for p in KEGG_NOTEBOOKS])
+    NOTEBOOKS = [*KEGG_NOTEBOOKS, DATA_ROOT / "Notebooks" / "EGC_ENZYME_TREE.ipynb"]
+
+    @pytest.mark.parametrize("nb", NOTEBOOKS, ids=[p.name for p in NOTEBOOKS])
     def test_notebook_does_not_open_a_keg_file(self, nb):
         cells = json.loads(nb.read_text(encoding="utf-8"))["cells"]
         code = "\n".join("".join(c["source"]) for c in cells if c["cell_type"] == "code")
@@ -681,6 +683,58 @@ class TestEnzymeFormat:
 
     def test_all_128_files_loaded(self, enzyme_by_sample):
         assert len(enzyme_by_sample) >= EXPECTED_SAMPLES
+
+
+class TestEnzymeNamesFromExPASy:
+    """EC names come from ExPASy ENZYME; the tree's shape from the EC
+    numbers themselves."""
+
+    SPOT_SAMPLE = "3300060590"
+
+    @pytest.fixture(scope="class")
+    def ec_nodes(self):
+        enzclass = ENZYME_JSON_DIR / "enzclass.txt"
+        enzyme_dat = ENZYME_JSON_DIR / "enzyme.dat"
+        if not (enzclass.exists() and enzyme_dat.exists()):
+            pytest.skip("ExPASy files missing")
+        sys.path.insert(0, str(DATA_ROOT / "FastAPI"))
+        from api.expasy_enzyme import (  # pylint: disable=import-error
+            build_ec_nodes, parse_enzclass, parse_enzyme_dat,
+        )
+        return build_ec_nodes(parse_enzclass(enzclass.read_text(encoding="latin-1")),
+                              parse_enzyme_dat(enzyme_dat.read_text(encoding="latin-1")))
+
+    def test_known_names(self, enzyme_by_sample):
+        tree = enzyme_by_sample.get(self.SPOT_SAMPLE)
+        if tree is None:
+            pytest.skip()
+        assert tree["1.1.1.1"]["name"] == "alcohol dehydrogenase"
+        # ExPASy's wording -- KEGG's file wrote "NAD+ or NADP+".
+        assert tree["1.1.1"]["name"] == "With NAD(+) or NADP(+) as acceptor"
+        assert tree["1.1.1.1"]["parent_name"] == "With NAD(+) or NADP(+) as acceptor"
+        assert tree["1"]["category"] == "Oxidoreductases"
+
+    def test_every_node_matches_expasy(self, enzyme_by_sample, ec_nodes):
+        tree = enzyme_by_sample.get(self.SPOT_SAMPLE)
+        if tree is None:
+            pytest.skip()
+        fields = ("name", "depth", "category", "parent_id", "parent_name")
+        bad = [(ec, {f: e[f] for f in fields}) for ec, e in tree.items()
+               if ec not in ec_nodes or any(e[f] != ec_nodes[ec][f] for f in fields)]
+        assert not bad, f"nodes that don't match ExPASy: {bad[:5]}"
+
+    def test_helicases_are_credited_to_their_current_class(self, enzyme_by_sample):
+        """ExPASy still lists DNA/RNA helicase as 3.6.4.12 / 3.6.4.13; IUBMB
+        moved them to 5.6.2, and the renumbering table follows IUBMB."""
+        hits = [s for s, tree in enzyme_by_sample.items() if "3.6.4.12" in tree or "3.6.4.13" in tree]
+        assert hits == []
+        assert all("5.6.2" in tree for tree in enzyme_by_sample.values())
+
+    def test_reinstated_number_keeps_its_own_node(self, enzyme_by_sample):
+        """1.1.3.2 (L-lactate oxidase) is current in the IUBMB list though
+        ExPASy still lists it as transferred."""
+        named = {tree["1.1.3.2"]["name"] for tree in enzyme_by_sample.values() if "1.1.3.2" in tree}
+        assert named == {"L-lactate oxidase"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

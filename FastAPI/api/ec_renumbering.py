@@ -1,8 +1,9 @@
 """
 ec_renumbering.py
 ==================
-How a gene's EC label maps onto a real node of the enzyme tree (KEGG's
-ko01000.keg). Shared by the data pipeline (EGC_ENZYME_TREE.ipynb, via
+How a gene's EC label maps onto a real node of the enzyme tree (built from
+the EC numbers themselves, named from ExPASy ENZYME -- see expasy_enzyme.py).
+Shared by the data pipeline (EGC_ENZYME_TREE.ipynb, via
 Notebooks/enzyme_ec_utils.py) and the API's mappings search
 (cache_sql.get_mappings_sql), so a node's chart totals and its gene list are
 built from the same rule.
@@ -10,10 +11,13 @@ built from the same rule.
 
 
 # EC numbers that were renumbered ("transferred") after JGI annotated these
-# samples, so they're absent from the current ko01000.keg. Maps each old id
-# to where its genes are credited in the current tree. Source: KEGG ENZYME
-# entries ("Obsolete Enzyme -- Transferred to ..."), checked 2026-10-20 for
-# every fully-specified id in the dataset that's missing from ko01000.keg.
+# samples. Maps each old id to where its genes are credited in the current
+# tree. Source: the IUBMB enzyme list (enzyme-database.org) and KEGG
+# ENZYME, which agree on every entry here. ExPASy ENZYME agrees too where it
+# has caught up; as of its 04-Nov-2026 release it still lists 1.2.99.7,
+# 3.6.4.10, 3.6.4.12, 3.6.4.13 and sub-subclass 3.6.3 as current, so this
+# table is applied before the tree is consulted. Checked 2026-11-16 against
+# every fully-specified id in the dataset.
 #
 # When an old id was split into several new ones, it maps to their shared
 # parent only -- the old label can't say which new enzyme a gene is, and
@@ -44,64 +48,69 @@ TRANSFERRED_EC = {
     # 3.6.3.49 -> 5.6.1.6, is accepted as a known small misattribution.
     "3.6.3.-":   "7",
 }
-# Not renumbered, just unknown to KEGG: 7.2.4.8 has no ENZYME entry at all,
-# so it keeps the ordinary walk-up to 7.2.4.
+# Not renumbered, just unknown: 7.2.4.8 is in neither the IUBMB list nor
+# ExPASy, so it keeps the ordinary walk-up to 7.2.4.
 
 
-def resolve_partial_ec(ec_id: str, brite: dict) -> str | None:
-    """For an EC id not directly in `brite` (KEGG's ko01000.keg flat node
-    dict), find the deepest real ancestor by progressively stripping
-    trailing dot-separated components.
+# Current EC numbers (per the IUBMB list, checked 2026-11-16) that ExPASy
+# ENZYME's 04-Nov-2026 release lacks or still lists as retired, with their
+# IUBMB accepted names. The enzyme tree adds these as nodes.
+CURRENT_EC_NOT_IN_EXPASY = {
+    # IUBMB's new number for 3.6.4.10 (2025); ExPASy has no 5.6.1.10 yet.
+    "5.6.1.10": "non-chaperonin molecular chaperone ATPase",
+    # Transferred to 1.13.12.4 in 1972 and reinstated in 2018; ExPASy still
+    # lists it as transferred.
+    "1.1.3.2":  "L-lactate oxidase",
+}
 
-    A partial/wildcard EC (e.g. "3.6.1.-") is never a key in `brite`,
-    which only contains fully-named nodes parsed from ko01000.keg's
-    A/B/C/D lines -- but its ancestors often are. Checked directly
-    against all 135 real partial ids seen across the full dataset: 132
-    resolve one level up, but 3 (e.g. "3.6.3.-", K03924 moxR's EC) need
-    two levels, because even the immediate
-    parent isn't its own separate BRITE entry -- so this always walks up
-    as far as needed, not just one fixed step.
+
+def resolve_partial_ec(ec_id: str, nodes) -> str | None:
+    """For an EC id not directly in `nodes`, find the deepest real ancestor
+    by progressively stripping trailing dot-separated components.
+
+    A partial/wildcard EC (e.g. "3.6.1.-") is never a node, but its
+    ancestors usually are. A missing middle level means walking up more
+    than one step, so this walks as far as needed.
 
     Args:
         ec_id: A bare EC id (no "EC:" prefix), possibly partial.
-        brite: Flat dict of real ko01000.keg nodes, keyed by id string.
+        nodes: The enzyme tree's real node ids (a dict or set).
 
     Returns:
-        The deepest ancestor id that IS a real key in `brite`, or None if
-        nothing resolves at any level.
+        The deepest ancestor id that IS in `nodes`, or None if nothing
+        resolves at any level.
     """
     parts = ec_id.split('.')
     for n in range(len(parts), 0, -1):
         candidate = '.'.join(parts[:n])
-        if candidate in brite:
+        if candidate in nodes:
             return candidate
     return None
 
 
-def resolve_or_drop_ec(ec_id: str, brite: dict) -> str | None:
-    """Decide which real `brite` node a gene's EC id should register under.
+def resolve_or_drop_ec(ec_id: str, nodes) -> str | None:
+    """Decide which real node a gene's EC id should register under.
 
-    Handles four cases in one place: an id that's already a real node; a
-    renumbered id (see TRANSFERRED_EC), credited to its new place in the
-    tree; a partial/wildcard EC containing a literal "-" (e.g. "1.1.1.-");
-    and a FULLY-specified EC that's simply absent from this ko01000.keg
-    download (e.g. "3.6.4.99"). The last two walk up to their nearest real
-    ancestor -- an EC number's position in the hierarchy is fixed by its
-    own digits -- instead of being dropped outright. A renumbered id whose
-    new number is itself missing from `brite` walks up from the NEW number,
-    so it never falls back under its old branch.
+    Handles four cases in one place: a renumbered id (see TRANSFERRED_EC),
+    credited to its new place in the tree even if the old number is still
+    a node; an id that's already a real node; a partial/wildcard EC
+    containing a literal "-" (e.g. "1.1.1.-"); and a FULLY-specified EC
+    that's simply absent from the tree (e.g. "7.2.4.8"). The last two walk
+    up to their nearest real ancestor -- an EC number's position in the
+    hierarchy is fixed by its own digits -- instead of being dropped
+    outright. A renumbered id whose new number is itself missing walks up
+    from the NEW number, so it never falls back under its old branch.
 
     Args:
         ec_id: A bare EC id (no "EC:" prefix), fully-specified or partial.
-        brite: Flat dict of real ko01000.keg nodes, keyed by id string.
+        nodes: The enzyme tree's real node ids (a dict or set).
 
     Returns:
-        `ec_id` itself if already a real `brite` key, its deepest real
-        ancestor if not, or None if nothing resolves at any level (the id
-        should be dropped).
+        The node id the gene registers under, or None if nothing resolves
+        at any level (the id should be dropped).
     """
-    if ec_id in brite:
-        return ec_id
     if ec_id in TRANSFERRED_EC:
-        return resolve_partial_ec(TRANSFERRED_EC[ec_id], brite)
-    return resolve_partial_ec(ec_id, brite)
+        return resolve_partial_ec(TRANSFERRED_EC[ec_id], nodes)
+    if ec_id in nodes:
+        return ec_id
+    return resolve_partial_ec(ec_id, nodes)
