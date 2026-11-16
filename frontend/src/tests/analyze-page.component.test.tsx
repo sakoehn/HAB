@@ -1918,7 +1918,9 @@ describe('CorrelatesPanel', () => {
       expect(el).toBeTruthy()
       return el as HTMLElement
     })
-    await userEvent.click(within(bar).getByTitle('Help'))
+    // The first help icon is the same-source exclusions one; a second
+    // (cross-source) follows because the panel opens on another source.
+    await userEvent.click(within(bar).getAllByTitle('Help')[0])
     await waitFor(() => {
       expect(screen.getByText(/siblings, ancestors, or descendants/i)).toBeInTheDocument()
     })
@@ -1957,14 +1959,15 @@ describe('CorrelatesPanel', () => {
       return el as HTMLElement
     })
 
-    // No taxonomy-specific tooltip yet -- default target is enzyme/cog.
-    expect(within(bar).getAllByTitle('Help')).toHaveLength(1)
+    // No taxonomy-specific tooltip yet -- default target is enzyme/cog, so
+    // only the exclusions and cross-source ones.
+    expect(within(bar).getAllByTitle('Help')).toHaveLength(2)
 
     await userEvent.click(within(bar).getByText('taxonomy', { exact: true }))
 
     const helpButtons = await waitFor(() => within(bar).getAllByTitle('Help'))
-    expect(helpButtons).toHaveLength(2)
-    await userEvent.click(helpButtons[1])
+    expect(helpButtons).toHaveLength(3)
+    await userEvent.click(helpButtons[2])
     await waitFor(() => {
       expect(screen.getByText(/genus-and-coarser/i)).toBeInTheDocument()
     })

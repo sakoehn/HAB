@@ -432,6 +432,31 @@ describe('CorrelatesPanel — explains that a first search can be slow', () => {
   })
 })
 
+describe('CorrelatesPanel — explains what a cross-source correlation can mean', () => {
+  it('shows a help tooltip only when the target is another source, pointing to Methods', async () => {
+    mockFetch.mockResolvedValue(jsonResponse([]))
+    const user = userEvent.setup()
+    render(<CorrelatesPanel annotationId="K02703" source="kegg" onAddAnnotation={vi.fn()} />)
+    await user.click(screen.getByRole('button', { name: /Find Correlates/i }))
+    const sourceRow = (await screen.findByText('Compare against:')).parentElement!
+    // Same source: only the existing exclusions tooltip.
+    await user.click(within(sourceRow).getByRole('button', { name: 'kegg' }))
+    expect(within(sourceRow).getAllByTitle('Help')).toHaveLength(1)
+
+    // Another source (the panel opens on enzyme for a KEGG reference).
+    await user.click(within(sourceRow).getByRole('button', { name: 'enzyme' }))
+    const helps = within(sourceRow).getAllByTitle('Help')
+    expect(helps).toHaveLength(2)
+    await user.click(helps[1])
+    await waitFor(() => expect(screen.getByText(/same genes/i)).toBeInTheDocument())
+    const text = screen.getByText(/same genes/i).textContent
+    expect(text).toMatch(/nothing is excluded/i)
+    expect(text).toMatch(/which organisms carry/i)
+    expect(text).toMatch(/relative abundance/i)
+    expect(text).toMatch(/Methods/)
+  })
+})
+
 describe('CorrelatesPanel — every method keeps trying while a first search is slow', () => {
   it('retries after a timeout, says it is still working, and shows the results', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse([]))

@@ -169,6 +169,32 @@ describe('MethodsPage — every correlation method is described', () => {
     expect(text).toMatch(/shared across the bloom count as a\s+real relationship/i)
   })
 
+  it('explains what a correlation across sources can mean, with the measured examples', () => {
+    const { container } = render(<MethodsPage />)
+    const text = (container.textContent ?? '').replace(/\s+/g, ' ')
+    expect(titles()).toContain('What a correlation across sources can mean')
+    // Shared genes: measured on the real database, EGC.
+    expect(text).toMatch(/K00844\) and EC 2\.7\.1\.1 are the same 154 genes \(r = 1\.00\)/)
+    expect(text).toMatch(/EC 1\.10\.3\.9 \(r = 0\.98\)/)
+    expect(text).toMatch(/EC 3\.5\.1\.5 \(r = 0\.98\)/)
+    expect(text).toMatch(/on EGC; all three methods give the same value to within 0\.02/)
+    // Taxonomy: who carries the gene.
+    expect(text).toMatch(/87% of psbA genes are cyanobacterial/)
+    expect(text).toMatch(/r = 0\.70 on EGC/)
+    // Relative abundance is a share of a shared total.
+    expect(text).toMatch(/varies 6\.8-fold/)
+    expect(text).toMatch(/94–99%/)
+    expect(text).toMatch(/r = 0\.39–0\.53 on relative abundance/)
+    expect(text).toMatch(/checking against EGC/)
+  })
+
+  it('places the cross-source item right after the same-source exclusions', () => {
+    const t = titles()
+    expect(t.indexOf('What a correlation across sources can mean')).toBe(
+      t.indexOf('Which candidates are compared') + 1,
+    )
+  })
+
   it('no longer describes the permutation test or its shortlist', () => {
     const { container } = render(<MethodsPage />)
     const text = container.textContent ?? ''

@@ -225,6 +225,9 @@ export function CorrelatesPanel({
               </button>
             ))}
             <HelpTooltip text="Includes this annotation's own source -- same-source candidates that are siblings, ancestors, or descendants of this one are excluded automatically to avoid compositional/containment artifacts." />
+            {targetSource !== source && (
+              <HelpTooltip text="Across sources nothing is excluded, so the same genes can count toward both annotations (e.g. a KEGG ortholog and its EC number), giving r near 1. Against taxonomy, r often reflects which organisms carry the gene. On relative abundance, groups that grow push other shares down. See Methods → Correlation." />
+            )}
             {targetSource === 'taxonomy' && (
               <HelpTooltip text="Taxonomy candidates are limited to genus-and-coarser ranks (domain through genus). Species and strain-level taxa make up the large majority of the ~60,000 taxonomy annotations, and including them made this search too slow to run -- this keeps it fast without losing the coarser ranks most cross-source comparisons care about." />
             )}

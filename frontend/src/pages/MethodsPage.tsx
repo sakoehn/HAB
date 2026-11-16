@@ -312,6 +312,31 @@ export function MethodsPage() {
             pathways still count as ancestors, but sharing one does not exclude a candidate,
             so a transporter is still compared with every other transporter.
           </Item>
+          <Item title="What a correlation across sources can mean">
+            When the candidates come from a different source than the reference, none are
+            left out, and the same genes can be behind both annotations: one gene can carry
+            a KEGG ortholog, an EC number and a COG at once. A high r then says the two
+            annotations count the same genes, not that two separate signals agree.
+            Hexokinase (K00844) and EC 2.7.1.1 are the same 154 genes (r = 1.00); every psbA
+            gene (K02703) is also counted in EC 1.10.3.9 (r = 0.98), and every ureC gene in
+            urease, EC 3.5.1.5 (r = 0.98). (r values here are on EGC; all three methods give
+            the same value to within 0.02.)
+            <br />
+            <br />
+            Against taxonomy, a function carried mostly by one group follows that group’s
+            abundance: 87% of psbA genes are cyanobacterial, and psbA against Cyanobacteria
+            gives r = 0.70 on EGC. That is a real relationship, but it says who carries the
+            gene rather than how it is regulated.
+            <br />
+            <br />
+            Relative abundance adds one more effect. Every value in a sample is a share of
+            the same total, which varies 6.8-fold between samples, and the taxa at one rank
+            make up 94–99% of it. When one group expands (a single genus reaches 21% of the
+            annotated signal), the other taxa’s shares fall even if their EGC did not change.
+            The same psbA–Cyanobacteria pair drops to r = 0.39–0.53 on relative abundance,
+            depending on the method. A negative correlation in relative abundance is worth
+            checking against EGC before reading it as a real decline.
+          </Item>
           <Item title="False discovery rate and the results list">
             Every candidate in the family is scored unless it shares fewer than 10 detected
             timepoints with the reference at every lag (or does not vary over the ones it
