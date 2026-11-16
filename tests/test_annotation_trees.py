@@ -34,7 +34,9 @@ ID format mapping (JGI → JSON key):
   Enzyme : "EC:1.1.1.1"→ "1.1.1.1"  (strip "EC:")
 
 Depth conventions:
-  KEGG   : 1=A-level … 4=D-level; leaf KO entries are depth=4 (K##### IDs)
+  KEGG   : a flat list of KOs (K##### IDs), all depth=1 with no parent and
+           no category -- KEGG's own pathway hierarchy (ko00001.keg) is not
+           used, and names come from JGI's gene_product files
   COG    : 1=letter category (C, H …); depth=2 are leaf COG#### entries
   Enzyme : 1–4 matching EC hierarchy; depth=4 are fully-specified X.X.X.X entries
 
@@ -70,7 +72,11 @@ KEGG_JSON_DIR     = DATA_ROOT / "DataStructures" / "Kegg"
 COG_JSON_DIR      = DATA_ROOT / "DataStructures" / "COG"
 ENZYME_JSON_DIR   = DATA_ROOT / "DataStructures" / "Enzyme"
 TAXONOMY_JSON_DIR = DATA_ROOT / "DataStructures" / "Taxonomy"
-BRITE_FILE        = DATA_ROOT / "DataStructures" / "Kegg" / "ko00001.keg"
+KO_NAMES_FILE     = DATA_ROOT / "DataStructures" / "Kegg" / "ko_names.json"
+KEGG_NOTEBOOKS    = [
+    DATA_ROOT / "Notebooks" / "Build_KEGG_DB.ipynb",
+    DATA_ROOT / "Notebooks" / "EGC_KEGG_TREE.ipynb",
+]
 
 EXPECTED_SAMPLES = 128
 NORM_TOLERANCE   = 1e-9
@@ -84,6 +90,9 @@ ALL_TYPES = [
     ("enzyme",   ENZYME_JSON_DIR,   "*.enzyme.json"),
     ("taxonomy", TAXONOMY_JSON_DIR, "*.tax.json"),
 ]
+
+# KEGG is a flat list of KOs with no category; the others all carry one.
+CATEGORY_TYPES = [t for t in ALL_TYPES if t[0] != "kegg"]
 
 # KEGG / COG / Enzyme share the name and parent_id fields.
 # Taxonomy intentionally omits both — the taxon name IS the dict key,
@@ -121,51 +130,6 @@ def cog_by_sample() -> dict[str, dict]:
 def enzyme_by_sample() -> dict[str, dict]:
     """All Enzyme .enzyme.json files as {sample_id: {node_id: entry}}."""
     return load_sample_annotation_dir(ENZYME_JSON_DIR, "*.enzyme.json")
-
-
-@pytest.fixture(scope="session")
-def brite_dict() -> dict[str, dict]:
-    """Parse ko00001.keg → {node_id: {name, depth, category, parent_id, parent_name}}.
-
-    Deliberately single-parent, last-occurrence-wins (current_at_depth is
-    overwritten per node) --
-    this matches .ko.json's own single-parent DISPLAY metadata fields, which
-    are intentionally last-occurrence too. It is NOT a ground-truth
-    multi-parent structure and must never be used to assert anything about
-    the EGC/scaffold rollup -- see TestKEGGHierarchyRollup for that."""
-    if not BRITE_FILE.exists():
-        pytest.skip(f"BRITE file not found: {BRITE_FILE}")
-
-    brite: dict = {}
-    current_at_depth: dict = {}
-
-    with BRITE_FILE.open() as f:
-        for line in f:
-            if not any(line.startswith(c) for c in "ABCDEFGHIJK"):
-                continue
-            level_char = line[0]
-            depth      = ord(level_char) - ord('A') + 1
-            rest       = line[1:].strip()
-            if not rest:
-                continue
-            parts = rest.split(None, 1)
-            if len(parts) < 2:
-                continue
-            node_id, name = parts[0], parts[1]
-            parent   = current_at_depth.get(depth - 1)
-            category = name if depth == 1 else current_at_depth.get(1, {}).get('name')
-            current_at_depth[depth] = {'id': node_id, 'name': name}
-            for d in list(current_at_depth):
-                if d > depth:
-                    del current_at_depth[d]
-            brite[node_id] = {
-                'name':        name,
-                'depth':       depth,
-                'category':    category,
-                'parent_id':   parent['id']   if parent else None,
-                'parent_name': parent['name'] if parent else None,
-            }
-    return brite
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -227,7 +191,7 @@ class TestNewFormatStructure:
         first = next(iter(data.values()))
         assert "depth" in first
 
-    @pytest.mark.parametrize("src,directory,glob", ALL_TYPES, ids=[t[0] for t in ALL_TYPES])
+    @pytest.mark.parametrize("src,directory,glob", CATEGORY_TYPES, ids=[t[0] for t in CATEGORY_TYPES])
     def test_entries_have_category(self, src, directory, glob):
         if not directory.exists():
             pytest.skip()
@@ -325,7 +289,7 @@ class TestNewFormatStructure:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestKEGGFormat:
-    """KEGG .ko.json structural invariants."""
+    """KEGG .ko.json invariants: a flat list of KOs, as JGI assigned them."""
 
     SPOT_SAMPLE = "3300060590"
 
@@ -335,53 +299,47 @@ class TestKEGGFormat:
             pytest.skip("KEGG JSON directory missing")
 
     def test_ids_are_not_ko_prefixed(self, kegg_by_sample):
-        """New format uses bare IDs (K00001, 09100) — not KO:K00001."""
+        """Bare IDs (K00001), not KO:K00001."""
         sid = self.SPOT_SAMPLE
         if sid not in kegg_by_sample:
             pytest.skip()
         prefixed = [k for k in kegg_by_sample[sid] if k.startswith("KO:")]
         assert not prefixed, f"KO:-prefixed IDs found: {prefixed[:3]}"
 
-    def test_depth_values_are_1_to_4(self, kegg_by_sample):
+    def test_every_entry_is_a_ko(self, kegg_by_sample):
+        """No pathway or category nodes: every key is a K##### id."""
         sid = self.SPOT_SAMPLE
         if sid not in kegg_by_sample:
             pytest.skip()
-        bad = [
-            (k, e["depth"])
-            for k, e in kegg_by_sample[sid].items()
-            if isinstance(e, dict) and not (1 <= e.get("depth", 0) <= 4)
-        ]
-        assert not bad, f"depth outside 1–4: {bad[:5]}"
+        bad = [k for k in kegg_by_sample[sid] if not re.match(r"^K\d{5}$", k)]
+        assert not bad, f"non-KO entries (KEGG hierarchy nodes?): {bad[:5]}"
 
-    def test_depth1_nodes_have_null_parent_id(self, kegg_by_sample):
+    def test_every_entry_is_depth1_without_parent_or_category(self, kegg_by_sample):
         sid = self.SPOT_SAMPLE
         if sid not in kegg_by_sample:
             pytest.skip()
         bad = [
             k for k, e in kegg_by_sample[sid].items()
-            if isinstance(e, dict) and e.get("depth") == 1 and e.get("parent_id") is not None
+            if e.get("depth") != 1 or e.get("parent_id") is not None
+            or e.get("parent_name") is not None or "category" in e
         ]
-        assert not bad, f"depth-1 nodes with non-null parent_id: {bad[:5]}"
+        assert not bad, f"entries with a depth other than 1, a parent or a category: {bad[:5]}"
 
-    def test_non_root_nodes_have_nonnull_parent_id(self, kegg_by_sample):
+    def test_every_jgi_ko_is_present(self, kegg_by_sample):
+        """Every KO JGI assigned in the sample's .a.ko.txt has an entry --
+        none dropped for being missing from a KEGG reference file."""
         sid = self.SPOT_SAMPLE
         if sid not in kegg_by_sample:
             pytest.skip()
-        bad = [
-            k for k, e in kegg_by_sample[sid].items()
-            if isinstance(e, dict) and e.get("depth", 1) > 1 and e.get("parent_id") is None
-        ]
-        assert not bad, f"non-root nodes missing parent_id: {bad[:5]}"
-
-    def test_category_non_empty(self, kegg_by_sample):
-        sid = self.SPOT_SAMPLE
-        if sid not in kegg_by_sample:
-            pytest.skip()
-        bad = [
-            k for k, e in kegg_by_sample[sid].items()
-            if isinstance(e, dict) and not e.get("category")
-        ]
-        assert not bad, f"entries with empty/missing category: {bad[:5]}"
+        raw = METAGENOME_SAMPLES_DIR / sid / f"{sid}.a.ko.txt"
+        if not raw.exists():
+            pytest.skip(f"{raw} not found")
+        jgi_kos = {
+            line.split("\t")[2].strip().removeprefix("KO:")
+            for line in raw.open() if line.strip()
+        }
+        missing = sorted(jgi_kos - set(kegg_by_sample[sid]))
+        assert not missing, f"{len(missing)} JGI KOs missing, e.g. {missing[:5]}"
 
     def test_scaffolds_values_are_positive_ints(self, kegg_by_sample):
         sid = self.SPOT_SAMPLE
@@ -398,82 +356,66 @@ class TestKEGGFormat:
                         break
         assert not bad, f"invalid scaffold gene counts: {bad}"
 
-    def test_hierarchy_nodes_alongside_ko_nodes(self, kegg_by_sample):
-        """Files must contain both KO entries (K#####) and hierarchy entries (##### numeric)."""
-        sid = self.SPOT_SAMPLE
-        if sid not in kegg_by_sample:
-            pytest.skip()
-        data        = kegg_by_sample[sid]
-        ko_ids      = [k for k in data if re.match(r'^K\d{5}$', k)]
-        numeric_ids = [k for k in data if re.match(r'^\d{5}$', k)]
-        assert ko_ids,      "No KO IDs (K#####) found — KO entries missing"
-        assert numeric_ids, "No numeric IDs (#####) found — hierarchy ancestor nodes missing"
-
     def test_all_128_files_loaded(self, kegg_by_sample):
         assert len(kegg_by_sample) >= EXPECTED_SAMPLES
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 2b. KEGG hierarchy correctness (multi-parent rollup)
-# ═══════════════════════════════════════════════════════════════════════════════
+class TestKEGGNames:
+    """KO names come from JGI's gene_product files, not from KEGG."""
 
-class TestKEGGHierarchyRollup:
-    """
-    A KO can belong to several real pathways. A BRITE parser that keeps
-    only the last parent seen per KO (a plain dict keyed by node_id, each
-    occurrence overwriting the last) files it under whichever pathway is
-    listed last in ko00001.keg -- usually the "Brite Hierarchies" catch-all
-    near the end of the file -- so pathway/category totals would be missing
-    most of their real members.
+    SPOT_SAMPLE = "3300060590"
 
-    K00844 (hexokinase) is the known case: it appears 14 times in
-    ko00001.keg under 14 different parents, the first of which is Glycolysis
-    / Gluconeogenesis (00010). A correct rollup must count K00844's coverage
-    toward 00010's total in every sample where both are annotated.
+    def _spot(self, kegg_by_sample):
+        if self.SPOT_SAMPLE not in kegg_by_sample:
+            pytest.skip()
+        return kegg_by_sample[self.SPOT_SAMPLE]
 
-    KNOWN_HEXOKINASE_GENE below is a real gene confirmed (by directly
-    searching DataStructures/Kegg/kegg_db.json) to be annotated K00844 in
-    sample 3300060358 -- not a synthetic fixture, an actual entry in the
-    dataset. Its scaffold is the ground truth used to check whether K00844
-    is actually being rolled up into Glycolysis, rather than a looser
-    magnitude check (00010's EGC total happens to already exceed a single
-    member's own small EGC from OTHER, correctly-parented members, even
-    while the bug is fully present -- a magnitude-only assertion silently
-    passes against the buggy output and proves nothing).
-    """
+    @pytest.mark.parametrize("ko,name", [
+        ("K00001", "alcohol dehydrogenase"),
+        ("K00844", "hexokinase"),
+        ("K09014", "Fe-S cluster assembly protein SufB"),
+    ])
+    def test_jgi_name_is_used(self, kegg_by_sample, ko, name):
+        """KEGG's own wording was e.g. 'E1.1.1.1, adh; alcohol dehydrogenase
+        [EC:1.1.1.1]'; JGI's is just the product name."""
+        assert self._spot(kegg_by_sample)[ko]["name"] == name
 
-    SPOT_SAMPLE           = "3300060358"
-    KNOWN_HEXOKINASE_GENE = "Ga0590986_0048567_1997_2740"
-    KNOWN_HEXOKINASE_SCAFFOLD = "Ga0590986_0048567"  # gene_id.rsplit('_', 2)[0]
+    @pytest.mark.parametrize("ko", ["K00243", "K07090"])
+    def test_ko_jgi_never_names_has_no_name(self, kegg_by_sample, ko):
+        """JGI named these genes from another source (e.g. COG), never from
+        the KO, so there is no JGI name for the KO itself."""
+        assert self._spot(kegg_by_sample)[ko]["name"] is None
 
-    @pytest.fixture(autouse=True)
-    def _skip_if_missing(self):
-        if not KEGG_JSON_DIR.exists():
-            pytest.skip("KEGG JSON directory missing")
-
-    def test_hexokinase_scaffold_reaches_glycolysis(self, kegg_by_sample):
+    def test_names_file_matches_gene_product(self):
+        """ko_names.json gives each KO the name JGI's gene_product.txt
+        gives genes named from that KO (one consistent name per KO)."""
+        if not KO_NAMES_FILE.exists():
+            pytest.skip(f"{KO_NAMES_FILE} not found -- run Build_KEGG_DB.ipynb")
+        names = json.loads(KO_NAMES_FILE.read_text(encoding="utf-8"))
         sid = self.SPOT_SAMPLE
-        if sid not in kegg_by_sample:
-            pytest.skip(f"{sid} not loaded")
-        data       = kegg_by_sample[sid]
-        hexokinase = data.get("K00844")
-        glycolysis = data.get("00010")
-        assert hexokinase is not None, "K00844 missing from sample -- can't test"
-        assert glycolysis is not None, "00010 missing from sample -- can't test"
+        gp = METAGENOME_SAMPLES_DIR / sid / f"{sid}.a.gene_product.txt"
+        if not gp.exists():
+            pytest.skip(f"{gp} not found")
+        bad = []
+        for line in gp.open(encoding="utf-8", errors="replace"):
+            f = line.rstrip("\n").split("\t")
+            if len(f) > 2 and f[2].startswith("KO:K"):
+                ko = f[2][3:]
+                if names.get(ko) != f[1]:
+                    bad.append((ko, names.get(ko), f[1]))
+                    if len(bad) >= 5:
+                        break
+        assert not bad, f"ko_names.json disagrees with gene_product.txt: {bad}"
 
-        scaffold = self.KNOWN_HEXOKINASE_SCAFFOLD
-        assert scaffold in hexokinase.get("scaffolds", {}), (
-            f"sanity check failed: {scaffold} not even under K00844 itself -- "
-            f"the known gene/scaffold no longer matches this dataset"
-        )
-        assert scaffold in glycolysis.get("scaffolds", {}), (
-            f"{scaffold} (gene {self.KNOWN_HEXOKINASE_GENE}, confirmed K00844/"
-            f"hexokinase -- a real member of Glycolysis / Gluconeogenesis per "
-            f"ko00001.keg) is missing from 00010's scaffold set. K00844 is "
-            f"currently rolled up under its last-seen parent instead "
-            f"({hexokinase.get('parent_id')!r} {hexokinase.get('parent_name')!r}), "
-            f"not under Glycolysis."
-        )
+
+class TestKEGGNoBriteFile:
+    """The KEGG notebooks no longer read KEGG's BRITE hierarchy file."""
+
+    @pytest.mark.parametrize("nb", KEGG_NOTEBOOKS, ids=[p.name for p in KEGG_NOTEBOOKS])
+    def test_notebook_does_not_open_a_keg_file(self, nb):
+        cells = json.loads(nb.read_text(encoding="utf-8"))["cells"]
+        code = "\n".join("".join(c["source"]) for c in cells if c["cell_type"] == "code")
+        assert ".keg" not in code and "brite" not in code.lower()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -974,137 +916,6 @@ class TestTaxonomyLineageCollapseRemoved:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 7. BRITE hierarchy correctness (KEGG only)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestKEGGBriteHierarchy:
-    """
-    Verify that .ko.json's single-parent DISPLAY metadata (depth, category,
-    parent_id, parent_name -- one canonical parent per node, "last occurrence
-    in ko00001.keg wins", same as `brite_dict` below) is internally
-    consistent and matches the BRITE file under that same last-occurrence
-    convention.
-
-    This class does NOT and CANNOT check the multi-parent EGC/scaffold
-    rollup -- `brite_dict` deliberately re-implements single-parent-wins
-    parsing, so a node's
-    metadata will always "match" it regardless of whether the real rollup
-    (which needs EVERY parent, not just the last one) is correct. That
-    real regression coverage lives in TestKEGGHierarchyRollup, which checks
-    real gene/scaffold ground truth instead of re-deriving from the same
-    parser being tested.
-
-    K00844 (hexokinase) is the canonical spot-check because its chain is in
-    the first lines of the .keg file:
-      A09100  Metabolism
-      B 09101  Carbohydrate metabolism
-      C  00010  Glycolysis / Gluconeogenesis [PATH:ko00010]
-      D   K00844  HK; hexokinase [EC:2.7.1.1]
-    """
-
-    SPOT_SAMPLE = "3300060590"
-    SPOT_KO     = "K00844"
-
-    def _load_spot(self) -> dict:
-        path = KEGG_JSON_DIR / f"{self.SPOT_SAMPLE}.ko.json"
-        if not path.exists():
-            pytest.skip(f"{path} not found — run EGC_KEGG_TREE notebook first")
-        return json.loads(path.read_text())
-
-    def test_spot_ko_present(self):
-        assert self.SPOT_KO in self._load_spot()
-
-    def test_spot_ko_depth_is_4(self):
-        data = self._load_spot()
-        if self.SPOT_KO not in data:
-            pytest.skip()
-        assert data[self.SPOT_KO]["depth"] == 4
-
-    def test_spot_ko_category_is_nonempty(self):
-        """
-        K00844 must have a non-empty category string.
-
-        K00844 appears in both Glycolysis (A09100 Metabolism) and in a BRITE
-        database section (A09180 Brite Hierarchies) within ko00001.keg.  The
-        notebook processes entries in file order, so the LAST occurrence wins;
-        in this file K00844 ends up under "Brite Hierarchies".  The important
-        property is that *some* category is assigned, not its specific value.
-        """
-        data = self._load_spot()
-        if self.SPOT_KO not in data:
-            pytest.skip()
-        assert data[self.SPOT_KO]["category"], "K00844 category is empty"
-
-    def test_spot_ko_parent_id_is_nonnull(self):
-        """K00844 is a D-level (depth=4) node and must have a parent_id."""
-        data = self._load_spot()
-        if self.SPOT_KO not in data:
-            pytest.skip()
-        assert data[self.SPOT_KO]["parent_id"] is not None, \
-            "K00844 depth-4 node has null parent_id"
-
-    def test_spot_ko_parent_exists_in_file(self):
-        data = self._load_spot()
-        if self.SPOT_KO not in data:
-            pytest.skip()
-        parent_id = data[self.SPOT_KO]["parent_id"]
-        assert parent_id in data, f"parent_id '{parent_id}' not found in same file"
-
-    def test_parent_chain_terminates_at_depth1_no_cycles(self):
-        """Walking parent_id from any KO must reach a depth-1 root without cycles."""
-        data     = self._load_spot()
-        ko_nodes = {k: e for k, e in data.items() if isinstance(e, dict) and e.get("depth") == 4}
-        if not ko_nodes:
-            pytest.skip("No depth-4 entries found")
-        node_id       = next(iter(ko_nodes))
-        visited, curr = set(), node_id
-        while curr is not None:
-            assert curr not in visited, f"Cycle in parent chain at {curr}"
-            visited.add(curr)
-            entry = data.get(curr)
-            assert entry is not None, f"parent_id '{curr}' not found in file"
-            if entry["depth"] == 1:
-                assert entry["parent_id"] is None
-                break
-            curr = entry["parent_id"]
-
-    def test_json_matches_brite_file_for_spot_ko(self, brite_dict):
-        """K00844's single-parent DISPLAY metadata in .ko.json must exactly
-        match brite_dict's same last-occurrence-wins parse. NOT a check of
-        the multi-parent EGC rollup -- see TestKEGGHierarchyRollup for that."""
-        data = self._load_spot()
-        if self.SPOT_KO not in data or self.SPOT_KO not in brite_dict:
-            pytest.skip()
-        entry = data[self.SPOT_KO]
-        brite = brite_dict[self.SPOT_KO]
-        for field in ("depth", "category", "parent_id", "parent_name"):
-            assert entry[field] == brite[field], \
-                f"{self.SPOT_KO}.{field}: json={entry[field]!r} brite={brite[field]!r}"
-
-    def test_all_json_nodes_match_brite_file(self, kegg_by_sample, brite_dict):
-        """Every node's single-parent DISPLAY metadata in the spot sample
-        must match brite_dict's same last-occurrence-wins parse. NOT a check
-        of the multi-parent EGC rollup -- see TestKEGGHierarchyRollup."""
-        sid = self.SPOT_SAMPLE
-        if sid not in kegg_by_sample:
-            pytest.skip()
-        data       = kegg_by_sample[sid]
-        mismatches: list[str] = []
-        for node_id, entry in data.items():
-            if not isinstance(entry, dict) or node_id not in brite_dict:
-                continue
-            b = brite_dict[node_id]
-            for field in ("depth", "category", "parent_id", "parent_name"):
-                if entry.get(field) != b[field]:
-                    mismatches.append(
-                        f"  {node_id}.{field}: json={entry.get(field)!r} brite={b[field]!r}"
-                    )
-            if len(mismatches) >= 10:
-                break
-        assert not mismatches, "BRITE/JSON mismatches:\n" + "\n".join(mismatches)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # 8. EGC formula — synthetic math verification (no files needed)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1177,10 +988,9 @@ class TestEGCMathSynthetic:
 
 class TestKEGGEGCVsJGI:
     """
-    Compare depth-4 KO EGC values from .ko.json against the JGI ground truth.
+    Compare KO EGC values from .ko.json against the JGI ground truth.
 
     JGI uses "KO:K00001"; JSON uses bare "K00001" — strip the prefix for lookup.
-    Hierarchy nodes (09100 etc.) have no JGI counterpart and are not compared.
     """
 
     def _get_egc(self, sample_data: dict, jgi_ann_id: str) -> Optional[float]:
@@ -1271,8 +1081,8 @@ class TestKEGGEGCVsJGI:
         assert not mismatches, \
             f"KEGG EGC mismatches for {sid} ({len(mismatches)}):\n" + "\n".join(mismatches)
 
-    def test_only_depth4_entries_compared_to_jgi(self, kegg_by_sample):
-        """K##### IDs in the JSON must all be at depth=4."""
+    def test_ko_entries_are_depth1(self, kegg_by_sample):
+        """K##### IDs in the JSON are all at depth=1 (a flat list)."""
         sid = "3300060590"
         if sid not in kegg_by_sample:
             pytest.skip()
@@ -1280,9 +1090,9 @@ class TestKEGGEGCVsJGI:
         ko_pattern = re.compile(r'^K\d{5}$')
         wrong_depth = [
             (k, e["depth"]) for k, e in data.items()
-            if isinstance(e, dict) and ko_pattern.match(k) and e.get("depth") != 4
+            if isinstance(e, dict) and ko_pattern.match(k) and e.get("depth") != 1
         ]
-        assert not wrong_depth, f"K##### IDs with depth ≠ 4: {wrong_depth[:5]}"
+        assert not wrong_depth, f"K##### IDs with depth ≠ 1: {wrong_depth[:5]}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1705,7 +1515,7 @@ class TestNormEgc:
 class TestAncestorAggregation:
     """
     Parent nodes accumulate all descendant scaffolds, so parent EGC ≥ child EGC.
-    Verified for KEGG, COG, Enzyme, and Taxonomy.
+    Verified for COG, Enzyme, and Taxonomy (KEGG is a flat list with no parents).
     """
 
     SPOT_SAMPLE = "3300060590"
@@ -1727,13 +1537,6 @@ class TestAncestorAggregation:
                 if len(violations) >= 5:
                     break
         return violations
-
-    def test_kegg_parent_egc_geq_child_egc(self, kegg_by_sample):
-        sid = self.SPOT_SAMPLE
-        if sid not in kegg_by_sample:
-            pytest.skip()
-        v = self._check_parent_geq_child(kegg_by_sample[sid], "KEGG")
-        assert not v, "KEGG parent EGC < child EGC:\n" + "\n".join(v)
 
     def test_cog_parent_egc_geq_child_egc(self, cog_by_sample):
         sid = self.SPOT_SAMPLE
@@ -1779,34 +1582,6 @@ class TestAncestorAggregation:
         data = json.loads(path.read_text())
         v = self._check_parent_geq_child(data, "Taxonomy", parent_key="parent")
         assert not v, "Taxonomy parent EGC < child EGC:\n" + "\n".join(v)
-
-    def test_kegg_depth1_root_egc_exceeds_max_depth4(self, kegg_by_sample):
-        """A depth-1 KEGG root should have higher EGC than any single KO in its category."""
-        sid = self.SPOT_SAMPLE
-        if sid not in kegg_by_sample:
-            pytest.skip()
-        data = kegg_by_sample[sid]
-
-        max_ko_by_cat: dict[str, float] = {}
-        for entry in data.values():
-            if isinstance(entry, dict) and entry.get("depth") == 4:
-                cat = entry.get("category", "")
-                max_ko_by_cat[cat] = max(max_ko_by_cat.get(cat, 0), float(entry.get("egc", 0)))
-
-        root_egc_by_cat: dict[str, float] = {}
-        for entry in data.values():
-            if isinstance(entry, dict) and entry.get("depth") == 1:
-                cat = entry.get("category", "")
-                root_egc_by_cat[cat] = float(entry.get("egc", 0))
-
-        violations: list[str] = []
-        for cat, max_ko in max_ko_by_cat.items():
-            root = root_egc_by_cat.get(cat)
-            if root is None:
-                continue
-            if root < max_ko - 1e-6:
-                violations.append(f"  '{cat}': root={root:.2f} < max_ko={max_ko:.2f}")
-        assert not violations, "Depth-1 KEGG root EGC < descendant KO EGC:\n" + "\n".join(violations)
 
     def test_scaffold_counts_consistent_with_egc_sign_kegg(self, kegg_by_sample):
         """Any KEGG entry with egc > 0 must have at least one scaffold."""
