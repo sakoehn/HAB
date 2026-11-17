@@ -42,10 +42,13 @@ const TOP_LEVEL_TOOLTIP =
 // /api/{source}/parents instead.
 const MULTI_PARENT_SOURCES = new Set(['cog'])
 
-// Sources the grouped views (Dataset Overview, Annotations by Parent) offer.
-// KEGG orthologs are a flat list with no parents, so there is nothing to
-// group them by.
+// Sources Annotations by Parent offers. KEGG orthologs are a flat list with
+// no parents, so there is nothing to group them by.
 const GROUPED_SOURCES = ['cog', 'enzyme', 'taxonomy'] as const
+
+// Sources with no hierarchy. Dataset Overview still gives their descriptive
+// stats, but no parent groups, top-level list or group chart.
+const FLAT_SOURCES = new Set(['kegg'])
 
 // Top EGC's Top N box. Its value is sent as /annotations/top's limit, so
 // the max must stay within that route's le= (pinned by
@@ -236,11 +239,15 @@ export function DatasetOverviewPanel({
     }
   }
 
+  // A flat source (KEGG) has no parents, so none of its rows is a top-level
+  // category and it has no groups.
+  const loadedIsFlat = FLAT_SOURCES.has(loadedParams?.source ?? source)
+
   // Rows with no parent are the top-level categories -- kept out of the
   // ranked groups and the chart (see TOP_LEVEL_TOOLTIP), listed separately.
   const topLevelRows = useMemo(
-    () => rows.filter(r => r.parent == null).sort((a, b) => b.mean_egc - a.mean_egc),
-    [rows],
+    () => loadedIsFlat ? [] : rows.filter(r => r.parent == null).sort((a, b) => b.mean_egc - a.mean_egc),
+    [rows, loadedIsFlat],
   )
 
   const memberGroups = useMemo(() => {
@@ -375,7 +382,7 @@ export function DatasetOverviewPanel({
           value={source}
           onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSource(e.target.value)}
         >
-          {GROUPED_SOURCES.map(s => (
+          {(['kegg', 'cog', 'enzyme', 'taxonomy'] as const).map(s => (
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
@@ -446,11 +453,16 @@ export function DatasetOverviewPanel({
             <span style={{ color: 'var(--teal)', fontWeight: 600 }}>
               {sampleCount}
             </span>{' '}
-            samples ·{' '}
-            <span style={{ color: 'var(--teal)', fontWeight: 600 }}>
-              {parentGroups.length}
-            </span>{' '}
-            parent groups
+            samples
+            {!loadedIsFlat && (
+              <>
+                {' '}·{' '}
+                <span style={{ color: 'var(--teal)', fontWeight: 600 }}>
+                  {parentGroups.length}
+                </span>{' '}
+                parent groups
+              </>
+            )}
             {loadedParams && (loadedParams.dateFrom || loadedParams.dateTo)
               ? ` · ${loadedParams.dateFrom || '…'} → ${loadedParams.dateTo || '…'}`
               : ' · all dates'}
@@ -468,6 +480,13 @@ export function DatasetOverviewPanel({
             />
           )}
 
+          {loadedIsFlat ? (
+            <div data-testid="overview-flat-note" style={{ font: '12px var(--sans)', color: 'var(--text-dim)' }}>
+              KEGG orthologs are a flat list here, with no pathways or categories, so there
+              are no parent groups to show. Each KO&apos;s KEGG page lists the pathways it
+              belongs to; Top EGC Annotations ranks the KOs themselves.
+            </div>
+          ) : (
           <div>
             <div style={{
               font:            '600 11px var(--mono)',
@@ -655,6 +674,7 @@ export function DatasetOverviewPanel({
               </div>
             )}
           </div>
+          )}
         </div>
       )}
     </div>

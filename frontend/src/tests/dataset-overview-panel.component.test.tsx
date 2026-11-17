@@ -344,13 +344,46 @@ describe('DatasetOverviewPanel — groups use every real parent for cog', () => 
   })
 })
 
-// KEGG orthologs are a flat list with no parents, so the overview, which
-// groups by parent, does not offer KEGG.
-describe('DatasetOverviewPanel — KEGG is not offered', () => {
-  it('the source dropdown lists cog, enzyme and taxonomy only', () => {
+// KEGG orthologs are a flat list with no parents: the overview still gives
+// KEGG's descriptive stats, but has no parent groups, top-level list or
+// group chart for it, and says so.
+describe('DatasetOverviewPanel — KEGG is a flat list', () => {
+  function keggRows() {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/api/annotations/top')) {
+        return Promise.resolve(jsonResponse({
+          data: [
+            { annotation_id: 'K02014', name: 'iron complex outermembrane receptor protein', parent: null, depth: 1, mean_egc: 60000, max_egc: 160000, sample_count: 128 },
+            { annotation_id: 'K20276', name: null, parent: null, depth: 1, mean_egc: 31000, max_egc: 90000, sample_count: 128 },
+          ],
+          sample_count: 128,
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+  }
+
+  it('offers every source, KEGG included', () => {
     render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
     const options = [...screen.getByRole('combobox').querySelectorAll('option')].map(o => o.value)
-    expect(options).toEqual(['cog', 'enzyme', 'taxonomy'])
+    expect(options).toEqual(['kegg', 'cog', 'enzyme', 'taxonomy'])
+  })
+
+  it('shows the KO count and stats, with a note instead of parent groups', async () => {
+    keggRows()
+    const user = userEvent.setup()
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    await user.selectOptions(screen.getByRole('combobox'), 'kegg')
+    await user.click(screen.getByRole('button', { name: /Load Overview/i }))
+
+    const summaryLine = await screen.findByText(/unique kegg annotations/i)
+    expect(summaryLine.textContent).not.toMatch(/parent groups/)
+    expect(screen.getByText(/Mean EGC distribution/)).toBeInTheDocument()
+    expect(screen.getByTestId('overview-flat-note')).toHaveTextContent(/flat list/)
+    expect(screen.queryByText(/Top Parent Groups/)).toBeNull()
+    expect(screen.queryByTestId('overview-top-level-row')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Load time series/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /^↓ CSV$/i })).toBeInTheDocument()
   })
 })
 
