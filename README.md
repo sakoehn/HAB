@@ -113,4 +113,4 @@ CI (`.github/workflows/ci.yml`) runs the self-contained backend tests, frontend 
 
 - `/mappings/search` scans a 74M-row table and can be slow (30s+) on modest hardware.
 - The correlation finder's taxonomy candidates are capped at genus-and-coarser ranks (species/strain excluded) — otherwise a single query would need to score against ~60,000 taxa.
-- The first correlation search for a given annotation/source/method/metric combination scores every candidate and can take a minute or more (longer for large families); results are cached, so repeating it is fast. The panel retries on its own while the server works.
+- The first correlation search for a given annotation/source/method/metric combination scores every candidate: a few seconds on the live server (about 3–8 s against KEGG, COG or EC, up to about 15 s against taxonomy, measured 2026-11-17). Results are cached, so repeating it takes well under a second.
