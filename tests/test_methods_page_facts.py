@@ -5,12 +5,13 @@ The Methods page (frontend/src/pages/MethodsPage.tsx) states the
 correlation lag window and the Correlates list limits as numbers. They live in METHODS_FACTS (methodsFacts.ts);
 this checks that block against the backend's real values, so the page
 can't drift from the code (the old About page said "9 lags" and "1000
-random shifts" long after both had changed).
+random shifts" long after both had changed). It also checks the page cites
+the ExPASy ENZYME release the enzyme names come from, and no longer cites
+KEGG's hierarchy files, which the site does not use.
 
 Run:
     pytest tests/test_methods_page_facts.py -v
 """
-import hashlib
 import inspect
 import json
 import os
@@ -28,10 +29,7 @@ import pytest  # pylint: disable=wrong-import-position
 ROOT = Path(__file__).resolve().parent.parent
 PAGE = ROOT / "frontend" / "src" / "pages" / "methodsFacts.ts"
 METHODS_PAGE = ROOT / "frontend" / "src" / "pages" / "MethodsPage.tsx"
-KEG_FILES = {
-    "ko00001": ROOT / "DataStructures" / "Kegg" / "ko00001.keg",
-    "ko01000": ROOT / "DataStructures" / "Enzyme" / "ko01000.keg",
-}
+EXPASY_META = ROOT / "DataStructures" / "Enzyme" / "expasy_enzyme.meta.json"
 
 
 def _facts() -> dict:
@@ -60,28 +58,16 @@ def test_family_limit_matches_backend():
     assert (_facts()["limit_default"], _facts()["limit_max"]) == (int(m.group(1)), int(m.group(2)))
 
 
-def _last_updated(keg: Path) -> str:
-    """The file's own '#Last updated: May 22, 2026' line, as '22 May 2026'."""
-    m = re.search(r"^#Last updated: (\w+) (\d+), (\d{4})", keg.read_text(encoding="utf-8"), re.M)
-    return f"{int(m.group(2))} {m.group(1)} {m.group(3)}"
+def test_expasy_release_matches_the_downloaded_files():
+    if not EXPASY_META.exists():
+        pytest.skip(f"{EXPASY_META} not present (data files are not in git)")
+    meta = json.loads(EXPASY_META.read_text(encoding="utf-8"))
+    text = METHODS_PAGE.read_text(encoding="utf-8")
+    assert f"ExPASy ENZYME (release {meta['release']}" in text
+    assert meta["license"] in text
 
 
-@pytest.mark.parametrize("name", sorted(KEG_FILES))
-def test_kegg_release_dates_match_the_files(name):
-    keg = KEG_FILES[name]
-    if not keg.exists():
-        pytest.skip(f"{keg} not present (data files are not in git)")
-    text = re.sub(r"\s+", " ", METHODS_PAGE.read_text(encoding="utf-8"))
-    assert f"KEGG BRITE {name} (KEGG release dated {_last_updated(keg)}" in text
-
-
-@pytest.mark.parametrize("name", sorted(KEG_FILES))
-def test_kegg_files_have_a_provenance_record(name):
-    keg = KEG_FILES[name]
-    if not keg.exists():
-        pytest.skip(f"{keg} not present (data files are not in git)")
-    meta = json.loads(keg.with_name(keg.name + ".meta.json").read_text(encoding="utf-8"))
-    assert meta["source_url"].endswith(f"htext={name}.keg&format=htext")
-    assert meta["fetched_at"]
-    if "sha256" in meta:
-        assert meta["sha256"] == hashlib.sha256(keg.read_bytes()).hexdigest()
+def test_methods_page_cites_no_kegg_hierarchy_file():
+    text = METHODS_PAGE.read_text(encoding="utf-8")
+    for gone in ("ko00001", "ko01000", "KEGG BRITE", "BRITE table", "KEGG group"):
+        assert gone not in text, gone

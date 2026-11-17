@@ -57,7 +57,7 @@ const ANNOTATION_TYPES = [
   {
     label: 'Functional',
     title: 'KEGG Orthology (KO)',
-    desc:  'KEGG Orthology terms represent functional orthologs across species and link genes to metabolic pathways, biological processes, and molecular functions. Hierarchy: pathway class → subcategory → pathway → KO. KEGG also files its Brite protein-family tables (e.g. Transporters) and its “Not Included in Pathway or Brite” groups at the pathway level; the app labels these “BRITE table” and “KEGG group”.',
+    desc:  'KEGG Orthology terms represent functional orthologs across species. The app treats KOs as a flat list, with no pathway hierarchy: each KO links to its own KEGG page, which shows its full name, gene symbol and the pathways it belongs to. KO names come from JGI (see Data Sources).',
     ex:    'K02014 · K00001 · K16950',
   },
   {
@@ -69,7 +69,7 @@ const ANNOTATION_TYPES = [
   {
     label: 'Biochemical',
     title: 'Enzyme Commission (EC)',
-    desc:  'EC numbers classify enzymes by the chemical reactions they catalyze. Hierarchical: class → subclass → sub-subclass → serial number.',
+    desc:  'EC numbers classify enzymes by the chemical reactions they catalyze. Hierarchical: class → subclass → sub-subclass → serial number. The tree follows from the numbers themselves; the names come from ExPASy ENZYME.',
     ex:    'EC:1.1.1.1 · EC:4.2.1.17',
   },
   {
@@ -119,24 +119,27 @@ export function MethodsPage() {
           </Item>
           <Item title="Hierarchies roll up">
             A gene counts toward its own annotation and toward every ancestor above it
-            (e.g. a KO, its pathway, subcategory and pathway class), but only once per
+            (e.g. an EC number, its sub-subclass, subclass and class), but only once per
             category per sample, even if it has several hits beneath that category. So a
             category’s value always includes everything beneath it. That is why top-level
-            categories (COG letters, KEGG’s top classes, EC classes, taxonomic domains) are
+            categories (COG letters, EC classes, taxonomic domains) are
             shown separately on the Explore page instead of being ranked next to the groups
             they already contain, and why Top EGC Annotations ranks one level at a time,
             starting at the most specific (KOs, COGs, EC numbers, species). Ranking all
             levels together is still available, with the categories necessarily on top.
+            KEGG orthologs have no hierarchy here, so a KO counts only toward itself.
           </Item>
           <Item title="Annotations with more than one parent">
-            A KO that belongs to several pathways, or a COG assigned to several categories,
-            counts in full toward each one. Each group’s total is therefore correct on its
+            A COG assigned to several categories counts in full toward each one. Each group’s total is therefore correct on its
             own, but totals summed across groups can exceed the overall total.
           </Item>
           <Item title="Renumbered and incomplete EC numbers">
-            Some EC numbers in the JGI annotations have since been renumbered and are no
-            longer in KEGG’s EC hierarchy. These are credited to their new place in the
-            tree, per KEGG’s record of where each was transferred (e.g. 1.6.1.2 → 7.1.1.1).
+            Some EC numbers in the JGI annotations have since been renumbered by IUBMB, which
+            keeps the official enzyme list. These are credited to their new number, per
+            IUBMB’s record of where each was transferred (e.g. 1.6.1.2 → 7.1.1.1), and the
+            enzyme’s page in the app names the old number JGI’s files use. ExPASy has not yet
+            caught up on a few of these (it still lists 3.6.4.10, 3.6.4.12, 3.6.4.13 and
+            1.2.99.7 as current); the app follows IUBMB.
             When one old number was split into several new ones, the gene is credited to
             their shared parent only, since the old label can’t say which it was: DNA
             helicase 3.6.4.12 (now 5.6.2.3 and 5.6.2.4) and RNA helicase 3.6.4.13 are
@@ -307,10 +310,11 @@ export function MethodsPage() {
             When the reference and the candidates come from the same source, the
             reference’s ancestors and descendants are left out, since their totals contain
             each other’s genes, and so are its siblings (annotations sharing one of its
-            immediate parents). For KEGG, only a real pathway makes two KOs siblings: the
-            Brite protein-family tables and “Not Included” groups filed alongside the
-            pathways still count as ancestors, but sharing one does not exclude a candidate,
-            so a transporter is still compared with every other transporter.
+            immediate parents). KEGG orthologs have no hierarchy here, so a KO leaves out
+            only itself: KOs from the same pathway are compared with it, and a top hit may
+            simply be a neighbor in the same pathway. Two KOs never count the same gene (in
+            every sample, each gene has exactly one KO), so their totals do not contain
+            each other.
           </Item>
           <Item title="What a correlation across sources can mean">
             When the candidates come from a different source than the reference, none are
@@ -367,11 +371,15 @@ export function MethodsPage() {
             and in every download, are local Pacific Daylight Time (UTC−7) at the sampling
             site; the whole sampling period falls within daylight time.
           </Item>
-          <Item title="Annotation hierarchies">
-            KEGG Orthology hierarchy: KEGG BRITE ko00001 (KEGG release dated 22 May 2026,
-            downloaded the same day).
-            EC hierarchy: KEGG BRITE ko01000 (KEGG release dated 12 September 2026,
-            downloaded 14 September 2026; a local copy is kept so results are reproducible).
+          <Item title="Annotation names and hierarchies">
+            KEGG orthologs: a flat list of the KOs in JGI’s KO hit files, named with the
+            product name JGI gives a gene when it names it from that KO. A KO that JGI never
+            names that way (its genes were named from a COG or TIGRFAM entry instead) is shown
+            by its ID; its KEGG page link gives KEGG’s own name. The app does not use KEGG’s
+            pathway hierarchy (BRITE).
+            EC hierarchy: built from the EC numbers themselves, named from
+            ExPASy ENZYME (release 04-Nov-2026, CC BY 4.0; enzclass.txt and enzyme.dat, with
+            a local copy kept so results are reproducible).
             COG category names: NCBI COG. Taxonomic lineages come from JGI’s phylodist
             assignments.
           </Item>
