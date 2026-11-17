@@ -224,8 +224,12 @@ export type CorrelationFamilyResponse = {
   // "top 50 of 4,637 tested, 3 significant" instead of a bare 50.
   significant_count: number
   tested_count:      number
-  // Candidates that couldn't be scored (too few shared timepoints).
+  // Candidates that couldn't be scored, and why: fewer than 10 shared
+  // timepoints at every lag, no variation where they overlap, or a score
+  // that came out non-finite ("other"). The reasons add up to
+  // untested_count.
   untested_count:    number
+  untested_reasons?: { too_few_points: number; no_variation: number; other: number }
 }
 
 // ── Chart / UI state ───────────────────────────────────────────────────────

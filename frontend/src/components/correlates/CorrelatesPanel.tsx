@@ -66,6 +66,7 @@ export function CorrelatesPanel({
   const [significantCount, setSignificantCount] = useState<number | null>(null)
   const [testedCount, setTestedCount] = useState<number | null>(null)
   const [untestedCount, setUntestedCount] = useState<number | null>(null)
+  const [untestedReasons, setUntestedReasons] = useState<CorrelationFamilyResponse['untested_reasons'] | null>(null)
 
   // Default to enzyme (the smallest real family, ~3.5k candidates) rather
   // than taxonomy (~60k, by far the largest) -- on a cold cache this is
@@ -143,6 +144,7 @@ export function CorrelatesPanel({
       setSignificantCount(result?.significant_count ?? null)
       setTestedCount(result?.tested_count ?? null)
       setUntestedCount(result?.untested_count ?? null)
+      setUntestedReasons(result?.untested_reasons ?? null)
       setStatus('ok')
     } catch (err) {
       if (requestId !== requestSeqRef.current) return
@@ -365,7 +367,18 @@ export function CorrelatesPanel({
                     <>
                       {' · '}
                       {untestedCount.toLocaleString()} not scored
-                      <HelpTooltip text="These candidates share fewer than 10 detected timepoints with this annotation (or don't vary over the ones they share), so no correlation can be measured. They are not in the tested count or the significance correction." />
+                      {untestedReasons && (
+                        <span data-testid="corr-untested-reasons">
+                          {' ('}
+                          {[
+                            untestedReasons.too_few_points > 0 && `${untestedReasons.too_few_points.toLocaleString()} had fewer than 10 shared timepoints`,
+                            untestedReasons.no_variation > 0 && `${untestedReasons.no_variation.toLocaleString()} had no variation where they overlap`,
+                            untestedReasons.other > 0 && `${untestedReasons.other.toLocaleString()} could not be computed`,
+                          ].filter(Boolean).join(', ')}
+                          {')'}
+                        </span>
+                      )}
+                      <HelpTooltip text="These candidates share fewer than 10 detected timepoints with this annotation (or don't vary over the ones they share), so no correlation can be measured. They are not in the tested count or the significance correction. Too few shared timepoints usually means a rare candidate; no variation means one of the two is flat wherever they overlap." />
                     </>
                   )}
                 </div>

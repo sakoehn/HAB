@@ -375,6 +375,42 @@ describe('CorrelatesPanel — full ranked list with significance marked', () => 
     expect(tip.textContent).toMatch(/not in the tested count/i)
   })
 
+  it('breaks the not-scored count down by reason', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001)],
+      significant_count: 1, tested_count: 1, untested_count: 2531,
+      untested_reasons: { too_few_points: 2500, no_variation: 31, other: 0 },
+    })
+
+    const breakdown = await screen.findByTestId('corr-untested-reasons')
+    expect(breakdown).toHaveTextContent('2,500 had fewer than 10 shared timepoints')
+    expect(breakdown).toHaveTextContent('31 had no variation where they overlap')
+    expect(breakdown).not.toHaveTextContent(/could not be computed/)
+  })
+
+  it('names a score that could not be computed, only when there is one', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001)],
+      significant_count: 1, tested_count: 1, untested_count: 3,
+      untested_reasons: { too_few_points: 2, no_variation: 0, other: 1 },
+    })
+
+    const breakdown = await screen.findByTestId('corr-untested-reasons')
+    expect(breakdown).toHaveTextContent('2 had fewer than 10 shared timepoints')
+    expect(breakdown).toHaveTextContent('1 could not be computed')
+    expect(breakdown).not.toHaveTextContent(/no variation/)
+  })
+
+  it('shows just the total when the server gives no reasons', async () => {
+    await openWith({
+      results: [row(1, 'COG0001', 0.92, 0.001)],
+      significant_count: 1, tested_count: 1, untested_count: 5,
+    })
+
+    await screen.findByText(/5 not scored/)
+    expect(screen.queryByTestId('corr-untested-reasons')).not.toBeInTheDocument()
+  })
+
   it('says nothing about unscored candidates when there are none', async () => {
     await openWith({
       results: [row(1, 'COG0001', 0.92, 0.001)],

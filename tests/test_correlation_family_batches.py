@@ -234,3 +234,50 @@ class TestSaving:
 
         entry = next(e for e in body["results"] if e["catalog_id"] == 1)
         assert entry["r"] != 0.123
+
+
+class TestWhyCandidatesWereNotScored:
+    """untested_reasons splits untested_count by why each candidate could
+    not be scored: K00004 has only 6 points (too few shared timepoints),
+    K00003 is constant (no variation where they overlap)."""
+
+    EXPECTED = {"too_few_points": 1, "no_variation": 1, "other": 0}
+
+    def test_a_cold_request_gives_the_reasons(self, client):
+        body = _family(client).json()
+        assert body["untested_reasons"] == self.EXPECTED
+        assert sum(body["untested_reasons"].values()) == body["untested_count"]
+
+    def test_a_cached_request_gives_the_same_reasons(self, client):
+        _family(client)
+        body = _family(client).json()
+        assert body["untested_reasons"] == self.EXPECTED
+
+    def test_a_score_that_could_not_be_computed_counts_as_other(self, client, monkeypatch):
+        real = correlation_sql.score_family_checked
+
+        def nan_for_first_row(ref, table, method):
+            result = real(ref, table, method)
+            result["r"][0] = np.nan
+            return result
+
+        monkeypatch.setattr(correlation_sql, "score_family_checked", nan_for_first_row)
+        body = _family(client).json()
+        assert body["untested_reasons"] == {"too_few_points": 1, "no_variation": 1, "other": 1}
+        assert sum(body["untested_reasons"].values()) == body["untested_count"]
+
+    def test_reasons_are_given_even_when_the_save_fails(self, client, monkeypatch):
+        real_connect = correlation_sql._connect
+
+        class LockedOnWrite:
+            def __init__(self, conn):
+                self._real = conn
+
+            def executemany(self, sql, rows):
+                raise sqlite3.OperationalError("database is locked")
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        monkeypatch.setattr(correlation_sql, "_connect", lambda: LockedOnWrite(real_connect()))
+        assert _family(client).json()["untested_reasons"] == self.EXPECTED

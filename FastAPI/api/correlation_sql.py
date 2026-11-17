@@ -674,8 +674,8 @@ FAMILY_BATCH_SIZE = 4000
 def _fetch_saved_family(conn, ref_catalog_id, metric, method):
     """Every saved result involving the reference at the current
     CORRELATION_METHOD_VERSION, in two queries: {candidate id: result with
-    the lag relative to the reference} and the set of candidate ids saved
-    as unscorable."""
+    the lag relative to the reference} and {candidate id: reason} for the
+    candidates saved as unscorable ('too_few_points' or 'no_variation')."""
     params = (ref_catalog_id, ref_catalog_id, metric, method, CORRELATION_METHOD_VERSION)
     saved = {}
     for id_a, id_b, r, lag, p, n_pairs, at_p_floor in conn.execute("""
@@ -692,9 +692,9 @@ def _fetch_saved_family(conn, ref_catalog_id, metric, method):
             "at_p_floor": bool(at_p_floor) if at_p_floor is not None else None,
         }
     unscored = {
-        id_b if id_a == ref_catalog_id else id_a
-        for id_a, id_b in conn.execute("""
-            SELECT catalog_id_a, catalog_id_b FROM correlations_unscored
+        (id_b if id_a == ref_catalog_id else id_a): reason
+        for id_a, id_b, reason in conn.execute("""
+            SELECT catalog_id_a, catalog_id_b, reason FROM correlations_unscored
             WHERE (catalog_id_a = ? OR catalog_id_b = ?) AND metric = ? AND method = ?
               AND method_version = ?
         """, params)
@@ -725,14 +725,16 @@ def _save_batch(conn, score_rows, unscored_rows) -> None:
 
 def _score_and_save_batch(conn, ref_catalog_id, ref_vec, batch, target_source, metric, method, sample_order):
     """Load, score and save one batch of candidates. Returns
-    {candidate id: result} for the ones that scored."""
+    {candidate id: result} for the ones that scored and {candidate id:
+    reason} for the ones that could not be."""
     table = load_family_matrix(conn, target_source, [c["annotation_id"] for c in batch], sample_order, metric)
     result = score_family_checked(ref_vec, table, method)
-    scores, score_rows, unscored_rows = {}, [], []
+    scores, reasons, score_rows, unscored_rows = {}, {}, [], []
     for i, cand in enumerate(batch):
         low, high = sorted((ref_catalog_id, cand["id"]))
         flip = ref_catalog_id > cand["id"]
         if not result["ok"][i]:
+            reasons[cand["id"]] = result["reason"][i]
             unscored_rows.append((low, high, metric, method, CORRELATION_METHOD_VERSION,
                                   result["reason"][i], int(result["max_shared"][i])))
             continue
@@ -746,7 +748,7 @@ def _score_and_save_batch(conn, ref_catalog_id, ref_vec, batch, target_source, m
         score_rows.append((low, high, r, metric, method, -lag if flip else lag, p, n_pairs, None,
                            CORRELATION_METHOD_VERSION))
     _save_batch(conn, score_rows, unscored_rows)
-    return scores
+    return scores, reasons
 
 
 @router.get("/correlations/family")
@@ -788,14 +790,23 @@ def correlation_family_endpoint(
                 ref_vec = np.array(
                     load_vector(conn, ref_source, ref_annotation_id, sample_order, metric), dtype=float)
                 for start in range(0, len(todo), FAMILY_BATCH_SIZE):
-                    saved.update(_score_and_save_batch(
+                    scores, reasons = _score_and_save_batch(
                         conn, ref_catalog_id, ref_vec, todo[start:start + FAMILY_BATCH_SIZE],
-                        target_source, metric, method, sample_order))
+                        target_source, metric, method, sample_order)
+                    saved.update(scores)
+                    unscored.update(reasons)
 
             scored = []
+            # Why each candidate that did not score was left out: fewer than
+            # 10 shared timepoints at every lag, no variation where they
+            # overlap, or "other" (a score that came out non-finite, so it
+            # was never saved).
+            untested_reasons = {"too_few_points": 0, "no_variation": 0, "other": 0}
             for cand in candidates:
                 result = saved.get(cand["id"])
                 if result is None:
+                    reason = unscored.get(cand["id"], "other")
+                    untested_reasons[reason if reason in untested_reasons else "other"] += 1
                     continue
                 scored.append({
                     "catalog_id":    cand["id"],
@@ -828,12 +839,14 @@ def correlation_family_endpoint(
         # significant" instead of a bare 50. untested_count is the
         # candidates that couldn't be scored (fewer than 10 shared
         # timepoints at every lag, or no variation where they overlap):
-        # they are outside the BH family, but are counted, not hidden.
+        # they are outside the BH family, but are counted, not hidden, and
+        # untested_reasons splits the count by reason.
         return {
             "results":           scored[:limit],
             "significant_count": sum(entry["significant"] for entry in scored),
             "tested_count":      len(scored),
             "untested_count":    len(candidates) - len(scored),
+            "untested_reasons":  untested_reasons,
         }
     finally:
         conn.close()
