@@ -12,9 +12,9 @@
  *   taxonomy: descendant dropped (free prefix check, no fetch)
  *   taxonomy: unrelated siblings both kept
  *   taxonomy: a 3-level nested chain drops both non-root levels
- *   kegg/cog/enzyme: descendant dropped via a real /path fetch
- *   kegg: a node with multiple real parent paths -- containment via ANY path counts
- *   different sources never cross-contaminate (a taxonomy id can't contain a kegg id)
+ *   cog/enzyme: descendant dropped via a real /path fetch
+ *   kegg: a flat list -- candidates always kept, never looked up
+ *   different sources never cross-contaminate (a taxonomy id can't contain a COG)
  *   a failed path fetch keeps the candidate rather than risking a wrong drop
  *   dropped result carries which candidate contained it (for the disclosure message)
  *
@@ -93,7 +93,7 @@ describe('filterRedundantAnnotations — taxonomy (free prefix check)', () => {
   })
 })
 
-describe('filterRedundantAnnotations — kegg/cog/enzyme (real /path fetch)', () => {
+describe('filterRedundantAnnotations — kegg/cog/enzyme', () => {
   it('drops a cog descendant using its real ancestor path', async () => {
     mockApiFetch.mockImplementation(async (url: string) => {
       if (url.includes('id=H')) return pathResponse([['H']])
@@ -112,25 +112,20 @@ describe('filterRedundantAnnotations — kegg/cog/enzyme (real /path fetch)', ()
     }])
   })
 
-  it('a kegg node with multiple real parent paths is dropped if ANY path shows containment', async () => {
+  // KEGG orthologs are a flat list: no KO contains another, so KEGG
+  // candidates are never looked up and never dropped.
+  it('kegg candidates are always kept, with no path lookup', async () => {
     mockApiFetch.mockImplementation(async (url: string) => {
-      if (url.includes('id=09180')) return pathResponse([['09180']])
-      // K00844 has 2 real paths; only the second one runs through 09180
-      if (url.includes('id=K00844')) {
-        return pathResponse([
-          ['09100', '00010', 'K00844'],
-          ['09180', '09182', 'K00844'],
-        ])
-      }
       throw new Error(`unexpected url: ${url}`)
     })
 
     const { kept, dropped } = await filterRedundantAnnotations([
-      { annotationId: '09180', source: 'kegg' },
       { annotationId: 'K00844', source: 'kegg' },
+      { annotationId: 'K00845', source: 'kegg' },
     ])
-    expect(kept).toEqual([{ annotationId: '09180', source: 'kegg' }])
-    expect(dropped.map(d => d.candidate.annotationId)).toEqual(['K00844'])
+    expect(kept).toHaveLength(2)
+    expect(dropped).toHaveLength(0)
+    expect(mockApiFetch).not.toHaveBeenCalled()
   })
 
   it('a lone candidate in a source never triggers a fetch (nothing to compare against)', async () => {
@@ -147,7 +142,7 @@ describe('filterRedundantAnnotations — kegg/cog/enzyme (real /path fetch)', ()
     expect(mockApiFetch).not.toHaveBeenCalled()
   })
 
-  it('kegg and cog candidates present at once never cross into each other\'s /path endpoint', async () => {
+  it('cog and enzyme candidates present at once never cross into each other\'s /path endpoint', async () => {
     // A prior version of this test used 1 candidate per source, which can't
     // actually detect cross-source contamination -- group.length < 2 means
     // no fetch happens at all regardless of source-scoping. This version
@@ -156,7 +151,7 @@ describe('filterRedundantAnnotations — kegg/cog/enzyme (real /path fetch)', ()
     // real fetch call log, not just the final kept/dropped outcome --
     // confirmed by deliberately breaking the source filter
     // (candidates.filter(c => c.source === source) -> c.source !== 'taxonomy',
-    // pooling kegg/cog/enzyme into one shared group) and watching the
+    // pooling cog/enzyme into one shared group) and watching the
     // outcome assertions below still pass while the call-log assertions
     // correctly failed, before reverting.
     mockApiFetch.mockImplementation(async (url: string) => {
@@ -164,11 +159,10 @@ describe('filterRedundantAnnotations — kegg/cog/enzyme (real /path fetch)', ()
         if (url.includes('id=H'))       return pathResponse([['H']])
         if (url.includes('id=COG0028')) return pathResponse([['H', 'COG0028']])
       }
-      if (url.includes('/api/kegg/path')) {
-        if (url.includes('id=09100'))  return pathResponse([['09100']])
-        // Genuinely unrelated to 09100 -- its real parent is a different
-        // pathway entirely.
-        if (url.includes('id=K00010')) return pathResponse([['09999', 'K00010']])
+      if (url.includes('/api/enzyme/path')) {
+        if (url.endsWith('id=1')) return pathResponse([['1']])
+        // Genuinely unrelated to class 1 -- it is in class 2.
+        if (url.includes('id=2.7.1.1')) return pathResponse([['2', '2.7', '2.7.1', '2.7.1.1']])
       }
       throw new Error(`unexpected url: ${url}`)
     })
@@ -176,14 +170,14 @@ describe('filterRedundantAnnotations — kegg/cog/enzyme (real /path fetch)', ()
     const { kept, dropped } = await filterRedundantAnnotations([
       { annotationId: 'H',       source: 'cog' },
       { annotationId: 'COG0028', source: 'cog' },
-      { annotationId: '09100',   source: 'kegg' },
-      { annotationId: 'K00010',  source: 'kegg' },
+      { annotationId: '1',       source: 'enzyme' },
+      { annotationId: '2.7.1.1', source: 'enzyme' },
     ])
 
     expect(kept).toEqual(expect.arrayContaining([
       { annotationId: 'H',      source: 'cog' },
-      { annotationId: '09100',  source: 'kegg' },
-      { annotationId: 'K00010', source: 'kegg' },
+      { annotationId: '1',       source: 'enzyme' },
+      { annotationId: '2.7.1.1', source: 'enzyme' },
     ]))
     expect(dropped).toEqual([{
       candidate:   { annotationId: 'COG0028', source: 'cog' },
@@ -194,8 +188,10 @@ describe('filterRedundantAnnotations — kegg/cog/enzyme (real /path fetch)', ()
     for (const url of urls.filter(u => u.includes('id=H') || u.includes('id=COG0028'))) {
       expect(url).toContain('/api/cog/path')
     }
-    for (const url of urls.filter(u => u.includes('id=09100') || u.includes('id=K00010'))) {
-      expect(url).toContain('/api/kegg/path')
+    const enzymeUrls = urls.filter(u => u.endsWith('id=1') || u.includes('id=2.7.1.1'))
+    expect(enzymeUrls).toHaveLength(2)
+    for (const url of enzymeUrls) {
+      expect(url).toContain('/api/enzyme/path')
     }
   })
 

@@ -17,11 +17,9 @@ const LEVELS: Record<string, RankOption[]> = {
     { value: 'subsubclass', label: 'Sub-subclass', depth: 3 },
     { value: 'ec',          label: 'EC number',    depth: 4 },
   ],
+  // KEGG orthologs are a flat list: one level, no starting term.
   kegg: [
-    { value: 'category',    label: 'Category',     depth: 1 },
-    { value: 'subcategory', label: 'Subcategory',  depth: 2 },
-    { value: 'pathway',     label: 'Pathway / BRITE table', depth: 3 },
-    { value: 'ko',          label: 'KO',           depth: 4 },
+    { value: 'ko',          label: 'KO',           depth: 1 },
   ],
   cog: [
     { value: 'category',    label: 'Category',     depth: 1 },

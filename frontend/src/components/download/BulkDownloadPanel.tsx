@@ -7,9 +7,9 @@
 // streams it to disk instead of the page building it in memory;
 // /api/series/export/summary supplies the size shown before downloading.
 //
-// Every source is available. A term reached through several paths inside the
-// start -- a KEGG KO in several pathways, a COG in several categories -- can
-// be reviewed (PathReviewList) and some of its paths unticked; those choices
+// Every source is available. KEGG orthologs are a flat list, so KEGG has no
+// starting term: it downloads every KO. A term reached through several paths
+// inside the start -- a COG in several categories -- can be reviewed (PathReviewList) and some of its paths unticked; those choices
 // go with the size request and the download as a text/plain form post,
 // since they can be too many for a link.
 
@@ -44,46 +44,40 @@ const LEVEL_PLURALS: Record<string, string> = {
   subsubclass: 'sub-subclasses',
   ec:          'EC numbers',
   category:    'categories',
-  subcategory: 'subcategories',
-  pathway:     'pathways',
   ko:          'KOs',
   cog:         'COGs',
 }
 
 // What a term's paths run through, for the review line ("in more than one
-// pathway") and list.
+// category") and list.
 const PATH_NOUNS: Record<string, string> = {
-  kegg: 'pathway',
   cog:  'category',
 }
 const PATH_NOUN_PLURALS: Record<string, string> = {
-  kegg: 'pathways',
   cog:  'categories',
 }
 
 const SEARCH_PLACEHOLDERS: Record<string, string> = {
   taxonomy: 'Search for a taxon (e.g. Gammaproteobacteria)…',
   enzyme:   'Search for an EC number or name (e.g. 5.6.2, topoisomerase)…',
-  kegg:     'Search for a KEGG term or ID (e.g. glycolysis, 00010)…',
   cog:      'Search for a COG category or COG (e.g. C, COG0028, ATP synthase)…',
 }
 
-// Excel reads some IDs as numbers when it opens a CSV: KEGG 00010 -> 10,
-// EC 1.10 -> 1.1 (587 KEGG ids and 274 EC numbers are affected).
-const EXCEL_ID_WARNING = ' If you open the file in Excel, Excel can turn IDs such as 00010 or 1.10 into numbers (10, 1.1); import those columns as text, or use R / pandas.'
+// Excel reads some IDs as numbers when it opens a CSV: EC 1.10 -> 1.1
+// (274 EC numbers are affected).
+const EXCEL_ID_WARNING = ' If you open the file in Excel, Excel can turn IDs such as 1.10 into numbers (1.1); import those columns as text, or use R / pandas.'
 
 const COLUMNS_HELP: Record<string, string> = {
   taxonomy: 'Columns: taxon, rank, lineage, sample, date, egc, norm_egc, detected. Samples where a taxon was not detected are written as 0 with detected = false. "unclassified …" taxa hold the reads that were not classified down to this rank, so every rank adds up to the starting taxon\'s total.',
   enzyme:   'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false.' + EXCEL_ID_WARNING,
   cog:      'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false. A COG in several ticked categories gets one set of rows per category, each with also_in_other_paths = true and the same values, so don\'t add those copies together.',
-  kegg:     'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a term was not detected are written as 0 with detected = false. A KO in several ticked pathways gets one set of rows per pathway, each with also_in_other_paths = true and the same values, so don\'t add those copies together. At the pathway level, level says what each entry is: pathway, brite_table (a Brite protein-family table such as Transporters) or kegg_group (a Not Included in Pathway or Brite group).' + EXCEL_ID_WARNING,
+  kegg:     'Columns: annotation_id, name, level, lineage_ids, lineage, also_in_other_paths, is_starting_term, sample, date, egc, norm_egc, detected. Samples where a KO was not detected are written as 0 with detected = false. KOs are a flat list, so lineage_ids is just the KO itself and also_in_other_paths is always false. The name is blank for a KO that JGI gives no name to. Each KO has a KEGG page at https://www.kegg.jp/entry/ followed by the KO id.',
 }
 
 // Shown under the size line for sources whose rows don't add up to the
 // starting term the way taxonomy's do.
 const SOURCE_NOTES: Record<string, string> = {
   cog:    'Rows can add up to more than the starting category: a gene with more than one COG counts under each of them, while the category counts it once; from the whole dataset, a COG in several categories also counts in each. Tick "Also include the starting term\'s own total" to compare.',
-  kegg:   'Rows may not add up to the starting term: a KO in several pathways counts in each of them, while the starting term counts it once. Tick "Also include the starting term\'s own total" to compare. The KEGG pathway level also holds its Brite protein-family tables (names ending [BR:…], such as Transporters) and its "Not Included in Pathway or Brite" groups, so these are listed with the pathways.',
   enzyme: 'Rows may not add up to the starting term. Genes known only to a higher level — a partial EC number such as 3.1.-, or an old number that was later split — count towards that level but towards no EC number below it, and a gene with two EC numbers counts under each. Tick "Also include the starting term\'s own total" to compare.',
 }
 
@@ -326,7 +320,7 @@ export function BulkDownloadPanel({
               style={{ font: '13px var(--mono)', color: 'var(--text-h)', overflowWrap: 'anywhere' }}
             >
               {!start
-                ? 'Whole dataset'
+                ? (source === 'kegg' ? 'Every KO (KEGG orthologs are a flat list, with no starting term)' : 'Whole dataset')
                 : source === 'taxonomy'
                   ? start.id.split(';').join(' › ')
                   : `${start.id} ${start.name}`}
@@ -334,18 +328,22 @@ export function BulkDownloadPanel({
                 <span style={{ marginLeft: 6, font: '11px var(--sans)', color: 'var(--text-dim)' }}>({startLevel})</span>
               )}
             </span>
-            <button
-              className={`btn sm ${picker === 'search' ? 'primary' : ''}`}
-              onClick={() => setPicker(p => (p === 'search' ? 'none' : 'search'))}
-            >
-              Search
-            </button>
-            <button
-              className={`btn sm ${picker === 'browse' ? 'primary' : ''}`}
-              onClick={() => setPicker(p => (p === 'browse' ? 'none' : 'browse'))}
-            >
-              Browse tree
-            </button>
+            {source !== 'kegg' && (
+              <>
+                <button
+                  className={`btn sm ${picker === 'search' ? 'primary' : ''}`}
+                  onClick={() => setPicker(p => (p === 'search' ? 'none' : 'search'))}
+                >
+                  Search
+                </button>
+                <button
+                  className={`btn sm ${picker === 'browse' ? 'primary' : ''}`}
+                  onClick={() => setPicker(p => (p === 'browse' ? 'none' : 'browse'))}
+                >
+                  Browse tree
+                </button>
+              </>
+            )}
             {start && (
               <button className="btn sm ghost" onClick={() => chooseStart(source, null)}>Whole dataset</button>
             )}

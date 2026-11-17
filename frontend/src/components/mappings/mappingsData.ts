@@ -104,7 +104,7 @@ export function estimateExportSize(rows: number): string {
 // Leaf ids have a fixed, well-known shape per source (mirrors the same
 // shape assumptions cache_sql.py's _expand_to_leaf_ids already relies on
 // server-side: a COG category is always a bare letter, never "COG####";
-// a KEGG pathway/BRITE code is numeric, never "K#####"; an Enzyme class
+// every KEGG id is a KO, "K#####"; an Enzyme class
 // has fewer than 4 dot-separated segments). Used only to pick a sensible
 // *default* for the unique-pairs checkbox before the first response comes
 // back -- a wrong guess here doesn't affect correctness, just which

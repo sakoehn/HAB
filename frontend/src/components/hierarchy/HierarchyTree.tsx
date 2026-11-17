@@ -1,5 +1,5 @@
 // ── HierarchyTree ────────────────────────────────────────────────────────────
-// Read-only expandable tree for browsing a KEGG/COG/Enzyme hierarchy inside
+// Read-only expandable tree for browsing a COG/Enzyme hierarchy inside
 // the hierarchy popup. Modeled on TaxonomyBrowseTree.tsx's rows (chevron +
 // plain name, no checkbox, no click-to-select -- this is pure browsing, not
 // a scope picker), reusing the same .tax-node-* CSS classes.

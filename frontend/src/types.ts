@@ -76,10 +76,11 @@ export type TaxonomyTreeNode = {
   children:       TaxonomyTreeNode[]
 }
 
-// ── Hierarchy popup (KEGG / COG / Enzyme browse tree) ──────────────────────
-// Source key for the hierarchy popup -- deliberately excludes 'taxonomy',
-// which already has its own dedicated tree (TaxonomyTree/TaxonomyPage).
-export type HierarchySource = 'kegg' | 'cog' | 'enzyme'
+// ── Hierarchy popup (COG / Enzyme browse tree) ─────────────────────────────
+// Source key for the hierarchy popup. Excludes 'taxonomy', which has its own
+// tree (TaxonomyTree/TaxonomyPage), and 'kegg': KEGG orthologs are a flat
+// list with no hierarchy.
+export type HierarchySource = 'cog' | 'enzyme'
 
 // Response row shape from GET /{source}/children.
 export type HierarchyChildNode = {
@@ -93,10 +94,9 @@ export type HierarchyChildNode = {
 export type HierarchyPathNode = { annotation_id: string; name: string; depth: number }
 
 // Response shape from GET /{source}/path. `paths` holds every real
-// ancestor chain for annotation_id, sorted by first real occurrence --
-// only KEGG ever has more than one entry (a node with multiple real
-// BRITE parents, e.g. K00844/hexokinase has 14); COG/Enzyme always have
-// exactly 1.
+// ancestor chain for annotation_id, sorted by first real occurrence -- a
+// COG in several functional categories has one per category (e.g. COG0028
+// is under both E and H); an Enzyme node always has exactly 1.
 export type HierarchyPathResponse = {
   annotation_id: string
   paths:         HierarchyPathNode[][]
@@ -129,7 +129,7 @@ export type TopAnnotation = {
   sample_count:   number
   value?:         AnnotationValue | null
   // Taxonomic rank, 1=domain..8=strain for taxonomy; hierarchy-tree depth
-  // (real for every source, including cog) for kegg/cog/enzyme. Present on
+  // for cog/enzyme; always 1 for kegg (a flat list of KOs). Present on
   // both /api/annotations/top and /api/search/annotations rows -- needed to
   // rank-filter down to real leaf annotations, since a parent's EGC is the
   // sum of its descendants and so always outranks its leaves by mean_egc.

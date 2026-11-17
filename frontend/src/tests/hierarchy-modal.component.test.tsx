@@ -8,11 +8,9 @@
  * annotation has multiple real parents, a picker must let the user switch
  * between them.
  *
- * Uses the real K00844/hexokinase example: a KEGG node with 14 real
- * pathway parents. GET /kegg/path must resolve
- * (by default) to the Metabolism > Carbohydrate metabolism > Glycolysis
- * chain, and switching the picker to "Fructose and mannose metabolism"
- * must move the tree's expanded/highlighted branch to match.
+ * Uses two real examples: EC 2.7.1.1 (hexokinase), four levels deep, for
+ * expanding and highlighting; and COG0028, a real member of both category
+ * E and category H, for the path picker and switching between paths.
  *
  * Run: npx vitest run src/tests/hierarchy-modal.component.test.tsx
  */
@@ -30,70 +28,78 @@ function jsonResponse(data: unknown) {
   return { ok: true, status: 200, statusText: 'OK', json: async () => data }
 }
 
-// Two of K00844's 14 real paths (both real, from tests/sql/test_cache_sql.py's
-// direct-query verification) -- enough to exercise switching without
-// hardcoding all 14.
-const GLYCOLYSIS_PATH = [
-  { annotation_id: '09100', name: 'Metabolism', depth: 1 },
-  { annotation_id: '09101', name: 'Carbohydrate metabolism', depth: 2 },
-  { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 3 },
-  { annotation_id: 'K00844', name: 'HK; hexokinase', depth: 4 },
+// EC 2.7.1.1's real path (enzyme_paths).
+const HEXOKINASE_PATH = [
+  { annotation_id: '2', name: 'Transferases', depth: 1 },
+  { annotation_id: '2.7', name: 'Transferring phosphorus-containing groups', depth: 2 },
+  { annotation_id: '2.7.1', name: 'Phosphotransferases with an alcohol group as acceptor', depth: 3 },
+  { annotation_id: '2.7.1.1', name: 'hexokinase', depth: 4 },
 ]
-const FRUCTOSE_PATH = [
-  { annotation_id: '09100', name: 'Metabolism', depth: 1 },
-  { annotation_id: '09101', name: 'Carbohydrate metabolism', depth: 2 },
-  { annotation_id: '00051', name: 'Fructose and mannose metabolism', depth: 3 },
-  { annotation_id: 'K00844', name: 'HK; hexokinase', depth: 4 },
-]
-
-const PATH_RESPONSE = {
-  annotation_id: 'K00844',
-  paths:         [GLYCOLYSIS_PATH, FRUCTOSE_PATH],
-  path_count:    14,
+const ENZYME_CHILDREN: Record<string, unknown[]> = {
+  root:    [{ annotation_id: '2', name: 'Transferases', depth: 1, category: 'Transferases' }],
+  '2':     [{ annotation_id: '2.7', name: 'Transferring phosphorus-containing groups', depth: 2, category: 'Transferases' }],
+  '2.7':   [{ annotation_id: '2.7.1', name: 'Phosphotransferases with an alcohol group as acceptor', depth: 3, category: 'Transferases' }],
+  '2.7.1': [{ annotation_id: '2.7.1.1', name: 'hexokinase', depth: 4, category: 'Transferases' }],
 }
 
-const CHILDREN_BY_PARENT: Record<string, unknown[]> = {
-  root:    [{ annotation_id: '09100', name: 'Metabolism', depth: 1, category: 'Metabolism' }],
-  '09100': [{ annotation_id: '09101', name: 'Carbohydrate metabolism', depth: 2, category: 'Metabolism' }],
-  // Both real pathways are siblings under Carbohydrate metabolism.
-  '09101': [
-    { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis', depth: 3, category: 'Metabolism' },
-    { annotation_id: '00051', name: 'Fructose and mannose metabolism', depth: 3, category: 'Metabolism' },
+// COG0028's two real paths (cog_paths).
+const COG0028_NAME = 'Acetolactate synthase large subunit or other thiamine pyrophosphate-requiring enzyme'
+const E_PATH = [
+  { annotation_id: 'E', name: 'Amino acid transport and metabolism', depth: 1 },
+  { annotation_id: 'COG0028', name: COG0028_NAME, depth: 2 },
+]
+const H_PATH = [
+  { annotation_id: 'H', name: 'Coenzyme transport and metabolism', depth: 1 },
+  { annotation_id: 'COG0028', name: COG0028_NAME, depth: 2 },
+]
+const COG_CHILDREN: Record<string, unknown[]> = {
+  root: [
+    { annotation_id: 'E', name: 'Amino acid transport and metabolism', depth: 1, category: 'Amino acid transport and metabolism' },
+    { annotation_id: 'H', name: 'Coenzyme transport and metabolism', depth: 1, category: 'Coenzyme transport and metabolism' },
   ],
-  '00010': [{ annotation_id: 'K00844', name: 'HK; hexokinase', depth: 4, category: 'Metabolism' }],
-  '00051': [{ annotation_id: 'K00844', name: 'HK; hexokinase', depth: 4, category: 'Metabolism' }],
+  E: [{ annotation_id: 'COG0028', name: COG0028_NAME, depth: 2, category: 'Amino acid transport and metabolism' }],
+  H: [{ annotation_id: 'COG0028', name: COG0028_NAME, depth: 2, category: 'Coenzyme transport and metabolism' }],
+}
+
+function childrenResponse(url: string, table: Record<string, unknown[]>) {
+  const match = /parent=([^&]*)/.exec(url)
+  const parent = match ? decodeURIComponent(match[1]) : 'root'
+  return Promise.resolve(jsonResponse({ data: table[parent] ?? [] }))
 }
 
 beforeEach(() => {
   mockFetch.mockReset()
   mockFetch.mockImplementation((url: string) => {
-    if (url.includes('/kegg/path')) return Promise.resolve(jsonResponse(PATH_RESPONSE))
-    const match = /parent=([^&]*)/.exec(url)
-    const parent = match ? decodeURIComponent(match[1]) : 'root'
-    return Promise.resolve(jsonResponse({ data: CHILDREN_BY_PARENT[parent] ?? [] }))
+    if (url.includes('/enzyme/path')) {
+      return Promise.resolve(jsonResponse({ annotation_id: '2.7.1.1', paths: [HEXOKINASE_PATH], path_count: 1 }))
+    }
+    if (url.includes('/cog/path')) {
+      return Promise.resolve(jsonResponse({ annotation_id: 'COG0028', paths: [E_PATH, H_PATH], path_count: 2 }))
+    }
+    return childrenResponse(url, url.includes('/cog/') ? COG_CHILDREN : ENZYME_CHILDREN)
   })
 })
 
 describe('HierarchyModal — auto-expand to path', () => {
-  it('expands every ancestor down to the target annotation (first/primary path)', async () => {
-    render(<HierarchyModal annotationId="K00844" source="kegg" onClose={vi.fn()} />)
+  it('expands every ancestor down to the target annotation', async () => {
+    render(<HierarchyModal annotationId="2.7.1.1" source="enzyme" onClose={vi.fn()} />)
 
-    expect(await screen.findByText('Metabolism')).toBeInTheDocument()
-    expect(await screen.findByText('Carbohydrate metabolism')).toBeInTheDocument()
-    expect(await screen.findByText('Glycolysis / Gluconeogenesis')).toBeInTheDocument()
-    expect(await screen.findByText('HK; hexokinase')).toBeInTheDocument()
+    expect(await screen.findByText('Transferases')).toBeInTheDocument()
+    expect(await screen.findByText('Transferring phosphorus-containing groups')).toBeInTheDocument()
+    expect(await screen.findByText('Phosphotransferases with an alcohol group as acceptor')).toBeInTheDocument()
+    expect(await screen.findByText('hexokinase')).toBeInTheDocument()
   })
 
   it('highlights the target annotation once expansion completes', async () => {
-    render(<HierarchyModal annotationId="K00844" source="kegg" onClose={vi.fn()} />)
+    render(<HierarchyModal annotationId="2.7.1.1" source="enzyme" onClose={vi.fn()} />)
 
-    const leafRow = await screen.findByText('HK; hexokinase')
+    const leafRow = await screen.findByText('hexokinase')
     expect(leafRow.closest('.tax-node-row')).toHaveClass('hier-node-highlighted')
   })
 
   it('shows a path picker with a count when path_count > 1', async () => {
-    render(<HierarchyModal annotationId="K00844" source="kegg" onClose={vi.fn()} />)
-    expect(await screen.findByTestId('multi-parent-note')).toHaveTextContent('14 real KEGG pathways')
+    render(<HierarchyModal annotationId="COG0028" source="cog" onClose={vi.fn()} />)
+    expect(await screen.findByTestId('multi-parent-note')).toHaveTextContent('2 real COG categories')
     expect(screen.getByTestId('path-picker')).toBeInTheDocument()
   })
 
@@ -155,12 +161,12 @@ describe('HierarchyModal — auto-expand to path', () => {
 
   it('shows an error state when the annotation cannot be located', async () => {
     mockFetch.mockImplementation(() => Promise.resolve({ ok: false, status: 404, statusText: 'Not Found', json: async () => ({}) }))
-    render(<HierarchyModal annotationId="NOT_REAL" source="kegg" onClose={vi.fn()} />)
+    render(<HierarchyModal annotationId="NOT_REAL" source="cog" onClose={vi.fn()} />)
     expect(await screen.findByTestId('error-state')).toBeInTheDocument()
   })
 
-  // /kegg/path (the fetch pathStatus
-  // tracks) is a SEPARATE request from the root /kegg/children fetch
+  // /enzyme/path (the fetch pathStatus
+  // tracks) is a SEPARATE request from the root /enzyme/children fetch
   // goToPath triggers internally to resolve the ancestor chain -- the
   // path lookup itself can succeed (pathStatus 'ok') while that root
   // fetch independently fails, leaving `nodes` empty. That must not render
@@ -168,10 +174,10 @@ describe('HierarchyModal — auto-expand to path', () => {
   // childless root.
   it('shows a distinct tree-load error when the root fetch fails even though the path lookup succeeded', async () => {
     mockFetch.mockImplementation((url: string) => {
-      if (url.includes('/kegg/path')) {
+      if (url.includes('/enzyme/path')) {
         return Promise.resolve(jsonResponse({
-          annotation_id: 'K00844',
-          paths: [GLYCOLYSIS_PATH],
+          annotation_id: '2.7.1.1',
+          paths: [HEXOKINASE_PATH],
           path_count: 1,
         }))
       }
@@ -184,7 +190,7 @@ describe('HierarchyModal — auto-expand to path', () => {
       return Promise.resolve(jsonResponse({ data: [] }))
     })
 
-    render(<HierarchyModal annotationId="K00844" source="kegg" onClose={vi.fn()} />)
+    render(<HierarchyModal annotationId="2.7.1.1" source="enzyme" onClose={vi.fn()} />)
 
     expect(await screen.findByText('Failed to load hierarchy tree.')).toBeInTheDocument()
     expect(screen.queryByText('No entries under this node.')).not.toBeInTheDocument()
@@ -192,29 +198,29 @@ describe('HierarchyModal — auto-expand to path', () => {
 })
 
 describe('HierarchyModal — switching between real paths', () => {
-  it('switching the picker moves the expanded/highlighted branch to the new path', async () => {
+  it('switching the picker moves the highlighted leaf to the new path', async () => {
     const user = userEvent.setup()
-    render(<HierarchyModal annotationId="K00844" source="kegg" onClose={vi.fn()} />)
+    render(<HierarchyModal annotationId="COG0028" source="cog" onClose={vi.fn()} />)
 
-    // Starts on the primary (Glycolysis) path.
-    await screen.findByText('Glycolysis / Gluconeogenesis')
-    expect(screen.getByText('HK; hexokinase').closest('.tax-node-row')).toHaveClass('hier-node-highlighted')
+    // Starts on the primary (E) path, with the leaf highlighted.
+    await screen.findByTestId('path-picker')
+    const first = await screen.findByText(COG0028_NAME)
+    expect(first.closest('.tax-node-row')).toHaveClass('hier-node-highlighted')
 
     await user.selectOptions(screen.getByTestId('path-picker'), '1')
 
-    // The shared ancestor stays put; the leaf now sits under Fructose
-    // instead, and is still the one highlighted.
-    expect(await screen.findByText('Fructose and mannose metabolism')).toBeInTheDocument()
-    expect(screen.getByText('Carbohydrate metabolism')).toBeInTheDocument()
-    const leafRow = screen.getByText('HK; hexokinase').closest('.tax-node-row')
-    expect(leafRow).toHaveClass('hier-node-highlighted')
+    // The leaf now sits under H, and exactly one copy is highlighted.
+    const rows = await screen.findAllByText(COG0028_NAME)
+    const highlighted = rows.filter(r => r.closest('.tax-node-row')?.classList.contains('hier-node-highlighted'))
+    expect(highlighted).toHaveLength(1)
+    expect(screen.getByText('Coenzyme transport and metabolism')).toBeInTheDocument()
   })
 
-  it('lists every real path as a picker option, labelled by its distinguishing pathway', async () => {
-    render(<HierarchyModal annotationId="K00844" source="kegg" onClose={vi.fn()} />)
+  it('lists every real path as a picker option, labelled by its distinguishing category', async () => {
+    render(<HierarchyModal annotationId="COG0028" source="cog" onClose={vi.fn()} />)
     await screen.findByTestId('path-picker')
 
-    expect(screen.getByRole('option', { name: /Glycolysis \/ Gluconeogenesis/ })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: /Fructose and mannose metabolism/ })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Amino acid transport and metabolism/ })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Coenzyme transport and metabolism/ })).toBeInTheDocument()
   })
 })

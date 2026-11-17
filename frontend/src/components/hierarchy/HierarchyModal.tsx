@@ -1,12 +1,12 @@
 // ── HierarchyModal ────────────────────────────────────────────────────────────
-// Popup showing where one KEGG/COG/Enzyme annotation sits in its source's
-// BRITE-style hierarchy. Shell copied from ScaffoldModal.tsx (overlay,
+// Popup showing where one COG/Enzyme annotation sits in its source's
+// hierarchy. Shell copied from ScaffoldModal.tsx (overlay,
 // escape-to-close, click-outside-to-close, header layout) -- much simpler
 // body: on open, fetches every real ancestor path for the annotation and
 // auto-expands the first (file-order-primary) one, highlighting the leaf.
 //
-// KEGG nodes can have multiple real parents (e.g. K00844/hexokinase has 14
-// real pathway parents); when that's the case (path_count > 1) a
+// A COG can be in several functional categories (e.g. COG0028 is under both
+// E and H); when that's the case (path_count > 1) a
 // dropdown above the tree lists every real path, labelled by whichever
 // segment actually differs between them (its immediate parent) -- picking
 // one switches the tree to that path instead.
@@ -19,11 +19,8 @@ import { useHierarchyTree } from '../../hooks/useHierarchyTree'
 import { HierarchyTree } from './HierarchyTree'
 import { SkeletonTreeRows } from '../ui/Skeleton'
 
-// The multi-parent note below names the right kind of parent per source --
-// a multi-category COG (e.g. COG0028, real member of both category E and
-// H) has categories, not "KEGG pathways".
+// The multi-parent note below names the right kind of parent per source.
 const HIERARCHY_NODE_NOUN: Record<HierarchySource, string> = {
-  kegg:   'KEGG pathways',
   cog:    'COG categories',
   enzyme: 'Enzyme classes',
 }

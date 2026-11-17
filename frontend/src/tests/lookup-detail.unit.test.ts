@@ -47,48 +47,16 @@ import type { TopAnnotation, AnnotationValue } from '../types'
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// depthLabel — KEGG (1–4)
+// depthLabel — KEGG (a flat list of KOs, all depth 1)
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('depthLabel — KEGG', () => {
-  it('depth 1 = pathway class', () => {
-    expect(depthLabel(1, 'kegg')).toBe('pathway class')
+  it('depth 1 = KO, the only KEGG level', () => {
+    expect(depthLabel(1, 'kegg')).toBe('KO')
   })
 
-  it('depth 2 = subcategory', () => {
-    expect(depthLabel(2, 'kegg')).toBe('subcategory')
-  })
-
-  // KEGG's third level also holds the Brite protein-family tables
-  // ([BR:...]) and the "Not Included in Pathway or Brite" bins, so only a
-  // [PATH:...] name is called a pathway.
-  it('depth 3 with no name names the whole level, which holds more than pathways', () => {
-    expect(depthLabel(3, 'kegg')).toBe('pathway / BRITE table')
-  })
-
-  it('depth 3 [PATH:] entry = pathway', () => {
-    expect(depthLabel(3, 'kegg', 'ABC transporters [PATH:ko02010]')).toBe('pathway')
-  })
-
-  it('depth 3 [BR:] entry = BRITE table', () => {
-    expect(depthLabel(3, 'kegg', 'Transporters [BR:ko02000]')).toBe('BRITE table')
-  })
-
-  it('depth 3 entry with neither marker = KEGG group (a "not included" bin)', () => {
-    expect(depthLabel(3, 'kegg', 'Enzymes with EC numbers')).toBe('KEGG group')
-  })
-
-  it('a name does not change any other level', () => {
-    expect(depthLabel(4, 'kegg', 'HK; hexokinase [EC:2.7.1.1]')).toBe('leaf (KO)')
-    expect(depthLabel(3, 'enzyme', 'With NAD+ or NADP+ as acceptor')).toBe('sub-subclass')
-  })
-
-  it('depth 4 = leaf (KO) — the KO entries actually searched are at this level', () => {
-    expect(depthLabel(4, 'kegg')).toBe('leaf (KO)')
-  })
-
-  it('unexpected depth returns the raw number as string', () => {
-    expect(depthLabel(5, 'kegg')).toBe('5')
+  it('any other depth returns the raw number as string', () => {
+    expect(depthLabel(4, 'kegg')).toBe('4')
   })
 })
 

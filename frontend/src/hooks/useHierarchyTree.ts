@@ -1,22 +1,22 @@
 // ── useHierarchyTree ─────────────────────────────────────────────────────────
-// Lazy-loading tree state for the KEGG/COG/Enzyme hierarchy popup. Fetches
+// Lazy-loading tree state for the COG/Enzyme hierarchy popup. Fetches
 // direct children of a node via GET /{source}/children on demand, same
 // mechanics as useTaxonomyTree.ts (kept as a separate, parallel
 // implementation rather than a shared abstraction -- matches this codebase's
 // existing house style of per-source functions, e.g. cache_sql.py's
-// get_kegg_children_sql/get_cog_children_sql/get_enzyme_children_sql).
+// get_cog_children_sql/get_enzyme_children_sql).
 //
 // Always rooted at the top level (no re-rootable "scope" concept the way
 // TaxonomyTree has) -- the popup always opens showing the whole source tree.
 //
 // Adds expandToPath(): fetches GET /{source}/path?id=X, which returns EVERY
-// real ancestor chain for a node (a KEGG node can have several real BRITE
-// parents -- e.g. K00844/hexokinase has 14), and expands the first (file-
+// real ancestor chain for a node (a COG can be in several categories --
+// e.g. COG0028 is under E and H), and expands the first (file-
 // order-primary) one, highlighting the leaf. switchToPath() lets the caller
 // (the popup's path picker) switch to a different real chain afterward --
 // it collapses whichever ancestors aren't shared with the new chain and
 // expands the new chain's ancestors, reusing already-loaded/cached levels
-// (e.g. Metabolism, if it's an ancestor of both chains, is never re-fetched
+// (e.g. a shared ancestor of both chains is never re-fetched
 // or even collapsed).
 
 import { useCallback, useRef, useState } from 'react'
@@ -157,7 +157,7 @@ export function useHierarchyTree(source: HierarchySource) {
 
   // Fetches every real ancestor chain for annotationId and expands the
   // first (file-order-primary) one. Returns { pathCount } on success
-  // (pathCount > 1 only for a genuinely multi-parent KEGG node), or null
+  // (pathCount > 1 only for a COG in several categories), or null
   // if the id isn't a real node / the fetch failed.
   const expandToPath = useCallback(async (annotationId: string): Promise<{ pathCount: number } | null> => {
     let pathResponse: HierarchyPathResponse

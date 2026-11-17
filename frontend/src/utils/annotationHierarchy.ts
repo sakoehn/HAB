@@ -18,16 +18,17 @@
 //     ancestor of B" is a free string-prefix check -- no fetch needed.
 //     Mirrors utils/taxonomy.ts's isCoveredByAnotherExclusion (built for
 //     the taxonomy-exclusion case), generalized here for the sum case.
-//   - kegg/cog/enzyme: no such shortcut -- a candidate only carries its
-//     immediate parent, not a full ancestor chain, and KEGG nodes can have
-//     multiple real parents (e.g. K00844/hexokinase has 14). Fetches each
+//   - cog/enzyme: no such shortcut -- a candidate only carries its
+//     immediate parent, not a full ancestor chain, and a COG can be in
+//     several categories (e.g. COG0028 is under E and H). Fetches each
 //     candidate's real ancestor path(s) from the existing /{source}/path
 //     endpoint (built for the hierarchy popup, root-to-node order,
 //     INCLUDES the node itself as the last element) and checks whether any
 //     other candidate in the group appears earlier in any of those paths.
 //
 // Only ever compares candidates within the SAME source -- a taxonomy node
-// can't contain a KEGG node.
+// can't contain a COG. KEGG orthologs are a flat list, so no KO contains
+// another and KEGG candidates are always kept.
 
 import { apiFetch } from './api'
 import type { HierarchyPathResponse, HierarchySource } from '../types'
@@ -51,7 +52,7 @@ function isTaxonomyDescendant(id: string, ofId: string): boolean {
   return id.startsWith(ofId + ';')
 }
 
-const HIERARCHY_SOURCES = new Set<string>(['kegg', 'cog', 'enzyme'])
+const HIERARCHY_SOURCES = new Set<string>(['cog', 'enzyme'])
 
 export async function filterRedundantAnnotations(
   candidates: RedundancyCandidate[],
@@ -73,7 +74,7 @@ export async function filterRedundantAnnotations(
     }
   }
 
-  // ── KEGG / COG / Enzyme: fetch real ancestor paths ─────────────────────
+  // ── COG / Enzyme: fetch real ancestor paths ────────────────────────────
   for (const source of HIERARCHY_SOURCES) {
     const group = candidates.filter(c => c.source === source)
     if (group.length < 2) continue // nothing to compare against

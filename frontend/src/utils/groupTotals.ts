@@ -3,9 +3,9 @@
 //
 // A category's size is its own mean EGC, in which each gene counts once.
 // Adding up its listed members is wrong both ways: members can overlap (a
-// KEGG KO in several pathways counts in each), which made KEGG categories
-// up to ~55% too large, and only the top 200 annotations are listed, which
-// left COG categories at a third to a half of their real size.
+// COG in several categories counts in each, and a gene with two COGs counts
+// under both), and only the top 200 annotations are listed, which left COG
+// categories at a third to a half of their real size.
 
 import type { TopAnnotation } from '../types'
 import { apiFetch } from './api'

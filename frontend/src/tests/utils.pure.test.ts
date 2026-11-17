@@ -83,7 +83,7 @@ import {
   resetSourceCounters,
   SOURCE_SHADES,
   CHART_COLORS,
-  KEGG_BRITE_CODES,
+  ecRenumberedNote,
 } from '../constants'
 
 import { LOWESS_BANDWIDTH_MIN } from '../components/charts/ChartControls'
@@ -1498,29 +1498,27 @@ describe('buildCsvString', () => {
 // expandParentLabel
 // ─────────────────────────────────────────────────────────────────────────────
 
-// KEGG_BRITE_CODES is a 449-entry table (every real bare-code kegg `parent`
-// value in the local db, cross-checked against kegg_paths). The
-// `expandParentLabel` tests below only spot-check 4 individual
-// codes -- none of them would catch a future edit that silently dropped or
-// duplicated OTHER entries (e.g. a bad merge, a copy-paste truncation).
-// These guard the table's own shape instead of any one value.
-describe('KEGG_BRITE_CODES table shape', () => {
-  it('has exactly 449 entries (the real count of distinct kegg parent codes in the local db)', () => {
-    expect(Object.keys(KEGG_BRITE_CODES).length).toBe(449)
+// ecRenumberedNote: the note on an enzyme node holding genes JGI's files
+// list under an old, since-renumbered EC number.
+describe('ecRenumberedNote', () => {
+  it('names the old number for a renumbered enzyme', () => {
+    const note = ecRenumberedNote('enzyme', '5.6.1.10')
+    expect(note).toContain('3.6.4.10')
+    expect(note).toContain('IUBMB')
   })
 
-  it('every key is a bare 5-digit numeric code', () => {
-    for (const key of Object.keys(KEGG_BRITE_CODES)) {
-      expect(key).toMatch(/^\d{5}$/)
-    }
+  it('names both old numbers when two were merged into one node', () => {
+    const note = ecRenumberedNote('enzyme', '5.6.2')!
+    expect(note).toContain('3.6.4.12 and 3.6.4.13')
   })
 
-  it('every value is a non-empty string with no leftover PATH/BR bracket suffix', () => {
-    for (const value of Object.values(KEGG_BRITE_CODES)) {
-      expect(typeof value).toBe('string')
-      expect(value.length).toBeGreaterThan(0)
-      expect(value).not.toMatch(/\[(PATH|BR):ko\d+\]/)
-    }
+  it('is null for an enzyme that was not renumbered', () => {
+    expect(ecRenumberedNote('enzyme', '1.1.1.1')).toBeNull()
+  })
+
+  it('is null for other sources, even with a matching id', () => {
+    expect(ecRenumberedNote('cog', '5.6.2')).toBeNull()
+    expect(ecRenumberedNote('kegg', 'K00844')).toBeNull()
   })
 })
 
@@ -1559,35 +1557,11 @@ describe('expandParentLabel', () => {
     expect(expandParentLabel('9.1.1', 'enzyme')).toBe('9.1.1')
   })
 
-  it('KEGG strips leading 5-digit code from "01000 Enzymes"', () => {
-    expect(expandParentLabel('01000 Enzymes', 'kegg')).toBe('Enzymes')
-  })
-
-  // KEGG_BRITE_CODES is generated from real kegg_paths data -- 09100 is a
-  // real, common top-level BRITE category code (09100 -> 'Metabolism').
-  it('KEGG resolves a real pure 5-digit BRITE code (09100)', () => {
-    expect(expandParentLabel('09100', 'kegg')).toBe('Metabolism')
-  })
-
-  it('KEGG unknown code uses BRITE group fallback', () => {
-    expect(expandParentLabel('99123', 'kegg')).toBe('BRITE group 99123')
-  })
-
-  // Codes a hand-typed table would plausibly get wrong -- each checked
-  // against the real kegg_paths table.
-  it('KEGG 02024 resolves to its real name, not the old table\'s wrong guess', () => {
-    expect(expandParentLabel('02024', 'kegg')).toBe('Quorum sensing')
-    expect(expandParentLabel('02024', 'kegg')).not.toBe('Transporters')
-  })
-
-  it('KEGG 99996 resolves to its real name, not the old table\'s wrong guess', () => {
-    expect(expandParentLabel('99996', 'kegg')).toBe('General function prediction only')
-    expect(expandParentLabel('99996', 'kegg')).not.toBe('Not included in regular maps')
-  })
-
-  it('KEGG 99980 resolves to its real name, not the old table\'s wrong guess', () => {
-    expect(expandParentLabel('99980', 'kegg')).toBe('Enzymes with EC numbers')
-    expect(expandParentLabel('99980', 'kegg')).not.toBe('Unclassified signaling/cellular processes')
+  // KEGG orthologs have no parent, and the site carries no KEGG pathway
+  // names, so a KEGG value is never translated.
+  it('KEGG values are returned unchanged (no KEGG pathway names on the site)', () => {
+    expect(expandParentLabel('09100', 'kegg')).toBe('09100')
+    expect(expandParentLabel('00010', 'kegg')).toBe('00010')
   })
 
   it('taxonomy domain-level parent gets a rank suffix', () => {

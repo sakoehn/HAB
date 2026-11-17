@@ -36,9 +36,11 @@ const ROWS: Record<string, object[]> = {
     { annotation_id: 'E', name: 'Amino acid transport and metabolism', parent: null, depth: 1, mean_egc: 900, max_egc: 1000, sample_count: 128 },
     { annotation_id: 'COG1473', name: 'Metal-dependent amidase', parent: 'R', depth: 2, mean_egc: 100, max_egc: 200, sample_count: 128 },
   ],
+  // KEGG orthologs are a flat list: every KO is depth 1 with no parent,
+  // and some have no name from JGI.
   kegg: [
-    { annotation_id: '09100', name: 'Metabolism', parent: null, depth: 1, mean_egc: 900, max_egc: 1000, sample_count: 128 },
-    { annotation_id: 'K00134', name: 'GAPDH', parent: '03019', depth: 4, mean_egc: 100, max_egc: 200, sample_count: 128 },
+    { annotation_id: 'K00134', name: 'glyceraldehyde 3-phosphate dehydrogenase (phosphorylating)', parent: null, depth: 1, mean_egc: 900, max_egc: 1000, sample_count: 128 },
+    { annotation_id: 'K22909', name: null, parent: null, depth: 1, mean_egc: 100, max_egc: 200, sample_count: 128 },
   ],
   enzyme: [
     { annotation_id: '1.14.15', name: 'With reduced iron-sulfur protein', parent: '1.14', depth: 3, mean_egc: 100, max_egc: 200, sample_count: 128 },
@@ -55,14 +57,6 @@ beforeEach(() => {
     if (url.includes('/api/annotations/top')) {
       const src = /source=(\w+)/.exec(url)![1]
       return Promise.resolve(json({ data: ROWS[src], sample_count: 128 }))
-    }
-    if (url.includes('/api/kegg/parents')) {
-      return Promise.resolve(json({ parents: {
-        K00134: [
-          { annotation_id: '00010', name: 'Glycolysis / Gluconeogenesis' },
-          { annotation_id: '03019', name: 'Messenger RNA biogenesis' },
-        ],
-      } }))
     }
     return Promise.resolve(json({}))
   })
@@ -107,10 +101,10 @@ describe('Top EGC — Rank column', () => {
     expect(cellText('COG1473', 'Rank')).toBe('leaf (COG)')
   })
 
-  it('kegg rows show pathway class / leaf (KO)', async () => {
+  it('kegg rows show KO, the only KEGG level', async () => {
     await loadTop('kegg')
-    await waitFor(() => expect(cellText('K00134', 'Rank')).toBe('leaf (KO)'))
-    expect(cellText('09100', 'Rank')).toBe('pathway class')
+    await waitFor(() => expect(cellText('K00134', 'Rank')).toBe('KO'))
+    expect(cellText('K22909', 'Rank')).toBe('KO')
   })
 
   it('enzyme rows show sub-subclass', async () => {
@@ -125,17 +119,15 @@ describe('Top EGC — Rank column', () => {
 })
 
 describe('Top EGC — Rank filter pills use the same names', () => {
-  it('kegg pills read "pathway class" / "leaf (KO)", not "Level N", and fetch their rank', async () => {
-    const user = await loadTop('kegg')
+  // KEGG has a single level, so there is nothing to choose between.
+  it('kegg shows no rank pills and asks for its one level', async () => {
+    await loadTop('kegg')
     await waitFor(() => expect(screen.getByText('K00134')).toBeInTheDocument())
     expect(screen.queryByText('Level 1')).not.toBeInTheDocument()
     const pills = screen.getAllByRole('button').filter(b => b.className.includes('al-source-pill'))
-    expect(pills.map(b => b.textContent)).toEqual(
-      ['All', 'pathway class', 'subcategory', 'pathway / BRITE table', 'leaf (KO)'],
-    )
-    await user.click(pills.find(b => b.textContent === 'pathway class')!)
-    await waitFor(() => expect(mockFetch.mock.calls.map(c => String(c[0])))
-      .toContainEqual(expect.stringMatching(/annotations\/top\?source=kegg.*&depth=1&depth=4$/)))
+    expect(pills).toHaveLength(0)
+    expect(mockFetch.mock.calls.map(c => String(c[0])))
+      .toContainEqual(expect.stringMatching(/annotations\/top\?source=kegg.*&depth=1$/))
   })
 })
 
@@ -151,14 +143,11 @@ describe('Top EGC — CSV has readable rank and group columns', () => {
     expect(rows.find(r => r.annotation_id === 'E')).toMatchObject({ rank: 'category', group: '' })
   })
 
-  it('kegg: group lists every real parent, not the single stale stored code', async () => {
+  it('kegg: a KO has no group, and nothing asks for KEGG parents', async () => {
     const user = await loadTop('kegg')
-    await waitFor(() => expect(screen.getByText(/\+1 more/)).toBeInTheDocument())
     await user.click(screen.getByRole('button', { name: /CSV/ }))
     const rows = downloadCsv.mock.calls[0][0] as Record<string, unknown>[]
-    expect(rows.find(r => r.annotation_id === 'K00134')).toMatchObject({
-      rank: 'leaf (KO)',
-      group: 'Glycolysis / Gluconeogenesis; Messenger RNA biogenesis',
-    })
+    expect(rows.find(r => r.annotation_id === 'K00134')).toMatchObject({ rank: 'KO', group: '' })
+    expect(mockFetch.mock.calls.some(c => String(c[0]).includes('/parents'))).toBe(false)
   })
 })

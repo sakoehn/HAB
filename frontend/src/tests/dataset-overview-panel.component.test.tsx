@@ -173,7 +173,7 @@ describe('DatasetOverviewPanel — 40-annotation temporal-chart fetch cap', () =
 describe('DatasetOverviewPanel — labels reflect what was actually loaded, not the live dropdown', () => {
   it('switching source while the request is in flight does not relabel the still-loading rows', async () => {
     const user = userEvent.setup()
-    const rows = [makeRow('K00001', 'groupA', 100)]
+    const rows = [makeRow('1.1.1.1', 'groupA', 100)]
     let resolveTop!: () => void
     const pending = new Promise<void>(resolve => { resolveTop = resolve })
     mockFetch.mockImplementation((url: string) => {
@@ -183,7 +183,7 @@ describe('DatasetOverviewPanel — labels reflect what was actually loaded, not 
       if (url.includes('/api/series/annotations')) {
         return Promise.resolve(jsonResponse({
           data: [{
-            source: 'kegg', sample: 's1', annotation_id: 'K00001', name: 'K00001',
+            source: 'enzyme', sample: 's1', annotation_id: '1.1.1.1', name: '1.1.1.1',
             timepoint: { taxon_oid: 's1', timepoint: 'T1', datetime: '5/27/21 8:00' },
             value: { egc: 10 },
           }],
@@ -194,29 +194,29 @@ describe('DatasetOverviewPanel — labels reflect what was actually loaded, not 
     render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
 
     const select = screen.getByRole('combobox')
-    await user.selectOptions(select, 'kegg')
+    await user.selectOptions(select, 'enzyme')
     await user.click(screen.getByRole('button', { name: /Load Overview/i }))
 
-    // Switch the dropdown to cog WHILE kegg's request is still pending.
+    // Switch the dropdown to cog WHILE enzyme's request is still pending.
     await user.selectOptions(select, 'cog')
 
     resolveTop()
     await waitFor(() => {
-      expect(screen.getByText(/unique kegg annotations/i)).toBeInTheDocument()
+      expect(screen.getByText(/unique enzyme annotations/i)).toBeInTheDocument()
     })
     expect(screen.queryByText(/unique cog annotations/i)).not.toBeInTheDocument()
 
-    // CSV export: filename and each row's `source` field must say kegg,
+    // CSV export: filename and each row's `source` field must say enzyme,
     // never cog (the live dropdown at the time the response landed).
     await user.click(screen.getByRole('button', { name: /^↓ CSV$/i }))
-    expect(lastDownloadFilename).toBe('overview_kegg.csv')
+    expect(lastDownloadFilename).toBe('overview_enzyme.csv')
 
-    // "Load time series" follow-up request must also target kegg.
+    // "Load time series" follow-up request must also target enzyme.
     await user.click(await screen.findByRole('button', { name: /Load time series/i }))
     await waitFor(() => {
       const call = mockFetch.mock.calls.find(([u]) => String(u).includes('/api/series/annotations'))
       expect(call).toBeTruthy()
-      expect(String(call![0])).toContain('source=kegg')
+      expect(String(call![0])).toContain('source=enzyme')
     })
   })
 })
@@ -316,9 +316,9 @@ describe('DatasetOverviewPanel — top-level categories are listed separately, n
   })
 })
 
-// Groups must reflect every real parent of a multi-parent KO or
-// multi-category COG, not just the single stored `parent` value.
-describe('DatasetOverviewPanel — groups use every real parent for kegg and cog', () => {
+// Groups must reflect every real parent of a multi-category COG, not just
+// the single stored `parent` value.
+describe('DatasetOverviewPanel — groups use every real parent for cog', () => {
   it('files a multi-category COG under both of its categories', async () => {
     const user = userEvent.setup()
     mockFetch.mockImplementation((url: string) => {
@@ -341,6 +341,16 @@ describe('DatasetOverviewPanel — groups use every real parent for kegg and cog
 
     await waitFor(() => expect(screen.getByTitle('Coenzyme transport and metabolism')).toBeInTheDocument())
     expect(screen.getByTitle('Amino acid transport and metabolism')).toBeInTheDocument()
+  })
+})
+
+// KEGG orthologs are a flat list with no parents, so the overview, which
+// groups by parent, does not offer KEGG.
+describe('DatasetOverviewPanel — KEGG is not offered', () => {
+  it('the source dropdown lists cog, enzyme and taxonomy only', () => {
+    render(<DatasetOverviewPanel resetKey={0} dataDateRange={null} />)
+    const options = [...screen.getByRole('combobox').querySelectorAll('option')].map(o => o.value)
+    expect(options).toEqual(['cog', 'enzyme', 'taxonomy'])
   })
 })
 

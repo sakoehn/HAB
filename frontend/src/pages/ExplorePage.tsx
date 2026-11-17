@@ -4,7 +4,7 @@
 // Sections:
 //   overview   — DatasetOverviewPanel: summary stats + temporal chart
 //   top-egc    — top N annotations by mean EGC, sortable table
-//   by-parent  — AnnotationsByParentPanel: grouped by pathway/category
+//   by-parent  — AnnotationsByParentPanel: grouped by category/class/taxon
 //   lookup     — annotation ID / keyword search with detail card
 //   scaffolds  — ScaffoldExplorePanel: scaffold counts over time
 //
@@ -22,7 +22,7 @@ import type {
   ExploreSection, ExploreSortCol, SortDir,
   HierarchyPathResponse, ScaffoldSummaryRow,
 } from '../types'
-import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel, taxonomyRankLabel, taxonomyAwarePrimaryLabel, primaryLabelWithCogCategory } from '../constants'
+import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel, taxonomyRankLabel, taxonomyAwarePrimaryLabel, primaryLabelWithCogCategory, ecRenumberedNote, EC_RENUMBERED_FROM } from '../constants'
 
 // Annotations with no parent -- each source's top-level categories. Shared by
 // Dataset Overview and Annotations by Parent. Used to be an "Ungrouped" bucket
@@ -32,15 +32,20 @@ import { SOURCE_COLORS, SOURCE_TAG_CLS, expandParentLabel, taxonomyRankLabel, ta
 const TOP_LEVEL_LABEL = 'Top-level categories'
 const TOP_LEVEL_TOOLTIP =
   "Annotations with no parent: each source's top-level categories (COG category letters, " +
-  "KEGG's top classes, the EC classes, taxonomic domains). Each one's EGC already includes " +
+  "the EC classes, taxonomic domains). Each one's EGC already includes " +
   'everything beneath it, so it overlaps every group listed above -- it is shown separately ' +
   'instead of being ranked alongside them.'
 
 // Sources whose stored `parent` holds only one of a node's possibly several
-// real parents: a KEGG KO can sit in many pathways, a COG id in several
-// categories. Everywhere Explore groups rows by parent, these sources use
-// the real parents from /api/{source}/parents instead.
-const MULTI_PARENT_SOURCES = new Set(['kegg', 'cog'])
+// real parents: a COG id can be in several categories. Everywhere Explore
+// groups rows by parent, these sources use the real parents from
+// /api/{source}/parents instead.
+const MULTI_PARENT_SOURCES = new Set(['cog'])
+
+// Sources the grouped views (Dataset Overview, Annotations by Parent) offer.
+// KEGG orthologs are a flat list with no parents, so there is nothing to
+// group them by.
+const GROUPED_SOURCES = ['cog', 'enzyme', 'taxonomy'] as const
 
 // Top EGC's Top N box. Its value is sent as /annotations/top's limit, so
 // the max must stay within that route's le= (pinned by
@@ -49,11 +54,11 @@ const TOP_EGC_LIMIT_MIN = 5
 const TOP_EGC_LIMIT_MAX = 200
 
 // Hierarchy levels per source (taxonomy: domain .. strain).
-const SOURCE_LEVELS: Record<string, number> = { kegg: 4, cog: 2, enzyme: 4, taxonomy: 8 }
+const SOURCE_LEVELS: Record<string, number> = { kegg: 1, cog: 2, enzyme: 4, taxonomy: 8 }
 // What Top EGC Annotations ranks by default: the most specific level (KOs,
 // COGs, EC numbers, species). A category's EGC includes its members', so
 // an all-level list is all categories.
-const TOP_DEFAULT_DEPTH: Record<string, number> = { kegg: 4, cog: 2, enzyme: 4, taxonomy: 7 }
+const TOP_DEFAULT_DEPTH: Record<string, number> = { kegg: 1, cog: 2, enzyme: 4, taxonomy: 7 }
 type RealParents = Record<string, { annotation_id: string; name: string }[]>
 
 async function fetchRealParents(source: string, rows: TopAnnotation[]): Promise<RealParents> {
@@ -159,7 +164,7 @@ export function DatasetOverviewPanel({
   const [seriesFailed, setSeriesFailed] = useState<string[]>([])
   const [seriesTruncatedFrom, setSeriesTruncatedFrom] = useState<number | null>(null)
   const [topLevelOpen, setTopLevelOpen] = useState(false)
-  // Every real parent per row for kegg/cog (see MULTI_PARENT_SOURCES); null
+  // Every real parent per row for cog (see MULTI_PARENT_SOURCES); null
   // when not applicable or when the lookup failed, which falls back to each
   // row's single stored parent.
   const [realParents, setRealParents]   = useState<RealParents | null>(null)
@@ -247,7 +252,7 @@ export function DatasetOverviewPanel({
     }
     for (const r of rows) {
       if (r.parent == null) continue
-      // A multi-parent KO / multi-category COG counts toward every real
+      // A multi-category COG counts toward every real
       // parent it has, so group totals can overlap (same as Annotations
       // by Parent).
       const real = realParents?.[r.annotation_id]
@@ -325,7 +330,7 @@ export function DatasetOverviewPanel({
     // seriesData was fetched under loadedSource (loadTemporalChart),
     // not necessarily whatever the dropdown shows right now -- everything
     // derived from it must agree, or a source-switch after loading would
-    // silently mislabel real kegg data as e.g. cog.
+    // silently mislabel real cog data as e.g. enzyme.
     const loadedSource = loadedParams?.source ?? source
     return top5Groups.map((group, gi) => ({
       // id must be unique per series -- group.label alone isn't guaranteed
@@ -370,7 +375,7 @@ export function DatasetOverviewPanel({
           value={source}
           onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSource(e.target.value)}
         >
-          {(['kegg', 'cog', 'enzyme', 'taxonomy'] as const).map(s => (
+          {GROUPED_SOURCES.map(s => (
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
@@ -476,7 +481,7 @@ export function DatasetOverviewPanel({
             }}>
               <span>
                 Top Parent Groups by Mean EGC
-                <HelpTooltip text="A group's size is its category's own mean EGC, in which each gene counts once -- not the sum of the members listed under it, which can overlap (a KEGG KO in several pathways counts in each) and covers only the top 200 annotations. Hover a number for the member sum. Each group here is formed by an annotation's own immediate parent, with no regard for hierarchy depth -- a broad category and one of its own sub-categories can both appear as separate groups in this same list. When that happens their totals are not independent peers: the sub-category's whole total is already included inside its parent category's total, so summing group totals together (or comparing them side by side in the chart below) can overstate how much of the dataset each one really represents." />
+                <HelpTooltip text="A group's size is its category's own mean EGC, in which each gene counts once -- not the sum of the members listed under it, which can overlap (a COG in several categories counts in each) and covers only the top 200 annotations. Hover a number for the member sum. Each group here is formed by an annotation's own immediate parent, with no regard for hierarchy depth -- a broad category and one of its own sub-categories can both appear as separate groups in this same list. When that happens their totals are not independent peers: the sub-category's whole total is already included inside its parent category's total, so summing group totals together (or comparing them side by side in the chart below) can overstate how much of the dataset each one really represents." />
               </span>
               {seriesStatus === 'idle' && (
                 <button className="btn sm" onClick={loadTemporalChart}>
@@ -684,21 +689,21 @@ export function AnnotationsByParentPanel({
   // (parent dropdown) while a previous source's request is still in
   // flight -- without a sequence guard, the slower (stale) response could
   // land after the newer one and get labelled under the new `source`,
-  // showing e.g. real kegg rows grouped/labelled as "cog". `loadedSource`
+  // showing e.g. real cog rows grouped/labelled as "enzyme". `loadedSource`
   // is the source that ACTUALLY produced `allRows`, used for every label
   // derived from it (expandParentLabel here); the live `source` prop is
   // only for the request itself and the dropdown's own display elsewhere.
   const [loadedSource, setLoadedSource] = useState(source)
   const requestSeqRef = useRef(0)
-  // A KEGG row's stored `parent` is
-  // last-occurrence-wins -- only ONE of its possibly-many real immediate
-  // parents. Resolved in bulk (one request for the whole batch, not 200
-  // individual lookups) via /api/kegg/parents, keyed by annotation_id.
-  // Never populated for non-kegg sources, which are never multi-parent.
+  // A COG row's stored `parent` is
+  // last-occurrence-wins -- only ONE of its possibly several real
+  // categories. Resolved in bulk (one request for the whole batch, not 200
+  // individual lookups) via /api/cog/parents, keyed by annotation_id.
+  // Never populated for other sources, which are never multi-parent.
   const [multiParents, setMultiParents] = useState<Record<string, { annotation_id: string; name: string }[]>>({})
-  // Tracks specifically whether the /kegg/parents bulk lookup itself
+  // Tracks specifically whether the /cog/parents bulk lookup itself
   // failed, as distinct from multiParents being legitimately empty (e.g. a
-  // non-kegg source, or a kegg source where every row happened to resolve
+  // non-cog source, or a cog source where every row happened to resolve
   // zero real parents). Drives both the visible warning below and the
   // single-parent fallback in parentGroups.
   const [multiParentsFetchFailed, setMultiParentsFetchFailed] = useState(false)
@@ -769,9 +774,8 @@ export function AnnotationsByParentPanel({
       const parents = multiParents[r.annotation_id]
       if (MULTI_PARENT_SOURCES.has(loadedSource) && !multiParentsFetchFailed && parents !== undefined) {
         if (parents.length > 0) {
-          // File under EVERY real parent -- a multi-parent KO's EGC
-          // counts toward each real pathway/category it belongs to, the
-          // same as COG's multi-category rollup. Group totals summed
+          // File under EVERY real parent -- a multi-category COG's EGC
+          // counts toward each real category it belongs to. Group totals summed
           // ACROSS groups therefore won't equal a flat dataset total.
           for (const p of parents) addTo(p.annotation_id, p.name, r)
         } else {
@@ -779,7 +783,7 @@ export function AnnotationsByParentPanel({
           addTo('Ungrouped', TOP_LEVEL_LABEL, r)
         }
       } else {
-        // Also the single-parent fallback for kegg when /kegg/parents
+        // Also the single-parent fallback for cog when /cog/parents
         // itself failed -- every row still carries its own
         // (last-occurrence-wins) single
         // `parent` field from /annotations/top, which is strictly better
@@ -883,24 +887,24 @@ export function AnnotationsByParentPanel({
     </div>
   ) : null
 
-  // Shown when /kegg/parents failed -- every row below is then grouped by
+  // Shown when /cog/parents failed -- every row below is then grouped by
   // its own single stored
-  // parent (expandParentLabel(r.parent, ...), the same as any non-kegg
+  // parent (expandParentLabel(r.parent, ...), the same as any non-cog
   // source) rather than the real, possibly-multiple parents
-  // /kegg/parents would have resolved, so a multi-parent KO only
+  // /cog/parents would have resolved, so a multi-category COG only
   // appears under one of its real groups right now.
   const multiParentsWarning = MULTI_PARENT_SOURCES.has(loadedSource) && multiParentsFetchFailed ? (
     <div
       className="state-box error"
       style={{ padding: '10px 16px', flexDirection: 'row', gap: 10, textAlign: 'left', marginBottom: 12 }}
-      data-testid="kegg-parents-fetch-failure-warning"
+      data-testid="multi-parents-fetch-failure-warning"
     >
       <span style={{ flex: 1 }}>
         Couldn't load full parent info for these annotations — grouping by each
         one's single stored parent instead, so one with several real parents may be
         missing from some of its groups.
       </span>
-      <button className="btn sm" data-testid="kegg-parents-retry-btn" onClick={loadTop}>
+      <button className="btn sm" data-testid="multi-parents-retry-btn" onClick={loadTop}>
         Retry
       </button>
     </div>
@@ -916,7 +920,7 @@ export function AnnotationsByParentPanel({
         <span style={{ font: '400 11px var(--mono)', color: 'var(--text-dim)' }}>
           View:
         </span>
-        <HelpTooltip text="Group trend & detail shows each parent group's summed trend over time, with a table below it breaking that total down by individual annotation. Summed by parent instead shows a static table ranked by each category's own total, with the sum of its listed members alongside — no time series. For KEGG, a KO with more than one real pathway/category appears (with its full EGC) in every real group it belongs to, so group totals summed together can exceed a flat sum of every annotation." />
+        <HelpTooltip text="Group trend & detail shows each parent group's summed trend over time, with a table below it breaking that total down by individual annotation. Summed by parent instead shows a static table ranked by each category's own total, with the sum of its listed members alongside — no time series. For COG, an id in more than one real category appears (with its full EGC) in every real group it belongs to, so group totals summed together can exceed a flat sum of every annotation." />
         <button
           className={`toggle-pill ${!showSummed ? 'on' : ''}`}
           onClick={() => setShowSummed(false)}
@@ -1219,42 +1223,18 @@ export function ExplorePage({
   const effectiveTopSource = state.loadedParams?.source ?? state.source
 
   // The same real-multi-parent bulk lookup AnnotationsByParentPanel does
-  // (/api/kegg/parents), for this table's own "Group" column -- row.parent
-  // alone is the single last-occurrence-wins stored value, e.g. "Exosome"
-  // (one of its rarest real categories) for K00134/GAPDH, whose 9 real
-  // parents include Glycolysis.
+  // (/api/cog/parents), for this table's own "Group" column -- row.parent
+  // alone is the single last-occurrence-wins stored value, only one of a
+  // multi-category COG's categories (e.g. COG0028 is under E and H).
   const [topRealParents, setTopRealParents]             = useState<Record<string, { annotation_id: string; name: string }[]>>({})
   const [topRealParentsFailed, setTopRealParentsFailed] = useState(false)
 
-  // A KEGG KO's stored `parent` is
-  // last-occurrence-wins -- only ONE of its possibly-many real immediate
-  // parents (e.g. K00844/hexokinase has 14; GAPDH, pyruvate kinase and
-  // enolase are also real multi-parent nodes). kegg_paths already has
-  // every real path (built for the hierarchy popup, /api/kegg/path), so
-  // the lookup card fetches it directly instead of trusting the single
-  // stored value -- Enzyme/Taxonomy are never multi-parent (confirmed
-  // directly against the real db: 0 of 7,333 real EC nodes are
-  // multi-parent; taxonomy's `parent` is a full lineage-prefix, never
-  // ambiguous), so only kegg and cog need this treatment. COG's version
-  // (below) reads /api/cog/path the same way -- there are 340 real
-  // multi-category COGs (e.g. COG0028 is real under both category E and H),
-  // all recorded in cog_paths (the table the hierarchy popup uses), while
-  // the single stored `parent`/`category` column only ever holds one.
-  const [lookupKeggParents, setLookupKeggParents] = useState<
-    { annotation_id: string; name: string }[] | null
-  >(null)
-  // Same real-path data as lookupKeggParents above, just the OTHER end of
-  // each path (depth-1, the real top-level category) instead of the
-  // immediate parent -- the single stored (last-occurrence-wins) category
-  // would contradict the Parent row beneath it (e.g. "Brite Hierarchies"
-  // for K00134/GAPDH, whose real pathways include Glycolysis).
-  const [lookupKeggCategories, setLookupKeggCategories] = useState<
-    { annotation_id: string; name: string }[] | null
-  >(null)
-  // A COG id's real categories (depth-1 is the ONLY level
-  // above a leaf COG id, so "category" and "immediate parent" are the same
-  // single real value here -- unlike kegg's 4-level hierarchy, there's no
-  // separate "parent" concept to also show).
+  // A COG id's real categories, read from /api/cog/path: the single stored
+  // `parent`/`category` column holds only one, but there are 340 real
+  // multi-category COGs (e.g. COG0028 is real under both category E and H).
+  // Depth-1 is the ONLY level above a leaf COG id, so "category" and
+  // "immediate parent" are the same value here. Enzyme/Taxonomy have one
+  // real parent, and a KEGG KO has none (a flat list).
   const [lookupCogCategories, setLookupCogCategories] = useState<
     { annotation_id: string; name: string }[] | null
   >(null)
@@ -1287,7 +1267,7 @@ export function ExplorePage({
   useEffect(() => {
     const sel = state.lookupSelected
     // Bumped unconditionally (not just on the branch that actually
-    // fetches) so a fetch started while this effect last ran for kegg/cog
+    // fetches) so a fetch started while this effect last ran for cog
     // can never be mistaken for current after a later run bails out
     // early (switched away, or no selection) -- without this, that early
     // return would leave the ref exactly where the in-flight fetch left
@@ -1296,8 +1276,6 @@ export function ExplorePage({
     // active.
     const requestId = ++lookupParentsSeqRef.current
     // eslint-disable-next-line react-hooks/set-state-in-effect -- A new selection clears the previous one's parents before fetching its own.
-    setLookupKeggParents(null)
-    setLookupKeggCategories(null)
     setLookupCogCategories(null)
     if (!sel) return
 
@@ -1316,39 +1294,7 @@ export function ExplorePage({
           if (requestId !== lookupParentsSeqRef.current) return
           setLookupCogCategories([]) // fetch failed -- fall back to showing nothing rather than a stale/wrong single value
         })
-      return
     }
-
-    if (effectiveLookupSource !== 'kegg') return
-
-    apiFetch<HierarchyPathResponse>(`/api/kegg/path?id=${encodeURIComponent(sel.annotation_id)}`)
-      .then(r => {
-        if (requestId !== lookupParentsSeqRef.current) return // superseded by a newer selection
-        const depth = r.paths[0]?.length ?? 0
-        if (depth < 2) {
-          // A-level root -- no parent above it, and no distinct category
-          // above it either (it IS the category).
-          setLookupKeggParents([])
-          setLookupKeggCategories([])
-          return
-        }
-        const parentsById = new Map<string, { annotation_id: string; name: string }>()
-        const categoriesById = new Map<string, { annotation_id: string; name: string }>()
-        for (const path of r.paths) {
-          const immediate = path[depth - 2]
-          if (immediate) parentsById.set(immediate.annotation_id, immediate)
-          const category = path[0]
-          if (category) categoriesById.set(category.annotation_id, category)
-        }
-        setLookupKeggParents(Array.from(parentsById.values()))
-        setLookupKeggCategories(Array.from(categoriesById.values()))
-      })
-      .catch(() => {
-        if (requestId !== lookupParentsSeqRef.current) return
-        // fetch failed -- fall back to showing nothing rather than a stale/wrong single value
-        setLookupKeggParents([])
-        setLookupKeggCategories([])
-      })
   }, [state.lookupSelected, effectiveLookupSource])
 
   async function load(ranksArg?: Set<number>) {
@@ -1435,8 +1381,8 @@ export function ExplorePage({
   }
 
   // depth is real for every source, not just taxonomy
-  // (annotation_catalog/annotation_series carry it for kegg/cog/enzyme
-  // too), so rank-filtering works for every source.
+  // (annotation_catalog/annotation_series carry it for cog/enzyme too, and
+  // every KEGG KO is depth 1), so rank-filtering works for every source.
   const availableLookupRanks = useMemo(
     () => [...new Set(
         state.lookupResults
@@ -1485,8 +1431,8 @@ export function ExplorePage({
   }
 
   // taxonomyRankLabel's named rungs (Domain/Phylum/.../Strain) only apply to
-  // taxonomy's own ladder -- reusing it unconditionally for e.g. a kegg
-  // depth=1 node would mislabel it "Domain". Falls back to the same
+  // taxonomy's own ladder -- reusing it unconditionally for e.g. a COG
+  // depth=1 category would mislabel it "Domain". Falls back to the same
   // generic "Level N" taxonomyRankLabel already uses for an out-of-range
   // taxonomy depth.
   function rankPillLabel(depth: number, source: string): string {
@@ -1497,13 +1443,13 @@ export function ExplorePage({
   // Depth row and the Rank filter pills (depthLabel).
   function topRankLabel(row: TopAnnotation): string {
     if (row.depth == null) return '—'
-    return depthLabel(row.depth, effectiveTopSource, row.name)
+    return depthLabel(row.depth, effectiveTopSource)
   }
 
   // The Group column's display -- real
   // multi-parent data (topRealParents) when it's available for this row,
   // falling back to the single stored `parent` field otherwise (a
-  // non-kegg source, a kegg root with no real parent above it, or
+  // non-cog source, a top-level row with no parent above it, or
   // topRealParentsFailed). label is what's shown in the cell; title is
   // the full real parent list for the tooltip when there's more than one.
   // full: every real parent, readable, for the CSV `group` column ('' when
@@ -1538,9 +1484,9 @@ export function ExplorePage({
         || (r.parent ?? '').toLowerCase().includes(q)
         // Also test the Group column's actual DISPLAYED label, not just
         // the raw stored r.parent code -- the text on screen is
-        // topGroupDisplay's expanded label (e.g. "Glycolysis /
-        // Gluconeogenesis" for the bare stored code "00010"), which is
-        // what a user types.
+        // topGroupDisplay's expanded label (e.g. "Amino acid transport and
+        // metabolism" for the stored COG category "E"), which is what a
+        // user types.
         || topGroupDisplay(r).label.toLowerCase().includes(q),
       )
       .sort((a, b) => {
@@ -1839,14 +1785,14 @@ export function ExplorePage({
               <div
                 className="state-box error"
                 style={{ padding: '10px 16px', flexDirection: 'row', gap: 10, textAlign: 'left', margin: '0 0 12px' }}
-                data-testid="top-kegg-parents-fetch-failure-warning"
+                data-testid="top-multi-parents-fetch-failure-warning"
               >
                 <span style={{ flex: 1 }}>
                   Couldn't load full parent info for these annotations — the Group
                   column below shows each one's single stored parent instead, which may
                   be only one of several real parents.
                 </span>
-                <button className="btn sm" data-testid="top-kegg-parents-retry-btn" onClick={() => load()}>
+                <button className="btn sm" data-testid="top-multi-parents-retry-btn" onClick={() => load()}>
                   Retry
                 </button>
               </div>
@@ -1982,7 +1928,7 @@ export function ExplorePage({
                   setState(prev => ({ ...prev, parentSource: e.target.value }))
                 }
               >
-                {['kegg', 'cog', 'enzyme', 'taxonomy'].map(s => (
+                {GROUPED_SOURCES.map(s => (
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>
@@ -2247,35 +2193,15 @@ export function ExplorePage({
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {state.lookupSelected ? (() => {
                       const r      = state.lookupSelected
-                      // kegg's real (possibly multiple) parents come
-                      // from lookupKeggParents (fetched from /api/kegg/path,
-                      // the real ancestor data), not r.parent -- the single
-                      // stored value is last-occurrence-wins and often wrong
-                      // for a multi-parent KO. Enzyme/taxonomy have at most
-                      // one real parent, so r.parent is still correct there.
-                      // cog is suppressed too (see keggCategoryNames's own
-                      // comment below) -- it has no separate "parent" vs.
-                      // "category" distinction to begin with.
+                      // A KEGG KO has no parent or category (a flat list).
+                      // A COG's stored parent/category is only one of its
+                      // real categories, so cogCategoryNames (from
+                      // cog_paths, the hierarchy popup's data) is shown
+                      // instead. Enzyme/taxonomy have at most one real
+                      // parent, so r.parent is correct there.
                       const parent = (effectiveLookupSource === 'kegg' || effectiveLookupSource === 'cog')
                         ? null
                         : (r.parent ? expandParentLabel(r.parent, effectiveLookupSource) : null)
-                      const keggParentNames = effectiveLookupSource === 'kegg' && lookupKeggParents
-                        ? lookupKeggParents.map(p => p.name)
-                        : null
-                      // Same reasoning as `parent` above -- kegg's real
-                      // category is the SAME kegg_paths data
-                      // lookupKeggParents already uses, not the single stored
-                      // `category` field (also last-occurrence-wins).
-                      // Suppressed here exactly like `parent` is, so the
-                      // generic row below never shows the stale value for
-                      // kegg OR cog -- cog has the same multi-category shape
-                      // (340 real multi-category COGs, e.g. COG0028 real
-                      // under both E and H), and
-                      // cogCategoryNames below reads the same cog_paths
-                      // data the hierarchy popup already uses instead.
-                      const keggCategoryNames = effectiveLookupSource === 'kegg' && lookupKeggCategories
-                        ? lookupKeggCategories.map(c => c.name)
-                        : null
                       const cogCategoryNames = effectiveLookupSource === 'cog' && lookupCogCategories
                         ? lookupCogCategories.map(c => c.name)
                         : null
@@ -2284,6 +2210,7 @@ export function ExplorePage({
                         ? null
                         : (rawCategory ? expandParentLabel(rawCategory, effectiveLookupSource) : null)
                       const depth         = resolveLookupDepth(r)
+                      const renumberedNote = ecRenumberedNote(effectiveLookupSource, r.annotation_id)
 
                       return (
                         <div className="lookup-result">
@@ -2301,23 +2228,17 @@ export function ExplorePage({
                             {r.name && effectiveLookupSource !== 'taxonomy' && (
                               <span className="lookup-name">{r.name}</span>
                             )}
+                            {!r.name && effectiveLookupSource === 'kegg' && (
+                              <span className="lookup-name" data-testid="lookup-kegg-no-name" style={{ fontStyle: 'italic' }}>
+                                No name from JGI — see the KEGG link
+                              </span>
+                            )}
                           </div>
                           <div className="lookup-meta-grid">
                             {category && (
                               <div className="lookup-meta-row">
                                 <span className="lookup-meta-label">Category</span>
                                 <span className="lookup-meta-value">{category}</span>
-                              </div>
-                            )}
-                            {keggCategoryNames && keggCategoryNames.length > 0 && (
-                              <div className="lookup-meta-row" data-testid="lookup-kegg-categories">
-                                <span className="lookup-meta-label">
-                                  Categor{keggCategoryNames.length > 1 ? 'ies' : 'y'}
-                                  {keggCategoryNames.length > 1 && (
-                                    <HelpTooltip text={`This KO has real parents in ${keggCategoryNames.length} different top-level KEGG categories -- every one is shown here, not just one.`} />
-                                  )}
-                                </span>
-                                <span className="lookup-meta-value">{keggCategoryNames.join(', ')}</span>
                               </div>
                             )}
                             {cogCategoryNames && cogCategoryNames.length > 0 && (
@@ -2337,22 +2258,22 @@ export function ExplorePage({
                                 <span className="lookup-meta-value">{parent}</span>
                               </div>
                             )}
-                            {keggParentNames && keggParentNames.length > 0 && (
-                              <div className="lookup-meta-row" data-testid="lookup-kegg-parents">
+                            {renumberedNote && (
+                              <div className="lookup-meta-row" data-testid="lookup-ec-renumbered">
                                 <span className="lookup-meta-label">
-                                  Parent{keggParentNames.length > 1 ? 's' : ''}
-                                  {keggParentNames.length > 1 && (
-                                    <HelpTooltip text={`This KO has ${keggParentNames.length} real parent pathways in KEGG's hierarchy (ko00001.keg) -- every one is shown here, not just one.`} />
-                                  )}
+                                  Old EC number
+                                  <HelpTooltip text={renumberedNote} />
                                 </span>
-                                <span className="lookup-meta-value">{keggParentNames.join(', ')}</span>
+                                <span className="lookup-meta-value mono">
+                                  {EC_RENUMBERED_FROM[r.annotation_id].join(', ')}
+                                </span>
                               </div>
                             )}
                             {depth != null && (
                               <div className="lookup-meta-row">
                                 <span className="lookup-meta-label">
                                   Depth
-                                  <HelpTooltip text="Depth = how deep this term sits in its hierarchy (e.g. KEGG depth 3 = pathway level). Meaning depends on the annotation source." />
+                                  <HelpTooltip text="Depth = how deep this term sits in its hierarchy (e.g. Enzyme depth 3 = sub-subclass). Meaning depends on the annotation source; every KEGG KO is depth 1, since KOs are a flat list." />
                                 </span>
                                 <span className="lookup-meta-value mono">
                                   {depth}
@@ -2363,7 +2284,7 @@ export function ExplorePage({
                                     color:       'var(--text-dim)',
                                     fontWeight:  400,
                                   }}>
-                                    ({depthLabel(depth, effectiveLookupSource, r.name)})
+                                    ({depthLabel(depth, effectiveLookupSource)})
                                   </span>
                                 </span>
                               </div>

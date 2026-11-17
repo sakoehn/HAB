@@ -53,62 +53,31 @@ describe('ExternalLinks — empty/unknown input', () => {
 })
 
 describe('ExternalLinks — kegg', () => {
-  it('a real KO id gets KEGG + BRITE + Color Mapper, with correct real hrefs', () => {
+  it('a KO gets KEGG + BRITE + Color Mapper, all on kegg.jp', () => {
     render(<ExternalLinks annotationId="K00844" source="kegg" />)
     expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
-      'href', 'https://www.genome.jp/entry/K00844',
+      'href', 'https://www.kegg.jp/entry/K00844',
     )
     expect(screen.getByRole('link', { name: 'BRITE' })).toHaveAttribute(
-      'href', 'https://www.genome.jp/kegg-bin/show_brite?htext=ko00001.keg&query=K00844',
+      'href', 'https://www.kegg.jp/kegg-bin/show_brite?htext=ko00001.keg&query=K00844',
     )
     expect(screen.getByRole('button', { name: /Color Mapper/i })).toBeInTheDocument()
   })
 
-  // The id's own numeric value can't tell
-  // a real BRITE hierarchy FILE apart from a bare category CODE inside
-  // one -- both can be any value. The catalog's own `name` field carries
-  // the real distinction via a bracketed " [BR:koNNNNN]" suffix on an
-  // actual hierarchy file's own ko00001.keg line; 02000 (Transporters) is
-  // real, confirmed against the live catalog, and falls well under any
-  // numeric threshold like >=9000.
-  it('a non-KO kegg id with a real [BR:] name marker gets a br:ko-prefixed KEGG link', () => {
-    render(<ExternalLinks annotationId="02000" source="kegg" name="Transporters [BR:ko02000]" />)
+  // A KO with no name from JGI still gets its KEGG page, where KEGG shows
+  // the name.
+  it('a KO with no name still gets its KEGG link', () => {
+    render(<ExternalLinks annotationId="K22909" source="kegg" name={null} />)
     expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
-      'href', 'https://www.genome.jp/entry/br:ko02000',
-    )
-    expect(screen.queryByRole('link', { name: 'BRITE' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Color Mapper/i })).not.toBeInTheDocument()
-  })
-
-  // 02024 (Quorum sensing) is a real KEGG pathway map, confirmed against
-  // the live catalog's own " [PATH:ko02024]" name suffix.
-  it('a non-KO kegg id with a real [PATH:] name marker gets a map-prefixed KEGG link', () => {
-    render(<ExternalLinks annotationId="02024" source="kegg" name="Quorum sensing [PATH:ko02024]" />)
-    expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
-      'href', 'https://www.genome.jp/entry/map02024',
+      'href', 'https://www.kegg.jp/entry/K22909',
     )
   })
 
-  // 09101 (Carbohydrate metabolism) has NEITHER marker in its real
-  // catalog name -- it's a bare category code inside ko00001.keg, not a
-  // standalone page of its own. The old numeric->=9000 guess sent this to
-  // a nonexistent br:ko09101 page; it must now fall back to the same
-  // BRITE-browser query form the real-KO BRITE link already uses.
-  it('a non-KO kegg id with no marker in its name (a bare in-file category code) falls back to the BRITE-browser query form', () => {
-    render(<ExternalLinks annotationId="09101" source="kegg" name="Carbohydrate metabolism" />)
-    expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
-      'href', 'https://www.genome.jp/kegg-bin/show_brite?htext=ko00001.keg&query=09101',
-    )
-  })
-
-  // No `name` at all means no marker can be read -- must fall back to the
-  // same safe BRITE-browser query form, never guess from the id's numeric
-  // value (the old, now-removed behavior).
-  it('a non-KO kegg id with no name prop at all also falls back to the BRITE-browser query form', () => {
-    render(<ExternalLinks annotationId="09101" source="kegg" />)
-    expect(screen.getByRole('link', { name: 'KEGG' })).toHaveAttribute(
-      'href', 'https://www.genome.jp/kegg-bin/show_brite?htext=ko00001.keg&query=09101',
-    )
+  // Every KEGG id on the site is a KO; anything else (an old pathway id)
+  // gets no link rather than a guessed one.
+  it('a non-KO kegg id gets no links', () => {
+    const { container } = render(<ExternalLinks annotationId="00010" source="kegg" />)
+    expect(container).toBeEmptyDOMElement()
   })
 
   it('Color Mapper copies the id to the clipboard and opens the real mapper URL', async () => {
@@ -126,7 +95,7 @@ describe('ExternalLinks — kegg', () => {
 
     expect(writeText).toHaveBeenCalledWith('K00844')
     expect(openSpy).toHaveBeenCalledWith(
-      'https://www.genome.jp/kegg/mapper/color.html', '_blank', 'noopener',
+      'https://www.kegg.jp/kegg/mapper/color.html', '_blank', 'noopener',
     )
     openSpy.mockRestore()
   })

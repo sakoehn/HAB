@@ -2539,11 +2539,11 @@ describe('ExplorePage — Annotation Lookup happy path', () => {
               annotation_id: 'K02014',
               source:        'kegg',
               name:          'TonB-dependent receptor',
-              parent:        '02010 Membrane transport',
+              parent:        null,
               mean_egc:      500,
               max_egc:       900,
               sample_count:  20,
-              value:         { egc: 500, norm_egc: 0.0005, depth: 3 },
+              value:         { egc: 500, norm_egc: 0.0005, depth: 1 },
               timepoint:     null,
               sample:        '',
             }],
@@ -2554,21 +2554,6 @@ describe('ExplorePage — Annotation Lookup happy path', () => {
         return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_TIMEPOINTS })
       if (url.includes('/api/status'))
         return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_STATUS })
-      // The lookup card's kegg Parent row comes from the real
-      // /api/kegg/path data, not the row's own single `parent` field.
-      if (url.includes('/api/kegg/path'))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: async () => ({
-            annotation_id: 'K02014',
-            path_count:    1,
-            paths: [[
-              { annotation_id: '09100', name: 'Metabolism',           depth: 1 },
-              { annotation_id: '02010', name: 'Membrane transport',   depth: 2 },
-              { annotation_id: 'K02014', name: 'TonB-dependent receptor', depth: 3 },
-            ]],
-          }),
-        })
       return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
     })
     render(<App />)
@@ -2587,11 +2572,11 @@ describe('ExplorePage — Annotation Lookup happy path', () => {
       expect(document.querySelector('.lookup-id')?.textContent).toBe('K02014')
     })
     expect(document.querySelector('.lookup-name')?.textContent).toBe('TonB-dependent receptor')
-    // Parent label comes from the real /api/kegg/path data, not the row's
-    // own single `parent` field / expandParentLabel.
-    await waitFor(() => {
-      expect(document.querySelector('.lookup-meta-grid')?.textContent).toContain('Membrane transport')
-    })
+    // A KO is a flat-list entry: no Parent or Category row, and no request
+    // for KEGG hierarchy data.
+    const meta = document.querySelector('.lookup-meta-grid')?.textContent ?? ''
+    expect(meta).not.toMatch(/Parent|Categor/)
+    expect(mockFetch.mock.calls.some(([u]) => String(u).includes('/api/kegg/'))).toBe(false)
   })
 
   it('multi-result search shows a result list without auto-selecting a detail card', async () => {

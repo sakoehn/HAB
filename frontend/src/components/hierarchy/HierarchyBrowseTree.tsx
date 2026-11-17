@@ -1,5 +1,5 @@
 // ── HierarchyBrowseTree ───────────────────────────────────────────────────────
-// KEGG/COG/Enzyme tree for picking a node by clicking it -- the Bulk
+// COG/Enzyme tree for picking a node by clicking it -- the Bulk
 // Download section's "Browse tree" for those sources. Same lazy-loading
 // tree as the hierarchy popup (useHierarchyTree + HierarchyTree), rooted at
 // the top level, with every name clickable.

@@ -1237,7 +1237,7 @@ export function AnalyzePage({
                             await navigator.clipboard.writeText(keggIds.join('\n'))
                           } catch {}
                           window.open(
-                            'https://www.genome.jp/kegg/mapper/color.html',
+                            'https://www.kegg.jp/kegg/mapper/color.html',
                             '_blank',
                             'noopener',
                           )

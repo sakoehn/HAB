@@ -51,21 +51,21 @@ export function ExternalLinks({
   if (!id) return null
 
   if (source === 'kegg') {
-    const isKO    = /^K\d{5}$/.test(id)
-    const links: React.ReactNode[] = []
-
-    if (isKO) {
-      links.push(link(
-        `https://www.genome.jp/entry/${id}`,
-        'KEGG',
-        'KEGG Orthology entry',
-      ))
-      links.push(link(
-        `https://www.genome.jp/kegg-bin/show_brite?htext=ko00001.keg&query=${id}`,
-        'BRITE',
-        'Find in KEGG BRITE functional hierarchy',
-      ))
-      links.push(
+    // Every KEGG id is a KO. KEGG's own pages show its name, gene symbol and
+    // the pathways it belongs to, which Metatrace does not.
+    if (!/^K\d{5}$/.test(id)) return null
+    return (
+      <>
+        {link(
+          `https://www.kegg.jp/entry/${id}`,
+          'KEGG',
+          'KEGG Orthology entry (name, gene symbol, pathways)',
+        )}
+        {link(
+          `https://www.kegg.jp/kegg-bin/show_brite?htext=ko00001.keg&query=${id}`,
+          'BRITE',
+          'Find in KEGG BRITE functional hierarchy',
+        )}
         <button
           key="mapper"
           className="ext-link"
@@ -74,61 +74,16 @@ export function ExternalLinks({
             e.stopPropagation()
             try { await navigator.clipboard.writeText(id) } catch {}
             window.open(
-              'https://www.genome.jp/kegg/mapper/color.html',
+              'https://www.kegg.jp/kegg/mapper/color.html',
               '_blank',
               'noopener',
             )
           }}
         >
           Color Mapper ⎘
-        </button>,
-      )
-    } else {
-      // A numeric id threshold (e.g. >=9000) can't tell pathways, BRITE
-      // files and in-file category codes apart -- real BRITE-only
-      // hierarchy files like 02000
-      // (Transporters), 03000 (Transcription factors), and 04131 (Membrane
-      // trafficking) fall well under 9000; and 09101 (Carbohydrate
-      // metabolism), 99980 (Enzymes with EC numbers) etc. are bare CATEGORY
-      // CODES *inside* a hierarchy file, not hierarchy files themselves --
-      // genome.jp/entry/br:ko09101 is not a real page (confirmed live).
-      //
-      // The catalog's own `name` already carries the real distinction, as
-      // a bracketed suffix on the real ko00001.keg line: " [PATH:koNNNNN]"
-      // for an actual pathway map (e.g. "Glycolysis / Gluconeogenesis
-      // [PATH:ko00010]"), " [BR:koNNNNN]" for an actual BRITE hierarchy
-      // file (e.g. "Transporters [BR:ko02000]"), and NO suffix at all for
-      // a bare in-file category code (e.g. just "Carbohydrate
-      // metabolism") -- branch on that instead of guessing from the id.
-      const hasPathMarker = !!name && /\[PATH:ko\d+\]/.test(name)
-      const hasBriteFileMarker = !!name && /\[BR:ko\d+\]/.test(name)
-      if (hasPathMarker) {
-        links.push(link(
-          `https://www.genome.jp/entry/map${id}`,
-          'KEGG',
-          'KEGG pathway map',
-        ))
-      } else if (hasBriteFileMarker) {
-        links.push(link(
-          `https://www.genome.jp/entry/br:ko${id}`,
-          'KEGG',
-          'KEGG BRITE hierarchy group',
-        ))
-      } else {
-        // A bare category code has no standalone page of its own -- fall
-        // back to the same BRITE-browser "find in page" query the real-KO
-        // branch above already uses for its own BRITE link, which works
-        // for any valid code regardless of type. Also the safe default
-        // when `name` isn't available at all to read a marker from.
-        links.push(link(
-          `https://www.genome.jp/kegg-bin/show_brite?htext=ko00001.keg&query=${id}`,
-          'KEGG',
-          'Find in KEGG BRITE functional hierarchy',
-        ))
-      }
-    }
-
-    return <>{links}</>
+        </button>
+      </>
+    )
   }
 
   if (source === 'cog') {

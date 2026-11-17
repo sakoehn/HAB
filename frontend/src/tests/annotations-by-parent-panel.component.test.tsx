@@ -94,9 +94,9 @@ describe('AnnotationsByParentPanel — parent grouping and sort order', () => {
   })
 
   it('shows a truncation note only when exactly 200 rows come back (the real fetch limit)', async () => {
-    const rows = Array.from({ length: 200 }, (_, i) => makeRow(`K${i}`, `group${i % 5}`, 200 - i))
+    const rows = Array.from({ length: 200 }, (_, i) => makeRow(`1.1.1.${i}`, `group${i % 5}`, 200 - i))
     mockFetch.mockResolvedValue(jsonResponse({ data: rows }))
-    render(<AnnotationsByParentPanel source="kegg" />)
+    render(<AnnotationsByParentPanel source="enzyme" />)
 
     await waitFor(() => expect(screen.getByText(/Showing first 200/i)).toBeInTheDocument())
     // A date filter never lifts the server's 200-row limit.
@@ -298,106 +298,102 @@ describe('AnnotationsByParentPanel — re-fetches when the source prop changes',
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('source=cog'))
         return Promise.resolve(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
-      if (url.includes('source=kegg'))
-        return Promise.resolve(jsonResponse({ data: [makeRow('K00001', 'Metabolism', 50)] }))
-      // kegg rows are grouped from /api/kegg/parents' real
-      // immediate-parent data, not the row's own single `parent` field.
-      if (url.includes('/api/kegg/parents'))
-        return Promise.resolve(jsonResponse({ parents: { K00001: [{ annotation_id: '09100', name: 'Metabolism' }] } }))
+      if (url.includes('source=enzyme'))
+        return Promise.resolve(jsonResponse({ data: [makeRow('1.1.1.1', 'Metabolism', 50)] }))
       return Promise.resolve(jsonResponse({}))
     })
     const { rerender } = render(<AnnotationsByParentPanel source="cog" />)
     await waitFor(() => expect(screen.getByText('Custom Group')).toBeInTheDocument())
 
-    rerender(<AnnotationsByParentPanel source="kegg" />)
+    rerender(<AnnotationsByParentPanel source="enzyme" />)
     await waitFor(() => expect(screen.getByText('Metabolism')).toBeInTheDocument())
     expect(screen.queryByText('Custom Group')).not.toBeInTheDocument()
   })
 
   // Switching source while the PREVIOUS source's request is still in
   // flight must not let the stale (slower) response land after the newer
-  // one and get labelled/grouped under the NEW source (switch from kegg to
-  // cog; the slower kegg response arrives last and must not show as "cog").
+  // one and get labelled/grouped under the NEW source (switch from enzyme to
+  // cog; the slower enzyme response arrives last and must not show as "cog").
   it('a stale response from the OLD source is ignored, even if it resolves after the new source\'s real response', async () => {
-    let resolveKegg!: (v: unknown) => void
-    const keggPending = new Promise(resolve => { resolveKegg = resolve })
+    let resolveOld!: (v: unknown) => void
+    const oldPending = new Promise(resolve => { resolveOld = resolve })
     mockFetch.mockImplementation((url: string) => {
-      if (url.includes('source=kegg')) return keggPending
+      if (url.includes('source=enzyme')) return oldPending
       if (url.includes('source=cog'))
         return Promise.resolve(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
       return Promise.resolve(jsonResponse({}))
     })
-    const { rerender } = render(<AnnotationsByParentPanel source="kegg" />)
+    const { rerender } = render(<AnnotationsByParentPanel source="enzyme" />)
 
-    // Switch to cog BEFORE kegg's request resolves.
+    // Switch to cog BEFORE enzyme's request resolves.
     rerender(<AnnotationsByParentPanel source="cog" />)
     await waitFor(() => expect(screen.getByText('Custom Group')).toBeInTheDocument())
 
-    // Now let the stale kegg response land.
-    resolveKegg(jsonResponse({ data: [makeRow('K00001', 'Metabolism', 50)] }))
+    // Now let the stale enzyme response land.
+    resolveOld(jsonResponse({ data: [makeRow('1.1.1.1', 'Metabolism', 50)] }))
     await new Promise(r => setTimeout(r, 20))
 
-    // Still showing cog's real data -- kegg's late response must not have
+    // Still showing cog's real data -- enzyme's late response must not have
     // overwritten it, and must not be shown labelled as "cog" either.
     expect(screen.getByText('Custom Group')).toBeInTheDocument()
     expect(screen.queryByText('Metabolism')).not.toBeInTheDocument()
   })
 })
 
-// A KEGG row with more than one real immediate parent must be filed under EVERY
-// one of them, not just the single last-occurrence-wins `parent` field
-// the row itself carries.
-describe('AnnotationsByParentPanel — files a multi-parent KO under every real parent group', () => {
+// A COG in more than one real category must be filed under EVERY one of
+// them, not just the single last-occurrence-wins `parent` field the row
+// itself carries.
+describe('AnnotationsByParentPanel — multi-parent grouping (COG)', () => {
   it('a multi-parent row appears in both of its real groups; a single-parent row appears in only one', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/annotations/top')) {
         return Promise.resolve(jsonResponse({
           data: [
-            makeRow('K01', 'irrelevant-stale-value', 100), // real parents: Group A and Group B
-            makeRow('K02', 'irrelevant-stale-value', 30),  // real parent: Group A only
+            makeRow('COG0001', 'irrelevant-stale-value', 100), // real parents: Group A and Group B
+            makeRow('COG0002', 'irrelevant-stale-value', 30),  // real parent: Group A only
           ],
         }))
       }
-      if (url.includes('/api/kegg/parents')) {
+      if (url.includes('/api/cog/parents')) {
         return Promise.resolve(jsonResponse({
           parents: {
-            K01: [{ annotation_id: 'A', name: 'Group A' }, { annotation_id: 'B', name: 'Group B' }],
-            K02: [{ annotation_id: 'A', name: 'Group A' }],
+            COG0001: [{ annotation_id: 'A', name: 'Group A' }, { annotation_id: 'B', name: 'Group B' }],
+            COG0002: [{ annotation_id: 'A', name: 'Group A' }],
           },
         }))
       }
       return Promise.resolve(jsonResponse({}))
     })
-    render(<AnnotationsByParentPanel source="kegg" />)
+    render(<AnnotationsByParentPanel source="cog" />)
 
     await waitFor(() => expect(screen.getByText('Group A')).toBeInTheDocument())
     expect(screen.getByText('Group B')).toBeInTheDocument()
 
-    // Group A: both K01 (100) and K02 (30) -- count=2, sum=130.
+    // Group A: both COG0001 (100) and COG0002 (30) -- count=2, sum=130.
     const groupARow = screen.getByText('Group A').closest('.mappings-toggle')!
     expect(groupARow.textContent).toContain('2 annotations')
     expect(groupARow.textContent).toContain('1.30e+2')
 
-    // Group B: K01 only -- count=1, sum=100. The SAME K01 EGC (100) is
-    // counted in both groups' totals (130 + 100 = 230, more than K01+K02's
+    // Group B: COG0001 only -- count=1, sum=100. The SAME COG0001 EGC (100) is
+    // counted in both groups' totals (130 + 100 = 230, more than COG0001+COG0002's
     // real combined 130) -- the same already-accepted cross-group
     // non-additivity as COG's multi-category rollup, not a
-    // bug to "fix" by splitting/dividing K01's value between groups.
+    // bug to "fix" by splitting/dividing COG0001's value between groups.
     const groupBRow = screen.getByText('Group B').closest('.mappings-toggle')!
     expect(groupBRow.textContent).toContain('1 annotations')
     expect(groupBRow.textContent).toContain('1.00e+2')
   })
 
-  it('a kegg row with no real parent at all (an A-level root) goes in "Top-level categories", listed last with an explanation', async () => {
+  it('a row with no real parent at all (a category letter) goes in "Top-level categories", listed last with an explanation', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/annotations/top'))
-        return Promise.resolve(jsonResponse({ data: [makeRow('09100', 'irrelevant', 5000), makeRow('K00001', '00010', 50)] }))
-      if (url.includes('/api/kegg/parents'))
-        return Promise.resolve(jsonResponse({ parents: { '09100': [], K00001: [{ annotation_id: '00010', name: 'Glycolysis' }] } }))
+        return Promise.resolve(jsonResponse({ data: [makeRow('E', 'irrelevant', 5000), makeRow('COG0001', 'H', 50)] }))
+      if (url.includes('/api/cog/parents'))
+        return Promise.resolve(jsonResponse({ parents: { E: [], COG0001: [{ annotation_id: 'H', name: 'Glycolysis' }] } }))
       return Promise.resolve(jsonResponse({}))
     })
     const user = userEvent.setup()
-    render(<AnnotationsByParentPanel source="kegg" />)
+    render(<AnnotationsByParentPanel source="cog" />)
 
     await waitFor(() => expect(screen.getByText('Top-level categories')).toBeInTheDocument())
     expect(screen.queryByText('Ungrouped')).not.toBeInTheDocument()
@@ -409,25 +405,25 @@ describe('AnnotationsByParentPanel — files a multi-parent KO under every real 
     expect(screen.getByText(/already includes everything beneath it/i)).toBeInTheDocument()
   })
 
-  // On a /kegg/parents failure, rows must fall back to their own single
+  // On a /cog/parents failure, rows must fall back to their own single
   // r.parent (not one undifferentiated "Ungrouped" bucket) and a visible
   // warning must be shown.
-  it('falls back to single-parent grouping and shows a visible warning when /kegg/parents fails', async () => {
+  it('falls back to single-parent grouping and shows a visible warning when /cog/parents fails', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/annotations/top')) {
         return Promise.resolve(jsonResponse({
-          data: [makeRow('K01', 'GroupOne', 100), makeRow('K02', 'GroupTwo', 50)],
+          data: [makeRow('COG0001', 'GroupOne', 100), makeRow('COG0002', 'GroupTwo', 50)],
         }))
       }
-      if (url.includes('/api/kegg/parents')) {
+      if (url.includes('/api/cog/parents')) {
         return Promise.reject(new Error('404'))
       }
       return Promise.resolve(jsonResponse({}))
     })
-    render(<AnnotationsByParentPanel source="kegg" />)
+    render(<AnnotationsByParentPanel source="cog" />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('kegg-parents-fetch-failure-warning')).toBeInTheDocument()
+      expect(screen.getByTestId('multi-parents-fetch-failure-warning')).toBeInTheDocument()
     })
     // Each row grouped under its OWN stored parent, not one shared
     // "Ungrouped" bucket for everything.
@@ -436,104 +432,104 @@ describe('AnnotationsByParentPanel — files a multi-parent KO under every real 
     expect(screen.queryByText('Ungrouped')).not.toBeInTheDocument()
   })
 
-  it('retrying after a /kegg/parents failure can recover the real multi-parent grouping', async () => {
+  it('retrying after a /cog/parents failure can recover the real multi-parent grouping', async () => {
     let parentsCallCount = 0
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/annotations/top')) {
-        return Promise.resolve(jsonResponse({ data: [makeRow('K01', 'GroupOne', 100)] }))
+        return Promise.resolve(jsonResponse({ data: [makeRow('COG0001', 'GroupOne', 100)] }))
       }
-      if (url.includes('/api/kegg/parents')) {
+      if (url.includes('/api/cog/parents')) {
         parentsCallCount++
         if (parentsCallCount === 1) return Promise.reject(new Error('404'))
-        return Promise.resolve(jsonResponse({ parents: { K01: [{ annotation_id: 'A', name: 'Real Group A' }] } }))
+        return Promise.resolve(jsonResponse({ parents: { COG0001: [{ annotation_id: 'A', name: 'Real Group A' }] } }))
       }
       return Promise.resolve(jsonResponse({}))
     })
-    render(<AnnotationsByParentPanel source="kegg" />)
+    render(<AnnotationsByParentPanel source="cog" />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('kegg-parents-fetch-failure-warning')).toBeInTheDocument()
+      expect(screen.getByTestId('multi-parents-fetch-failure-warning')).toBeInTheDocument()
     })
     expect(screen.getByText('GroupOne')).toBeInTheDocument() // single-parent fallback label
 
     const user = userEvent.setup()
-    await user.click(screen.getByTestId('kegg-parents-retry-btn'))
+    await user.click(screen.getByTestId('multi-parents-retry-btn'))
 
     await waitFor(() => expect(screen.getByText('Real Group A')).toBeInTheDocument())
-    expect(screen.queryByTestId('kegg-parents-fetch-failure-warning')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('multi-parents-fetch-failure-warning')).not.toBeInTheDocument()
   })
 
-  it('/api/kegg/parents is never called for a non-kegg source', async () => {
-    mockFetch.mockResolvedValue(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
-    render(<AnnotationsByParentPanel source="cog" />)
+  it('/api/cog/parents is never called for a non-cog source', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ data: [makeRow('1.1.1.1', 'Custom Group', 100)] }))
+    render(<AnnotationsByParentPanel source="enzyme" />)
 
     await waitFor(() => expect(screen.getByText('Custom Group')).toBeInTheDocument())
-    expect(mockFetch.mock.calls.some(([u]) => String(u).includes('/api/kegg/parents'))).toBe(false)
+    expect(mockFetch.mock.calls.some(([u]) => String(u).includes('/parents'))).toBe(false)
   })
 
   // The source-switch race test (above) covers a stale response superseded
   // at the FIRST fetch (/api/annotations/top). This covers the other
-  // await: a kegg request that already committed its
+  // await: a cog request that already committed its
   // allRows/loadedSource, then gets superseded WHILE still awaiting its
-  // own /api/kegg/parents call. The panel's `status` stays 'loading'
+  // own /api/cog/parents call. The panel's `status` stays 'loading'
   // across that whole await specifically so nothing stale can render in
-  // between -- this proves the late-resolving kegg parents response can't
-  // corrupt or overwrite the newer (cog) request's already-shown result.
+  // between -- this proves the late-resolving cog parents response can't
+  // corrupt or overwrite the newer request's already-shown result.
   // The source-switch race test (above) and the cross-source variant below
   // both supersede with a DIFFERENT source -- loadedSource ends up !=
-  // 'kegg', so the grouping logic's own `if (loadedSource === 'kegg')`
+  // 'cog', so the grouping logic's own multi-parent
   // branch never even reads multiParents, masking a missing requestId
   // check there regardless of whether it's present. This variant keeps
-  // the source the SAME (kegg) across both requests specifically so a
+  // the source the SAME (cog) across both requests specifically so a
   // missing check would be directly visible: setMultiParents replaces
-  // the whole object (not a merge), so a late, stale K01-only response
-  // landing after the real K02-only response would wipe out K02's entry
-  // entirely, and K02 would incorrectly fall back to "Ungrouped".
-  it('a stale kegg request\'s LATE /api/kegg/parents response cannot overwrite a later kegg request\'s own result', async () => {
+  // the whole object (not a merge), so a late, stale COG0001-only response
+  // landing after the real COG0002-only response would wipe out COG0002's entry
+  // entirely, and COG0002 would incorrectly fall back to "Ungrouped".
+  it('a stale cog request\'s LATE /api/cog/parents response cannot overwrite a later cog request\'s own result', async () => {
     let resolveStaleParents!: (v: unknown) => void
     const staleParentsPending = new Promise(resolve => { resolveStaleParents = resolve })
-    let keggTopCall = 0
+    let cogTopCall = 0
     mockFetch.mockImplementation((url: string) => {
-      if (url.includes('/api/annotations/top') && url.includes('source=kegg')) {
-        keggTopCall += 1
-        // 1st kegg load -> K01 (whose /kegg/parents call is parked below).
-        // 2nd kegg load (after bouncing through cog) -> K02, a different row.
+      if (url.includes('/api/annotations/top') && url.includes('source=cog')) {
+        cogTopCall += 1
+        // 1st cog load -> COG0001 (whose /cog/parents call is parked below).
+        // 2nd cog load (after bouncing through enzyme) -> COG0002, a different row.
         return Promise.resolve(jsonResponse({
-          data: [keggTopCall === 1 ? makeRow('K01', 'irrelevant', 100) : makeRow('K02', 'irrelevant', 50)],
+          data: [cogTopCall === 1 ? makeRow('COG0001', 'irrelevant', 100) : makeRow('COG0002', 'irrelevant', 50)],
         }))
       }
-      if (url.includes('/api/kegg/parents')) {
-        return url.includes('ids=K01') ? staleParentsPending
-          : Promise.resolve(jsonResponse({ parents: { K02: [{ annotation_id: 'B', name: 'Group B' }] } }))
+      if (url.includes('/api/cog/parents')) {
+        return url.includes('ids=COG0001') ? staleParentsPending
+          : Promise.resolve(jsonResponse({ parents: { COG0002: [{ annotation_id: 'B', name: 'Group B' }] } }))
       }
-      if (url.includes('/api/annotations/top') && url.includes('source=cog'))
-        return Promise.resolve(jsonResponse({ data: [makeRow('COG0001', 'Custom Group', 100)] }))
+      if (url.includes('/api/annotations/top') && url.includes('source=enzyme'))
+        return Promise.resolve(jsonResponse({ data: [makeRow('1.1.1.1', 'Custom Group', 100)] }))
       return Promise.resolve(jsonResponse({}))
     })
-    const { rerender } = render(<AnnotationsByParentPanel source="kegg" />)
-    // Wait for K01's /api/annotations/top to actually resolve and its own
-    // /api/kegg/parents call to actually START (parked pending) BEFORE
-    // switching source -- otherwise K01's request can go stale before it
-    // even reaches its own kegg/parents call, never exercising the race
+    const { rerender } = render(<AnnotationsByParentPanel source="cog" />)
+    // Wait for COG0001's /api/annotations/top to actually resolve and its own
+    // /api/cog/parents call to actually START (parked pending) BEFORE
+    // switching source -- otherwise COG0001's request can go stale before it
+    // even reaches its own cog/parents call, never exercising the race
     // this test exists to catch at all.
     await waitFor(() => {
-      expect(mockFetch.mock.calls.some(([u]) => String(u).includes('ids=K01'))).toBe(true)
+      expect(mockFetch.mock.calls.some(([u]) => String(u).includes('ids=COG0001'))).toBe(true)
     })
 
-    // Bounce through cog and back to kegg -- a brand new kegg request
-    // (K02) starts and fully completes (real Group B grouping shown)
-    // while K01's parents call is still stuck.
-    rerender(<AnnotationsByParentPanel source="cog" />)
+    // Bounce through enzyme and back to cog -- a brand new cog request
+    // (COG0002) starts and fully completes (real Group B grouping shown)
+    // while COG0001's parents call is still stuck.
+    rerender(<AnnotationsByParentPanel source="enzyme" />)
     await waitFor(() => expect(screen.getByText('Custom Group')).toBeInTheDocument())
-    rerender(<AnnotationsByParentPanel source="kegg" />)
+    rerender(<AnnotationsByParentPanel source="cog" />)
     await waitFor(() => expect(screen.getByText('Group B')).toBeInTheDocument())
 
-    // Now let the stale K01 request's /api/kegg/parents finally land.
-    resolveStaleParents(jsonResponse({ parents: { K01: [{ annotation_id: 'A', name: 'Group A (STALE)' }] } }))
+    // Now let the stale COG0001 request's /api/cog/parents finally land.
+    resolveStaleParents(jsonResponse({ parents: { COG0001: [{ annotation_id: 'A', name: 'Group A (STALE)' }] } }))
     await new Promise(r => setTimeout(r, 20))
 
-    // K02's real grouping must still be shown -- the stale K01-only
-    // response must not have replaced it (which would leave K02 with no
+    // COG0002's real grouping must still be shown -- the stale COG0001-only
+    // response must not have replaced it (which would leave COG0002 with no
     // entry in multiParents at all, falling back to "Ungrouped").
     expect(screen.getByText('Group B')).toBeInTheDocument()
     expect(screen.queryByText('Group A (STALE)')).not.toBeInTheDocument()
@@ -542,8 +538,8 @@ describe('AnnotationsByParentPanel — files a multi-parent KO under every real 
 })
 
 // A COG id can belong to several categories (e.g. COG0028 is in E and H),
-// but its stored `parent` holds only one. Like a multi-parent KO, it must
-// be filed under every real category it belongs to.
+// but its stored `parent` holds only one, so it must be filed under every
+// real category it belongs to.
 describe('AnnotationsByParentPanel — files a multi-category COG under every real category', () => {
   it('uses /api/cog/parents and lists the COG in both of its categories', async () => {
     mockFetch.mockImplementation((url: string) => {
@@ -603,9 +599,9 @@ describe('AnnotationsByParentPanel — a group trend from the previous source is
 })
 
 // A group's size is its category's own total (each gene counted once), not
-// the sum of the listed members: members can overlap (a KO in several
-// pathways) and only the top 200 are listed, so the sum came out too high
-// for KEGG and too low for COG.
+// the sum of the listed members: members can overlap (a COG in several
+// categories) and only the top 200 are listed, so the sum came out too
+// low for COG.
 describe('AnnotationsByParentPanel — group size is the category\'s own total', () => {
   function mockWithOwnTotals(own: Record<string, number>) {
     mockFetch.mockImplementation((url: string) => {

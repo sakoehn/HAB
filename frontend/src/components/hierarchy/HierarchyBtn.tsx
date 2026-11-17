@@ -1,18 +1,18 @@
 // ── HierarchyBtn ─────────────────────────────────────────────────────────────
-// Small button that opens the HierarchyModal for a given KEGG/COG/Enzyme
+// Small button that opens the HierarchyModal for a given COG/Enzyme
 // annotation. Modeled directly on ScaffoldBtn.tsx (self-contained open/
 // closed state).
 //
-// Renders nothing for source === 'taxonomy' -- taxonomy already has its own
-// dedicated tree UI (TaxonomyPage/TaxonomyTree), so call sites don't need
-// their own conditional to hide this button for taxonomy rows.
+// Renders nothing for taxonomy -- it has its own tree UI (TaxonomyPage/
+// TaxonomyTree) -- or for kegg, whose orthologs are a flat list with no
+// hierarchy, so call sites don't need their own conditional to hide it.
 
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { HierarchySource } from '../../types'
 import { HierarchyModal } from './HierarchyModal'
 
-const HIERARCHY_SOURCES: readonly string[] = ['kegg', 'cog', 'enzyme']
+const HIERARCHY_SOURCES: readonly string[] = ['cog', 'enzyme']
 
 function isHierarchySource(source: string): source is HierarchySource {
   return HIERARCHY_SOURCES.includes(source)

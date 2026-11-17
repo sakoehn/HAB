@@ -19,8 +19,8 @@
  *   date range is passed through to both requests
  *   every source can be chosen
  *   cog: levels, the review list worded for categories, its note
- *   kegg: the review list of KOs in several pathways and the choices sent
- *     with the size request and the download
+ *   kegg: a flat list of KOs -- one level, no starting term, nothing to
+ *     review
  *   enzyme: levels, search, browse tree, the note about totals not adding up
  *   the "also include the starting term" option
  *   a slower, superseded summary response is ignored
@@ -29,7 +29,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { BulkDownloadPanel } from '../components/download/BulkDownloadPanel'
@@ -346,8 +346,8 @@ describe('canBulkDownloadFrom', () => {
     expect(canBulkDownloadFrom('taxonomy', 8)).toBe(false)
     expect(canBulkDownloadFrom('enzyme', 3)).toBe(true)
     expect(canBulkDownloadFrom('enzyme', 4)).toBe(false)
-    expect(canBulkDownloadFrom('kegg', 3)).toBe(true)
-    expect(canBulkDownloadFrom('kegg', 4)).toBe(false)
+    // A KO is the only KEGG level, so nothing is ever below it.
+    expect(canBulkDownloadFrom('kegg', 1)).toBe(false)
     expect(canBulkDownloadFrom('cog', 1)).toBe(true)
     expect(canBulkDownloadFrom('cog', 2)).toBe(false)
     expect(canBulkDownloadFrom('nonsense', 1)).toBe(false)
@@ -368,187 +368,38 @@ describe('BulkDownloadPanel — handoff of a non-taxonomy term', () => {
 })
 
 
-// ── KEGG: review list and path choices ───────────────────────────────────────
-
-const CARB = '09101'
-const REVIEW = {
-  terms: [
-    {
-      annotation_id: 'K00844', name: 'HK; hexokinase [EC:2.7.1.1]', total_paths: 14,
-      paths: [
-        { parent_id: '00010', parent_name: 'Glycolysis / Gluconeogenesis [PATH:ko00010]', parent_mean_egc: 188665.2,
-          lineage_ids: ['09100', CARB, '00010', 'K00844'], lineage_names: ['Metabolism', 'Carbohydrate metabolism', 'Glycolysis / Gluconeogenesis [PATH:ko00010]', 'HK'] },
-        { parent_id: '00052', parent_name: 'Galactose metabolism [PATH:ko00052]', parent_mean_egc: 63100,
-          lineage_ids: ['09100', CARB, '00052', 'K00844'], lineage_names: ['Metabolism', 'Carbohydrate metabolism', 'Galactose metabolism [PATH:ko00052]', 'HK'] },
-      ],
-    },
-    {
-      annotation_id: 'K01810', name: 'GPI; glucose-6-phosphate isomerase', total_paths: 3,
-      paths: [
-        { parent_id: '00010', parent_name: 'Glycolysis / Gluconeogenesis [PATH:ko00010]', parent_mean_egc: 188665.2,
-          lineage_ids: ['09100', CARB, '00010', 'K01810'], lineage_names: ['Metabolism', 'Carbohydrate metabolism', 'Glycolysis / Gluconeogenesis [PATH:ko00010]', 'GPI'] },
-        { parent_id: '00030', parent_name: 'Pentose phosphate pathway [PATH:ko00030]', parent_mean_egc: 90000,
-          lineage_ids: ['09100', CARB, '00030', 'K01810'], lineage_names: ['Metabolism', 'Carbohydrate metabolism', 'Pentose phosphate pathway [PATH:ko00030]', 'GPI'] },
-      ],
-    },
-  ],
-}
-
-function keggFetch(multi = 2) {
-  mockFetch.mockImplementation(async (url: string) => {
-    if (url.startsWith('/api/series/export/review')) return jsonResponse(REVIEW)
-    if (url.startsWith('/api/search/annotations')) {
-      return jsonResponse({ data: [{ annotation_id: CARB, name: 'Carbohydrate metabolism', depth: 2 }], total: 1 })
-    }
-    return jsonResponse({ ...summary({ taxa: 716, max_rows: 1000 * 128 }), multi_path_terms: multi })
-  })
-}
-
-function renderKeggKos() {
-  render(<BulkDownloadPanel initialParent={{ lineage: CARB, source: 'kegg', depth: 2, name: 'Carbohydrate metabolism' }} />)
-}
-
-async function chooseKo(user: ReturnType<typeof userEvent.setup>) {
-  await user.selectOptions(rankSelect(), 'ko')
-}
-
-function postCalls(path: string) {
-  return mockFetch.mock.calls.filter(c => String(c[0]).startsWith(path) && (c[1] as RequestInit | undefined)?.method === 'POST')
-}
+// ── KEGG: a flat list of KOs ─────────────────────────────────────────────────
 
 describe('levelOptionsBelow — KEGG', () => {
-  it('lists the KEGG levels', () => {
-    expect(levelOptionsBelow('kegg', 0).map(o => [o.value, o.label])).toEqual([
-      ['category', 'Category'], ['subcategory', 'Subcategory'], ['pathway', 'Pathway / BRITE table'], ['ko', 'KO'],
-    ])
-    expect(levelOptionsBelow('kegg', 2).map(o => o.value)).toEqual(['pathway', 'ko'])
+  it('has one level, KO, and nothing below it', () => {
+    expect(levelOptionsBelow('kegg', 0).map(o => [o.value, o.label])).toEqual([['ko', 'KO']])
+    expect(levelOptionsBelow('kegg', 1)).toEqual([])
   })
 })
 
-describe('BulkDownloadPanel — KEGG review list', () => {
-  it('says how many KOs are in more than one pathway, only when there are some', async () => {
-    keggFetch(194)
+describe('BulkDownloadPanel — KEGG', () => {
+  it('downloads every KO: no starting term to pick, and the request has no parent', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ ...summary({ taxa: 12286, max_rows: 12286 * 128 }), multi_path_terms: 0 }))
     const user = userEvent.setup()
-    renderKeggKos()
-    await chooseKo(user)
-    expect(await screen.findByTestId('bulk-review-line')).toHaveTextContent('194 of these KOs are in more than one pathway here')
-  })
+    render(<BulkDownloadPanel />)
+    await user.selectOptions(screen.getByLabelText('Source'), 'kegg')
 
-  it('the size line multiplies out when KOs are in several pathways', async () => {
-    keggFetch(194)
-    const user = userEvent.setup()
-    renderKeggKos()
-    await chooseKo(user)
-    await waitFor(() => expect(screen.getByTestId('bulk-size'))
-      .toHaveTextContent('716 KOs (1,000 with each pathway counted) × 128 samples ≈ 128,000 rows'))
-  })
+    expect(screen.getByTestId('bulk-start')).toHaveTextContent('Every KO')
+    expect(screen.queryByRole('button', { name: 'Search' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Browse tree' })).toBeNull()
+    expect(rankSelect().value).toBe('ko')
+    expect([...rankSelect().options].map(o => o.value)).toEqual(['ko'])
 
-  it('has no review line when nothing needs review', async () => {
-    keggFetch(0)
-    renderKeggKos()
-    await screen.findByTestId('bulk-size')
+    await waitFor(() => expect(lastSummaryUrl().searchParams.get('source')).toBe('kegg'))
+    expect(Object.fromEntries(lastSummaryUrl().searchParams)).toEqual({ source: 'kegg', rank: 'ko' })
     expect(screen.queryByTestId('bulk-review-line')).toBeNull()
   })
 
-  it('opens the list, with the note about what the abundance means', async () => {
-    keggFetch()
+  it('has no note about rows not adding up', async () => {
     const user = userEvent.setup()
-    renderKeggKos()
-    await chooseKo(user)
-    await user.click(await screen.findByRole('button', { name: /Review/ }))
-    const reviewUrl = new URL(String(mockFetch.mock.calls.map(c => c[0]).find(u => String(u).startsWith('/api/series/export/review'))), 'http://x')
-    expect(Object.fromEntries(reviewUrl.searchParams)).toEqual({ source: 'kegg', parent: CARB, rank: 'ko' })
-    expect(await screen.findByText(/K00844/)).toBeInTheDocument()
-    expect(screen.getByTestId('bulk-review-note')).toHaveTextContent(/describes the pathway as a whole, not where this KO is active/)
-    expect(screen.getByTestId('bulk-review-K00844')).toHaveTextContent('2 of 2 paths')
-    expect(screen.getByTestId('bulk-review-K00844')).toHaveTextContent('12 more outside your start')
-  })
-
-  it('lists each KO\'s pathways in the order given (most abundant first) with their mean EGC', async () => {
-    keggFetch()
-    const user = userEvent.setup()
-    renderKeggKos()
-    await chooseKo(user)
-    await user.click(await screen.findByRole('button', { name: /Review/ }))
-    await user.click(await screen.findByRole('button', { name: /K00844/ }))
-    const boxes = screen.getAllByRole('checkbox', { name: /K00844/ })
-    expect(boxes.map(b => b.getAttribute('aria-label'))).toEqual([
-      'K00844 in Glycolysis / Gluconeogenesis [PATH:ko00010]',
-      'K00844 in Galactose metabolism [PATH:ko00052]',
-    ])
-    expect(boxes.every(b => (b as HTMLInputElement).checked)).toBe(true)
-    expect(screen.getByTestId('bulk-review-K00844')).toHaveTextContent('188,665')
-  })
-
-  it('unticking a pathway sends it with the size request and turns the download into a form post', async () => {
-    keggFetch()
-    const user = userEvent.setup()
-    renderKeggKos()
-    await chooseKo(user)
-    await user.click(await screen.findByRole('button', { name: /Review/ }))
-    await user.click(await screen.findByRole('button', { name: /K00844/ }))
-    await user.click(screen.getByRole('checkbox', { name: 'K00844 in Galactose metabolism [PATH:ko00052]' }))
-
-    await waitFor(() => expect(postCalls('/api/series/export/summary').length).toBeGreaterThan(0))
-    const [url, init] = postCalls('/api/series/export/summary').at(-1)!
-    expect(new URL(String(url), 'http://x').searchParams.get('rank')).toBe('ko')
-    expect((init as RequestInit).headers).toEqual({ 'Content-Type': 'text/plain' })
-    expect(String((init as RequestInit).body)).toBe('selection={"exclude":[["K00844","00052"]]}')
-
-    expect(screen.getByTestId('bulk-review-line')).toHaveTextContent('1 path unticked')
-    expect(screen.getByTestId('bulk-review-K00844')).toHaveTextContent('1 of 2 paths')
-    expect(screen.queryByRole('link', { name: /Download CSV/ })).toBeNull()
-    const form = screen.getByTestId('bulk-download-form') as HTMLFormElement
-    expect(form.getAttribute('method')).toBe('post')
-    expect(form.getAttribute('enctype')).toBe('text/plain')
-    expect(Object.fromEntries(new URL(form.getAttribute('action')!, 'http://x').searchParams)).toEqual({ source: 'kegg', rank: 'ko', parent: CARB })
-    expect((form.querySelector('input[name="selection"]') as HTMLInputElement).value).toBe('{"exclude":[["K00844","00052"]]}')
-  })
-
-  it('None unticks every pathway of a KO and All ticks them again', async () => {
-    keggFetch()
-    const user = userEvent.setup()
-    renderKeggKos()
-    await chooseKo(user)
-    await user.click(await screen.findByRole('button', { name: /Review/ }))
-    const row = await screen.findByTestId('bulk-review-K00844')
-    await user.click(within(row).getByRole('button', { name: 'None' }))
-    expect(row).toHaveTextContent('0 of 2 paths')
-    await user.click(within(row).getByRole('button', { name: 'All' }))
-    expect(row).toHaveTextContent('2 of 2 paths')
-    expect(screen.getByRole('link', { name: /Download CSV/ })).toBeInTheDocument()
-  })
-
-  it('the filter narrows the list by id or name', async () => {
-    keggFetch()
-    const user = userEvent.setup()
-    renderKeggKos()
-    await chooseKo(user)
-    await user.click(await screen.findByRole('button', { name: /Review/ }))
-    await screen.findByTestId('bulk-review-K00844')
-    await user.type(screen.getByPlaceholderText(/Filter KOs/), 'isomerase')
-    expect(screen.queryByTestId('bulk-review-K00844')).toBeNull()
-    expect(screen.getByTestId('bulk-review-K01810')).toBeInTheDocument()
-  })
-
-  it('changing the level clears the choices', async () => {
-    keggFetch()
-    const user = userEvent.setup()
-    renderKeggKos()
-    await chooseKo(user)
-    await user.click(await screen.findByRole('button', { name: /Review/ }))
-    const row = await screen.findByTestId('bulk-review-K00844')
-    await user.click(within(row).getByRole('button', { name: 'None' }))
-    expect(screen.getByTestId('bulk-download-form')).toBeInTheDocument()
-    await user.selectOptions(rankSelect(), 'pathway')
-    await user.selectOptions(rankSelect(), 'ko')
-    expect(screen.queryByTestId('bulk-download-form')).toBeNull()
-  })
-
-  it('explains that KEGG rows may not add up', async () => {
-    keggFetch()
-    renderKeggKos()
-    expect(screen.getByTestId('bulk-source-note')).toHaveTextContent(/counts in each of them/)
+    render(<BulkDownloadPanel />)
+    await user.selectOptions(screen.getByLabelText('Source'), 'kegg')
+    expect(screen.queryByTestId('bulk-source-note')).toBeNull()
   })
 })
 
@@ -624,15 +475,23 @@ describe('BulkDownloadPanel — column help warns about Excel and IDs', () => {
     return document.body.textContent ?? ''
   }
 
-  it('for KEGG and Enzyme, whose IDs Excel turns into numbers', async () => {
-    for (const source of ['kegg', 'enzyme']) {
-      mockFetch.mockResolvedValue(jsonResponse(summary()))
-      const user = userEvent.setup()
-      const { unmount } = render(<BulkDownloadPanel />)
-      await user.selectOptions(screen.getByLabelText('Source'), source)
-      expect(await columnHelp(user)).toMatch(/Excel can turn IDs such as 00010 or 1\.10 into numbers/)
-      unmount()
-    }
+  it('for Enzyme, whose IDs Excel turns into numbers', async () => {
+    mockFetch.mockResolvedValue(jsonResponse(summary()))
+    const user = userEvent.setup()
+    render(<BulkDownloadPanel />)
+    await user.selectOptions(screen.getByLabelText('Source'), 'enzyme')
+    expect(await columnHelp(user)).toMatch(/Excel can turn IDs such as 1\.10 into numbers/)
+  })
+
+  it('KEGG column help says KOs are a flat list and where their KEGG page is', async () => {
+    mockFetch.mockResolvedValue(jsonResponse(summary()))
+    const user = userEvent.setup()
+    render(<BulkDownloadPanel />)
+    await user.selectOptions(screen.getByLabelText('Source'), 'kegg')
+    const help = await columnHelp(user)
+    expect(help).toMatch(/KOs are a flat list/)
+    expect(help).toMatch(/https:\/\/www\.kegg\.jp\/entry\//)
+    expect(help).not.toMatch(/Excel can turn IDs/)
   })
 
   it('not for taxonomy', async () => {
@@ -666,7 +525,7 @@ describe('BulkDownloadPanel — late search answers', () => {
     await user.click(screen.getByRole('button', { name: 'Search' }))
     await user.type(screen.getByPlaceholderText(/Search for a taxon/), 'Bacillus{Enter}')
     await waitFor(() => expect(pending).toHaveLength(1))
-    await user.selectOptions(screen.getByLabelText('Source'), 'kegg')
+    await user.selectOptions(screen.getByLabelText('Source'), 'enzyme')
     pending[0]([{ annotation_id: BACILLUS, name: 'Bacillus', depth: 6 }])
     await user.click(screen.getByRole('button', { name: 'Search' }))
     await new Promise(r => setTimeout(r, 20))
