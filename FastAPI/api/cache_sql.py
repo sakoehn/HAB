@@ -164,216 +164,18 @@ def get_taxonomy_children_sql(conn: sqlite3.Connection, parent: str | None, dept
     return sorted(children_by_id.values(), key=lambda c: c["annotation_id"])
 
 
-# Depth (1=A..4=D) -> the (id_column, name_column) pair on kegg_paths that
-# holds that level. Verified disjoint against real data: no KEGG id
-# appears in more than one level's column, so a bare id unambiguously
-# identifies its own depth -- unlike taxonomy, which needs a full
-# lineage-prefix string for that (see RANK_COLUMNS above).
-KEGG_LEVEL_COLUMNS = {
-    1: ("a_id", "a_name"),
-    2: ("b_id", "b_name"),
-    3: ("c_id", "c_name"),
-    4: ("d_id", "d_name"),
-}
-
-
-def _kegg_node_depth(conn: sqlite3.Connection, node_id: str) -> int | None:
-    """Return which level (1=A..4=D) a KEGG node id belongs to, by
-    checking which kegg_paths column actually contains it.
-
-    Args:
-        conn: Open SQLite connection.
-        node_id: A KEGG annotation id, e.g. '00010' or 'K00844'.
-
-    Returns:
-        The depth (1-4), or None if node_id isn't in kegg_paths at all.
-    """
-    for depth, (id_col, _name_col) in KEGG_LEVEL_COLUMNS.items():
-        row = conn.execute(f"SELECT 1 FROM kegg_paths WHERE {id_col} = ? LIMIT 1", (node_id,)).fetchone()
-        if row is not None:
-            return depth
-    return None
-
-
-def get_kegg_children_sql(conn: sqlite3.Connection, parent_id: str | None, depth: int | None = None) -> list[dict]:
-    """Return the direct children of a KEGG node, built from `kegg_paths`.
-
-    Args:
-        conn: Open SQLite connection.
-        parent_id: KEGG node id to find children of. None returns the
-            A-level roots (Metabolism, Human Diseases, etc.).
-        depth: Level of `parent_id` (1=A..4=D), if already known. If None,
-            derived via _kegg_node_depth.
-
-    Returns:
-        List of dicts keyed annotation_id, name, depth, category, sorted
-        by annotation_id. Empty list if `parent_id` is a leaf KO (depth=4),
-        an unknown id, or has no children.
-    """
-    if parent_id is None:
-        # sorted() here too -- see get_taxonomy_children_sql's root branch.
-        # This source's root ids happen to come back in ascending order from
-        # SQLite's table scan, but that's incidental, not guaranteed.
-        query = "SELECT DISTINCT a_id AS annotation_id, a_name AS name, 1 AS depth, a_name AS category FROM kegg_paths"
-        cursor = conn.execute(query)
-        return sorted(
-            (
-                {"annotation_id": row[0], "name": row[1], "depth": row[2], "category": row[3]}
-                for row in cursor.fetchall()
-            ),
-            key=lambda c: c["annotation_id"],
-        )
-
-    if depth is None:
-        depth = _kegg_node_depth(conn, parent_id)
-        if depth is None:
-            return []  # parent_id isn't a real KEGG node at all
-
-    next_depth = depth + 1
-    next_columns = KEGG_LEVEL_COLUMNS.get(next_depth)
-    if next_columns is None:
-        return []  # D is a real leaf level -- no children below it
-
-    id_col, _ = KEGG_LEVEL_COLUMNS[depth]
-    next_id_col, next_name_col = next_columns
-
-    query = f"""
-        SELECT DISTINCT {next_id_col} AS annotation_id, {next_name_col} AS name, a_name AS category
-        FROM kegg_paths
-        WHERE {id_col} = ? AND {next_id_col} IS NOT NULL
-    """
-    cursor = conn.execute(query, (parent_id,))
-    return sorted(
-        (
-            {"annotation_id": row[0], "name": row[1], "depth": next_depth, "category": row[2]}
-            for row in cursor.fetchall()
-        ),
-        key=lambda c: c["annotation_id"],
-    )
-
-
-def get_kegg_path_sql(conn: sqlite3.Connection, annotation_id: str) -> dict | None:
-    """Return every real ancestor path (root to node) for a KEGG node, for
-    auto-expanding/highlighting a node in the hierarchy popup -- and for
-    letting the user switch between real paths when there's more than one.
-
-    A KEGG node can have multiple real parents (e.g. K00844/hexokinase
-    has 14 real pathway occurrences in ko00001.keg), so
-    annotation_catalog.parent alone isn't enough here: it stores one
-    last-occurrence-wins "display" parent per node, which for a
-    multi-parent KO is often an incidental catch-all (e.g. "Brite
-    Hierarchies") rather than a biologically meaningful path. This reads
-    kegg_paths directly instead.
-
-    GROUP BY is required, not just ORDER BY id: for a node shallower than
-    depth=4 (e.g. a pathway like '00010', or a branch), kegg_paths has one
-    RAW ROW per real full 4-level occurrence, so most of those rows share
-    the exact same truncated ancestor chain up to this node's own depth
-    (confirmed against real data: '00010' has 87 raw rows, one per real
-    child KO, but exactly 1 distinct ancestor path) -- without GROUP BY,
-    path_count would wildly overcount for anything shallower than a leaf.
-    MIN(id) keeps each group's earliest (file-order) row so paths stay
-    sorted the same way the single-path version was.
-
-    Args:
-        conn: Open SQLite connection.
-        annotation_id: A KEGG annotation id, e.g. '00010' or 'K00844'.
-
-    Returns:
-        {"annotation_id": ..., "paths": [[{"annotation_id","name","depth"}, ...], ...]
-         (each inner list root-to-node order, sorted by first real
-         occurrence), "path_count": N}, or None if annotation_id isn't a
-         real KEGG node at all. path_count == len(paths); N > 1 only for
-         genuinely multi-parent nodes (KEGG only -- COG/Enzyme never have
-         this case, see get_cog_path_sql/get_enzyme_path_sql).
-    """
-    depth = _kegg_node_depth(conn, annotation_id)
-    if depth is None:
-        return None
-
-    id_col, _ = KEGG_LEVEL_COLUMNS[depth]
-    cols = [c for d in range(1, depth + 1) for c in KEGG_LEVEL_COLUMNS[d]]
-    col_list = ", ".join(cols)
-
-    rows = conn.execute(
-        f"""
-        SELECT {col_list}, MIN(id) AS first_id
-        FROM kegg_paths WHERE {id_col} = ?
-        GROUP BY {col_list}
-        ORDER BY first_id ASC
-        """,
-        (annotation_id,),
-    ).fetchall()
-
-    paths = [
-        [
-            {"annotation_id": row[(d - 1) * 2], "name": row[(d - 1) * 2 + 1], "depth": d}
-            for d in range(1, depth + 1)
-        ]
-        for row in rows
-    ]
-    return {"annotation_id": annotation_id, "paths": paths, "path_count": len(paths)}
-
-
-def get_kegg_immediate_parents_bulk_sql(conn: sqlite3.Connection, annotation_ids: list[str]) -> dict[str, list[dict]]:
-    """Return every real IMMEDIATE parent (one level up) for each of
-    `annotation_ids`, for bucketing a list of KEGG nodes by parent group
-    -- a single id-at-a-time call to
-    get_kegg_path_sql for every row in a 200-row list would be 200 round
-    trips; this does it in at most 3 queries total (one per non-root
-    depth), regardless of how many ids are passed.
-
-    Resolves each id at the DEEPEST column it's found in across depths
-    4->2 (not get_kegg_path_sql's per-id `_kegg_node_depth`, which only
-    checks in 1->4 order) -- a real KEGG id only ever appears at one
-    consistent depth across all its real occurrences (confirmed directly:
-    0 of 547 real C-level nodes and 0 of 55 real B-level nodes are ever
-    multi-parent, i.e. a node's OWN depth never varies even when its
-    ancestors do), so this is equivalent for real ids, but doesn't rely on
-    a separate depth-detection pass per id.
-
-    Args:
-        conn: Open SQLite connection.
-        annotation_ids: KEGG annotation ids to resolve (any depth, mixed
-            depths within the same call are fine).
-
-    Returns:
-        {annotation_id: [{"annotation_id", "name"}, ...]} -- one entry
-        per id passed in (always present, even if real depth is 1 / a
-        root with no parent, or the id isn't a real KEGG node at all --
-        both give an empty list, not a missing key). More than one entry
-        in a list only for a genuinely multi-parent id.
-    """
-    result: dict[str, list[dict]] = {aid: [] for aid in annotation_ids}
-    remaining = set(annotation_ids)
-
-    for depth in (4, 3, 2):
-        if not remaining:
-            break
-        id_col, _ = KEGG_LEVEL_COLUMNS[depth]
-        parent_id_col, parent_name_col = KEGG_LEVEL_COLUMNS[depth - 1]
-        ids_to_check = list(remaining)
-        placeholders = ", ".join("?" * len(ids_to_check))
-        rows = conn.execute(
-            f"""
-            SELECT DISTINCT {id_col}, {parent_id_col}, {parent_name_col}
-            FROM kegg_paths
-            WHERE {id_col} IN ({placeholders}) AND {parent_id_col} IS NOT NULL
-            """,
-            ids_to_check,
-        ).fetchall()
-        found_at_this_depth = set()
-        for node_id, parent_id, parent_name in rows:
-            result[node_id].append({"annotation_id": parent_id, "name": parent_name})
-            found_at_this_depth.add(node_id)
-        remaining -= found_at_this_depth
-
-    return result
+def _kegg_node_exists(conn: sqlite3.Connection, node_id: str) -> bool:
+    """Whether node_id is a KEGG ortholog (KO) in this dataset. KOs are a
+    flat list -- the site does not use KEGG's pathway hierarchy -- so a
+    KO is its own only "node"."""
+    return conn.execute(
+        "SELECT 1 FROM annotation_catalog WHERE source = 'kegg' AND annotation_id = ?", (node_id,),
+    ).fetchone() is not None
 
 
 # Depth (1=A..4=D) -> the (id_column, name_column) pair on enzyme_paths that
-# holds that level -- same column shape as kegg_paths (EC hierarchy is also
-# exactly 4 levels: class, subclass, sub-subclass, full EC number).
+# holds that level (the EC hierarchy is exactly 4 levels: class, subclass,
+# sub-subclass, full EC number).
 ENZYME_LEVEL_COLUMNS = {
     1: ("a_id", "a_name"),
     2: ("b_id", "b_name"),
@@ -386,7 +188,7 @@ def _enzyme_node_exists(conn: sqlite3.Connection, node_id: str) -> bool:
     """Return whether `node_id` is a real EC id in enzyme_paths, at the
     depth its own string implies.
 
-    Unlike _kegg_node_depth, this doesn't need to probe every level
+    Unlike _cog_node_depth, this doesn't need to probe every level
     column -- an EC id's depth is already known from its own dot count
     (see get_enzyme_children_sql's docstring), so this goes straight to
     the one column that depth implies.
@@ -416,11 +218,11 @@ def get_enzyme_children_sql(conn: sqlite3.Connection, parent_id: str | None, dep
         parent_id: EC id to find children of, e.g. "1.1.1". None returns
             the 7 top-level EC classes (Oxidoreductases, Transferases, etc.).
         depth: Level of `parent_id` (1-4), if already known. If None,
-            derived from `parent_id`'s own dot count. Unlike KEGG ids, an
-            EC id's depth is readable directly from its own text -- "1.1.1"
-            is unambiguously depth 3 -- the same way taxonomy's
-            lineage-prefix depth is derived from `len(parent.split(';'))`,
-            so no kegg-style column-membership lookup is needed here.
+            derived from `parent_id`'s own dot count. An EC id's depth is
+            readable directly from its own text -- "1.1.1" is
+            unambiguously depth 3 -- the same way taxonomy's lineage-prefix
+            depth is derived from `len(parent.split(';'))`, so no
+            column-membership lookup is needed here.
 
     Returns:
         List of dicts keyed annotation_id, name, depth, category, sorted
@@ -470,10 +272,10 @@ def get_enzyme_children_sql(conn: sqlite3.Connection, parent_id: str | None, dep
 def get_enzyme_path_sql(conn: sqlite3.Connection, annotation_id: str) -> dict | None:
     """Return every real ancestor path (root to node) for an Enzyme (EC)
     node, for auto-expanding/highlighting a node in the hierarchy popup.
-    Same GROUP BY-deduplicated shape as get_kegg_path_sql for response
+    Same GROUP BY-deduplicated shape as get_cog_path_sql for response
     parity, even though every EC id has exactly one real parent (see
     get_enzyme_children_sql's docstring) -- `paths` will always have
-    exactly 1 entry here, never the "N real paths" case KEGG has.
+    exactly 1 entry here, never the "N real paths" case COG has.
 
     Args:
         conn: Open SQLite connection.
@@ -512,8 +314,8 @@ def get_enzyme_path_sql(conn: sqlite3.Connection, annotation_id: str) -> dict | 
 
 
 # Depth (1=category, 2=specific COG id) -> the (id_column, name_column)
-# pair on cog_paths that holds that level. Only 2 levels, unlike KEGG/
-# Enzyme's 4 -- a COG category letter has no further real subdivision.
+# pair on cog_paths that holds that level. Only 2 levels, unlike Enzyme's
+# 4 -- a COG category letter has no further real subdivision.
 COG_LEVEL_COLUMNS = {
     1: ("a_id", "a_name"),
     2: ("b_id", "b_name"),
@@ -523,8 +325,8 @@ COG_LEVEL_COLUMNS = {
 def _cog_node_depth(conn: sqlite3.Connection, node_id: str) -> int | None:
     """Return which level (1=category, 2=specific COG id) a COG node id
     belongs to, by checking which cog_paths column actually contains it --
-    same column-membership approach as _kegg_node_depth, since a bare COG
-    id/category letter carries no depth information in its own text.
+    a bare COG id/category letter carries no depth information in its own
+    text.
 
     Args:
         conn: Open SQLite connection.
@@ -599,7 +401,7 @@ def get_cog_children_sql(conn: sqlite3.Connection, parent_id: str | None, depth:
 
 def get_cog_immediate_parents_bulk_sql(conn: sqlite3.Connection, annotation_ids: list[str]) -> dict[str, list[dict]]:
     """Every real category for each of `annotation_ids` (COG ids), in one
-    query -- the COG counterpart of get_kegg_immediate_parents_bulk_sql.
+    query.
 
     annotation_catalog.parent holds only one of a COG id's categories, but
     cog_paths has one row per real (category, COG id) membership (e.g.
@@ -629,11 +431,10 @@ def get_cog_immediate_parents_bulk_sql(conn: sqlite3.Connection, annotation_ids:
 
 def get_cog_path_sql(conn: sqlite3.Connection, annotation_id: str) -> dict | None:
     """Return every real ancestor path (root to node) for a COG node, for
-    auto-expanding/highlighting a node in the hierarchy popup. Same
-    GROUP BY-deduplicated shape as get_kegg_path_sql for response parity --
-    a COG id can have multiple real categories (e.g. COG0028 is real
-    under both E and H), so
-    `paths` can have more than 1 entry, same as KEGG's multi-parent case.
+    auto-expanding/highlighting a node in the hierarchy popup. Results are
+    GROUP BY-deduplicated -- a COG id can have multiple real categories
+    (e.g. COG0028 is real under both E and H), so `paths` can have more
+    than 1 entry.
 
     Args:
         conn: Open SQLite connection.
@@ -1037,8 +838,7 @@ def _sort_group_concat(value: str | None) -> str | None:
 
 
 
-# Non-leaf mapping searches (a KEGG pathway, an Enzyme class, a COG
-# category) can expand to hundreds of real leaf ids -- see
+# Non-leaf mapping searches (an Enzyme class, a COG category) can expand to hundreds of real leaf ids -- see
 # _expand_to_leaf_ids. Above this many resolved leaves, get_mappings_sql
 # clamps how many samples it will scan regardless of the caller's
 # requested sample count, the same way /annotations/top's sample_count
@@ -1194,8 +994,8 @@ def strip_source_prefix(source: str, annotation_id: str) -> str:
     resolves the same way regardless of which form a caller passes.
 
     Shared by get_mappings_sql and routes.py's cap-check (search_mappings),
-    which both call _expand_to_leaf_ids. kegg_paths/enzyme_paths store bare
-    ids at every level, so an unstripped prefixed id (e.g. "KO:K02014")
+    which both call _expand_to_leaf_ids. annotation_catalog/enzyme_paths
+    store bare ids, so an unstripped prefixed id (e.g. "KO:K02014")
     would resolve to zero leaves -- and with leaf_count=0 every cap check
     in search_mappings sees nothing to cap, so the uncapped query runs in
     full (271,284 rows / ~250s for KO:K02014). Keeping one function means
@@ -1230,8 +1030,8 @@ def strip_any_source_prefix(text: str) -> str:
 
 def _expand_to_leaf_ids(conn: sqlite3.Connection, source: str, annotation_id: str) -> list[str]:
     """Resolve annotation_id to every real leaf id it reaches -- itself,
-    if it's already a leaf, or every descendant leaf if it's a pathway/
-    class/category node. Unifies the leaf and non-leaf cases: a leaf id
+    if it's already a leaf (every KEGG ortholog is), or every descendant
+    leaf if it's an EC class or COG category. Unifies the leaf and non-leaf cases: a leaf id
     only ever matches its own leaf column, so this returns exactly [id]
     for a leaf without needing a separate branch.
 
@@ -1252,10 +1052,12 @@ def _expand_to_leaf_ids(conn: sqlite3.Connection, source: str, annotation_id: st
         ).fetchall()
         return sorted(row[0] for row in rows)
 
-    table = "kegg_paths" if source == "kegg" else "enzyme_paths"
+    if source == "kegg":
+        return [annotation_id] if _kegg_node_exists(conn, annotation_id) else []
+
     rows = conn.execute(
-        f"""
-        SELECT DISTINCT d_id FROM {table}
+        """
+        SELECT DISTINCT d_id FROM enzyme_paths
         WHERE (a_id = ? OR b_id = ? OR c_id = ? OR d_id = ?) AND d_id IS NOT NULL
         """,
         (annotation_id, annotation_id, annotation_id, annotation_id),
@@ -1320,8 +1122,8 @@ def iter_mappings_sql(
     one row per gene, straight from the cursor so a large result is never
     held in memory.
 
-    For kegg/enzyme/cog, annotation_id no longer has to be a leaf id --
-    a pathway, EC class, or COG category expands to every real leaf id
+    For enzyme/cog, annotation_id doesn't have to be a leaf id -- an EC
+    class or COG category expands to every real leaf id
     beneath it via _expand_to_leaf_ids and matches any of them. A leaf id
     matches only itself.
 
@@ -1365,8 +1167,8 @@ def iter_mappings_sql(
         return
 
     if source in ("kegg", "cog", "enzyme"):
-        # kegg_paths/enzyme_paths store bare ids at every level (no "KO:"/
-        # "EC:" prefix, same as e.g. a bare pathway code) -- strip it here
+        # annotation_catalog/enzyme_paths store bare ids (no "KO:"/"EC:"
+        # prefix) -- strip it here
         # (via the shared strip_source_prefix -- routes.py's cap-check needs
         # the exact same stripping before its own _expand_to_leaf_ids call) so a
         # caller passing either form (both are real call patterns, see
@@ -1655,9 +1457,9 @@ def iter_series_for_ids_sql(conn: sqlite3.Connection, source: str, annotation_id
 
 
 # source -> (paths table, depth -> (id column, name column)) for the
-# sources whose hierarchy lives in a *_paths table.
+# sources whose hierarchy lives in a *_paths table. KEGG has none: its
+# orthologs are a flat list, read straight from annotation_catalog.
 _PATHS_TABLES = {
-    "kegg":   ("kegg_paths",   KEGG_LEVEL_COLUMNS),
     "cog":    ("cog_paths",    COG_LEVEL_COLUMNS),
     "enzyme": ("enzyme_paths", ENZYME_LEVEL_COLUMNS),
 }
@@ -1668,10 +1470,11 @@ def get_paths_under_at_depth_sql(
 ) -> list[dict]:
     """Return every term at one level under a starting term, for the bulk
     time-series download of kegg/cog/enzyme -- e.g. every EC number under
-    a sub-subclass, or every KO under a pathway (levels can be skipped).
-    One row per distinct lineage, so a KO reached through several
-    pathways comes back once per pathway; an Enzyme term (one parent
-    each) comes back once. Only terms that have data are returned.
+    a sub-subclass (levels can be skipped), or every KEGG ortholog (a flat
+    list, so level 1 with no starting term only). One row per distinct
+    lineage, so a COG in several categories comes back once per category;
+    an Enzyme term (one parent each) comes back once. Only terms that have
+    data are returned.
 
     Args:
         conn: Open SQLite connection.
@@ -1690,6 +1493,15 @@ def get_paths_under_at_depth_sql(
         ValueError: For an unknown source or a level that doesn't exist or
             isn't below `parent_depth`.
     """
+    if source == "kegg":
+        if parent is not None or parent_depth != 0 or depth != 1:
+            raise ValueError("KEGG orthologs are a flat list: only level 1, with no starting term")
+        return [
+            {"annotation_id": aid, "name": name, "lineage_ids": [aid], "lineage_names": [name or ""]}
+            for aid, name in conn.execute(
+                "SELECT annotation_id, name FROM annotation_catalog WHERE source = 'kegg' ORDER BY annotation_id"
+            )
+        ]
     if source not in _PATHS_TABLES:
         raise ValueError(f"no paths table for source {source!r}")
     table, columns = _PATHS_TABLES[source]
@@ -1724,8 +1536,8 @@ def get_path_review_sql(
     conn: sqlite3.Connection, source: str, parent: str | None, parent_depth: int, depth: int,
 ) -> list[dict]:
     """Return every term at `depth` under `parent` that is reached through
-    more than one path inside it -- in practice KEGG KOs in several
-    pathways and COGs in several categories -- for the Bulk Download review
+    more than one path inside it -- in practice COGs in several
+    categories -- for the Bulk Download review
     list, where the user picks which of a term's paths to keep. Each term's
     paths are sorted by the mean EGC (all samples) of the path's immediate
     parent, most abundant first.
@@ -1742,7 +1554,8 @@ def get_path_review_sql(
         sorted by annotation_id, where total_paths also counts the term's
         paths outside `parent` and each path is {"parent_id",
         "parent_name", "parent_mean_egc", "lineage_ids", "lineage_names"}.
-        Empty when no term has more than one path (always, for Enzyme).
+        Empty when no term has more than one path (always, for Enzyme and
+        KEGG).
     """
     by_term: dict[str, list[dict]] = {}
     for path in get_paths_under_at_depth_sql(conn, source, parent, parent_depth, depth):

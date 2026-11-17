@@ -10,9 +10,8 @@ catalog_id_a/catalog_id_b integers, so a cached pair computed against the
 OLD ids would silently be served as a DIFFERENT pair's r/p/q after a
 rebuild. populate_annotation_catalog must therefore clear correlations_cache
 itself -- running migrate_annotation_catalog_sql.py on its own is the
-documented recovery procedure after a COG/KEGG-only path rebuild (see
-migrate_cog_paths_to_sql.py's and migrate_kegg_paths_to_sql.py's
-docstrings).
+documented recovery procedure after a COG-only path rebuild (see
+migrate_cog_paths_to_sql.py's docstring).
 
 Data-layer test: an in-memory sqlite connection with the real schema for
 the three tables involved, no server.

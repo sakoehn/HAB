@@ -390,22 +390,23 @@ def test_expand_to_leaf_ids_needs_the_prefix_stripped_first(conn):
 #=============================================================
 #  Non-leaf ids resolve to their member leaves
 #=============================================================
-# A pathway/class/category id never appears as any gene's own
-# kegg_id/ec_id/cog_id -- only leaf ids do (mappings.kegg_id only ever
-# holds "KO:K#####" forms, never e.g. "KO:00910"). Matching only the exact
-# id would return zero rows for every non-leaf kegg/enzyme/cog id,
+# A class/category id never appears as any gene's own ec_id/cog_id --
+# only leaf ids do. Matching only the exact id would return zero rows for
+# every non-leaf enzyme/cog id,
 # indistinguishable from "this annotation genuinely has no mappings", so
 # get_mappings_sql expands a non-leaf id to its member leaves first.
 
-def test_kegg_pathway_id_now_returns_its_member_kos_mappings(conn):
-    """00910 (Nitrogen metabolism) is a real KEGG pathway with real member
-    KOs in this dataset -- restricted to one sample to keep this fast."""
-    rows = get_mappings_sql(conn, "kegg", "00910", samples=["3300060410"])
-    assert rows, "a real KEGG pathway id must resolve to its member KOs' mappings, not []"
-    # every returned row's own kegg_id must be a real leaf KO under 00910,
-    # never the bare pathway code itself -- proves this is a real
-    # leaf-level match, not e.g. a substring/accidental hit.
-    assert all(row["kegg_id"] and row["kegg_id"].startswith("KO:K") for row in rows)
+def test_enzyme_class_id_returns_its_member_ec_numbers_mappings(conn):
+    """1.1.1 is a real EC sub-subclass with real member EC numbers in this
+    dataset -- restricted to one sample to keep this fast."""
+    rows = get_mappings_sql(conn, "enzyme", "1.1.1", samples=["3300060410"])
+    assert rows, "a real EC class id must resolve to its member EC numbers' mappings, not []"
+
+
+def test_kegg_pathway_id_is_not_a_term(conn):
+    """KEGG orthologs are a flat list -- the site doesn't use KEGG's pathway
+    hierarchy -- so a pathway code such as 00910 matches nothing."""
+    assert get_mappings_sql(conn, "kegg", "00910", samples=["3300060410"]) == []
 
 
 def test_cog_category_id_now_returns_its_member_cogs_mappings(conn):

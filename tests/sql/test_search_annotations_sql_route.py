@@ -287,7 +287,6 @@ def test_ec_prefix_across_all_sources_matches_the_bare_search(client):
     sources = ["kegg", "cog", "enzyme", "taxonomy"]
     prefixed = _ids(client, q="EC:1.1.1.1", sources=sources)
     assert ("enzyme", "1.1.1.1") in prefixed
-    assert ("kegg", "K00001") in prefixed  # alcohol dehydrogenase [EC:1.1.1.1], by name
     assert prefixed == _ids(client, q="1.1.1.1", sources=sources)
 
 
@@ -324,17 +323,22 @@ def test_exact_ec_number_comes_first_and_on_the_first_page(client, typed):
     assert all(r["match"] != "exact" for r in body["data"][1:])
 
 
-def test_kegg_gene_symbol_counts_as_an_exact_name(client):
-    """KO names read "psbA; photosystem II ..." -- the gene symbol before
-    the ';' is what people type."""
-    body = client.get("/search/annotations", params={"q": "psba", "sources": ["kegg"]}).json()
+def test_full_ko_name_is_an_exact_match(client):
+    """KO names are JGI's descriptions, with no gene symbol in front."""
+    body = client.get("/search/annotations", params={
+        "q": "photosystem II P680 reaction center D1 protein", "sources": ["kegg"],
+    }).json()
     assert (body["data"][0]["annotation_id"], body["data"][0]["match"]) == ("K02703", "exact")
 
 
 def test_name_starting_with_the_text_beats_a_more_abundant_mention(client):
-    body = client.get("/search/annotations", params={"q": "nitrogen", "sources": ["kegg", "cog", "enzyme"]}).json()
-    assert body["data"][0]["annotation_id"] == "00910"  # Nitrogen metabolism
-    assert body["data"][0]["match"] == "starts"
+    params = {"q": "nitrogen", "sources": ["kegg", "cog", "enzyme"], "page_size": 500}
+    body = client.get("/search/annotations", params=params).json()
+    first = body["data"][0]
+    assert first["annotation_id"] == "COG0347"  # Nitrogen regulatory protein PII
+    assert first["match"] == "starts"
+    mentions = [r["mean_egc"] for r in body["data"] if r["match"] == "contains"]
+    assert max(mentions) > first["mean_egc"]
 
 
 def test_exact_taxon_name_comes_before_longer_names(client):

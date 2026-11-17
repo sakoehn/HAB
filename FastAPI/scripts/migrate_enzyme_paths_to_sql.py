@@ -2,44 +2,46 @@
 migrate_enzyme_paths_to_sql.py
 ================================
 Populates `enzyme_paths` (see create_sql_schema.py) -- one row per real EC
-classification node (A/B/C/D level id+name), parsed directly from
-DataStructures/Enzyme/ko01000.keg (saved locally by
-scripts/download_enzyme_brite.py -- see that script for why this isn't a
-live fetch).
+classification node (class / subclass / sub-subclass / EC number, id +
+name at each level), from the same tree nodes EGC_ENZYME_TREE.ipynb uses:
+the EC numbers' own digits for the shape, ExPASy ENZYME for the names
+(DataStructures/Enzyme/enzclass.txt and enzyme.dat, saved by
+scripts/download_expasy_enzyme.py; see api/expasy_enzyme.py).
 
-Only includes nodes that are actually real in this dataset -- i.e. the
-node's own id must exist in `annotation_catalog` (source='enzyme'), not
-just anywhere in KEGG's global EC reference file. Same filtering principle
-as migrate_kegg_paths_to_sql.py.
+Only includes nodes that are actually real in this dataset -- the node's
+own id must exist in `annotation_catalog` (source='enzyme'), not just
+anywhere in ExPASy's full list.
 
-Unlike KEGG, every EC node has exactly one real parent (verified: 0 of
-7,333 A/B/C/D nodes in ko01000.keg appear more than once, since the EC
-numbering system itself is a strict single-parent hierarchy) -- so this
-table ends up one row per real EC id, not the ~2.4 rows-per-id kegg_paths
-averages. Still built the same way for consistency, not because the
-multi-occurrence case can actually happen here.
+Every EC node has exactly one parent (fixed by its own digits), so this
+table has one row per real EC id.
 
-Safe to re-run: DELETE-then-reinsert on every run, same reasoning as
-migrate_kegg_paths_to_sql.py -- this table isn't scoped per-sample, so
-there's no partial-update case worth optimizing for.
+Safe to re-run: DELETE-then-reinsert on every run -- this table isn't
+scoped per-sample, so there's no partial-update case worth optimizing for.
 
 Usage (from FastAPI/):
     python scripts/migrate_enzyme_paths_to_sql.py
 """
 
 import os
-import re
 import sqlite3
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from api.config import ENZYME_DIR, SQLITE_DB_PATH  # pylint: disable=wrong-import-position,import-error
+from api.expasy_enzyme import (  # pylint: disable=wrong-import-position,import-error
+    build_ec_nodes,
+    ec_parent,
+    parse_enzclass,
+    parse_enzyme_dat,
+)
 
-BRITE_FILE = os.path.join(ENZYME_DIR, "ko01000.keg")
+ENZCLASS_FILE = os.path.join(ENZYME_DIR, "enzclass.txt")
+ENZYME_DAT_FILE = os.path.join(ENZYME_DIR, "enzyme.dat")
 
-# Depth (1=A..4=D) -> the (id_column, name_column) pair on enzyme_paths
-# that holds that level. Same shape as KEGG_LEVEL_COLUMNS in cache_sql.py.
+# Depth (1=class .. 4=EC number) -> the (id_column, name_column) pair on
+# enzyme_paths that holds that level. Same shape as ENZYME_LEVEL_COLUMNS in
+# cache_sql.py.
 ENZYME_LEVEL_COLUMNS = {
     1: ("a_id", "a_name"),
     2: ("b_id", "b_name"),
@@ -62,82 +64,51 @@ def load_real_enzyme_annotation_ids(conn: sqlite3.Connection) -> set[str]:
     return {row[0] for row in cursor.fetchall()}
 
 
-def iter_enzyme_path_rows(keg_file_path: str, valid_ids: set[str]):
-    """Parse ko01000.keg and yield one row dict per real EC node.
+def _ec_sort_key(ec_id: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in ec_id.split(".") if part.isdigit())
 
-    Same current_at_depth tracking approach as
-    migrate_kegg_paths_to_sql.py's iter_kegg_path_rows and
-    EGC_ENZYME_TREE.ipynb's own BRITE-parsing cell -- HTML tags stripped
-    from A-level lines ("A<b>1. Oxidoreductases</b>"), node ids matched
-    with the same digit-dot regex that skips E-level KO cross-reference
-    lines entirely (they don't match a digit-based id, so they're never
-    even candidates here).
+
+def iter_enzyme_path_rows(nodes: dict[str, dict], valid_ids: set[str]):
+    """Yield one row dict per id in `valid_ids`, in EC-number order.
 
     Args:
-        keg_file_path: Path to ko01000.keg.
+        nodes: The enzyme tree's nodes, from api.expasy_enzyme.build_ec_nodes.
         valid_ids: Real Enzyme annotation ids from
-            load_real_enzyme_annotation_ids() -- a node is only yielded
-            if its own id is in this set.
+            load_real_enzyme_annotation_ids().
 
     Yields:
         Dicts with keys a_id, a_name, b_id, b_name, c_id, c_name, d_id,
         d_name (None for levels the node doesn't reach), and full_path
         (the ids actually present, joined by '|').
+
+    Raises:
+        ValueError: if a valid id isn't one of `nodes` -- the catalog and
+            the ExPASy files would then be out of step.
     """
-    with open(keg_file_path, encoding="utf-8") as f:
-        keg_lines = f.readlines()
+    missing = sorted(valid_ids - nodes.keys())
+    if missing:
+        raise ValueError(f"enzyme ids in annotation_catalog that aren't tree nodes: {missing[:10]}")
 
-    current_at_depth: dict[int, dict] = {}
-
-    for raw_line in keg_lines:
-        line = raw_line.strip()
-        if not line or line[0] not in "ABCD":
-            continue
-
-        depth = ord(line[0]) - ord("A") + 1
-
-        rest = re.sub(r"<[^>]+>", "", line[1:]).strip()
-        if not rest:
-            continue
-
-        # The trailing name group is optional: ko01000.keg line 17308
-        # ("C    7.2.3") is a bare "<id>" line with no name text (the only
-        # one in the file). Skipping it would leave current_at_depth[3]
-        # stale at the PREVIOUS named C-line, so the next D-line ("7.2.3.1")
-        # would inherit the WRONG parent. A nameless node uses its bare id
-        # as its name.
-        m = re.match(r"^(\d+(?:\.\d+){0,3})\.?(?:\s+(.+))?$", rest)
-        if not m:
-            continue
-
-        node_id = m.group(1)
-        name    = (m.group(2) or node_id).strip()
-
-        current_at_depth[depth] = {"id": node_id, "name": name}
-        for d in list(current_at_depth):
-            if d > depth:
-                del current_at_depth[d]
-
-        if node_id not in valid_ids:
-            continue
+    for ec_id in sorted(valid_ids, key=_ec_sort_key):
+        chain = []
+        cur = ec_id
+        while cur is not None:
+            chain.append(cur)
+            cur = ec_parent(cur)
+        chain.reverse()
 
         row = {}
-        path_ids = []
         for d, (id_col, name_col) in ENZYME_LEVEL_COLUMNS.items():
-            if d <= depth:
-                row[id_col] = current_at_depth[d]["id"]
-                row[name_col] = current_at_depth[d]["name"]
-                path_ids.append(current_at_depth[d]["id"])
-            else:
-                row[id_col] = None
-                row[name_col] = None
-        row["full_path"] = "|".join(path_ids)
-
+            level_id = chain[d - 1] if d <= len(chain) else None
+            row[id_col] = level_id
+            row[name_col] = nodes[level_id]["name"] if level_id else None
+        row["full_path"] = "|".join(chain)
         yield row
 
 
 def populate_enzyme_paths(conn: sqlite3.Connection) -> int:
-    """Rebuild enzyme_paths from ko01000.keg, filtered to real annotations.
+    """Rebuild enzyme_paths from the ExPASy files, filtered to real
+    annotations.
 
     Args:
         conn: Open SQLite connection.
@@ -145,8 +116,14 @@ def populate_enzyme_paths(conn: sqlite3.Connection) -> int:
     Returns:
         Number of rows inserted.
     """
+    with open(ENZCLASS_FILE, encoding="latin-1") as f:
+        classes = parse_enzclass(f.read())
+    with open(ENZYME_DAT_FILE, encoding="latin-1") as f:
+        entries = parse_enzyme_dat(f.read())
+    nodes = build_ec_nodes(classes, entries)
+
     valid_ids = load_real_enzyme_annotation_ids(conn)
-    rows = list(iter_enzyme_path_rows(BRITE_FILE, valid_ids))
+    rows = list(iter_enzyme_path_rows(nodes, valid_ids))
 
     cursor = conn.cursor()
     cursor.execute("DELETE FROM enzyme_paths")

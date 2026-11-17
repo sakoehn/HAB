@@ -59,7 +59,7 @@ from .cache_sql import (
     _cog_node_depth,
     _enzyme_node_exists,
     _expand_to_leaf_ids,
-    _kegg_node_depth,
+    _kegg_node_exists,
     _MANY_LEAVES_THRESHOLD,
     _MAX_SAMPLES_FOR_MANY_LEAVES,
     _MAPPINGS_ROW_LIMIT,
@@ -74,10 +74,7 @@ from .cache_sql import (
     get_cog_path_sql,
     get_enzyme_children_sql,
     get_enzyme_path_sql,
-    get_kegg_children_sql,
     get_cog_immediate_parents_bulk_sql,
-    get_kegg_immediate_parents_bulk_sql,
-    get_kegg_path_sql,
     get_taxonomy_children_sql,
     get_top_annotations_sql,
     taxon_exists_sql,
@@ -325,10 +322,10 @@ def search_mappings(
     """
     Search mappings for a given annotation ID and source.
 
-    For kegg/enzyme/cog, annotation_id can be a pathway/class/category
-    node, not just a leaf id -- it's expanded to every real leaf id
-    beneath it (e.g. source=kegg, annotation_id=00910 returns every gene
-    mapped to any KO under Nitrogen metabolism).
+    For enzyme/cog, annotation_id can be a class/category node, not just
+    a leaf id -- it's expanded to every real leaf id beneath it (e.g.
+    source=enzyme, annotation_id=1.1.1 returns every gene mapped to any EC
+    number under it). Every KEGG ortholog is a leaf.
 
     Results are deduplicated (if unique_pairs), sorted chronologically,
     then paginated. sample_count is clamped to _MAX_SAMPLES_FOR_MANY_LEAVES
@@ -789,74 +786,11 @@ def taxonomy_children(request: Request, parent: str | None = Query(None)):
     return {'parent': parent, 'count': len(children), 'data': children}
 
 
-@router.get("/kegg/children")
-def kegg_children(request: Request, parent: str | None = Query(None)):
-    """
-    Direct children of a KEGG node (structure only — no egc values), for
-    the BRITE hierarchy popup.
-
-    parent omitted/empty -> the 8 top-level branches (Metabolism, Human
-    Diseases, Brite Hierarchies, etc.).
-
-    Read from `kegg_paths` (built from ko00001.keg, capturing every real
-    multi-parent occurrence — see migrate_kegg_paths_to_sql.py).
-    """
-    # An explicitly empty `parent=` arrives as "", not None -- treat it as
-    # omission (see taxonomy_children), not as an unknown node to 404 on.
-    parent = parent or None
-    db = connect_to_sql()
-    try:
-        if parent is not None and _kegg_node_depth(db, parent) is None:
-            raise HTTPException(status_code=404, detail=f"Unknown KEGG node '{parent}'")
-
-        children = get_kegg_children_sql(db, parent)
-    finally:
-        close_sql_connection(db)
-    return {'parent': parent, 'count': len(children), 'data': children}
-
-
-@router.get("/kegg/path")
-def kegg_path(request: Request, id: str = Query(...)):
-    """
-    Ancestor path (root to node) for a KEGG node, for auto-expanding and
-    highlighting a node in the hierarchy popup when opened from a chart
-    for one specific annotation.
-    """
-
-    db = connect_to_sql()
-    try:
-        result = get_kegg_path_sql(db, id)
-    finally:
-        close_sql_connection(db)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"Unknown KEGG node '{id}'")
-    return result
-
-
-@router.get("/kegg/parents")
-def kegg_parents_bulk(request: Request, ids: str = Query(...)):
-    """
-    Every real IMMEDIATE parent (one level up) for each of a comma-separated
-    list of KEGG node ids, in one request. "Annotations by Parent" groups up to 200 rows at once, and a KO's
-    stored `parent` is last-occurrence-wins (only one of its possibly-many
-    real parents), so the panel needs every real parent for every row to
-    bucket a multi-parent KO into every group it actually belongs to --
-    one /kegg/path call per row would be 200 round trips; this is one.
-    """
-    id_list = [i for i in ids.split(",") if i]
-    db = connect_to_sql()
-    try:
-        result = get_kegg_immediate_parents_bulk_sql(db, id_list)
-    finally:
-        close_sql_connection(db)
-    return {"parents": result}
-
-
 @router.get("/cog/parents")
 def cog_parents_bulk(request: Request, ids: str = Query(...)):
     """
     Every real category for each of a comma-separated list of COG ids, in
-    one request -- the COG counterpart of /kegg/parents. A COG id's stored
+    one request. A COG id's stored
     `parent` holds only one of its categories, so Explore needs every real
     category to file a multi-category COG under each one it belongs to.
     """
@@ -873,7 +807,7 @@ def cog_parents_bulk(request: Request, ids: str = Query(...)):
 def enzyme_children(request: Request, parent: str | None = Query(None)):
     """
     Direct children of an Enzyme (EC) node (structure only — no egc
-    values), for the same BRITE-hierarchy-popup feature as /kegg/children.
+    values), for the hierarchy popup.
 
     parent omitted/empty -> the 7 top-level EC classes (Oxidoreductases,
     Transferases, etc.).
@@ -918,7 +852,7 @@ def enzyme_path(request: Request, id: str = Query(...)):
 def cog_children(request: Request, parent: str | None = Query(None)):
     """
     Direct children of a COG node (structure only — no egc values), for
-    the same BRITE-hierarchy-popup feature as /kegg/children.
+    the hierarchy popup.
 
     parent omitted/empty -> the 25 top-level category letters (Energy
     production and conversion, etc.) -- 25 in the real db, not 26.
@@ -1198,7 +1132,7 @@ _LINEAGE_SEP = " > "
 # not listed here (besides taxonomy) aren't available for bulk download yet.
 _EXPORT_LEVELS = {
     "enzyme": {"class": 1, "subclass": 2, "subsubclass": 3, "ec": 4},
-    "kegg":   {"category": 1, "subcategory": 2, "pathway": 3, "ko": 4},
+    "kegg":   {"ko": 1},
     "cog":    {"category": 1, "cog": 2},
 }
 
@@ -1245,7 +1179,7 @@ def _paths_parent_depth(db, source: str, parent: str) -> int | None:
     if source == "enzyme":
         return len(parent.split(".")) if _enzyme_node_exists(db, parent) else None
     if source == "kegg":
-        return _kegg_node_depth(db, parent)
+        return 1 if _kegg_node_exists(db, parent) else None
     if source == "cog":
         return _cog_node_depth(db, parent)
     return None
@@ -1267,20 +1201,6 @@ def _paths_levels(db, source: str, parent: str | None, rank: str) -> tuple[int, 
     return depth, parent_depth
 
 
-def _kegg_level3_name(name: str | None) -> str:
-    """The level column for a KEGG third-level entry. KEGG's file also puts
-    its Brite protein-family tables ([BR:...], e.g. Transporters) and its
-    "Not Included in Pathway or Brite" bins at the pathway level, so only a
-    [PATH:...] entry is called a pathway; the frontend labels them the same
-    way (stats.ts keggLevel3Label)."""
-    name = name or ""
-    if "[PATH:" in name:
-        return "pathway"
-    if "[BR:" in name:
-        return "brite_table"
-    return "kegg_group"
-
-
 def _paths_export_entries(
     db, source: str, parent: str | None, rank: str, include_parent: bool, exclude: set[tuple[str, str]],
 ):
@@ -1290,8 +1210,6 @@ def _paths_export_entries(
     level_names = {d: name for name, d in levels.items()}
 
     def labels(path: dict, level: str, repeated: bool, is_start: bool) -> list:
-        if source == "kegg" and level == "pathway":
-            level = _kegg_level3_name(path["name"])
         return [
             path["annotation_id"], path["name"], level,
             _LINEAGE_SEP.join(path["lineage_ids"]), _LINEAGE_SEP.join(path["lineage_names"]),
@@ -1338,7 +1256,7 @@ def _series_export_plan(
 ) -> dict:
     """Check a bulk-download request and work out what it covers: the
     file's header, one entry per block of rows (one block per term, or per
-    term per path for a KO in several pathways), the optional starting-term
+    term per path for a COG in several categories), the optional starting-term
     block, the samples (in date order, with ISO dates) and whether the file
     is too big to also list undetected samples. Raises HTTPException for a
     bad request, so both routes reject it before anything is sent.
@@ -1543,9 +1461,10 @@ def series_export(
     omitted), one row per term per sample. Taxonomy columns: taxon, rank,
     lineage, sample, date, egc, norm_egc, detected. kegg/cog/enzyme columns:
     annotation_id, name, level, lineage_ids, lineage, also_in_other_paths,
-    is_starting_term, then the same sample columns; a KO in several
-    pathways gets one block of rows per pathway, flagged
-    also_in_other_paths. include_parent adds the starting term's own rows
+    is_starting_term, then the same sample columns; a COG in several
+    categories gets one block of rows per category, flagged
+    also_in_other_paths. KEGG orthologs are a flat list: rank=ko, no
+    parent. include_parent adds the starting term's own rows
     first. Undetected samples are written as 0 with detected=false, unless
     the file would pass Excel's row limit, in which case only detected rows
     are written. Streamed, so a large file never has to be built in memory

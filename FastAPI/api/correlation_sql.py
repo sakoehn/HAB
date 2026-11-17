@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 from api.config import SQLITE_DB_PATH
 
 from .cache import AnnotationSource
-from .cache_sql import _kegg_node_depth, KEGG_LEVEL_COLUMNS, _cog_node_depth, COG_LEVEL_COLUMNS
+from .cache_sql import _cog_node_depth, COG_LEVEL_COLUMNS
 from .config import CORRELATION_LAGS, LAG_HOURS_PER_SAMPLE
 from .correlation_loaders import (
     load_family_matrix,
@@ -224,86 +224,6 @@ def _spearman_at_lags(ref:  list[float], cand: list[float], lags: list[int], met
 def _bonferroni_correct(p: float, n_tests: int):
     return min(p * n_tests, 1.0)
 
-# The two top-level sections of KEGG's hierarchy file that are not
-# pathways: 09180 "Brite Hierarchies" (protein-family catalogue tables such
-# as 02000 Transporters, 2,000+ KOs) and 09190 "Not Included in Pathway or
-# Brite" (leftover bins such as 99980 Enzymes with EC numbers). Every
-# third-level entry of the other six sections is a [PATH:] map.
-_KEGG_NON_PATHWAY_SECTIONS = ("09180", "09190")
-
-
-def _kegg_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
-    """
-    annotation_catalog's `parent` column can only hold ONE of a KEGG
-    node's real parents, but KEGG KOs are commonly multi-parent
-    (K00844/hexokinase has 14 real parents). The generic by_id/children_of
-    walk in get_family_candidates assumes one parent per node, so it would
-    miss every ancestor/descendant relationship except the one parent
-    that happened to get recorded.
-
-    `kegg_paths` (built for the BRITE hierarchy popup, see
-    migrate_kegg_paths_to_sql.py) stores every real occurrence-path a node
-    appears in, so this walks that table instead. COG has the same
-    problem and gets the same treatment (_cog_family_exclusions); enzyme
-    is single-parent by construction (0 of 7,333 real EC nodes have more
-    than one parent) and taxonomy's `parent` is a full lineage prefix, so
-    the generic walk is exact for both.
-
-    Args:
-        conn: Open SQLite connection.
-        ref_annotation_id: The KEGG node to build the exclusion set for.
-
-    Returns:
-        Set of annotation_ids to exclude: ref itself, every real ancestor
-        and descendant across every occurrence-path ref appears in, and
-        every real sibling (shares at least one of ref's real immediate
-        parents -- or, for a depth=1 ref, every other real depth=1 id,
-        matching the generic walk's NULL-shared-parent convention for
-        top-level nodes with nothing above them). A parent inside
-        _KEGG_NON_PATHWAY_SECTIONS makes no siblings: sharing a protein-
-        family table says nothing about the two KOs' totals overlapping,
-        and it would drop every other transporter from a transporter's
-        results. Those tables still count as ancestors (their totals
-        contain ref's genes).
-    """
-    excluded = {ref_annotation_id}
-    depth = _kegg_node_depth(conn, ref_annotation_id)
-    if depth is None:
-        return excluded  # not a real kegg_paths node -- no relationships to exclude
-
-    level_col, _ = KEGG_LEVEL_COLUMNS[depth]
-    rows = conn.execute(
-        f"SELECT a_id, b_id, c_id, d_id FROM kegg_paths WHERE {level_col} = ?", (ref_annotation_id,)
-    ).fetchall()
-
-    # Ancestors + descendants: every real id in ANY column of ANY
-    # occurrence-path ref appears in -- correct regardless of how many
-    # real parents ref (or anything above/below it) has, since each row
-    # is already a full A->B->C->D path, not a single parent pointer.
-    for row in rows:
-        excluded.update(value for value in row if value is not None)
-
-    if depth == 1:
-        top_level_ids = conn.execute("SELECT DISTINCT a_id FROM kegg_paths WHERE a_id IS NOT NULL").fetchall()
-        excluded.update(r[0] for r in top_level_ids)
-    else:
-        parent_col_index = depth - 2  # (a_id, b_id, c_id, d_id) index of the column one level shallower
-        real_parents = {
-            row[parent_col_index] for row in rows
-            if row[parent_col_index] is not None and row[0] not in _KEGG_NON_PATHWAY_SECTIONS
-        }
-        if real_parents:
-            parent_col, _ = KEGG_LEVEL_COLUMNS[depth - 1]
-            placeholders = ",".join("?" * len(real_parents))
-            siblings = conn.execute(
-                f"SELECT DISTINCT {level_col} FROM kegg_paths WHERE {parent_col} IN ({placeholders})",
-                tuple(real_parents),
-            ).fetchall()
-            excluded.update(r[0] for r in siblings if r[0] is not None)
-
-    return excluded
-
-
 def _cog_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
     """
     A COG id can belong to more than one category (340 real
@@ -317,8 +237,7 @@ def _cog_family_exclusions(conn, ref_annotation_id: str) -> set[str]:
 
     `cog_paths` (built for the hierarchy popup, see
     migrate_cog_paths_to_sql.py) stores every category a COG id belongs
-    to. Same approach as _kegg_family_exclusions above, over COG's
-    2-level (category, COG id) hierarchy instead of KEGG's 4.
+    to, so this walks that 2-level (category, COG id) table instead.
 
     Args:
         conn: Open SQLite connection.
@@ -373,11 +292,11 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
     excludes ref itself, its siblings (share ref's exact parent, NULL
     included), and its ancestors/descendants at any depth, via the generic
     by_id/children_of tree-walk below -- enzyme only now (single-parent by
-    construction: 0 of 7,333 real EC nodes have more than one real
-    parent). kegg and cog each get their own dedicated exclusion path
-    (_kegg_family_exclusions / _cog_family_exclusions above) since both
-    can have MULTIPLE real parents per node, which the single-value
-    `parent` column the generic walk reads can't represent. Taxonomy gets
+    construction: an EC number's parent is fixed by its own digits). KEGG
+    orthologs are a flat list with no parent, so a KO excludes only
+    itself. cog gets its own exclusion path (_cog_family_exclusions above)
+    since a COG id can have MULTIPLE real categories, which the
+    single-value `parent` column the generic walk reads can't represent. Taxonomy gets
     its own ancestor-exclusion path too: the by_id tree-walk only sees
     ancestors shallower than TAXONOMY_DEPTH_CUTOFF, so it would stop short
     for a species/strain reference -- see the comment at the taxonomy
@@ -386,7 +305,7 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
     Returns a list of dicts:
         {"id": ..., "annotation_id": ..., "parent": ..., "name": ..., "depth": ...}
     `depth` is the taxonomic rank (1=domain..8=strain) for taxonomy rows,
-    source-specific pathway/EC hierarchy depth for kegg/enzyme, always
+    the EC hierarchy depth for enzyme, 1 for every KEGG ortholog, always
     None for cog (see annotation_catalog's own depth column docs).
 
     Taxonomy candidates are capped at genus-and-coarser (depth <=
@@ -429,8 +348,10 @@ def get_family_candidates(conn, ref_catalog_id, target_source):
         return _shape(target_rows)
 
     if target_source == AnnotationSource.kegg.value:
-        excluded = _kegg_family_exclusions(conn, ref_annotation_id)
-        return _shape(row for row in target_rows if row[1] not in excluded)
+        # Flat list: no relatives to leave out. (The generic walk below
+        # would treat every KO as a sibling through their shared NULL
+        # parent and leave out all of them.)
+        return _shape(row for row in target_rows if row[1] != ref_annotation_id)
 
     if target_source == AnnotationSource.cog.value:
         excluded = _cog_family_exclusions(conn, ref_annotation_id)

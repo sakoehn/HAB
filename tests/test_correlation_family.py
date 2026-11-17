@@ -33,15 +33,6 @@ CREATE TABLE annotation_catalog(
     UNIQUE (source, annotation_id)
 );
 
-CREATE TABLE kegg_paths(
-    id INTEGER PRIMARY KEY,
-    a_id TEXT, a_name TEXT,
-    b_id TEXT, b_name TEXT,
-    c_id TEXT, c_name TEXT,
-    d_id TEXT, d_name TEXT,
-    full_path TEXT NOT NULL UNIQUE
-);
-
 CREATE TABLE cog_paths(
     id INTEGER PRIMARY KEY,
     a_id TEXT, a_name TEXT,
@@ -64,20 +55,6 @@ def insert(conn, id, source, annotation_id, parent=None, depth=None, name=None):
         "INSERT INTO annotation_catalog (id, source, annotation_id, name, parent, depth) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (id, source, annotation_id, name or annotation_id, parent, depth),
-    )
-    conn.commit()
-
-
-def insert_kegg_path(conn, a_id=None, b_id=None, c_id=None, d_id=None):
-    """One real occurrence-path row for kegg_paths --
-    _kegg_family_exclusions in correlation_sql.py reads this table
-    instead of annotation_catalog.parent for same-source kegg families,
-    since a KEGG node can have multiple real parents (annotation_catalog's
-    single `parent` column can't represent that)."""
-    full_path = "|".join(v for v in (a_id, b_id, c_id, d_id) if v is not None)
-    conn.execute(
-        "INSERT INTO kegg_paths (a_id, b_id, c_id, d_id, full_path) VALUES (?, ?, ?, ?, ?)",
-        (a_id, b_id, c_id, d_id, full_path),
     )
     conn.commit()
 
@@ -302,125 +279,22 @@ class TestExclusionRules:
 
         assert {c["id"] for c in family} == {2, 3}
 
-    def test_kegg_hierarchy_siblings_and_ancestors_excluded(self, conn):
-        # Single-real-parent case (the common one) -- the kegg_paths-based
-        # walk (_kegg_family_exclusions) must get this right too, not
-        # just the multi-parent case below. Reads kegg_paths, not
-        # annotation_catalog.parent, for kegg same-source families -- the
-        # `insert(...)` rows below deliberately don't even set `parent`.
-        insert(conn, 10, "kegg", "A1", depth=1)  # grandparent
-        insert(conn, 11, "kegg", "B1", depth=2)  # ref (parent)
-        insert(conn, 12, "kegg", "C1", depth=3)  # child of ref
-        insert(conn, 13, "kegg", "B2", depth=2)  # sibling of ref
-        insert(conn, 15, "kegg", "A2", depth=1)  # unrelated root
-        insert(conn, 14, "kegg", "B3", depth=2)  # cousin
+    # KEGG orthologs (KOs) are a flat list with no parent: the site does
+    # not use KEGG's pathway hierarchy. Every other KO is a candidate --
+    # in particular, KOs are never all treated as "siblings" of each other
+    # because they share a NULL parent.
 
-        insert_kegg_path(conn, a_id="A1", b_id="B1", c_id="C1")
-        insert_kegg_path(conn, a_id="A1", b_id="B2")
-        insert_kegg_path(conn, a_id="A2", b_id="B3")
+    def test_kegg_ref_excludes_only_itself(self, conn):
+        insert(conn, 10, "kegg", "K00844", depth=1)
+        insert(conn, 11, "kegg", "K00845", depth=1)
+        insert(conn, 12, "kegg", "K01810", depth=1)
 
-        family = get_family_candidates(conn, ref_catalog_id=11, target_source="kegg")
+        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=10, target_source="kegg")}
+        assert family_ids == {11, 12}
 
-        assert {c["id"] for c in family} == {14, 15}
-
-    def test_kegg_multi_parent_ko_excluded_from_every_real_parents_family(self, conn):
-        # annotation_catalog.parent can only ever hold ONE of a
-        # multi-parent KO's real parents (KOs like hexokinase have up to
-        # 14), but kegg_paths records every
-        # real occurrence. A KO genuinely belonging to two different
-        # pathways must be excluded from BOTH pathways' families, not just
-        # whichever one its single recorded parent happened to be.
-        insert(conn, 20, "kegg", "P1", depth=3)          # pathway 1
-        insert(conn, 21, "kegg", "P2", depth=3)          # pathway 2 -- unrelated to P1
-        insert(conn, 22, "kegg", "KMulti", depth=4)      # real member of BOTH P1 and P2
-        insert(conn, 23, "kegg", "KOnlyP1", depth=4)     # real member of only P1
-        insert(conn, 24, "kegg", "KUnrelated", depth=4)  # real member of neither
-
-        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P1", d_id="KMulti")
-        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P2", d_id="KMulti")  # same KO, 2nd real parent
-        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P1", d_id="KOnlyP1")
-        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P3", d_id="KUnrelated")
-
-        family_p1_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=20, target_source="kegg")}
-        assert 22 not in family_p1_ids  # KMulti excluded from P1's family
-        assert 23 not in family_p1_ids  # KOnlyP1 excluded too (regular single-parent case)
-        assert 24 in family_p1_ids      # KUnrelated stays -- real member of neither
-
-        family_p2_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=21, target_source="kegg")}
-        assert 22 not in family_p2_ids  # KMulti excluded from P2's family too -- its other real parent
-
-    def test_kegg_multi_parent_ko_as_ref_excludes_all_its_real_parents(self, conn):
-        # The reverse direction: when the multi-parent KO itself is ref,
-        # ALL of its real ancestors must be excluded, not just one.
-        insert(conn, 20, "kegg", "P1", depth=3)
-        insert(conn, 21, "kegg", "P2", depth=3)
-        insert(conn, 22, "kegg", "KMulti", depth=4)  # ref -- real member of both P1 and P2
-
-        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P1", d_id="KMulti")
-        insert_kegg_path(conn, a_id="A", b_id="B", c_id="P2", d_id="KMulti")
-
-        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=22, target_source="kegg")}
-        assert 20 not in family_ids  # P1 excluded (a real ancestor)
-        assert 21 not in family_ids  # P2 excluded too -- its OTHER real ancestor
-
-    # KEGG's hierarchy file also holds two sections that are not pathways:
-    # 09180 "Brite Hierarchies" (protein-family catalogue tables such as
-    # 02000 Transporters, 2,000+ KOs) and 09190 "Not Included in Pathway or
-    # Brite". Sharing one of those is not a reason to exclude a KO as a
-    # sibling; containment (ancestors/descendants) still is.
-
-    def test_kegg_ko_in_only_a_brite_table_keeps_its_table_mates(self, conn):
-        insert(conn, 40, "kegg", "K_TONB", depth=4)   # ref: only parent is a BRITE table
-        insert(conn, 41, "kegg", "K_ABC", depth=4)    # another transporter
-        insert(conn, 42, "kegg", "02000", depth=3)    # the table itself
-        insert(conn, 43, "kegg", "09183", depth=2)
-        insert(conn, 44, "kegg", "09180", depth=1)
-        insert_kegg_path(conn, a_id="09180", b_id="09183", c_id="02000", d_id="K_TONB")
-        insert_kegg_path(conn, a_id="09180", b_id="09183", c_id="02000", d_id="K_ABC")
-
-        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=40, target_source="kegg")}
-        assert 41 in family_ids          # fellow transporter is a real candidate
-        assert not {42, 43, 44} & family_ids  # the table and its ancestors still excluded
-
-    def test_kegg_ko_in_a_pathway_and_a_bin_excludes_only_pathway_siblings(self, conn):
-        insert(conn, 50, "kegg", "K_HK", depth=4)        # ref: in a pathway and in a 09190 bin
-        insert(conn, 51, "kegg", "K_PATHMATE", depth=4)  # shares the pathway
-        insert(conn, 52, "kegg", "K_BINMATE", depth=4)   # shares only the bin
-        insert(conn, 53, "kegg", "00010", depth=3)
-        insert(conn, 54, "kegg", "99980", depth=3)
-        insert_kegg_path(conn, a_id="09100", b_id="09101", c_id="00010", d_id="K_HK")
-        insert_kegg_path(conn, a_id="09100", b_id="09101", c_id="00010", d_id="K_PATHMATE")
-        insert_kegg_path(conn, a_id="09190", b_id="09191", c_id="99980", d_id="K_HK")
-        insert_kegg_path(conn, a_id="09190", b_id="09191", c_id="99980", d_id="K_BINMATE")
-
-        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=50, target_source="kegg")}
-        assert 51 not in family_ids  # pathway sibling excluded
-        assert 52 in family_ids      # bin-mate kept
-        assert not {53, 54} & family_ids  # both of ref's parents still excluded as ancestors
-
-    def test_kegg_brite_table_as_ref_excludes_its_members_not_other_tables(self, conn):
-        insert(conn, 60, "kegg", "02000", depth=3)   # ref: Transporters table
-        insert(conn, 61, "kegg", "01001", depth=3)   # Protein kinases table, same B parent
-        insert(conn, 62, "kegg", "K_TONB", depth=4)  # member of the ref table
-        insert_kegg_path(conn, a_id="09180", b_id="09183", c_id="02000", d_id="K_TONB")
-        insert_kegg_path(conn, a_id="09180", b_id="09183", c_id="01001")
-
-        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=60, target_source="kegg")}
-        assert 62 not in family_ids  # its own member: contained, so excluded
-        assert 61 in family_ids      # another catalogue table is not a sibling
-
-    def test_kegg_unknown_ref_id_returns_self_exclusion_only_not_a_crash(self, conn):
-        # ref exists in annotation_catalog but was never real enough to
-        # make it into kegg_paths (e.g. filtered out at migration time) --
-        # _kegg_node_depth returns None; must degrade to self-exclusion
-        # only, not raise.
-        insert(conn, 30, "kegg", "GhostId", depth=2)
-        insert(conn, 31, "kegg", "Real", depth=2)
-        insert_kegg_path(conn, a_id="A", b_id="Real")
-
-        family_ids = {c["id"] for c in get_family_candidates(conn, ref_catalog_id=30, target_source="kegg")}
-        assert 30 not in family_ids  # ref always excludes itself
-        assert 31 in family_ids      # no real relationship data -- nothing else excluded
+    def test_kegg_unknown_ref_id_returns_empty_not_a_crash(self, conn):
+        insert(conn, 11, "kegg", "K00845", depth=1)
+        assert get_family_candidates(conn, ref_catalog_id=999, target_source="kegg") == []
 
 
 class TestTaxonomyDepthCutoff:

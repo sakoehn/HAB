@@ -277,18 +277,26 @@ def test_too_many_ids_is_rejected(client):
     assert resp.status_code == 422
 
 
-# depth=: every category's EGC contains its members', so an unfiltered top
-# list is all categories (KEGG's top 25 has no KO). depth ranks only the
-# given level(s), so "top 25 KOs" is possible.
+# depth=: every class's EGC contains its members', so an unfiltered top
+# list is all classes (Enzyme's top 25 has no full EC number). depth ranks
+# only the given level(s), so "top 25 EC numbers" is possible.
 
 @pytest.mark.parametrize("dates", [{}, {"date_from": "2021-06-02", "date_to": "2021-06-04"}])
 def test_depth_ranks_only_that_level(client, dates):
-    body = client.get("/annotations/top", params={"source": "kegg", "limit": 25, "depth": 4, **dates}).json()
+    body = client.get("/annotations/top", params={"source": "enzyme", "limit": 25, "depth": 4, **dates}).json()
     assert len(body["data"]) == 25
     assert {r["depth"] for r in body["data"]} == {4}
-    assert all(r["annotation_id"].startswith("K") for r in body["data"])
+    assert all(r["annotation_id"].count(".") == 3 for r in body["data"])
     egc = [r["mean_egc"] for r in body["data"]]
     assert egc == sorted(egc, reverse=True)
+
+
+def test_kegg_top_list_is_all_kos(client):
+    """KEGG orthologs are a flat list: every row is a depth-1 KO."""
+    body = client.get("/annotations/top", params={"source": "kegg", "limit": 25}).json()
+    assert len(body["data"]) == 25
+    assert {r["depth"] for r in body["data"]} == {1}
+    assert all(r["annotation_id"].startswith("K") for r in body["data"])
 
 
 def test_depth_rows_match_the_unfiltered_values(client):

@@ -7,8 +7,7 @@ which builds cog_paths rows from DataStructures/COG/cog_categories.json.
 A COG id can belong to more than one of NCBI's 26 categories (400 of
 ~5,000 COGs, e.g. COG0028 is listed under both category E and category H).
 annotation_catalog.parent is a single TEXT column that can only express
-one, so the script reads cog_categories.json directly (the same pattern
-migrate_kegg_paths_to_sql.py uses for ko00001.keg) to express real
+one, so the script reads cog_categories.json directly to express real
 multi-category membership.
 
 Data-layer test: no database, no server -- just the row-generation

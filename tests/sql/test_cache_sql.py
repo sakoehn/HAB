@@ -16,8 +16,8 @@ Covers every function in that module:
   get_search_annotations()         -- backs /search/annotations.
   get_mappings_sql()               -- backs /mappings/search.
   get_taxa_at_rank_sql()           -- backs /taxonomy/export (one row per lineage).
-  get_cog_children_sql()           -- backs /cog/children (BRITE-hierarchy popup).
-  get_kegg_path_sql() / get_enzyme_path_sql() / get_cog_path_sql() -- back
+  get_cog_children_sql()           -- backs /cog/children (hierarchy popup).
+  get_enzyme_path_sql() / get_cog_path_sql() -- back
                                        /{source}/path (auto-expand+highlight
                                        in the hierarchy popup).
 
@@ -35,6 +35,7 @@ Run:
 """
 
 import os
+import re
 import sqlite3
 import sys
 
@@ -45,7 +46,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"
 from api.cache_sql import (
     _cog_node_depth,
     _enzyme_node_exists,
-    _kegg_node_depth,
+    _kegg_node_exists,
     get_all_sample_names_sql,
     count_annotation_scaffolds_sql,
     get_annotation_scaffolds_sql,
@@ -54,8 +55,6 @@ from api.cache_sql import (
     get_cog_path_sql,
     get_enzyme_children_sql,
     get_enzyme_path_sql,
-    get_kegg_children_sql,
-    get_kegg_path_sql,
     get_taxa_at_rank_sql,
     get_taxonomy_children_sql,
     get_top_annotations_from_catalog_sql,
@@ -408,195 +407,47 @@ def test_homonym_lineages_have_disjoint_children(conn):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# get_kegg_children_sql / _kegg_node_depth / kegg_paths -- built to back the
-# BRITE hierarchy popup. Unlike taxonomy, a KEGG id carries
-# no depth information in its own text ("00010" doesn't look any different
-# from "K00844"), so depth has to come from which kegg_paths column
-# actually contains the id -- verified disjoint across all four columns
-# against the real table before get_kegg_children_sql was written.
-#
-# Real counts below confirmed against the live database right after the
-# full-scope KEGG regeneration + kegg_paths migration (2026-09-14).
+# KEGG orthologs (KOs) are a flat list: the site does not use KEGG's
+# pathway hierarchy, so there is no kegg_paths table and every KO is a
+# depth-1 annotation with no parent and no category.
 # ═══════════════════════════════════════════════════════════════════════════
 
-EXPECTED_KEGG_ROOT_IDS = ["09100", "09120", "09130", "09140", "09150", "09160", "09180", "09190"]
-EXPECTED_CARBOHYDRATE_METABOLISM_CHILDREN = [
-    "00010", "00020", "00030", "00040", "00051", "00052", "00053",
-    "00500", "00562", "00566", "00620", "00630", "00640", "00650", "00660",
-]
-EXPECTED_KEGG_PATHS_TOTAL_ROWS = 30252
-EXPECTED_K00844_OCCURRENCE_COUNT = 14
+def test_no_kegg_paths_table(conn):
+    assert conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'kegg_paths'").fetchone() is None
 
 
-def test_kegg_root_case_returns_the_eight_top_level_branches(conn):
-    """parent_id=None -> the 8 real A-level branches (Metabolism, Human
-    Diseases, Brite Hierarchies, etc.), not KEGG's theoretical universe --
-    Human Diseases IS included here, matching the "full scope" decision for
-    EGC rollup, and this table has no exclusions of its own regardless."""
-    children = get_kegg_children_sql(conn, None)
-    assert sorted(c["annotation_id"] for c in children) == EXPECTED_KEGG_ROOT_IDS
-    assert all(c["depth"] == 1 for c in children)
-    # a top-level branch is its own category -- e.g. 09100's category is
-    # its own name, "Metabolism" (unlike taxonomy, a KEGG annotation_id is
-    # never equal to its own name/category -- ids and display text are
-    # always separate here)
-    assert all(c["name"] == c["category"] for c in children)
+def test_every_kegg_annotation_is_a_flat_ko(conn):
+    rows = conn.execute("SELECT annotation_id, parent, depth FROM annotation_catalog WHERE source = 'kegg'").fetchall()
+    assert len(rows) > 10000
+    assert all(re.fullmatch(r"K\d{5}", aid) for aid, _, _ in rows)
+    assert {(parent, depth) for _, parent, depth in rows} == {(None, 1)}
 
 
-def test_kegg_root_case_is_itself_sorted_not_just_sortable(conn):
-    """See test_root_case_is_itself_sorted_not_just_sortable. KEGG's real
-    root ids happen to come back in ascending order from SQLite's table
-    scan, but that's not an ORDER BY guarantee -- this pins down that the
-    function's own output is sorted, not just by coincidence."""
-    children = get_kegg_children_sql(conn, None)
-    ids = [c["annotation_id"] for c in children]
-    assert ids == sorted(ids)
+def test_kegg_series_rows_have_no_category_or_parent(conn):
+    row = conn.execute(
+        "SELECT COUNT(*) FROM annotation_series WHERE source = 'kegg' "
+        "AND (category IS NOT NULL OR parent IS NOT NULL OR depth != 1)"
+    ).fetchone()
+    assert row[0] == 0
 
 
-def test_kegg_metabolism_branch_returns_its_real_subcategories(conn):
-    """Metabolism (09100, depth=1) -- direct children are B-level
-    subcategories, depth known and passed explicitly."""
-    children = get_kegg_children_sql(conn, "09100", depth=1)
-    ids = {c["annotation_id"] for c in children}
-    assert "09101" in ids  # Carbohydrate metabolism
-    assert "09102" in ids  # Energy metabolism
-    assert all(c["depth"] == 2 for c in children)
-    assert all(c["category"] == "Metabolism" for c in children)
-
-
-def test_kegg_carbohydrate_metabolism_children_depth_auto_resolves(conn):
-    """Carbohydrate metabolism (09101) -- depth NOT passed, so this also
-    exercises _kegg_node_depth's lookup, not just the query shape. Real,
-    independently confirmed pathway list, not a subset/truncated check."""
-    children = get_kegg_children_sql(conn, "09101")
-    assert sorted(c["annotation_id"] for c in children) == EXPECTED_CARBOHYDRATE_METABOLISM_CHILDREN
-    assert all(c["depth"] == 3 for c in children)
-    assert all(c["category"] == "Metabolism" for c in children)
-
-
-def test_kegg_glycolysis_children_are_real_leaf_kos(conn):
-    """Depth 3->4 -- the one level transition the rest of this section
-    doesn't otherwise exercise (root->1, 1->2, 2->3 auto-resolve are all
-    covered, but nothing tests landing on the actual leaf level). K00001
-    and K00844 confirmed real children of Glycolysis (00010) by direct
-    query before this test was written; a subset check since Glycolysis
-    has 86 real KO children total, too many to hardcode."""
-    children = get_kegg_children_sql(conn, "00010")
-    ids = {c["annotation_id"] for c in children}
-    assert "K00001" in ids
-    assert "K00844" in ids
-    assert all(c["depth"] == 4 for c in children)
-    assert all(c["category"] == "Metabolism" for c in children)
-
-
-def test_kegg_leaf_ko_has_no_children(conn):
-    """K00844 (hexokinase, depth=4) is a real leaf -- must return [], not
-    raise, same contract as taxonomy's strain-level leaf case."""
-    assert get_kegg_children_sql(conn, "K00844") == []
-
-
-def test_kegg_unknown_id_returns_empty_list_not_none(conn):
-    children = get_kegg_children_sql(conn, "NOT_A_REAL_KEGG_ID")
-    assert children == []
-
-
-def test_kegg_children_sql_returns_structure_only_no_egc_fields(conn):
-    """The route docstring promises "structure only -- no egc values" --
-    worth actually checking that promise holds, not just trusting it,
-    across the root case, a mid-tree case, and a leaf-adjacent case."""
-    for entry in (
-        get_kegg_children_sql(conn, None)
-        + get_kegg_children_sql(conn, "09100", depth=1)
-        + get_kegg_children_sql(conn, "00010")
-    ):
-        assert "egc" not in entry
-        assert "norm_egc" not in entry
-
-
-def test_kegg_paths_every_intermediate_node_has_real_children(conn):
-    """A KEGG node only ever gets into kegg_paths because some real
-    gene's rollup walk reached it, and that walk always continues down to
-    an actual KO by construction -- ko00001.keg's depth structure is
-    strictly nested, so a D-level line can't exist without a real C-level
-    ancestor on that exact occurrence. Confirmed by direct query before
-    writing this test (0 childless nodes found at A, B, or C level) --
-    there's no such thing as a "real but genuinely childless"
-    intermediate KEGG node in this dataset, so this asserts that
-    invariant directly rather than hunting for a counter-example that
-    doesn't exist."""
-    for level_col, next_col in (("a_id", "b_id"), ("b_id", "c_id"), ("c_id", "d_id")):
-        ids = {
-            row[0] for row in conn.execute(f"SELECT DISTINCT {level_col} FROM kegg_paths WHERE {level_col} IS NOT NULL")
-        }
-        ids_with_children = {
-            row[0] for row in conn.execute(
-                f"SELECT DISTINCT {level_col} FROM kegg_paths WHERE {level_col} IS NOT NULL AND {next_col} IS NOT NULL"
-            )
-        }
-        childless = ids - ids_with_children
-        assert not childless, f"{level_col} nodes with no real children at {next_col}: {childless}"
-
-
-def test_kegg_node_depth_resolves_each_real_level(conn):
-    """One id confirmed at each of the 4 real levels -- 09100 (A), 09101
-    (B), 00010 (C), K00844 (D) -- proves the column-membership lookup
-    isn't accidentally always returning the same depth."""
-    assert _kegg_node_depth(conn, "09100") == 1
-    assert _kegg_node_depth(conn, "09101") == 2
-    assert _kegg_node_depth(conn, "00010") == 3
-    assert _kegg_node_depth(conn, "K00844") == 4
-
-
-def test_kegg_node_depth_returns_none_for_unknown_id(conn):
-    assert _kegg_node_depth(conn, "NOT_A_REAL_KEGG_ID") is None
-
-
-def test_kegg_paths_k00844_has_all_real_occurrences(conn):
-    """K00844 (hexokinase) is confirmed (by direct inspection of
-    ko00001.keg, independent of this migration's own code) to appear
-    under 14 distinct real parents -- the multi-parent case this table
-    exists to represent."""
-    rows = conn.execute("SELECT COUNT(*) FROM kegg_paths WHERE d_id = ?", ("K00844",)).fetchone()
-    assert rows[0] == EXPECTED_K00844_OCCURRENCE_COUNT
-
-
-def test_kegg_paths_total_row_count(conn):
-    total = conn.execute("SELECT COUNT(*) FROM kegg_paths").fetchone()[0]
-    assert total == EXPECTED_KEGG_PATHS_TOTAL_ROWS
-
-
-def test_kegg_paths_every_node_id_is_a_real_annotation(conn):
-    """kegg_paths is filtered against annotation_catalog at migration
-    time -- every id it contains, at any level, must correspond to a real
-    KEGG annotation, not KEGG's full theoretical universe (~28,893 nodes
-    in ko00001.keg vs the real, much smaller set actually annotated in
-    this dataset)."""
-    real_ids = {
-        row[0] for row in conn.execute("SELECT annotation_id FROM annotation_catalog WHERE source = 'kegg'")
-    }
-    path_ids = set()
-    for col in ("a_id", "b_id", "c_id", "d_id"):
-        path_ids.update(
-            row[0] for row in conn.execute(f"SELECT DISTINCT {col} FROM kegg_paths WHERE {col} IS NOT NULL")
-        )
-    assert path_ids.issubset(real_ids)
+def test_kegg_node_exists(conn):
+    assert _kegg_node_exists(conn, "K00844") is True
+    assert _kegg_node_exists(conn, "00010") is False  # a KEGG pathway code is not a term
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# get_enzyme_children_sql / _enzyme_node_exists / enzyme_paths -- same
-# BRITE-popup feature as the KEGG section above, but every EC id has
-# exactly one real parent (verified: 0 of 7,333 A/B/C/D nodes in
-# ko01000.keg appear more than once), unlike KEGG's KO ids. Two real
-# consequences for these tests, not just style choices:
+# get_enzyme_children_sql / _enzyme_node_exists / enzyme_paths -- backs
+# the hierarchy popup. Every EC id has exactly one parent, fixed by its own
+# digits. Two real consequences for these tests, not just style choices:
 #
 #   1. Depth comes from the id's own dot count (len(id.split('.'))), not a
-#      DB lookup like _kegg_node_depth -- so _enzyme_node_exists exists
+#      DB lookup like _cog_node_depth -- so _enzyme_node_exists exists
 #      only to answer "is this real", never "how deep is this".
 #   2. Full children lists (e.g. everything under Oxidoreductases) can't
-#      be hardcoded here the way EXPECTED_CARBOHYDRATE_METABOLISM_CHILDREN
-#      was for KEGG -- enzyme_paths is filtered against annotation_catalog
-#      at migration time (same as kegg_paths), and which of the raw
-#      file's subclasses turn out to have zero real gene hits across all
+#      be hardcoded here -- enzyme_paths is filtered against
+#      annotation_catalog at migration time, and which of ExPASy's
+#      subclasses turn out to have zero real gene hits across all
 #      128 samples isn't knowable without the table actually built. Tests
 #      below assert known-real, well-annotated ids are PRESENT (subset
 #      checks), not exact/complete lists.
@@ -670,8 +521,8 @@ def test_enzyme_unknown_id_returns_empty_list_not_none(conn):
 
 
 def test_enzyme_children_sql_returns_structure_only_no_egc_fields(conn):
-    """Same "structure only" promise as /kegg/children -- check it holds
-    here too, across root/mid-tree/leaf-adjacent cases."""
+    """The popup's children lists carry structure only -- check that
+    across root/mid-tree/leaf-adjacent cases."""
     for entry in (
         get_enzyme_children_sql(conn, None)
         + get_enzyme_children_sql(conn, "1", depth=1)
@@ -702,9 +553,9 @@ def test_enzyme_node_exists_false_for_malformed_dot_count(conn):
 
 
 def test_enzyme_paths_every_node_id_is_a_real_annotation(conn):
-    """Same guarantee as kegg_paths: every id enzyme_paths contains, at
-    any level, must correspond to a real Enzyme annotation in
-    annotation_catalog, not just anything present in ko01000.keg."""
+    """Every id enzyme_paths contains, at any level, must correspond to a
+    real Enzyme annotation in annotation_catalog, not just anything
+    present in ExPASy's full list."""
     real_ids = {
         row[0] for row in conn.execute("SELECT annotation_id FROM annotation_catalog WHERE source = 'enzyme'")
     }
@@ -718,8 +569,8 @@ def test_enzyme_paths_every_node_id_is_a_real_annotation(conn):
 
 def test_enzyme_paths_no_id_appears_at_more_than_one_level(conn):
     """The property that makes depth-from-string-alone safe in the first
-    place -- verified against the raw ko01000.keg file before any of this
-    code was written, re-asserted here against the actual populated table
+    place -- an EC id's level is its own dot count -- re-asserted here
+    against the actual populated table
     so a future migration bug can't silently break the assumption
     get_enzyme_children_sql and _enzyme_node_exists both depend on."""
     level_sets = []
@@ -733,11 +584,10 @@ def test_enzyme_paths_no_id_appears_at_more_than_one_level(conn):
 
 
 def test_enzyme_paths_every_intermediate_node_has_real_children(conn):
-    """Same invariant as kegg_paths' equivalent test, for the same
-    structural reason: an EC node only gets into enzyme_paths because a
-    real gene's rollup walk reached it, and ko01000.keg's A/B/C/D lines
-    are strictly nested the same way ko00001.keg's are -- a D-level line
-    can't exist without a real C-level ancestor on that occurrence.
+    """An EC node only gets into enzyme_paths because a real gene's rollup
+    walk reached it, and every EC number sits under its own class,
+    subclass and sub-subclass -- so a node can't exist without a real
+    ancestor chain, and a class normally has real children.
 
     There is exactly one real exception at the c_id level: a gene whose
     only EC annotation is a 3-level partial/wildcard id
@@ -746,18 +596,19 @@ def test_enzyme_paths_every_intermediate_node_has_real_children(conn):
     EGC_ENZYME_TREE.ipynb) instead of being silently dropped -- but a
     wildcard id never names a specific d_id leaf, so that c_id can be
     real and populated with NO real d_id child at all. Confirmed directly
-    against the real database (not assumed): exactly 2 such nodes exist,
-    '3.1.27' (494.0 mean EGC, 127 samples) and '4.5.1' (8.3 mean EGC, 16
-    samples) -- both real signal that was previously dropped entirely.
+    against the real database (not assumed): exactly 4 such nodes exist,
+    '3.1.27' (494.0 mean EGC, 127 samples), '4.5.1' (8.3 mean EGC, 16
+    samples), and '1.10.2' / '1.16.8' (JGI's partial labels "1.10.2.-"
+    and "1.16.8.-"; KEGG's file had no such sub-subclasses, ExPASy does).
     a_id and b_id are NOT exempted: a 1- or 2-level partial EC
     ("class.-" or "class.subclass.-" registered ABOVE the c_id level)
     still always lands on a node that also has other real fully-resolved
     genes reaching it through a real c_id/d_id chain elsewhere, so those
     two levels keep the original, stricter invariant. If a NEW a_id or
     b_id childless node ever appears, or a c_id childless node other than
-    these 2 specific known ones, that's a real migration bug, not another
+    these 4 specific known ones, that's a real migration bug, not another
     instance of this same exception."""
-    KNOWN_E18_CHILDLESS_C_IDS = {"3.1.27", "4.5.1"}
+    KNOWN_E18_CHILDLESS_C_IDS = {"3.1.27", "4.5.1", "1.10.2", "1.16.8"}
 
     for level_col, next_col in (("a_id", "b_id"), ("b_id", "c_id"), ("c_id", "d_id")):
         ids = {
@@ -775,11 +626,11 @@ def test_enzyme_paths_every_intermediate_node_has_real_children(conn):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# get_cog_children_sql / _cog_node_depth / cog_paths -- same BRITE-popup
-# feature as the KEGG/Enzyme sections above, but only 2 real levels
-# (category letter -> specific COG id) -- a category has no further real
-# subdivision the way KEGG pathways or EC numbers do, so there's no
-# "intermediate node" case to test the way kegg_paths/enzyme_paths have.
+# get_cog_children_sql / _cog_node_depth / cog_paths -- same popup feature
+# as the Enzyme section above, but only 2 real levels (category letter ->
+# specific COG id) -- a category has no further real subdivision the way EC
+# numbers do, so there's no "intermediate node" case to test the way
+# enzyme_paths has.
 #
 # Every value below is confirmed against the real populated cog_paths
 # table, not assumed from migrate_cog_paths_to_sql.py's own docstring.
@@ -842,7 +693,7 @@ def test_cog_unknown_id_returns_empty_list_not_none(conn):
 
 
 def test_cog_children_sql_returns_structure_only_no_egc_fields(conn):
-    """Same "structure only" promise as /kegg/children and /enzyme/children."""
+    """Same "structure only" promise as /enzyme/children."""
     for entry in (
         get_cog_children_sql(conn, None)
         + get_cog_children_sql(conn, "H", depth=1)
@@ -861,7 +712,7 @@ def test_cog_node_depth_none_for_unknown_id(conn):
 
 
 def test_cog_paths_every_node_id_is_a_real_annotation(conn):
-    """Same guarantee as kegg_paths/enzyme_paths: every id cog_paths
+    """Same guarantee as enzyme_paths: every id cog_paths
     contains must correspond to a real COG annotation in
     annotation_catalog -- the join that builds cog_paths reads
     annotation_catalog directly, so this also catches a migration script
@@ -920,81 +771,9 @@ def test_cog_paths_has_one_row_per_membership_for_a_real_multi_category_cog(conn
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# get_kegg_path_sql / get_enzyme_path_sql / get_cog_path_sql -- ancestor
-# path lookup for the hierarchy popup's auto-expand-and-highlight feature.
-#
-# K00844 is the deliberate choice for the KEGG case: it's the same known
-# multi-parent example (14 real occurrences in kegg_paths) used throughout
-# these tests. annotation_catalog.parent alone would resolve it
-# to an arbitrary last-occurrence-wins parent ("Brite Hierarchies", id
-# 04131 -- confirmed by direct query while designing this function); these
-# tests confirm get_kegg_path_sql instead returns the file-order-first
-# real path (Metabolism > Carbohydrate metabolism > Glycolysis /
-# Gluconeogenesis), which is what a user opening this popup from a real
-# EGC chart would actually expect to see.
+# get_enzyme_path_sql / get_cog_path_sql -- ancestor path lookup for the
+# hierarchy popup's auto-expand-and-highlight feature.
 # ═══════════════════════════════════════════════════════════════════════════
-
-def test_kegg_path_resolves_multiparent_node_to_all_14_real_occurrences(conn):
-    result = get_kegg_path_sql(conn, "K00844")
-    assert result is not None
-    assert result["path_count"] == 14
-    assert len(result["paths"]) == 14
-
-    first = result["paths"][0]
-    ids = [node["annotation_id"] for node in first]
-    assert ids == ["09100", "09101", "00010", "K00844"]
-    depths = [node["depth"] for node in first]
-    assert depths == [1, 2, 3, 4]
-
-
-def test_kegg_path_includes_distinct_real_alternate_pathways(conn):
-    """K00844's other real parents must also be present, each as its own
-    distinct path -- not just the first/primary one. Confirmed against
-    real data that these 14 genuinely span different top-level branches,
-    not just different pathways within Metabolism (Signal transduction,
-    Human Diseases, and Brite Hierarchies -- the arbitrary last-occurrence
-    "display" parent annotation_catalog.parent would have picked -- are
-    all real, distinct entries here too)."""
-    result = get_kegg_path_sql(conn, "K00844")
-    pathway_names = {p[-2]["name"] for p in result["paths"]}  # second-to-last = the pathway itself
-    top_branches   = {p[0]["annotation_id"] for p in result["paths"]}
-
-    assert any("Fructose and mannose metabolism" in n for n in pathway_names)
-    assert any("Galactose metabolism" in n for n in pathway_names)
-    # Spans multiple real top-level branches, not just Metabolism.
-    assert "09100" in top_branches  # Metabolism
-    assert "09160" in top_branches  # Human Diseases
-    assert "09180" in top_branches  # Brite Hierarchies -- the last-occurrence "display" parent
-
-
-def test_kegg_path_root_to_leaf_names_are_real(conn):
-    result = get_kegg_path_sql(conn, "K00844")
-    names = {node["annotation_id"]: node["name"] for node in result["paths"][0]}
-    assert names["09100"] == "Metabolism"
-    assert names["09101"] == "Carbohydrate metabolism"
-    assert "Glycolysis" in names["00010"]
-
-
-def test_kegg_path_for_a_category_node_stops_at_its_own_depth(conn):
-    """Requesting the path for a mid-tree node (not a leaf KO) must return
-    only the ancestors up to and including that node, not descend further."""
-    result = get_kegg_path_sql(conn, "09101")
-    ids = [node["annotation_id"] for node in result["paths"][0]]
-    assert ids == ["09100", "09101"]
-
-
-def test_kegg_path_deduplicates_a_mid_depth_node_to_one_distinct_path(conn):
-    """Glycolysis (00010, depth 3) has 87 raw rows in kegg_paths (one per
-    real child KO occurrence), but exactly 1 distinct ancestor path up to
-    its own depth -- without GROUP BY dedup this would wildly overcount."""
-    result = get_kegg_path_sql(conn, "00010")
-    assert result["path_count"] == 1
-    assert len(result["paths"]) == 1
-
-
-def test_kegg_path_unknown_id_returns_none(conn):
-    assert get_kegg_path_sql(conn, "NOT_A_REAL_KEGG_ID") is None
-
 
 def test_enzyme_path_single_real_parent_has_path_count_one(conn):
     result = get_enzyme_path_sql(conn, "1.1.1.1")
@@ -1167,10 +946,8 @@ def test_sorted_by_mean_egc_descending(conn):
 
 def test_top_result_matches_independently_recomputed_stats(conn):
     """COG category rollups (e.g. "J") compete in this ranking the same way
-    KEGG/Enzyme's pathway/class rollups do -- kegg's own top results are ALSO entirely
-    top-level category nodes (09180, 09100, ...), never leaf KOs, for the
-    same reason -- a category's EGC is the sum of its members', so it
-    always dominates any single leaf. "J" (Translation, ribosomal
+    Enzyme's class rollups do -- a category's EGC is the sum of its
+    members', so it always dominates any single leaf. "J" (Translation, ribosomal
     structure and biogenesis) is the real #1 result across these two
     samples; mean/max independently computed in plain Python from the raw
     rows, not assumed.
@@ -1222,12 +999,11 @@ def test_sample_count_reflects_how_many_of_the_given_samples_actually_have_it(co
     assert row["mean_egc"] == row["max_egc"] == 360.0
 
 
-def test_parent_comes_from_parent_id_for_kegg(conn):
-    """K09014, real kegg example -- parent is parent_id ("99996"), not
-    parent_name."""
+def test_kegg_ko_has_no_parent(conn):
+    """K09014, real kegg example -- KOs are a flat list, so no parent."""
     results = get_top_annotations_sql(conn, "kegg", TWO_SAMPLES)
     row = next(r for r in results if r["annotation_id"] == "K09014")
-    assert row["parent"] == "99996"
+    assert row["parent"] is None
     assert row["mean_egc"] == 3721.0
     assert row["max_egc"] == 4067.0
     assert row["sample_count"] == 2
@@ -1281,7 +1057,7 @@ def test_row_shape_matches_get_top_annotations_sql(conn):
 
 
 # Since a parent's EGC is the sum of its descendants, the real top-25 by
-# mean_egc for kegg/cog/enzyme is 100% branch/rollup nodes -- depth must be
+# mean_egc for cog/enzyme is 100% branch/rollup nodes -- depth must be
 # in the response so the frontend can rank-filter those out (for taxonomy
 # it's also derivable client-side from the lineage-prefix id itself).
 def test_depth_is_present_and_matches_annotation_catalog(conn):
@@ -1294,20 +1070,26 @@ def test_depth_is_present_and_matches_annotation_catalog(conn):
     assert any(d is not None for d in by_id.values())
 
 
-def test_without_depth_filtering_the_real_top_25_is_entirely_non_leaf_kegg_nodes(conn):
-    """A measured fact about the real catalog, not an assumption: kegg's
-    top 25 rows by mean_egc are
-    every one a depth-1/2/3 branch node, never a real depth-4 leaf KO --
-    confirming depth is the right (and only) signal available to fix this,
-    and that the fix must be applied by a caller, not by re-sorting here
-    (branch nodes genuinely do have the largest real mean_egc)."""
-    rows = get_top_annotations_from_catalog_sql(conn, "kegg")
+def test_without_depth_filtering_the_real_top_25_is_entirely_non_leaf_enzyme_nodes(conn):
+    """A measured fact about the real catalog, not an assumption: enzyme's
+    top 25 rows by mean_egc are every one a class/subclass/sub-subclass
+    node, never a full EC number -- confirming depth is the right (and
+    only) signal available to fix this, and that the fix must be applied
+    by a caller, not by re-sorting here (branch nodes genuinely do have
+    the largest real mean_egc)."""
+    rows = get_top_annotations_from_catalog_sql(conn, "enzyme")
     top_25_depths = [r["depth"] for r in rows[:25]]
     assert all(d is not None and d < 4 for d in top_25_depths)
     # And real depth-4 leaves do exist further down -- proving a depth
     # filter (now possible with this field present) is what would surface
     # them, not that they're simply absent from the source data.
     assert any(r["depth"] == 4 for r in rows)
+
+
+def test_every_kegg_top_row_is_a_ko(conn):
+    """KEGG orthologs are a flat list, so every row is a depth-1 KO."""
+    rows = get_top_annotations_from_catalog_sql(conn, "kegg")
+    assert {r["depth"] for r in rows} == {1}
 
 
 @pytest.mark.slow

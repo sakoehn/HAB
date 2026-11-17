@@ -9,10 +9,7 @@ A COG id can belong to more than one of NCBI's 26 categories (400 of
 ~5,000 COGs). cog_categories.json is written by EGC_COG_TREE.ipynb's
 scraping cell and already contains one row per real membership -- this
 deliberately does NOT read annotation_catalog.parent, which is a single
-TEXT column and can only ever express one category per COG. That mirrors how
-migrate_kegg_paths_to_sql.py reads ko00001.keg directly instead of
-annotation_catalog's single-valued parent column, for the same reason
-(KEGG nodes can have multiple real parents too).
+TEXT column and can only ever express one category per COG.
 
 annotation_catalog is still used as the "is this COG id actually real in
 our dataset" filter -- a membership row is only kept if its COG id is a
@@ -24,8 +21,8 @@ regeneration, this script will find zero real COG ids to keep and produce
 an empty table. Run migrate_annotations_to_sql.py +
 migrate_annotation_catalog_sql.py first if there's any doubt.
 
-Safe to re-run: DELETE-then-reinsert on every run, same reasoning as
-migrate_kegg_paths_to_sql.py -- this table isn't scoped per-sample, so
+Safe to re-run: DELETE-then-reinsert on every run -- this table isn't
+scoped per-sample, so
 there's no partial-update case worth optimizing for.
 
 Usage (from FastAPI/):

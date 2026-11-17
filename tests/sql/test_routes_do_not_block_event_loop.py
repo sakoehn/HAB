@@ -61,10 +61,10 @@ def test_slow_query_does_not_stall_other_requests(monkeypatch):
         time.sleep(slow_seconds)
         return []
 
-    monkeypatch.setattr(routes_mod, "get_kegg_children_sql", _slow_children)
+    monkeypatch.setattr(routes_mod, "get_cog_children_sql", _slow_children)
 
     with TestClient(app) as client:
-        slow = threading.Thread(target=lambda: client.get("/kegg/children"))
+        slow = threading.Thread(target=lambda: client.get("/cog/children"))
         slow.start()
         time.sleep(0.5)  # let the slow request get going first
 

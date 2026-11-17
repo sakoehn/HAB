@@ -4,7 +4,7 @@ test_series_export_csv_contract.py
 What every file from GET /series/export must look like and hold, checked
 against several real downloads (taxonomy, enzyme, kegg and cog, with and
 without the starting term, a date range, levels skipped, names containing
-commas, KOs in several pathways, COGs in several categories, and the detected-only "sparse" mode).
+commas, COGs in several categories, and the detected-only "sparse" mode).
 POST /series/export/taxa (the Taxonomy page's checked taxa) is held to the
 same contract, with "which terms" meaning exactly the listed taxa, each
 labelled with its own rank, over every sample.
@@ -21,7 +21,7 @@ Shape
     commas or quotes come back unchanged when the file is read as CSV.
   * Rows come in blocks: the starting term's block first (only when
     include_parent is on), then one block per term -- or, for a term
-    reached through several paths (a KEGG KO in several pathways), one
+    reached through several paths (a COG in several categories), one
     block per path -- in id order.
 
 Which terms
@@ -83,23 +83,18 @@ PATHS_HEADER = [
 TAXONOMY_RANKS = {"domain": 1, "phylum": 2, "class": 3, "order": 4, "family": 5, "genus": 6, "species": 7, "strain": 8}
 LEVELS = {
     "enzyme": {"class": 1, "subclass": 2, "subsubclass": 3, "ec": 4},
-    "kegg":   {"category": 1, "subcategory": 2, "pathway": 3, "ko": 4},
+    "kegg":   {"ko": 1},
     "cog":    {"category": 1, "cog": 2},
 }
-PATH_TABLES = {"enzyme": "enzyme_paths", "kegg": "kegg_paths", "cog": "cog_paths"}
+# KEGG orthologs are a flat list read from annotation_catalog (no paths table).
+PATH_TABLES = {"enzyme": "enzyme_paths", "cog": "cog_paths"}
 
 
-def _expected_level(source, level, lineage_ids):
-    """The level column. KEGG's pathway level also holds the two top-level
-    sections that are not pathways, 09180 (Brite protein-family tables) and
-    09190 (Not Included in Pathway or Brite); a row there says which.
-    Worked out from the section at the top of the row's lineage, not the
-    [PATH:]/[BR:] name marker the app reads, so the two have to agree."""
-    if source != "kegg" or level != "pathway":
-        return level
-    return {"09180": "brite_table", "09190": "kegg_group"}.get(lineage_ids.split(" > ")[0], "pathway")
+def _expected_level(source, level, lineage_ids):  # pylint: disable=unused-argument
+    """The level column: the requested level's own name."""
+    return level
 COLUMNS = {1: ("a_id", "a_name"), 2: ("b_id", "b_name"), 3: ("c_id", "c_name"), 4: ("d_id", "d_name")}
-MAX_DEPTH = {"enzyme": 4, "kegg": 4, "cog": 2}
+MAX_DEPTH = {"enzyme": 4, "cog": 2}
 
 GAMMA = "Bacteria;Proteobacteria;Gammaproteobacteria"
 AEROPYRUM_CAMINI = "Archaea;Crenarchaeota;Thermoprotei;Desulfurococcales;Desulfurococcaceae;Aeropyrum;Aeropyrum camini"
@@ -114,11 +109,7 @@ REQUESTS = {
     "enzyme: with the starting term":             {"source": "enzyme", "parent": "5.6.2", "rank": "ec", "include_parent": "true"},
     "enzyme: levels skipped, class to EC":        {"source": "enzyme", "parent": "5", "rank": "ec", "date_from": "2021-05-27"},
     "enzyme: whole dataset":                      {"source": "enzyme", "rank": "class"},
-    "kegg: KOs in several pathways":              {"source": "kegg", "parent": "09101", "rank": "ko"},
-    "kegg: pathways, with the starting term":     {"source": "kegg", "parent": "09100", "rank": "pathway", "include_parent": "true"},
-    "kegg: whole dataset subcategories":          {"source": "kegg", "rank": "subcategory", "date_to": "2021-06-01"},
-    "kegg: BRITE tables and other groups":        {"source": "kegg", "rank": "pathway", "date_from": "2021-06-10"},
-    "kegg: KOs in a BRITE table, with the start": {"source": "kegg", "parent": "02000", "rank": "ko", "include_parent": "true"},
+    "kegg: every KO, a few days":                 {"source": "kegg", "rank": "ko", "date_from": "2021-06-03", "date_to": "2021-06-05"},
     "cog: COGs in several categories":            {"source": "cog", "rank": "cog"},
     "cog: one category, with the starting term":  {"source": "cog", "parent": "E", "rank": "cog", "include_parent": "true"},
 }
@@ -142,7 +133,7 @@ CHECKED_REQUESTS = {
 SPARSE_REQUESTS = {
     "taxonomy, sparse": {"source": "taxonomy", "parent": GAMMA, "rank": "family"},
     "enzyme, sparse":   {"source": "enzyme", "parent": "1.1.1", "rank": "ec", "include_parent": "true"},
-    "kegg, sparse":     {"source": "kegg", "parent": "09101", "rank": "ko"},
+    "kegg, sparse":     {"source": "kegg", "rank": "ko", "date_from": "2021-06-03", "date_to": "2021-06-05"},
     "cog, sparse":      {"source": "cog", "parent": "C", "rank": "cog"},
 }
 
@@ -190,6 +181,12 @@ def _path_depth(conn, source, term):
 def _lineages(conn, source, depth, parent=None):
     """{(id, 'a > b > id'): ('Name A > Name B > Name', name)} for every
     path to a term with data at `depth` (under `parent`, if given)."""
+    if source == "kegg":
+        assert depth == 1 and parent is None
+        return {
+            (aid, aid): (name or "", name or "")
+            for aid, name in conn.execute("SELECT annotation_id, name FROM annotation_catalog WHERE source = 'kegg'")
+        }
     cols = [COLUMNS[d] for d in range(1, depth + 1)]
     select = ", ".join(f"{i}, {n}" for i, n in cols)
     sql = f"SELECT DISTINCT {select} FROM {PATH_TABLES[source]} WHERE {cols[-1][0]} IS NOT NULL"
@@ -293,6 +290,16 @@ def _check_contract(resp, req, conn, sparse):
     assert len(keys) == len(set(keys)), "a block appears twice"
 
     expected = _expected_blocks(conn, req)
+    if sparse and (req.get("date_from") or req.get("date_to")):
+        # A sparse block lists only detected samples, so a term with no
+        # detection inside the date range has no rows and no block.
+        in_range = {s for s, _ in _expected_samples(conn, req.get("date_from"), req.get("date_to"))}
+        detected = {
+            aid for aid, s in conn.execute(
+                "SELECT annotation_id, sample FROM annotation_series WHERE source = ?", (source,)
+            ) if s in in_range
+        }
+        expected = {k: v for k, v in expected.items() if (k if taxonomy else k[0]) in detected}
     assert set(keys) == set(expected)
 
     # Labels.
@@ -388,16 +395,16 @@ def test_csv_contract_checked_taxa_sparse(client, conn, monkeypatch):
 
 def test_fixtures_really_exercise_commas_and_repeated_kos(client):
     """Guards the requests above: the comma requests must contain
-    comma-bearing names and the KEGG one KOs in several pathways, or the
+    comma-bearing names and the COG one COGs in several categories, or the
     round-trip and repeated-block checks prove nothing."""
     tax = client.get("/series/export", params=REQUESTS["taxonomy: strain names containing commas"]).text
     enz = client.get("/series/export", params=REQUESTS["enzyme: EC numbers, names with commas"]).text
-    kegg = client.get("/series/export", params=REQUESTS["kegg: KOs in several pathways"]).text
+    cog = client.get("/series/export", params=REQUESTS["cog: COGs in several categories"]).text
     assert '"Aeropyrum camini SY1, JCM 12091"' in tax
     checked = _post_checked(client, CHECKED_REQUESTS["checked: strain names containing commas"]).text
     assert '"Aeropyrum camini SY1, JCM 12091"' in checked
-    assert '"D-xylose 1-dehydrogenase (NADP+, D-xylono-1,5-lactone-forming)"' in enz
-    assert ",true,false," in kegg  # also_in_other_paths=true on a non-starting row
+    assert '"D-xylose 1-dehydrogenase (NADP(+), D-xylono-1,5-lactone-forming)"' in enz
+    assert ",true,false," in cog  # also_in_other_paths=true on a non-starting row
 
 
 def test_summary_matches_the_file(client):

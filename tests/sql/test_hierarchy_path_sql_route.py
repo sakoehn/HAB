@@ -1,7 +1,7 @@
 """
 test_hierarchy_path_sql_route.py
 ==================================
-Live-HTTP tests for /kegg/path, /enzyme/path, /cog/path -- these back the hierarchy popup's auto-expand-and-
+Live-HTTP tests for /enzyme/path, /cog/path -- these back the hierarchy popup's auto-expand-and-
 highlight feature (open a popup for one specific annotation, jump
 straight to its position in the tree instead of an empty root).
 
@@ -43,62 +43,15 @@ def client():
         yield c
 
 
-def test_kegg_path_resolves_multiparent_node_to_all_14_real_paths(client):
-    """K00844 (hexokinase) has 14 real KEGG pathway parents -- the route
-    must return every real path (not just one), with the file-order-first
-    one (Glycolysis / Gluconeogenesis) listed first."""
-    resp = client.get("/kegg/path", params={"id": "K00844"})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["path_count"] == 14
-    assert len(body["paths"]) == 14
-    ids = [node["annotation_id"] for node in body["paths"][0]]
-    assert ids == ["09100", "09101", "00010", "K00844"]
-
-
-def test_kegg_path_unknown_id_returns_404(client):
-    resp = client.get("/kegg/path", params={"id": "NOT_A_REAL_KEGG_ID"})
-    assert resp.status_code == 404
-
-
-# /kegg/parents, the bulk sibling of
-# /kegg/path -- "Annotations by Parent" needs every real immediate parent
-# for up to 200 rows at once, not one id-at-a-time call per row.
-
-def test_kegg_parents_bulk_resolves_multiparent_node_to_all_its_real_immediate_parents(client):
-    """K00844's 14 real paths (see test above) each have their own
-    distinct C-level immediate parent (14 of 14, confirmed directly
-    against the real db -- no two of those 14 pathways happen to nest
-    under the same C-level node here). This confirms the bulk endpoint
-    returns every one of them, matching the set of 3rd-from-last nodes
-    across get_kegg_path_sql's own 14 paths, not a re-derived or
-    hardcoded count."""
-    path_resp = client.get("/kegg/path", params={"id": "K00844"})
-    assert path_resp.status_code == 200
-    expected_immediate_parents = {path[-2]["annotation_id"] for path in path_resp.json()["paths"]}
-    assert len(expected_immediate_parents) > 1  # genuinely multi-parent, not a coincidental single value
-
-    resp = client.get("/kegg/parents", params={"ids": "K00844"})
-    assert resp.status_code == 200
-    body = resp.json()
-    got_parents = {p["annotation_id"] for p in body["parents"]["K00844"]}
-    assert got_parents == expected_immediate_parents
-
-
-def test_kegg_parents_bulk_resolves_multiple_ids_in_one_request(client):
-    resp = client.get("/kegg/parents", params={"ids": "K00844,COG0001_NOT_KEGG,00010"})
-    assert resp.status_code == 200
-    body = resp.json()["parents"]
-    assert "K00844" in body and len(body["K00844"]) > 1
-    assert body["COG0001_NOT_KEGG"] == []  # not a real kegg id -- empty, not missing or an error
-    assert len(body["00010"]) > 0  # a real C-level pathway -- genuinely resolves to its own B-level parent, not just present-but-empty
-
-
-def test_kegg_parents_bulk_every_requested_id_is_present_in_the_response(client):
-    resp = client.get("/kegg/parents", params={"ids": "NOT_REAL_1,NOT_REAL_2"})
-    assert resp.status_code == 200
-    body = resp.json()["parents"]
-    assert body == {"NOT_REAL_1": [], "NOT_REAL_2": []}
+@pytest.mark.parametrize("path, params", [
+    ("/kegg/path", {"id": "K00844"}),
+    ("/kegg/children", {}),
+    ("/kegg/parents", {"ids": "K00844"}),
+])
+def test_kegg_hierarchy_routes_are_gone(client, path, params):
+    """The site doesn't serve KEGG's pathway hierarchy: KEGG orthologs are
+    a flat list, so there is no KEGG tree to browse."""
+    assert client.get(path, params=params).status_code == 404
 
 
 def test_enzyme_path_returns_full_chain_with_path_count_one(client):
@@ -150,7 +103,7 @@ def test_cog_path_resolves_multicategory_node_to_all_real_paths(client):
     )
 
 
-# /cog/parents, the COG counterpart of /kegg/parents: a COG id's stored
+# /cog/parents: a COG id's stored
 # `parent` holds only one of its categories, so Explore needs every real
 # category for every row to file a multi-category COG under each of them.
 

@@ -194,10 +194,13 @@ def test_scaffold_count_matches_a_real_per_sample_value(conn):
 
 
 def test_category_and_scaffold_count_present_across_all_four_sources(conn):
-    """Not just a cog-specific fix -- kegg/enzyme/taxonomy all get both
-    fields populated too."""
+    """Not just a cog-specific fix -- enzyme/taxonomy get both fields
+    populated too. KEGG KOs are a flat list with no category, so they
+    carry scaffold_count and a null category."""
+    kegg = get_search_annotations(conn, sources=["kegg"], q=None, annotation_id="K00001", name_exact=None)
+    assert kegg and kegg[0]["category"] is None and kegg[0]["scaffold_count"] is not None
     for source, ann_id in [
-        ("kegg", "K00001"), ("enzyme", "1.1.1.1"), ("taxonomy", "Bacteria"),
+        ("enzyme", "1.1.1.1"), ("taxonomy", "Bacteria"),
     ]:
         results = get_search_annotations(conn, sources=[source], q=None, annotation_id=ann_id, name_exact=None)
         assert results, f"no results for {source}/{ann_id}"

@@ -80,7 +80,7 @@ def test_same_set_of_tables(fresh, live):
 
 
 @pytest.mark.parametrize("table", [
-    "taxon_paths", "kegg_paths", "enzyme_paths", "cog_paths", "mappings",
+    "taxon_paths", "enzyme_paths", "cog_paths", "mappings",
     "gene_cog", "gene_enzyme", "annotation_series", "annotation_catalog",
     "scaffolds", "correlations_cache",
 ])

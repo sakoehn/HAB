@@ -93,9 +93,10 @@ def test_correct_values(conn):
     """No NULLs in any column where a real value is always expected.
     `parent` is deliberately excluded -- every source legitimately has
     NULL parent for its own hierarchy root (cog's 25 category letters,
-    kegg's 8 top-level branches, enzyme's 7 top-level classes, taxonomy's
-    4 domains -- reconfirmed live before writing this), so a blanket NULL
-    check there would fail on real, valid data, not a bug. `depth` is NOT
+    enzyme's 7 top-level classes, taxonomy's 4 domains, and every KEGG KO,
+    since KOs are a flat list), so a blanket NULL check there would fail
+    on real, valid data, not a bug. `name` may be NULL only for KEGG: KOs
+    JGI gives no name to are stored without one. `depth` is NOT
     excluded -- every source populates a real depth for every row, cog
     included (0 NULL depth rows across all 4 sources)."""
     never_null_columns = [
@@ -105,6 +106,7 @@ def test_correct_values(conn):
     for column in never_null_columns:
         count = conn.execute(
             f"SELECT COUNT(*) FROM annotation_catalog WHERE {column} IS NULL"
+            + (" AND source != 'kegg'" if column == "name" else "")
         ).fetchone()[0]
         assert count == 0, f"{column} has {count} NULL values"
 
@@ -163,44 +165,21 @@ def test_taxonomy_homonym_produces_two_distinct_catalog_rows(conn):
     assert all(row[2] == 6 for row in rows), "both are genus-level (depth=6)"
 
 
-def test_partial_ec_two_level_walkup_never_synthesizes_a_fake_node(conn):
-    """A gene whose only EC annotation is
-    partial/wildcard (e.g. "3.6.3.-") is resolved to its deepest REAL
-    ko01000.keg ancestor (resolve_partial_ec(), Notebooks/enzyme_ec_utils.py)
-    by walking up as many levels as needed -- confirmed directly against
-    the real ko01000.keg file that these 3 specific ids need TWO levels,
-    because even their immediate parent isn't a real node: "3.6.3",
-    "1.10.2" and "1.16.8" were never in ko01000.keg, only their
-    grandparents "3.6"/"1.10"/"1.16" are (K03924 moxR [EC:3.6.3.-] is the
-    first of these).
+def test_partial_ec_ids_land_on_real_classes_only(conn):
+    """A gene whose only EC annotation is partial/wildcard (e.g.
+    "1.10.2.-") is credited to its deepest REAL class
+    (resolve_or_drop_ec(), FastAPI/api/ec_renumbering.py), walking up as
+    many levels as needed -- never a made-up node.
 
-    This is a real-data regression guard specifically for a NAIVE
-    alternative implementation mistake: treating a partial id's own
-    literal (post-dash-strip) string as if it were automatically a real
-    node, instead of continuing to walk up when it isn't one. If that
-    ever regresses, "3.6.3"/"1.10.2"/"1.16.8" would start appearing as
-    their own annotation_catalog rows -- entries for EC nodes that do not
-    exist in KEGG's real EC hierarchy at all.
-
-    Deliberately NOT asserting the real ancestors' mean_egc here: "3.6",
-    "1.10" and "1.16" all had some real signal even before this fix
-    (from unrelated, fully-resolved child ECs), so a bare "EGC > 0" check
-    wouldn't actually distinguish the fix being applied from it being
-    reverted -- and the real per-id gene-observation counts driving the
-    fix's own contribution vary by four orders of magnitude (33,455 for
-    "3.6.3.-" down to just 3 for "1.16.8.-", counted directly against all
-    128 real .a.ec.txt files), too wide a range for one fixed numeric
-    threshold to be meaningful for all three without being fragile to
-    unrelated future data changes.
+    "1.10.2" and "1.16.8" are real ExPASy sub-subclasses, so JGI's
+    "1.10.2.-" / "1.16.8.-" genes get their own nodes there. "3.6.3" is a
+    retired sub-subclass: TRANSFERRED_EC sends "3.6.3.-" to class 7
+    (Translocases), where its members went, so "3.6.3" must never appear.
     """
-    never_real_ids = ["3.6.3", "1.10.2", "1.16.8"]
-    for never_real_id in never_real_ids:
-        absent = conn.execute(
-            "SELECT 1 FROM annotation_catalog WHERE source='enzyme' AND annotation_id=?",
-            (never_real_id,),
-        ).fetchone()
-        assert absent is None, (
-            f"{never_real_id!r} exists as its own annotation_catalog row, but it was "
-            f"never a real ko01000.keg node -- a partial EC id resolving through it "
-            f"should walk up one more level instead of stopping here"
+    present = {
+        row[0] for row in conn.execute(
+            "SELECT annotation_id FROM annotation_catalog WHERE source='enzyme' "
+            "AND annotation_id IN ('3.6.3', '1.10.2', '1.16.8')"
         )
+    }
+    assert present == {"1.10.2", "1.16.8"}

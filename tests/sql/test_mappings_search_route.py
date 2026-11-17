@@ -237,20 +237,23 @@ def test_exact_match_rejects_substring_query(client):
 # samples_were_capped rather than silently fetching millions of rows.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_kegg_pathway_search_returns_real_rows_at_the_route_level(client):
-    """00910 (Nitrogen metabolism) is a real KEGG pathway -- pre-fix, this
-    exact route call always returned total=0 (kegg_id was built as
-    "KO:00910", which mappings.kegg_id never contains)."""
+def test_kegg_pathway_id_is_not_a_term_at_the_route_level(client):
+    """KEGG orthologs are a flat list, so a KEGG pathway code such as 00910
+    (Nitrogen metabolism) is not an annotation the site knows."""
     resp = client.get(
         "/mappings/search",
         params={"annotation_id": "00910", "source": "kegg", "sample_count": 1},
     )
+    assert resp.status_code == 404
+
+
+def test_a_ko_search_has_one_leaf(client):
+    resp = client.get(
+        "/mappings/search",
+        params={"annotation_id": "K00844", "source": "kegg", "sample_count": 1},
+    )
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["total"] > 0, "a real KEGG pathway id must return real mappings, not 0"
-    assert body["leaf_count"] is not None and body["leaf_count"] > 1
-    for row in body["data"]:
-        assert row["kegg_id"].startswith("KO:K")
+    assert resp.json()["leaf_count"] == 1
 
 
 def test_broad_category_caps_sample_count_and_discloses_it(client):
@@ -382,7 +385,7 @@ def test_high_volume_leaf_id_is_capped_the_same_way_in_its_prefixed_form(client)
     test_bare_id_normalizes_to_prefixed_storage_form,
     tests/sql/test_mappings_sql.py). If search_mappings' cap-check passed
     this id to _expand_to_leaf_ids unstripped, it would resolve to zero
-    leaves (kegg_paths stores bare ids only), leaf_count=0 would skip every
+    leaves (annotation_catalog stores bare ids only), leaf_count=0 would skip every
     cap, and the route would run the uncapped 271,284-row / ~250s query
     the cap exists to prevent. The mechanism itself is checked cheaply in
     test_expand_to_leaf_ids_needs_the_prefix_stripped_first; this test
@@ -575,7 +578,7 @@ def test_concurrent_requests_do_not_hang_or_corrupt_the_shared_connection(client
         {"annotation_id": "K02014", "source": "kegg", "sample_count": 5},
         {"annotation_id": "COG0055", "source": "cog", "sample_count": 5},
         {"annotation_id": "H", "source": "cog", "sample_count": 5},
-        {"annotation_id": "00910", "source": "kegg", "sample_count": 5},
+        {"annotation_id": "E", "source": "cog", "sample_count": 5},
         {"annotation_id": "K02014", "source": "kegg", "sample_count": 5},
         {"annotation_id": "COG0055", "source": "cog", "sample_count": 5},
     ] * 3  # 18 concurrent requests, deliberately repeating the same ids

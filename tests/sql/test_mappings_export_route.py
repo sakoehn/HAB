@@ -89,9 +89,9 @@ def test_export_of_a_leaf_has_every_row_and_the_documented_columns(client):
 
 
 def test_export_goes_past_the_old_50000_row_limit(client):
-    """COG0006 (one COG) and kegg 00074 (a pathway) each have just over
+    """COG0006 (one COG) and EC 1.1.99 (a sub-subclass) each have just over
     50,000 gene records. The old Export all stopped at exactly 50,000."""
-    for source, annotation_id in [("cog", "COG0006"), ("kegg", "00074")]:
+    for source, annotation_id in [("cog", "COG0006"), ("enzyme", "1.1.99")]:
         expected = _gene_count_total(source, annotation_id)
         assert expected > 50_000
         _, rows = _export_rows(client, annotation_id=annotation_id, source=source)

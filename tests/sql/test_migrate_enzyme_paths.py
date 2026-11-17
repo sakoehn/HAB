@@ -2,17 +2,13 @@
 test_migrate_enzyme_paths.py
 ==============================
 Tests for iter_enzyme_path_rows() in
-FastAPI/scripts/migrate_enzyme_paths_to_sql.py -- the BRITE-file parser
-that walks ko01000.keg and yields one row per real EC node.
+FastAPI/scripts/migrate_enzyme_paths_to_sql.py, which yields one
+enzyme_paths row per real EC node from the enzyme tree's nodes (built from
+ExPASy ENZYME by api.expasy_enzyme.build_ec_nodes, the same nodes
+EGC_ENZYME_TREE.ipynb uses).
 
-Data-layer test: no database, no server -- just the parser against a
-small, hand-written .keg fixture written to a temp file, same spirit as
-test_migrate_annotations.py testing build_annotation_series_row().
-
-Covers bare C-lines: a line like "C    7.2.3" (digits only, no trailing
-name -- the real shape of ko01000.keg line 17308) must still be parsed.
-Skipping it would leave current_at_depth stale at the PREVIOUS named
-C-line, so the next D-line would inherit the wrong parent.
+Data-layer test: no database, no server -- small hand-written ExPASy-style
+snippets only.
 
 Run:
     pytest tests/sql/test_migrate_enzyme_paths.py -v
@@ -20,64 +16,67 @@ Run:
 
 import os
 import sys
-import tempfile
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"))
 
-from scripts.migrate_enzyme_paths_to_sql import iter_enzyme_path_rows
+from api.expasy_enzyme import build_ec_nodes, parse_enzclass, parse_enzyme_dat  # noqa: E402
+from scripts.migrate_enzyme_paths_to_sql import iter_enzyme_path_rows  # noqa: E402
 
+ENZCLASS = """\
+7. -. -.-  Translocases.
+7. 2. -.-   Catalysing the translocation of inorganic cations.
+7. 2. 2.-    Linked to the hydrolysis of a nucleoside triphosphate.
+7. 2. 3.-    Linked to the hydrolysis of a diphosphate.
+"""
 
-# Minimal .keg fixture reproducing the real bug shape: a bare C-line with
-# no trailing name ("7.2.3"), followed by a D-line ("7.2.3.1") that must
-# attach to IT, not to the previous named C-line ("7.2.2").
-BRITE_FIXTURE_BARE_C_LINE = """\
-A<b>7. Translocases</b>
-B  7.2  Catalysing the translocation of inorganic cations and their chelates
-C    7.2.2  Linked to the hydrolysis of a nucleoside triphosphate
-D      7.2.2.1  ABC-type Na+ transporter
-C    7.2.3
-D      7.2.3.1  ABC-type cation transporter
+ENZYME_DAT = """\
+ID   7.2.2.1
+DE   ABC-type Na(+) transporter.
+//
+ID   7.2.3.1
+DE   H(+)-exporting diphosphatase.
+//
 """
 
 
 @pytest.fixture
-def keg_file(tmp_path):
-    p = tmp_path / "ko01000.keg"
-    p.write_text(BRITE_FIXTURE_BARE_C_LINE, encoding="utf-8")
-    return str(p)
+def nodes():
+    return build_ec_nodes(parse_enzclass(ENZCLASS), parse_enzyme_dat(ENZYME_DAT), extra={})
 
 
-def test_bare_c_line_with_no_name_still_becomes_a_real_node(keg_file):
-    rows = list(iter_enzyme_path_rows(keg_file, valid_ids={"7.2.3"}))
+def test_full_ec_number_row_carries_every_level(nodes):
+    rows = list(iter_enzyme_path_rows(nodes, valid_ids={"7.2.3.1"}))
+    assert rows == [{
+        "a_id": "7", "a_name": "Translocases",
+        "b_id": "7.2", "b_name": "Catalysing the translocation of inorganic cations",
+        "c_id": "7.2.3", "c_name": "Linked to the hydrolysis of a diphosphate",
+        "d_id": "7.2.3.1", "d_name": "H(+)-exporting diphosphatase",
+        "full_path": "7|7.2|7.2.3|7.2.3.1",
+    }]
+
+
+def test_class_level_row_leaves_deeper_levels_empty(nodes):
+    rows = list(iter_enzyme_path_rows(nodes, valid_ids={"7.2.2"}))
     assert len(rows) == 1
-    assert rows[0]["c_id"] == "7.2.3"
-    # No trailing name text on the real line -- falls back to the bare id.
-    assert rows[0]["c_name"] == "7.2.3"
-    assert rows[0]["b_id"] == "7.2"
+    assert rows[0]["c_id"] == "7.2.2"
+    assert rows[0]["d_id"] is None and rows[0]["d_name"] is None
+    assert rows[0]["full_path"] == "7|7.2|7.2.2"
 
 
-def test_d_line_after_a_bare_c_line_attaches_to_the_bare_c_line_not_the_previous_one(keg_file):
-    rows = list(iter_enzyme_path_rows(keg_file, valid_ids={"7.2.3.1"}))
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["d_id"] == "7.2.3.1"
-    # The real bug: without the fix, this stayed "7.2.2" (the previous
-    # NAMED C-line) instead of advancing to the new bare "7.2.3".
-    assert row["c_id"] == "7.2.3"
-    assert row["full_path"] == "7|7.2|7.2.3|7.2.3.1"
+def test_one_row_per_valid_id_in_id_order(nodes):
+    rows = list(iter_enzyme_path_rows(nodes, valid_ids={"7.2.3.1", "7", "7.2.2.1"}))
+    assert [r["full_path"] for r in rows] == ["7", "7|7.2|7.2.2|7.2.2.1", "7|7.2|7.2.3|7.2.3.1"]
 
 
-def test_d_line_after_a_named_c_line_is_unaffected_by_the_fix(keg_file):
-    rows = list(iter_enzyme_path_rows(keg_file, valid_ids={"7.2.2.1"}))
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["d_id"] == "7.2.2.1"
-    assert row["c_id"] == "7.2.2"
-    assert row["c_name"] == "Linked to the hydrolysis of a nucleoside triphosphate"
+def test_ids_not_in_valid_ids_are_not_yielded(nodes):
+    assert list(iter_enzyme_path_rows(nodes, valid_ids=set())) == []
 
 
-def test_ids_not_in_valid_ids_are_not_yielded(keg_file):
-    rows = list(iter_enzyme_path_rows(keg_file, valid_ids=set()))
-    assert rows == []
+def test_a_valid_id_that_is_not_a_node_is_refused(nodes):
+    # Every enzyme id in annotation_catalog comes from the notebook, which
+    # only ever credits real nodes -- anything else means the two are out
+    # of step (e.g. a different ExPASy release).
+    with pytest.raises(ValueError, match="9.9.9.9"):
+        list(iter_enzyme_path_rows(nodes, valid_ids={"9.9.9.9"}))

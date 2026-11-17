@@ -83,9 +83,17 @@ def parse_enzyme_dat(text: str) -> dict[str, dict]:
     return entries
 
 
-def build_ec_nodes(classes: dict[str, str], entries: dict[str, dict]) -> dict[str, dict]:
+def build_ec_nodes(
+    classes: dict[str, str], entries: dict[str, dict], extra: dict[str, str] | None = None,
+) -> dict[str, dict]:
     """Every node of the enzyme tree: all classes, every current EC number,
-    and the current numbers ExPASy lacks (CURRENT_EC_NOT_IN_EXPASY).
+    and the current numbers ExPASy lacks.
+
+    Args:
+        classes: From parse_enzclass.
+        entries: From parse_enzyme_dat.
+        extra: {EC id: name} of current numbers ExPASy lacks or lists as
+            retired; defaults to CURRENT_EC_NOT_IN_EXPASY.
 
     Returns:
         {id: {"name", "depth", "category", "parent_id", "parent_name"}},
@@ -96,7 +104,7 @@ def build_ec_nodes(classes: dict[str, str], entries: dict[str, dict]) -> dict[st
     """
     names = dict(classes)
     names.update({ec: e["name"] for ec, e in entries.items() if e["status"] == "current"})
-    names.update(CURRENT_EC_NOT_IN_EXPASY)
+    names.update(CURRENT_EC_NOT_IN_EXPASY if extra is None else extra)
 
     orphans = sorted(ec for ec in names if ec_parent(ec) and ec_parent(ec) not in names)
     if orphans:

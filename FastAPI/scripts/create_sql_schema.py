@@ -71,20 +71,11 @@ CREATE TABLE IF NOT EXISTS taxon_paths (
     full_path TEXT NOT NULL UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS kegg_paths (
-    id      INTEGER PRIMARY KEY,
-    a_id    TEXT, a_name TEXT, -- e.g. 09100, Metabolism
-    b_id    TEXT, b_name TEXT, -- e.g. 09101, Carbohydrate metabolism
-    c_id    TEXT, c_name TEXT, -- e.g. 00010, Glycolysis / Cluconeogenesis
-    d_id    TEXT, d_name TEXT, -- e.g. K00844, HK; hexokinase (leaf, may be NULL)
-    full_path TEXT NOT NULL UNIQUE
-);
-
 CREATE TABLE IF NOT EXISTS enzyme_paths (
     id      INTEGER PRIMARY KEY,
     a_id    TEXT, a_name TEXT, -- e.g. 1, Oxidoreductases
     b_id    TEXT, b_name TEXT, -- e.g. 1.1, Acting on the CH-OH group of donors
-    c_id    TEXT, c_name TEXT, -- e.g. 1.1.1, With NAD+ or NADP+ as acceptor
+    c_id    TEXT, c_name TEXT, -- e.g. 1.1.1, With NAD(+) or NADP(+) as acceptor
     d_id    TEXT, d_name TEXT, -- e.g. 1.1.1.1, alcohol dehydrogenase (leaf, may be NULL)
     full_path TEXT NOT NULL UNIQUE
 );
@@ -136,14 +127,15 @@ CREATE TABLE IF NOT EXISTS annotation_series(
     sample     TEXT NOT NULL,
     annotation_id  TEXT NOT NULL,
     name           TEXT,
-    category       TEXT,           -- functional category (cog/kegg/enzyme); domain root for taxonomy
-    parent         TEXT,           -- taxonomy's own parent field, kegg/enzyme's parent_name, or cog's
-                                    -- category letter (e.g. COG0001 -> 'H'). NULL only for each source's
-                                    -- top-level roots (e.g. cog's 25 category letters themselves).
+    category       TEXT,           -- functional category (cog/enzyme); domain root for taxonomy; NULL for
+                                    -- kegg (KEGG orthologs are a flat list)
+    parent         TEXT,           -- taxonomy's own parent field, enzyme's parent_name, or cog's
+                                    -- category letter (e.g. COG0001 -> 'H'). NULL for each source's
+                                    -- top-level roots (e.g. cog's 25 category letters) and every kegg KO.
     depth          INTEGER,        -- MEANING IS SOURCE-SPECIFIC: taxonomic rank (1=domain..8=strain) for
-                                    -- taxonomy; kegg/enzyme's own pathway/EC hierarchy depth otherwise (NOT
-                                    -- a taxonomic rank) -- see migrate_annotations_to_sql.py. For cog,
-                                    -- 1 = category letter, 2 = COG. Never NULL in the live db.
+                                    -- taxonomy; enzyme's own EC hierarchy depth (NOT a taxonomic rank) --
+                                    -- see migrate_annotations_to_sql.py. For cog, 1 = category letter,
+                                    -- 2 = COG. Always 1 for kegg. Never NULL in the live db.
     egc            REAL,
     norm_egc       REAL,
     scaffold_count INTEGER,
