@@ -407,6 +407,19 @@ describe('TaxonomyPage — Remove / Keep-only mode', () => {
     fireEvent.click(screen.getByLabelText(/remove checked/i))
     await waitFor(() => expect(legend().some(t => t.includes('minus 2 exclusions'))).toBe(true))
   })
+
+  // A long tree scrolls inside its box; the mode switch and heading must stay
+  // in view so the user always sees whether checks remove or keep.
+  it('keeps the mode switch and heading in a sticky header above the scrolling tree', async () => {
+    renderWithTwoChecked()
+    await waitFor(() => expect(legend().some(t => t.includes('minus 2 exclusions'))).toBe(true))
+    const header = screen.getByRole('radiogroup', { name: /what checked branches do/i })
+      .closest('[data-testid="taxonomy-tree-controls"]') as HTMLElement | null
+    expect(header).not.toBeNull()
+    expect(header).toHaveStyle({ position: 'sticky' })
+    expect(header).toContainElement(screen.getByRole('heading', { name: /remove branches/i }))
+    expect(header!.querySelector('.tax-tree, .tax-tree-status')).toBeNull()
+  })
 })
 
 describe('TaxonomyPage — taxon search shows every match and says how many', () => {

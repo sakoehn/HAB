@@ -453,6 +453,21 @@ export function TaxonomyPage({
               maxHeight:    520,
               overflowY:    'auto',
             }}>
+              {/* Sticky so the remove/keep switch stays visible while a long
+                  tree scrolls beneath it. top/margin of -12 cancel the box's
+                  padding so it pins flush to the top edge. */}
+              <div
+                data-testid="taxonomy-tree-controls"
+                style={{
+                  position:     'sticky',
+                  top:          -12,
+                  zIndex:       1,
+                  margin:       '-12px -12px 8px',
+                  padding:      '12px 12px 6px',
+                  background:   'var(--surface)',
+                  borderBottom: '1px solid var(--border)',
+                }}
+              >
               <div role="radiogroup" aria-label="What checked branches do" style={{ display: 'flex', gap: 12, marginBottom: 8, font: '12px var(--mono)' }}>
                 {([['remove', 'Remove checked'], ['keep', 'Keep only checked']] as const).map(([mode, label]) => (
                   <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
@@ -466,12 +481,13 @@ export function TaxonomyPage({
                   </label>
                 ))}
               </div>
-              <h2 style={{ fontSize: 14, marginBottom: 8 }}>
+              <h2 style={{ fontSize: 14, marginBottom: 0 }}>
                 {state.selectionMode === 'keep' ? 'Keep branches' : 'Remove branches'}
                 <HelpTooltip text={state.selectionMode === 'keep'
                   ? "The second line is the sum of only the checked taxa (each with everything below it). Switching back to Remove keeps the same checks. You can't drill further into an already-checked branch, so nothing is counted twice."
                   : "Checking a taxon subtracts it (and everything below it) from the total. Switch to Keep only to see just the checked taxa instead -- your checks are kept. You can't drill further into an already-checked branch."} />
               </h2>
+              </div>
               <TaxonomyTree
                 rootId={state.rootId}
                 excludedIds={state.excludedIds}
