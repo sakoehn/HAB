@@ -125,6 +125,22 @@ describe('LeftResultList — taxonomy homonym disambiguation', () => {
     expect(screen.getByText(/in SomeOtherFamily/)).toBeInTheDocument()
   })
 
+  // JGI repeats a name down the ranks (a species and its strain share it), so
+  // one lineage sits inside the other. The row's rank badge already tells
+  // them apart; the "in ..." slot must still name a parent, never a rank.
+  it('shows the real parent, not a rank word, for a species and its same-named strain', () => {
+    const species = 'Bacteria;Bacteroidetes;Flavobacteriia;Flavobacteriales;Flavobacteriaceae;Polaribacter;Polaribacter sp. Hel1_33_96'
+    renderList({
+      rows: [
+        makeRow({ source: 'taxonomy', depth: 7, name: 'Polaribacter sp. Hel1_33_96', annotation_id: species }),
+        makeRow({ source: 'taxonomy', depth: 8, name: 'Polaribacter sp. Hel1_33_96', annotation_id: `${species};Polaribacter sp. Hel1_33_96` }),
+      ],
+      total: 2,
+    })
+    const hints = [...document.querySelectorAll('.al-row-parent-hint')].map(el => el.textContent?.trim())
+    expect(hints).toEqual(['in Polaribacter', 'in Polaribacter sp. Hel1_33_96'])
+  })
+
   it('names the ancestor that differs when two same-named taxa share their parent', () => {
     renderList({
       rows: [

@@ -150,7 +150,12 @@ export function LeftResultList({
   const visibleKeys  = visibleRows.map(r => `${r.annotation_id}::${r.source}`)
   // A same-named taxon elsewhere in the list often shares the immediate
   // parent too; for those the hint names the ancestor that differs.
-  const nameHints = useMemo(() => homonymHints(visibleRows.map(r => r.annotation_id)), [visibleRows])
+  // Rows show their rank as a badge and print the hint as "in <hint>", so
+  // only ancestor names are wanted here, never a rank word.
+  const nameHints = useMemo(
+    () => homonymHints(visibleRows.map(r => r.annotation_id), { withRank: false }),
+    [visibleRows],
+  )
   const allChecked   = visibleKeys.length > 0 && visibleKeys.every(k => checkedKeys.has(k))
   const someChecked  = checkedKeys.size > 0
   const checkedCount = checkedKeys.size

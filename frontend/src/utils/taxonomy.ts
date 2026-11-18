@@ -252,8 +252,13 @@ export function computeChartTitle(rootId: string, excludedList: string[], mode: 
 // "unclassified X" placeholders repeat a name down the ranks) no ancestor
 // differs, so the rank is added instead. Taxa whose name is unique in the
 // list (and non-taxonomy ids) get no entry.
+//
+// withRank: false leaves the rank out, for displays that already show each
+// row's rank and print the hint as "in <hint>" -- there only an ancestor's
+// name reads correctly. A nested pair then gets no entry at all, so the
+// caller falls back to the row's real parent.
 
-export function homonymHints(ids: string[]): Map<string, string> {
+export function homonymHints(ids: string[], { withRank = true }: { withRank?: boolean } = {}): Map<string, string> {
   const byName = new Map<string, string[][]>()
   for (const id of new Set(ids)) {
     if (!id.includes(';')) continue
@@ -281,8 +286,9 @@ export function homonymHints(ids: string[]): Map<string, string> {
         levels.add(i)
       }
       const parts = [[...levels].sort((x, y) => x - y).map(i => a[i]).join(' › ')]
-      if (nested) parts.push(taxonomyRankLabel(a.length).toLowerCase())
-      hints.set(a.join(';'), parts.filter(Boolean).join(' · '))
+      if (nested && withRank) parts.push(taxonomyRankLabel(a.length).toLowerCase())
+      const hint = parts.filter(Boolean).join(' · ')
+      if (hint) hints.set(a.join(';'), hint)
     }
   }
   return hints
