@@ -168,6 +168,25 @@ CREATE TABLE IF NOT EXISTS scaffolds(
     gene_count          INTEGER NOT NULL   -- the count value from entry["scaffolds"][scaffold]
 );
 
+-- AvgFold from <sample>.a.depth.txt, for every scaffold that has a gene in
+-- `mappings`. A gene's EGC is its scaffold's AvgFold, so joining this to
+-- mappings splits any annotation's egc by taxon. Keyed on (sample,
+-- scaffold_id) WITHOUT ROWID: the key is the lookup, no separate index.
+CREATE TABLE IF NOT EXISTS scaffold_fold(
+    sample      TEXT NOT NULL,
+    scaffold_id TEXT NOT NULL,
+    avg_fold    REAL NOT NULL,
+    PRIMARY KEY (sample, scaffold_id)
+) WITHOUT ROWID;
+
+-- The norm_egc denominator per sample: sum over every gene in `mappings`
+-- of its scaffold's AvgFold (the same value Notebooks/weighted_totals.py
+-- computes). norm_egc = egc / weighted_total.
+CREATE TABLE IF NOT EXISTS sample_totals(
+    sample         TEXT PRIMARY KEY,
+    weighted_total REAL NOT NULL
+);
+
 DROP TABLE IF EXISTS correlations;
 CREATE TABLE IF NOT EXISTS correlations_cache(
     id     INTEGER PRIMARY KEY,
