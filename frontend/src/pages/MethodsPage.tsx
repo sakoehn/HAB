@@ -161,6 +161,20 @@ export function MethodsPage() {
             under it, so listing both would count those genes twice. To get each family
             separately, check only the families.
           </Item>
+          <Item title="KEGG by taxon">
+            Explore → Bulk Download can split a KO’s EGC by the taxa its genes belong to.
+            Each gene adds its scaffold’s average read depth to its own taxon, the same
+            per-gene weight that makes up the KO’s EGC, so a KO’s taxa add up to the KO’s
+            own value at every timepoint. Genes not classified down to the chosen rank are
+            grouped as that rank’s “unclassified …” taxon, and genes with no taxonomy at
+            all as “Unclassified”. norm_egc uses the same per-sample total as everywhere
+            else, so it is a share of the annotated genes only (see Relative Abundance).
+            A 0 means none of the KO’s genes from that taxon were assembled in that
+            sample, which is below detection, not proof the taxon or gene was absent.
+            A gene’s taxon is JGI’s best match for it, so it can name a relative of the
+            real organism, and an unexpected genus at the top of a KO is worth checking
+            before relying on it.
+          </Item>
         </Section>
 
         {/* ── How Values Are Calculated ── */}

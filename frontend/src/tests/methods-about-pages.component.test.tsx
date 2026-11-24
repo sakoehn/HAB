@@ -86,6 +86,16 @@ describe('MethodsPage', () => {
     expect(text).toMatch(/check only the families/)
   })
 
+  it('explains the KEGG by taxon download: sums, shared norm_egc total, zeros, best-match taxa', () => {
+    render(<MethodsPage />)
+    expect(screen.getByText('KEGG by taxon', { selector: 'strong' })).toBeInTheDocument()
+    const text = document.body.textContent ?? ''
+    expect(text).toMatch(/a KO’s taxa add up to the KO’s\s+own value at every timepoint/)
+    expect(text).toMatch(/share of the annotated genes only/)
+    expect(text).toMatch(/below detection, not proof the taxon or gene was absent/)
+    expect(text).toMatch(/JGI’s best match/)
+  })
+
   it('says a series too short to smooth is drawn unsmoothed', () => {
     const { container } = render(<MethodsPage />)
     expect(container.textContent).toMatch(/fewer than 4 detected points is drawn unsmoothed/)
@@ -218,6 +228,14 @@ describe('AboutPage', () => {
     const text = container.textContent ?? ''
     expect(text).toMatch(/Explore: Six views/)
     expect(text).toMatch(/Scaffold Information, and Bulk Download/)
+  })
+
+  it('API reference lists the KEGG by taxon download and its size route', () => {
+    const { container } = render(<AboutPage />)
+    const text = container.textContent ?? ''
+    expect(text).toMatch(/\/api\/series\/export\/by-taxon\?rank=genus&format=long/)
+    expect(text).toMatch(/\/api\/series\/export\/by-taxon\/summary\?rank=genus/)
+    expect(text).toMatch(/selection=\{"kos": \[KO, …\]\}/)
   })
 
   it('API reference no longer claims an inverted index or 26 COG categories', () => {
