@@ -1456,6 +1456,86 @@ def iter_series_for_ids_sql(conn: sqlite3.Connection, source: str, annotation_id
             }
 
 
+def iter_kegg_by_taxon_sql(
+    conn: sqlite3.Connection, ko_ids: list[str], depth: int, samples: list[str],
+) -> Iterator[dict]:
+    """Yield each KO's egc split by taxon, per sample, for the "by taxon"
+    download.
+
+    A gene's EGC is its scaffold's AvgFold (scaffold_fold), so a taxon's
+    share of a KO in a sample is the sum over the KO's genes in that taxon.
+    Taxa are grouped by lineage down to `depth`, never by bare name, so two
+    genera with the same name in different families stay two rows. Every
+    taxon_paths row has all 8 ranks (JGI fills gaps with "unclassified ..."
+    names), so the only special case is a gene with no taxonomy at all:
+    taxon "Unclassified", lineage "". The taxa of a KO add up to its egc in
+    annotation_series.
+
+    Args:
+        conn: Open SQLite connection.
+        ko_ids: Bare KO ids, e.g. ["K02014"].
+        depth: Rank to group at, 1 (domain) through 8 (strain, the full
+            lineage).
+        samples: Samples to include.
+
+    Yields:
+        {"ko", "taxon", "lineage", "sample", "egc", "norm_egc"} dicts,
+        ordered by KO, then lineage, then sample. Only (taxon, sample)
+        pairs with at least one gene are yielded.
+
+    Raises:
+        ValueError: If depth is outside 1-8.
+    """
+    if depth < 1 or depth > 8:
+        raise ValueError(f"depth must be 1-8, got {depth}")
+    if not samples:
+        return
+    lineage = " || ';' || ".join(f"tp.{RANK_COLUMNS[d]}" for d in range(1, depth + 1))
+    placeholders = ",".join("?" * len(samples))
+    query = f"""
+        SELECT tp.{RANK_COLUMNS[depth]}, {lineage} AS lineage, m.sample,
+               SUM(f.avg_fold), SUM(f.avg_fold) / t.weighted_total
+        FROM mappings m
+        JOIN scaffold_fold f ON f.sample = m.sample AND f.scaffold_id = m.scaffold_id
+        JOIN sample_totals t ON t.sample = m.sample
+        LEFT JOIN taxon_paths tp ON tp.id = m.taxon_path_id
+        WHERE m.kegg_id = ? AND m.sample IN ({placeholders})
+        GROUP BY lineage, m.sample
+        ORDER BY lineage, m.sample
+    """
+    # One query per KO keeps each one on the (kegg_id, sample) index.
+    for ko in sorted(set(ko_ids)):
+        for taxon, path, sample, egc, norm_egc in conn.execute(query, [f"KO:{ko}", *samples]):
+            yield {
+                "ko":       ko,
+                "taxon":    taxon if path is not None else "Unclassified",
+                "lineage":  path or "",
+                "sample":   sample,
+                "egc":      egc,
+                "norm_egc": norm_egc,
+            }
+
+
+def count_kegg_genes_sql(conn: sqlite3.Connection, ko_ids: list[str], samples: list[str]) -> int:
+    """Number of gene records (one per gene per sample) for these KOs in
+    these samples -- what iter_kegg_by_taxon_sql has to add up, so the
+    download's size limit is checked against it.
+
+    Args:
+        conn: Open SQLite connection.
+        ko_ids: Bare KO ids, e.g. ["K02014"].
+        samples: Samples to include.
+    """
+    kos = sorted(set(ko_ids))
+    if not kos or not samples:
+        return 0
+    query = f"""
+        SELECT COUNT(*) FROM mappings
+        WHERE kegg_id IN ({",".join("?" * len(kos))}) AND sample IN ({",".join("?" * len(samples))})
+    """
+    return conn.execute(query, [f"KO:{k}" for k in kos] + list(samples)).fetchone()[0]
+
+
 # source -> (paths table, depth -> (id column, name column)) for the
 # sources whose hierarchy lives in a *_paths table. KEGG has none: its
 # orthologs are a flat list, read straight from annotation_catalog.
