@@ -24,6 +24,8 @@ GET /series/export/review
 POST /series/export/summary
 POST /series/export
 POST /series/export/taxa
+POST /series/export/by-taxon/summary
+POST /series/export/by-taxon
 
 All business logic (pagination, search, EGC extraction) lives here or in
 cache.py / index.py — endpoints are intentionally thin.
@@ -64,6 +66,7 @@ from .cache_sql import (
     _MAX_SAMPLES_FOR_MANY_LEAVES,
     _MAPPINGS_ROW_LIMIT,
     _ROW_VOLUME_THRESHOLD,
+    count_kegg_genes_sql,
     count_taxa_under_sql,
     estimate_mapping_row_count_sql,
     count_annotation_scaffolds_sql,
@@ -90,6 +93,7 @@ from .cache_sql import (
     get_paths_under_at_depth_sql,
     get_taxa_under_at_rank_sql,
     get_taxa_by_ids_sql,
+    iter_kegg_by_taxon_sql,
     iter_series_for_ids_sql,
     strip_any_source_prefix,
     strip_source_prefix,
@@ -1558,6 +1562,205 @@ def series_export_checked_taxa(
     filename = re.sub(r"[^A-Za-z0-9._-]+", "_", "_".join([*parts, "checked_taxa_timeseries"])) + ".csv"
     return StreamingResponse(
         _series_export_csv(db, plan),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── KOs split by taxon ("by taxon" bulk download) ────────────────────────────
+
+# Above this many gene records (one per gene per sample, summed over the
+# chosen KOs) the download is refused before it starts, as for /mappings/export.
+# Measured: the heaviest KO (K02014, 271k genes) takes ~1.8 s.
+_BY_TAXON_MAX_GENES = _MAPPINGS_EXPORT_MAX_ROWS
+# Keeps the KO list well under SQLite's bound-parameter limit.
+_BY_TAXON_MAX_KOS = 1000
+
+_BY_TAXON_LONG_HEADER = [
+    "ko", "ko_name", "taxon", "rank", "lineage", "sample", "date", "time", "egc", "norm_egc", "detected",
+]
+_BY_TAXON_WIDE_FIXED = ["ko", "ko_name", "taxon", "rank", "lineage"]
+
+
+def _parse_kos(raw: bytes) -> list[str]:
+    """The KO list from a POST body: `selection=<json>` where the JSON is
+    {"kos": [id, ...]}. Ids may carry the "KO:" prefix; duplicates are
+    dropped, first-seen order kept."""
+    data = _parse_selection_json(raw)
+    kos = data.get("kos") if isinstance(data, dict) else None
+    if not isinstance(kos, list) or not all(isinstance(k, str) for k in kos):
+        raise HTTPException(status_code=400, detail="selection.kos must be a list of KO ids")
+    kos = list(dict.fromkeys(strip_source_prefix("kegg", k.strip()) for k in kos if k.strip()))
+    if not kos:
+        raise HTTPException(status_code=400, detail="No KOs were chosen")
+    if len(kos) > _BY_TAXON_MAX_KOS:
+        raise HTTPException(status_code=400, detail=f"At most {_BY_TAXON_MAX_KOS} KOs per download")
+    return kos
+
+
+def _by_taxon_plan(
+    db, kos: list[str], rank: str, fmt: str, metric: str, date_from: str | None, date_to: str | None,
+) -> dict:
+    """Check a by-taxon request and work out what it covers: the known KOs
+    (sorted) with their names, the unknown ones, the samples in date order
+    and the number of gene records to add up. Raises HTTPException for a
+    bad parameter; unknown KOs are reported, not refused, here."""
+    for label, value in (("date_from", date_from), ("date_to", date_to)):
+        if value is not None and _parse_any_datetime(value) is None:
+            raise HTTPException(status_code=400, detail=f"{label} is not a recognized date: {value!r}")
+    depth = _taxonomy_rank_depth(rank)
+    if depth is None:
+        raise HTTPException(status_code=400, detail=f"Rank '{rank}' not found")
+    if fmt not in ("long", "wide"):
+        raise HTTPException(status_code=400, detail=f"format must be 'long' or 'wide', not {fmt!r}")
+    if metric not in ("egc", "norm_egc"):
+        raise HTTPException(status_code=400, detail=f"metric must be 'egc' or 'norm_egc', not {metric!r}")
+
+    placeholders = ",".join("?" * len(kos))
+    names = dict(db.execute(
+        f"SELECT annotation_id, name FROM annotation_catalog WHERE source = 'kegg' AND annotation_id IN ({placeholders})",
+        kos,
+    ))
+    samples = _export_samples(db, date_from, date_to)
+    known = sorted(names)
+    return {
+        "kos":     known,
+        "names":   names,
+        "unknown": [k for k in kos if k not in names],
+        "rank":    rank,
+        "depth":   depth,
+        "format":  fmt,
+        "metric":  metric,
+        "samples": samples,
+        "genes":   count_kegg_genes_sql(db, known, [s for s, _ in samples]),
+    }
+
+
+def _by_taxon_csv(db, plan: dict):
+    """Yield the CSV in chunks, one KO at a time in id order, its taxa by
+    total egc (largest first). Long: every taxon gets every timepoint, 0
+    with detected=false where it had no genes. Wide: one column per
+    timepoint, holding plan["metric"]. Closes `db` when done (or when the
+    download is abandoned)."""
+    try:
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        samples = plan["samples"]
+        sample_ids = [s for s, _ in samples]
+        wide = plan["format"] == "wide"
+        if wide:
+            writer.writerow(_BY_TAXON_WIDE_FIXED + [iso or s for s, iso in samples])
+        else:
+            writer.writerow(_BY_TAXON_LONG_HEADER)
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+        pending = 0
+        rows = iter_kegg_by_taxon_sql(db, plan["kos"], plan["depth"], sample_ids)
+        for ko, ko_rows in groupby(rows, key=itemgetter("ko")):
+            taxa: dict[str, dict] = {}
+            for r in ko_rows:
+                taxon = taxa.setdefault(r["lineage"], {"taxon": r["taxon"], "by_sample": {}, "total": 0.0})
+                taxon["by_sample"][r["sample"]] = r
+                taxon["total"] += r["egc"]
+            ko_name = plan["names"].get(ko) or ""
+            for lineage, taxon in sorted(taxa.items(), key=lambda item: (-item[1]["total"], item[0])):
+                labels = [ko, ko_name, taxon["taxon"], plan["rank"], lineage]
+                found = taxon["by_sample"]
+                if wide:
+                    writer.writerow([*labels, *(found[s][plan["metric"]] if s in found else 0 for s in sample_ids)])
+                    pending += 1
+                else:
+                    for sample, iso in samples:
+                        date, _, time_of_day = iso.partition(" ")
+                        r = found.get(sample)
+                        if r is not None:
+                            writer.writerow([*labels, sample, date, time_of_day, r["egc"], r["norm_egc"], "true"])
+                        else:
+                            writer.writerow([*labels, sample, date, time_of_day, 0, 0, "false"])
+                        pending += 1
+                if pending >= _EXPORT_CHUNK_ROWS:
+                    yield buf.getvalue()
+                    buf.seek(0)
+                    buf.truncate(0)
+                    pending = 0
+        yield buf.getvalue()
+    finally:
+        close_sql_connection(db)
+
+
+@router.post("/series/export/by-taxon/summary")
+def series_export_by_taxon_summary(
+    request:   Request,
+    rank:      str = Query("genus"),
+    fmt:       str = Query("long", alias="format"),
+    metric:    str = Query("egc"),
+    date_from: str | None = Query(None),
+    date_to:   str | None = Query(None),
+    selection: bytes = Body(..., media_type="text/plain"),
+):
+    """Size of a /series/export/by-taxon download before starting it: how
+    many of the KOs are known (`kos`) and which aren't (`unknown_kos`), the
+    samples in the date range, the gene records to add up (`genes`) and the
+    most the server will start (`max_genes`). Body: see _parse_kos."""
+    kos = _parse_kos(selection)
+    db = connect_to_sql()
+    try:
+        plan = _by_taxon_plan(db, kos, rank, fmt, metric, date_from, date_to)
+    finally:
+        close_sql_connection(db)
+    return {
+        "kos":         len(plan["kos"]),
+        "unknown_kos": plan["unknown"],
+        "rank":        rank,
+        "samples":     len(plan["samples"]),
+        "genes":       plan["genes"],
+        "max_genes":   _BY_TAXON_MAX_GENES,
+    }
+
+
+@router.post("/series/export/by-taxon")
+def series_export_by_taxon(
+    request:   Request,
+    rank:      str = Query("genus"),
+    fmt:       str = Query("long", alias="format"),
+    metric:    str = Query("egc"),
+    date_from: str | None = Query(None),
+    date_to:   str | None = Query(None),
+    selection: bytes = Body(..., media_type="text/plain"),
+):
+    """CSV of each KO's egc and norm_egc split by taxon at `rank` (domain
+    .. strain), per timepoint. A taxon is its lineage down to `rank`, so
+    same-named taxa in different lineages stay apart; genes with no
+    taxonomy are "Unclassified". A KO's taxa add up to its own series.
+    format=long (default): one row per KO, taxon and timepoint, with
+    separate date and time columns. format=wide: one row per KO and taxon,
+    one "date time" column per timepoint holding `metric`. Unknown KOs are
+    left out (404 if none are known); over _BY_TAXON_MAX_GENES gene records
+    is refused with 413 before anything is sent. Body: see _parse_kos."""
+    kos = _parse_kos(selection)
+    db = connect_to_sql()
+    try:
+        plan = _by_taxon_plan(db, kos, rank, fmt, metric, date_from, date_to)
+        if not plan["kos"]:
+            raise HTTPException(status_code=404, detail=f"No known KOs among {', '.join(kos[:5])}")
+        if plan["genes"] > _BY_TAXON_MAX_GENES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"This download would add up {plan['genes']:,} gene records, over the "
+                       f"{_BY_TAXON_MAX_GENES:,} limit. Choose fewer KOs or narrow the date range.",
+            )
+    except Exception:
+        close_sql_connection(db)
+        raise
+    ko_part = plan["kos"][0] if len(plan["kos"]) == 1 else f"{len(plan['kos'])}_KOs"
+    parts = ["kegg", ko_part, "by", rank, fmt]
+    if date_from or date_to:
+        parts.append(f"{date_from or 'start'}_to_{date_to or 'end'}")
+    filename = re.sub(r"[^A-Za-z0-9._-]+", "_", "_".join(parts)) + ".csv"
+    return StreamingResponse(
+        _by_taxon_csv(db, plan),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
