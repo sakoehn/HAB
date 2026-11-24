@@ -2,7 +2,8 @@
 migrate_scaffold_fold_to_sql.py
 ================================
 Fills `scaffold_fold` and `sample_totals` (see create_sql_schema.py) from
-each sample's Metagenome_Samples/<sample>/<sample>.a.depth.txt.
+each sample's Metagenome_Samples/<sample>/<sample>.a.depth.txt, then
+`kegg_taxon_fold` from those and `mappings`.
 
 A gene's EGC is its scaffold's AvgFold, and an annotation's egc in
 annotation_series is the sum of that over the annotation's genes. Storing
@@ -13,10 +14,12 @@ Only scaffolds with at least one gene in `mappings` are stored; no query can
 reach the others. Needs `mappings` loaded first.
 
 Safe to re-run: each sample's old rows are deleted before its new ones are
-written, in one transaction per sample.
+written, in one transaction per sample, and kegg_taxon_fold is rebuilt
+whole in one transaction.
 
 Usage (from FastAPI/):
     python scripts/migrate_scaffold_fold_to_sql.py
+    python scripts/migrate_scaffold_fold_to_sql.py --kegg-taxon-only   # keep scaffold_fold, rebuild kegg_taxon_fold
 """
 
 import os
@@ -92,20 +95,50 @@ def load_sample(conn: sqlite3.Connection, sample: str, depth_path) -> tuple[int,
     return len(rows), total
 
 
+def build_kegg_taxon_fold(conn: sqlite3.Connection) -> int:
+    """Rebuild kegg_taxon_fold: each KO's egc per sample and full taxon path.
+
+    Sums scaffold_fold over the KO's genes in `mappings`, so it must run
+    after scaffold_fold is filled. KO ids are stored bare ("K02014"), and a
+    gene with no taxonomy is stored under taxon_path_id 0.
+
+    Returns:
+        Rows written.
+    """
+    with conn:
+        conn.execute("DELETE FROM kegg_taxon_fold")
+        conn.execute(
+            """
+            INSERT INTO kegg_taxon_fold (kegg_id, sample, taxon_path_id, egc)
+            SELECT substr(m.kegg_id, 4), m.sample, COALESCE(m.taxon_path_id, 0), SUM(f.avg_fold)
+            FROM mappings m
+            JOIN scaffold_fold f ON f.sample = m.sample AND f.scaffold_id = m.scaffold_id
+            WHERE m.kegg_id IS NOT NULL
+            GROUP BY 1, 2, 3
+            ORDER BY 1, 2, 3
+            """
+        )
+    return conn.execute("SELECT COUNT(*) FROM kegg_taxon_fold").fetchone()[0]
+
+
 def main():
-    """Create the two tables if needed, then load every sample in `mappings`."""
+    """Create the tables if needed, load every sample in `mappings`, then
+    build kegg_taxon_fold (only that with --kegg-taxon-only)."""
     create_schema()
     conn = sqlite3.connect(SQLITE_DB_PATH)
     try:
-        samples = [r[0] for r in conn.execute("SELECT DISTINCT sample FROM mappings ORDER BY sample")]
-        if not samples:
-            raise SystemExit("mappings is empty -- run migrate_mappings_to_sql.py first.")
         start = time.time()
-        for i, sample in enumerate(samples, 1):
-            path = os.path.join(METAGENOME_SAMPLES_DIR, sample, f"{sample}.a.depth.txt")
-            count, total = load_sample(conn, sample, path)
-            print(f"[{i}/{len(samples)}] {sample}: {count:,} scaffolds, total {total:,.0f} "
-                  f"({time.time() - start:.0f}s)")
+        if "--kegg-taxon-only" not in sys.argv[1:]:
+            samples = [r[0] for r in conn.execute("SELECT DISTINCT sample FROM mappings ORDER BY sample")]
+            if not samples:
+                raise SystemExit("mappings is empty -- run migrate_mappings_to_sql.py first.")
+            for i, sample in enumerate(samples, 1):
+                path = os.path.join(METAGENOME_SAMPLES_DIR, sample, f"{sample}.a.depth.txt")
+                count, total = load_sample(conn, sample, path)
+                print(f"[{i}/{len(samples)}] {sample}: {count:,} scaffolds, total {total:,.0f} "
+                      f"({time.time() - start:.0f}s)")
+        rows = build_kegg_taxon_fold(conn)
+        print(f"kegg_taxon_fold: {rows:,} rows ({time.time() - start:.0f}s)")
     finally:
         conn.close()
 

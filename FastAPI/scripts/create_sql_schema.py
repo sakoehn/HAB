@@ -187,6 +187,21 @@ CREATE TABLE IF NOT EXISTS sample_totals(
     weighted_total REAL NOT NULL
 );
 
+-- Each KO's egc per sample and full taxon path: the sum of scaffold_fold
+-- over the KO's genes with that taxon_path_id (0 for a gene with no
+-- taxonomy). Built from mappings + scaffold_fold by
+-- migrate_scaffold_fold_to_sql.py. The KEGG-by-taxon download reads one
+-- KO's rows as a single key range instead of looking up every gene in
+-- mappings and scaffold_fold, which on a small server is read from disk
+-- gene by gene.
+CREATE TABLE IF NOT EXISTS kegg_taxon_fold(
+    kegg_id       TEXT NOT NULL,
+    sample        TEXT NOT NULL,
+    taxon_path_id INTEGER NOT NULL,
+    egc           REAL NOT NULL,
+    PRIMARY KEY (kegg_id, sample, taxon_path_id)
+) WITHOUT ROWID;
+
 DROP TABLE IF EXISTS correlations;
 CREATE TABLE IF NOT EXISTS correlations_cache(
     id     INTEGER PRIMARY KEY,

@@ -1464,6 +1464,9 @@ def iter_kegg_by_taxon_sql(
 
     A gene's EGC is its scaffold's AvgFold (scaffold_fold), so a taxon's
     share of a KO in a sample is the sum over the KO's genes in that taxon.
+    kegg_taxon_fold holds that sum per full taxon path, so this reads one
+    key range per KO and adds paths up to the chosen rank, never touching
+    mappings or scaffold_fold (gene-by-gene disk reads on a small server).
     Taxa are grouped by lineage down to `depth`, never by bare name, so two
     genera with the same name in different families stay two rows. Every
     taxon_paths row has all 8 ranks (JGI fills gaps with "unclassified ..."
@@ -1493,19 +1496,18 @@ def iter_kegg_by_taxon_sql(
     lineage = " || ';' || ".join(f"tp.{RANK_COLUMNS[d]}" for d in range(1, depth + 1))
     placeholders = ",".join("?" * len(samples))
     query = f"""
-        SELECT tp.{RANK_COLUMNS[depth]}, {lineage} AS lineage, m.sample,
-               SUM(f.avg_fold), SUM(f.avg_fold) / t.weighted_total
-        FROM mappings m
-        JOIN scaffold_fold f ON f.sample = m.sample AND f.scaffold_id = m.scaffold_id
-        JOIN sample_totals t ON t.sample = m.sample
-        LEFT JOIN taxon_paths tp ON tp.id = m.taxon_path_id
-        WHERE m.kegg_id = ? AND m.sample IN ({placeholders})
-        GROUP BY lineage, m.sample
-        ORDER BY lineage, m.sample
+        SELECT tp.{RANK_COLUMNS[depth]}, {lineage} AS lineage, k.sample,
+               SUM(k.egc), SUM(k.egc) / t.weighted_total
+        FROM kegg_taxon_fold k
+        JOIN sample_totals t ON t.sample = k.sample
+        LEFT JOIN taxon_paths tp ON tp.id = k.taxon_path_id
+        WHERE k.kegg_id = ? AND k.sample IN ({placeholders})
+        GROUP BY lineage, k.sample
+        ORDER BY lineage, k.sample
     """
-    # One query per KO keeps each one on the (kegg_id, sample) index.
+    # One query per KO keeps each one on the (kegg_id, sample, ...) key.
     for ko in sorted(set(ko_ids)):
-        for taxon, path, sample, egc, norm_egc in conn.execute(query, [f"KO:{ko}", *samples]):
+        for taxon, path, sample, egc, norm_egc in conn.execute(query, [ko, *samples]):
             yield {
                 "ko":       ko,
                 "taxon":    taxon if path is not None else "Unclassified",

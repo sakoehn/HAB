@@ -5,12 +5,15 @@ Tests for iter_kegg_by_taxon_sql() and count_kegg_genes_sql()
 (FastAPI/api/cache_sql.py): a KO's egc split by taxon, per sample.
 
 A gene's EGC is its scaffold's AvgFold (scaffold_fold), so a taxon's share
-of a KO is the sum over that KO's genes in that taxon. Taxa are grouped by
-lineage down to the chosen rank, so two genera with the same name under
+of a KO is the sum over that KO's genes in that taxon. kegg_taxon_fold
+holds that sum per KO, sample and full taxon path (built by
+build_kegg_taxon_fold), and the query adds paths up to the chosen rank.
+Taxa are grouped by lineage, so two genera with the same name under
 different families stay apart.
 
 The first group uses an in-memory database; the last group checks the real
-hab_mappings.db: the taxa of every KO must add up to its stored egc.
+hab_mappings.db: the taxa of every KO must add up to its stored egc, and
+the stored table must match summing the genes directly.
 
 Run:
     pytest tests/sql/test_kegg_by_taxon_sql.py -v
@@ -27,6 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FastAPI"
 from api.cache_sql import count_kegg_genes_sql, iter_kegg_by_taxon_sql  # noqa: E402
 from api.config import SQLITE_DB_PATH  # noqa: E402
 from scripts.create_sql_schema import SCHEMA  # noqa: E402
+from scripts.migrate_scaffold_fold_to_sql import build_kegg_taxon_fold  # noqa: E402
 
 
 # pylint: disable=redefined-outer-name
@@ -72,6 +76,41 @@ def add_gene(conn, sample, scaffold, fold, ko, taxon_path_id):
         (sample, scaffold, fold),
     )
     conn.commit()
+    build_kegg_taxon_fold(conn)
+
+
+def stored(conn):
+    return conn.execute("SELECT kegg_id, sample, taxon_path_id, egc FROM kegg_taxon_fold ORDER BY 1, 2, 3").fetchall()
+
+
+# ── build_kegg_taxon_fold ─────────────────────────────────────────────────────
+
+def test_build_sums_a_kos_genes_per_sample_and_path(conn):
+    add_gene(conn, "s1", "sc1", 10.0, "K00001", 1)
+    add_gene(conn, "s1", "sc2", 4.0, "K00001", 1)
+    add_gene(conn, "s1", "sc3", 5.0, "K00001", 2)
+    add_gene(conn, "s2", "sc1", 7.0, "K00001", 1)
+
+    assert stored(conn) == [("K00001", "s1", 1, 14.0), ("K00001", "s1", 2, 5.0), ("K00001", "s2", 1, 7.0)]
+
+
+def test_build_skips_genes_without_a_ko_and_keeps_no_taxonomy_as_0(conn):
+    add_gene(conn, "s1", "sc1", 10.0, None, 1)
+    add_gene(conn, "s1", "sc2", 4.0, "K00001", None)
+
+    assert stored(conn) == [("K00001", "s1", 0, 4.0)]
+
+
+def test_build_replaces_the_old_rows(conn):
+    add_gene(conn, "s1", "sc1", 10.0, "K00001", 1)
+    conn.execute("DELETE FROM mappings")
+    conn.commit()
+    build_kegg_taxon_fold(conn)
+
+    assert stored(conn) == []
+
+
+# ── iter_kegg_by_taxon_sql ────────────────────────────────────────────────────
 
 
 def rows(conn, kos, depth, samples=("s1", "s2")):
@@ -160,6 +199,16 @@ def test_ko_with_no_genes_gives_no_rows(conn):
     assert rows(conn, ["K09999"], GENUS) == []
 
 
+def test_reads_only_the_prebuilt_table(conn):
+    # The download must not touch the big mappings / scaffold_fold tables.
+    add_gene(conn, "s1", "sc1", 10.0, "K00001", 1)
+    conn.execute("DELETE FROM mappings")
+    conn.execute("DELETE FROM scaffold_fold")
+    conn.commit()
+
+    assert rows(conn, ["K00001"], GENUS) == [("K00001", "Gen", "Bacteria;P1;C1;O1;F1;Gen", "s1", 10.0)]
+
+
 def test_bad_depth_is_rejected(conn):
     with pytest.raises(ValueError):
         list(iter_kegg_by_taxon_sql(conn, ["K00001"], 9, ["s1"]))
@@ -186,9 +235,9 @@ def real_conn():
         pytest.skip(f"{SQLITE_DB_PATH} not found")
     connection = sqlite3.connect(f"file:{SQLITE_DB_PATH}?mode=ro", uri=True)
     names = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    if "scaffold_fold" not in names:
+    if not {"scaffold_fold", "kegg_taxon_fold"} <= names:
         connection.close()
-        pytest.skip("scaffold_fold not built -- run migrate_scaffold_fold_to_sql.py")
+        pytest.skip("scaffold_fold / kegg_taxon_fold not built -- run migrate_scaffold_fold_to_sql.py")
     yield connection
     connection.close()
 
@@ -225,6 +274,31 @@ def test_real_taxa_add_up_to_stored_egc(real_conn, real_kos, depth):
     assert totals.keys() == stored.keys()
     wrong = [k for k in stored if totals[k] != pytest.approx(stored[k], rel=1e-9)]
     assert not wrong, f"{len(wrong)} (KO, sample) totals differ, e.g. {wrong[:5]}"
+
+
+def test_real_prebuilt_table_matches_summing_the_genes(real_conn, real_kos):
+    """kegg_taxon_fold equals summing each gene's scaffold AvgFold directly."""
+    placeholders = ",".join("?" * len(real_kos))
+    direct = {
+        (ko, sample, path): egc
+        for ko, sample, path, egc in real_conn.execute(
+            f"SELECT substr(m.kegg_id, 4), m.sample, COALESCE(m.taxon_path_id, 0), SUM(f.avg_fold) "
+            f"FROM mappings m JOIN scaffold_fold f ON f.sample = m.sample AND f.scaffold_id = m.scaffold_id "
+            f"WHERE m.kegg_id IN ({placeholders}) AND m.sample IN (?, ?, ?) GROUP BY 1, 2, 3",
+            (*(f"KO:{k}" for k in real_kos), *REAL_SAMPLES),
+        )
+    }
+    prebuilt = {
+        (ko, sample, path): egc
+        for ko, sample, path, egc in real_conn.execute(
+            f"SELECT kegg_id, sample, taxon_path_id, egc FROM kegg_taxon_fold "
+            f"WHERE kegg_id IN ({placeholders}) AND sample IN (?, ?, ?)",
+            (*real_kos, *REAL_SAMPLES),
+        )
+    }
+    assert direct and prebuilt.keys() == direct.keys()
+    wrong = [k for k in direct if prebuilt[k] != pytest.approx(direct[k], rel=1e-12)]
+    assert not wrong, f"{len(wrong)} rows differ, e.g. {wrong[:5]}"
 
 
 def test_real_genus_lineages_are_taxonomy_node_ids(real_conn, real_kos):
