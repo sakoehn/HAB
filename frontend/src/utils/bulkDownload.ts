@@ -78,3 +78,41 @@ export function selectionJson(excluded: Set<string>): string {
   const exclude = [...excluded].sort().map(key => key.split('|'))
   return JSON.stringify({ exclude })
 }
+
+// ── KEGG by taxon ────────────────────────────────────────────────────────────
+
+// KO ids typed or pasted into the "KEGG by taxon" box: split on commas,
+// semicolons and whitespace, "KO:" dropped, upper-cased, duplicates removed
+// (first one kept).
+export function parseKoList(text: string): string[] {
+  const kos = new Set<string>()
+  for (const part of text.split(/[\s,;]+/)) {
+    const id = part.replace(/^ko:/i, '').toUpperCase()
+    if (id) kos.add(id)
+  }
+  return [...kos]
+}
+
+export type ByTaxonFormat = 'long' | 'wide'
+export type ByTaxonMetric = 'egc' | 'norm_egc'
+
+// Query string for /api/series/export/by-taxon(/summary). The metric only
+// matters for wide (long has both), so it is only sent then.
+export function buildByTaxonQuery({ rank, format, metric, dateFrom, dateTo }: {
+  rank:     string
+  format:   ByTaxonFormat
+  metric:   ByTaxonMetric
+  dateFrom: string
+  dateTo:   string
+}): string {
+  const q = new URLSearchParams({ rank, format })
+  if (format === 'wide') q.set('metric', metric)
+  if (dateFrom) q.set('date_from', dateFrom)
+  if (dateTo)   q.set('date_to', dateTo)
+  return q.toString()
+}
+
+// The "selection" field of the by-taxon POSTs.
+export function koSelectionJson(kos: string[]): string {
+  return JSON.stringify({ kos })
+}

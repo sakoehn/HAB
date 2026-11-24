@@ -95,6 +95,7 @@ import { GroupedEgcChart } from '../components/charts/GroupedEgcChart'
 import { ScaffoldBtn } from '../components/scaffolds/ScaffoldBtn'
 import { HierarchyBtn } from '../components/hierarchy/HierarchyBtn'
 import { BulkDownloadPanel } from '../components/download/BulkDownloadPanel'
+import { BulkByTaxonSection } from '../components/download/BulkByTaxonSection'
 import { canBulkDownloadFrom } from '../utils/bulkDownload'
 import { ScaffoldExplorePanel } from '../components/scaffolds/ScaffoldExplorePanel'
 import type { ExploreState } from './exploreState'
@@ -2452,6 +2453,7 @@ export function ExplorePage({
               initialParent={state.bulkDownloadInitialParent}
               dataDateRange={dataDateRange}
             />
+            <BulkByTaxonSection key={resetKey} dataDateRange={dataDateRange} />
           </div>
         )}
 
