@@ -2,8 +2,10 @@
 test_about_page_api_reference.py
 ================================
 The About page's API Reference (frontend/src/pages/AboutPage.tsx) lists
-every public GET /api endpoint with an example URL. These tests keep that
-list in step with the routes the app really serves:
+every public /api endpoint with an example URL -- GET routes, and the
+POST-only bulk downloads (their example URL shows the query string; the
+body is described in the text). These tests keep that list in step with
+the routes the app really serves:
 
 - every listed path is a real route, and every real route is listed;
 - every query parameter in an example is one the route accepts, and every
@@ -39,17 +41,19 @@ def _listed_examples() -> dict[str, str]:
 
 @pytest.fixture(scope="module")
 def routes():
-    """Every GET /api path the app serves -> {query parameter: required?},
-    from the app's own OpenAPI schema (version-stable: newer FastAPI keeps
-    included routers bundled in app.routes rather than listing each route)."""
+    """Every GET or POST /api path the app serves -> {query parameter:
+    required?} (the GET's when it has both), from the app's own OpenAPI
+    schema (version-stable: newer FastAPI keeps included routers bundled in
+    app.routes rather than listing each route)."""
     from main import app
 
     found = {}
     for path, ops in app.openapi()["paths"].items():
-        if path.startswith("/api/") and "get" in ops:
+        method = "get" if "get" in ops else "post" if "post" in ops else None
+        if path.startswith("/api/") and method:
             found[path] = {
                 p["name"]: p.get("required", False)
-                for p in ops["get"].get("parameters", [])
+                for p in ops[method].get("parameters", [])
                 if p.get("in") == "query"
             }
     assert len(found) > 20  # really found the routes

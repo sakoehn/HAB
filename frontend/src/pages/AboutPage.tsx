@@ -157,6 +157,8 @@ export function AboutPage() {
                'Size of that download before it starts: taxa (number of terms), samples, max_rows, sparse (true when the file is too big for Excel and lists only detected samples), and multi_path_terms (terms reached through more than one path). Same parameters, and the same POST form'],
               ['/api/series/export/review?source=…&rank=…&parent=…',
                'For that download, every term reached through more than one path inside the start (in practice COGs in several categories), each with its paths sorted by the parent\'s mean EGC, most abundant first. Empty for KEGG, taxonomy and enzyme'],
+              ['/api/series/export/taxa?parent=…',
+               'POST, text/plain body selection={"taxa": [lineage, …]}. CSV of exactly the taxa checked on the Taxonomy page, each at its own rank, every sample, same columns as the taxonomy /api/series/export. parent (optional) is the page\'s scope: every taxon must be below it. Powers the Taxonomy page\'s Download checked taxa'],
               ['/api/series/export/by-taxon?rank=genus&format=long',
                'POST, text/plain body selection={"kos": [KO, …]}. CSV of each KO\'s EGC split by the taxa its genes belong to, at a chosen rank (domain … strain), per sample. format=long (default) has one row per KO, taxon and sample with egc, norm_egc and detected; format=wide has one column per sample holding metric=egc or norm_egc. Undetected samples are 0. Optional date_from/date_to. Powers Explore → Bulk Download → KEGG by taxon'],
               ['/api/series/export/by-taxon/summary?rank=genus',
