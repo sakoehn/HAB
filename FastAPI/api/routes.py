@@ -1571,7 +1571,8 @@ def series_export_checked_taxa(
 
 # Above this many gene records (one per gene per sample, summed over the
 # chosen KOs) the download is refused before it starts, as for /mappings/export.
-# Measured: the heaviest KO (K02014, 271k genes) takes ~1.8 s.
+# Measured on the server: the heaviest KO (K02014, 271k genes) reads in
+# ~0.7 s from kegg_taxon_fold, cold.
 _BY_TAXON_MAX_GENES = _MAPPINGS_EXPORT_MAX_ROWS
 # Keeps the KO list well under SQLite's bound-parameter limit.
 _BY_TAXON_MAX_KOS = 1000
